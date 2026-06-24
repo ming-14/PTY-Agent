@@ -179,8 +179,7 @@ class RequestHandler:
             elif msg_type == "stop":
                 Message.send(conn, {"type": "ok"})
                 _logger.info("收到停止命令，关闭守护进程...")
-                self.manager.stop_all()
-                # 通知服务器主循环退出 → run() 的 finally 块执行 _cleanup()
+
                 if self._server:
                     self._server.stop()
             else:

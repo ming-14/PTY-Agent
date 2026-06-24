@@ -24,7 +24,7 @@ def create_pty(command, cols: int = 80, rows: int = 24, shell: Optional[str] = N
 
     优先级:
       Windows: kernel32.CreatePseudoConsole > subprocess 管道
-               （ConDrv 直连因 I/O 不完整已禁用，见 convars.py 注释）
+               （ConDrv 直连不可行：conhost VT I/O 走 ConDrv IPC 而非 hStdOutput）
       Unix:    UnixPseudoTerminal > subprocess 管道
 
     Args:

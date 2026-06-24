@@ -19,6 +19,7 @@ _DEFAULTS: dict = {
     "newline": False,
     "encoding": None,
     "keep_ansi": False,
+    "debug": True,
 }
 
 # on/off -> bool 映射
@@ -88,7 +89,7 @@ class ConfigManager:
             value = float(value)
 
         # newline/keep_ansi/output_by_natural_language 转为 bool
-        if key in ("newline", "keep_ansi", "output_by_natural_language"):
+        if key in ("newline", "keep_ansi", "output_by_natural_language", "debug"):
             if not isinstance(value, bool):
                 value = bool(value)
 

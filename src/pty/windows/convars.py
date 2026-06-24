@@ -315,6 +315,10 @@ _NtSetSystemInformation = _ntapi("NtSetSystemInformation")
 _NtSetSystemInformation.restype = W.LONG
 _NtSetSystemInformation.argtypes = [W.INT, ctypes.c_void_p, W.ULONG]
 
+# ── DuplicateHandle ──
+_DuplicateHandle = _api("DuplicateHandle", W.BOOL,
+    [W.HANDLE, W.HANDLE, W.HANDLE, ctypes.POINTER(W.HANDLE), W.DWORD, W.BOOL, W.DWORD])
+
 
 # ============================================================
 #  ConDrv 驱动可用性检测
@@ -338,6 +342,23 @@ _NtSetSystemInformation.argtypes = [W.INT, ctypes.c_void_p, W.ULONG]
 # 修复优先级较低（win-conpty 后端完全可用），暂时禁用此路径。
 # 若后续需要重新开启，需参考 Windows Terminal 源码实现完整的
 # IOCTL 握手序列，而非仅依赖 HANDLE_LIST + CreatePipe。
+#
+# ── 禁用 ConDrv 后端 ──
+#
+# 原因：conhost.exe --headless 模式下，VT I/O 不走 hStdInput/hStdOutput 管道，
+# 而是走 ConDrv 驱动的内部 IPC 通道。该通道需要通过 IOCTL 握手序列初始化：
+#   1. IOCTL_CONDRV_SET_SERVER_INFORMATION 注册 InputAvailableEvent
+#   2. IOCTL_CONDRV_READ_IO / COMPLETE_IO / READ_INPUT / WRITE_OUTPUT 循环
+#
+# kernel32.CreatePseudoConsole 内部自动完成这些 IOCTL 握手（见 winconpty.cpp），
+# 但 Python 层面无法直接调用 conhost 内部的 IOCTL 接口（这些是 conhost 进程
+# 内部与 ConDrv 驱动之间的通信，不是外部 API）。
+#
+# Windows Terminal 能工作是因为它使用 ConptyCreatePseudoConsole（同 kernel32 API），
+# 而非手动 ConDrv 直连。Terminal 的 winconpty.cpp _CreatePseudoConsole 本质上
+# 也是调用 kernel32.CreatePseudoConsole 的内部实现。
+#
+# 当前 ConPTY（kernel32_api.py）完全可用，ConDrv 直连方案不可行。
 #
 _CONDRV_OK: bool = False
 

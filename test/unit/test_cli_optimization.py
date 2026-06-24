@@ -25,6 +25,7 @@ class TestConfigManager:
         assert cfg.get("newline") is False
         assert cfg.get("encoding") is None
         assert cfg.get("keep_ansi") is False
+        assert cfg.get("debug") is True
 
     def test_set_and_get(self, cfg):
         """测试设置值并读取"""
@@ -86,6 +87,38 @@ class TestConfigManager:
         assert cfg.get("timeout") == 60.0
         assert isinstance(cfg.get("timeout"), float)
 
+    def test_debug_default_on(self, cfg):
+        """测试 debug 默认开启"""
+        assert cfg.get("debug") is True
+
+    def test_debug_set_off(self, cfg):
+        """测试 debug 设置为 off"""
+        cfg.set("debug", "off")
+        assert cfg.get("debug") is False
+
+    def test_debug_set_on(self, cfg):
+        """测试 debug 设置为 on"""
+        cfg.set("debug", False)
+        assert cfg.get("debug") is False
+        cfg.set("debug", "on")
+        assert cfg.get("debug") is True
+
+    def test_debug_set_bool(self, cfg):
+        """测试 debug 直接设置 bool"""
+        cfg.set("debug", False)
+        assert cfg.get("debug") is False
+        cfg.set("debug", True)
+        assert cfg.get("debug") is True
+
+    def test_debug_show(self, cfg):
+        """测试 show 展示 debug 配置"""
+        text = cfg.show("debug")
+        assert "debug" in text
+        assert "on" in text
+        cfg.set("debug", "off")
+        text = cfg.show("debug")
+        assert "off" in text
+
 
 # ---- Formatter 测试 ----
 
@@ -96,10 +129,11 @@ class TestFormatter:
     @pytest.fixture(autouse=True)
     def reset_mode(self):
         """每个测试后重置输出模式"""
-        from src.client.formatter import set_output_mode
+        from src.client.formatter import set_output_mode, set_debug_mode
 
         yield
-        set_output_mode(True)  # 重置为 JSON 模式
+        set_output_mode(True)
+        set_debug_mode(True)
 
     def test_json_mode_default(self):
         """测试默认使用 JSON 模式"""
@@ -244,6 +278,198 @@ class TestFormatter:
 
         # 自然语言模式下崩溃事件应有特殊标记
         assert "[!!]" in captured.out or "[!!]" in captured.err
+
+    # ---- debug 模式测试 ----
+
+    def test_json_mode_debug_enabled(self, capsys):
+        """测试 JSON 模式下 debug 开启时包含 debug 字段"""
+        from src.client.formatter import print_response, set_output_mode, set_debug_mode
+
+        set_output_mode(True)
+        set_debug_mode(True)
+        resp = {
+            "type": "result",
+            "session_id": "test-sess",
+            "output": "hello",
+            "trigger_matched": True,
+            "reason": "matched",
+            "program": {"running": True},
+            "debug": {"processes": [1234], "gui_windows": [], "pending_events": []},
+        }
+        print_response(resp)
+        captured = capsys.readouterr()
+
+        data = json.loads(captured.out.strip())
+        assert "debug" in data
+        assert data["debug"]["processes"] == [1234]
+
+    def test_json_mode_debug_disabled(self, capsys):
+        """测试 JSON 模式下 debug 关闭时移除 debug 字段"""
+        from src.client.formatter import print_response, set_output_mode, set_debug_mode
+
+        set_output_mode(True)
+        set_debug_mode(False)
+        resp = {
+            "type": "result",
+            "session_id": "test-sess",
+            "output": "hello",
+            "trigger_matched": True,
+            "reason": "matched",
+            "program": {"running": True},
+            "debug": {"processes": [1234], "gui_windows": [], "pending_events": []},
+        }
+        print_response(resp)
+        captured = capsys.readouterr()
+
+        data = json.loads(captured.out.strip())
+        assert "debug" not in data
+        assert data["output"] == "hello"
+
+    def test_natural_language_debug_enabled(self, capsys):
+        """测试自然语言模式下 debug 开启时显示 debug 段"""
+        from src.client.formatter import print_response, set_output_mode, set_debug_mode
+
+        set_output_mode(False)
+        set_debug_mode(True)
+        resp = {
+            "type": "result",
+            "session_id": "test-sess",
+            "output": "hello",
+            "trigger_matched": True,
+            "reason": "matched",
+            "program": {"running": True},
+            "debug": {
+                "processes": [{"pid": 1234, "path": "python.exe"}],
+                "gui_windows": [],
+                "pending_events": [],
+            },
+        }
+        print_response(resp)
+        captured = capsys.readouterr()
+
+        combined = captured.out + captured.err
+        assert "debug" in combined
+        assert "1234" in combined
+
+    def test_natural_language_debug_disabled(self, capsys):
+        """测试自然语言模式下 debug 关闭时隐藏 debug 段"""
+        from src.client.formatter import print_response, set_output_mode, set_debug_mode
+
+        set_output_mode(False)
+        set_debug_mode(False)
+        resp = {
+            "type": "result",
+            "session_id": "test-sess",
+            "output": "hello",
+            "trigger_matched": True,
+            "reason": "matched",
+            "program": {"running": True},
+            "debug": {
+                "processes": [{"pid": 1234, "path": "python.exe"}],
+                "gui_windows": [],
+                "pending_events": [],
+            },
+        }
+        print_response(resp)
+        captured = capsys.readouterr()
+
+        combined = captured.out + captured.err
+        assert "debug" not in combined
+        assert "process tree" not in combined
+
+    def test_natural_language_debug_disabled_hides_events(self, capsys):
+        """测试自然语言模式下 debug 关闭时隐藏 pending_events"""
+        from src.client.formatter import print_response, set_output_mode, set_debug_mode
+
+        set_output_mode(False)
+        set_debug_mode(False)
+        resp = {
+            "type": "result",
+            "session_id": "test-sess",
+            "output": "hello",
+            "trigger_matched": True,
+            "reason": "matched",
+            "program": {"running": True},
+            "debug": {
+                "processes": [],
+                "gui_windows": [],
+                "pending_events": [
+                    {
+                        "time": 1000000.0,
+                        "type": "process_spawn",
+                        "pid": 1234,
+                        "info": "PID 1234 created",
+                    },
+                ],
+            },
+        }
+        print_response(resp)
+        captured = capsys.readouterr()
+
+        combined = captured.out + captured.err
+        assert "events" not in combined
+        assert "process_spawn" not in combined
+
+    def test_natural_language_debug_disabled_hides_gui(self, capsys):
+        """测试自然语言模式下 debug 关闭时隐藏 GUI 窗口"""
+        from src.client.formatter import print_response, set_output_mode, set_debug_mode
+
+        set_output_mode(False)
+        set_debug_mode(False)
+        resp = {
+            "type": "result",
+            "session_id": "test-sess",
+            "output": "hello",
+            "trigger_matched": True,
+            "reason": "matched",
+            "program": {"running": True},
+            "debug": {
+                "processes": [],
+                "gui_windows": [
+                    {"hwnd": 0x1234, "pid": 5678, "title": "test", "class_name": "cls"},
+                ],
+                "pending_events": [],
+            },
+        }
+        print_response(resp)
+        captured = capsys.readouterr()
+
+        combined = captured.out + captured.err
+        assert "window" not in combined
+        assert "0x1234" not in combined
+
+    def test_json_mode_debug_disabled_keeps_other_fields(self, capsys):
+        """测试 JSON 模式下 debug 关闭时其他字段不受影响"""
+        from src.client.formatter import print_response, set_output_mode, set_debug_mode
+
+        set_output_mode(True)
+        set_debug_mode(False)
+        resp = {
+            "type": "result",
+            "session_id": "test-sess",
+            "output": "hello",
+            "output_offset": 42,
+            "trigger_matched": True,
+            "reason": "matched",
+            "program": {"running": True, "pty_type": "subprocess"},
+            "debug": {"processes": [1234], "gui_windows": [], "pending_events": []},
+        }
+        print_response(resp)
+        captured = capsys.readouterr()
+
+        data = json.loads(captured.out.strip())
+        assert "debug" not in data
+        assert data["output"] == "hello"
+        assert data["output_offset"] == 42
+        assert data["trigger_matched"] is True
+        assert data["program"]["pty_type"] == "subprocess"
+
+    def test_set_debug_mode(self):
+        """测试 set_debug_mode 切换"""
+        from src.client.formatter import set_debug_mode
+
+        set_debug_mode(True)
+        set_debug_mode(False)
 
 
 class TestConfigParserIntegration:

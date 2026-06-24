@@ -10,6 +10,7 @@ import time
 import socket
 import logging
 import subprocess
+from typing import Optional
 
 from ..config import (
     DAEMON_HOST,
@@ -23,7 +24,14 @@ from ..config import (
     STOP_TIMEOUT,
     IS_WINDOWS,
 )
-from ..session.shm_utils import read_port_from_shm, read_auth_token, cleanup_port_shm
+from ..session.shm_utils import (
+    read_port_from_shm,
+    read_auth_token,
+    cleanup_port_shm,
+    read_pid_file,
+    cleanup_pid_file,
+    write_pid_file,
+)
 from ..protocol.message import Message
 
 _logger = logging.getLogger("pty-daemon")
@@ -67,13 +75,46 @@ def _cleanup_port():
 # ============================================================
 
 
-def is_running() -> bool:
-    """检查守护进程是否正在运行（ping-pong 探测）
+def _pid_exists(pid: int) -> bool:
+    """检查指定 PID 的进程是否存在
+
+    Args:
+        pid: 进程 ID。
 
     Returns:
-        True 表示守护进程在运行。
+        True 表示进程存在。
     """
-    port = read_port_from_shm()
+    if IS_WINDOWS:
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+            return False
+        except Exception:
+            return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+
+
+def _ping_daemon(port: int) -> bool:
+    """通过 ping-pong 探测指定端口的守护进程
+
+    Args:
+        port: 端口号。
+
+    Returns:
+        True 表示守护进程响应了 ping。
+    """
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(PING_TIMEOUT)
@@ -83,21 +124,66 @@ def is_running() -> bool:
         sock.close()
         return resp is not None and resp.get("type") == "pong"
     except (socket.error, ConnectionRefusedError, OSError):
-        # 共享内存端口连接失败 → 守护进程已不在，清理旧共享内存
-        _cleanup_port()
         return False
+
+
+def _find_daemon_port() -> Optional[int]:
+    """查找正在运行的守护进程端口
+
+    依次检查：PID 文件 → 共享内存。
+    用于 start_daemon 的单实例检查和 stop_daemon 的孤儿清理。
+
+    Returns:
+        守护进程端口，未找到返回 None。
+    """
+    # 1. 检查 PID 文件
+    pid_info = read_pid_file()
+    if pid_info:
+        pid, port = pid_info
+        if _pid_exists(pid) and _ping_daemon(port):
+            return port
+        if not _pid_exists(pid):
+            _logger.info("PID 文件中的进程 %d 已不存在，清理陈旧 PID 文件", pid)
+            cleanup_pid_file()
+
+    # 2. 检查共享内存
+    port = read_port_from_shm()
+    if port != DEFAULT_DAEMON_PORT and _ping_daemon(port):
+        return port
+
+    return None
+
+
+def is_running() -> bool:
+    """检查守护进程是否正在运行
+
+    依次检查 PID 文件、共享内存和进程扫描，
+    确保不会遗漏孤儿守护进程。
+
+    Returns:
+        True 表示守护进程在运行。
+    """
+    port = _find_daemon_port()
+    if port is not None:
+        return True
+    # 没找到任何守护进程，清理残留
+    _cleanup_port()
+    cleanup_pid_file()
+    return False
 
 
 def start_daemon():
     """启动守护进程（以子进程方式）
 
     自动分配一个随机端口，通过共享内存传递给客户端。
+    启动前检查 PID 文件和共享内存，防止重复启动。
     Windows: DETACHED_PROCESS 创建独立子进程。
     Unix:    双 fork 彻底守护化。
     注意：子进程的 stderr 重定向到日志文件，方便排查启动失败原因。
     """
-    if is_running():
-        _safe_print("[pty-agent] 守护进程已在运行中")
+    port = _find_daemon_port()
+    if port is not None:
+        _safe_print(f"[pty-agent] 守护进程已在运行中 (端口 {port})")
         return
 
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -162,12 +248,22 @@ def start_daemon():
 
 
 def stop_daemon():
-    """停止守护进程"""
-    port = read_port_from_shm()
-    if not is_running():
+    """停止守护进程
+
+    依次尝试：PID 文件 → 共享内存，
+    确保能找到并停止所有残留的守护进程。
+    """
+    port = _find_daemon_port()
+    if port is None:
         _safe_print("[pty-agent] 守护进程未运行")
+        _cleanup_port()
+        cleanup_pid_file()
         return
 
+    pid_info = read_pid_file()
+    stopped = False
+
+    # 1. 尝试通过 TCP 发送 stop 命令
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(STOP_TIMEOUT)
@@ -176,13 +272,36 @@ def stop_daemon():
         resp = Message.recv(sock)
         sock.close()
         if resp and resp.get("type") == "ok":
-            _safe_print("[pty-agent] 守护进程已停止")
+            stopped = True
         else:
             _safe_print("[pty-agent] 停止守护进程失败")
     except Exception as e:
-        _safe_print(f"[pty-agent] 停止守护进程失败: {e}")
-    finally:
-        _cleanup_port()
+        _safe_print(f"[pty-agent] TCP 停止失败: {e}")
+
+    # 2. TCP 停止失败时，尝试通过 PID 强制终止
+    if not stopped and pid_info:
+        pid, _ = pid_info
+        if _pid_exists(pid):
+            try:
+                if IS_WINDOWS:
+                    os.system(f"taskkill /PID {pid} /F >nul 2>&1")
+                else:
+                    os.kill(pid, 9)
+                _safe_print(f"[pty-agent] 已强制终止守护进程 (PID {pid})")
+                stopped = True
+            except Exception as e:
+                _safe_print(f"[pty-agent] 强制终止失败: {e}")
+
+    # 3. 先清理文件，再等待进程退出
+    _cleanup_port()
+    cleanup_pid_file()
+
+    if stopped:
+        # TCP stop 成功 → 守护进程已收到命令并开始退出
+        # 不需要再 ping 验证（守护进程 stop 会话需要时间，期间 TCP 仍存活）
+        _safe_print("[pty-agent] 守护进程已停止")
+    elif _find_daemon_port() is None:
+        _safe_print("[pty-agent] 守护进程已停止")
 
 
 # ============================================================
@@ -283,4 +402,5 @@ def main():
         _logger.info("收到键盘中断，关闭守护进程...")
     finally:
         _cleanup_port()
+        cleanup_pid_file()
         server.stop()

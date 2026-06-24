@@ -207,3 +207,22 @@ class TestBuildParser:
         parser = build_parser()
         args = parser.parse_args(["closewin", "test-id", "305419896"])
         assert args.hwnd == 305419896
+
+    def test_parse_no_debug_global(self):
+        """解析全局 --no-debug"""
+        parser = build_parser()
+        args = parser.parse_args(["--no-debug", "exec", "test-id", "-c", "python"])
+        assert args.no_debug is True
+
+
+    def test_parse_default_debug(self):
+        """解析 --default debug off"""
+        parser = build_parser()
+        args = parser.parse_args(["exec", "test-id", "-c", "python", "--default", "debug", "off"])
+        assert args.default == ["debug", "off"]
+
+    def test_no_debug_default_false(self):
+        """默认 no_debug 为 False"""
+        parser = build_parser()
+        args = parser.parse_args(["exec", "test-id", "-c", "python"])
+        assert args.no_debug is False

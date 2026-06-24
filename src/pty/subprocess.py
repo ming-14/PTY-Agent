@@ -20,6 +20,9 @@ if IS_WINDOWS:
 _SEM_FAILCRITICALERRORS     = 0x0001   # 禁止 critical-error-handler 消息框
 _SEM_NOGPFAULTERRORBOX      = 0x0002   # 禁止一般保护错误消息框
 _SEM_NOOPENFILEERRORBOX     = 0x8000   # 禁止文件打开失败消息框
+_CREATE_NO_WINDOW           = 0x08000000  # 禁止为控制台程序创建可见窗口
+_STARTF_USESHOWWINDOW       = 0x00000001
+_SW_HIDE                    = 0
 
 _logger = logging.getLogger("pty-subprocess")
 
@@ -115,6 +118,11 @@ class SubprocessPseudoTerminal(PseudoTerminal):
             except Exception:
                 pass
         try:
+            startupinfo = None
+            if IS_WINDOWS:
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= _STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = _SW_HIDE
             if use_shell and IS_WINDOWS:
                 # 处理 --shell 参数：选择指定的解释器
                 # 默认优先使用 powershell，不可用时回退至 cmd.exe
@@ -132,6 +140,8 @@ class SubprocessPseudoTerminal(PseudoTerminal):
                         env=child_env,
                         cwd=cwd,
                         bufsize=0,
+                        creationflags=_CREATE_NO_WINDOW,
+                        startupinfo=startupinfo,
                     )
                 else:
                     # 指定解释器（powershell/pwsh/bash）：构建命令行列表，shell=False
@@ -147,6 +157,8 @@ class SubprocessPseudoTerminal(PseudoTerminal):
                         env=child_env,
                         cwd=cwd,
                         bufsize=0,
+                        creationflags=_CREATE_NO_WINDOW,
+                        startupinfo=startupinfo,
                     )
             else:
                 _logger.info("Popen(shell=%s) command=%r", use_shell, command)
@@ -159,6 +171,8 @@ class SubprocessPseudoTerminal(PseudoTerminal):
                     env=child_env,
                     cwd=cwd,
                     bufsize=0,
+                    creationflags=_CREATE_NO_WINDOW if IS_WINDOWS else 0,
+                    startupinfo=startupinfo,
                 )
             _logger.info("Popen OK pid=%d", self._proc.pid)
         finally:

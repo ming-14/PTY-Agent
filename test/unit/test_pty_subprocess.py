@@ -1,13 +1,15 @@
-"""SubprocessPseudoTerminal 退出码测试
+"""SubprocessPseudoTerminal 退出码测试 + 隐藏窗口测试
 
-验证 get_exit_code() 是否能正确捕获子进程的退出状态。
+验证 get_exit_code() 是否能正确捕获子进程的退出状态，
+以及 subprocess 模式下是否正确设置 CREATE_NO_WINDOW 和 STARTUPINFO 隐藏窗口。
 """
 
 import sys
+import subprocess
 import time
 import pytest
 
-from src.pty.subprocess import SubprocessPseudoTerminal
+from src.pty.subprocess import SubprocessPseudoTerminal, _CREATE_NO_WINDOW, _STARTF_USESHOWWINDOW, _SW_HIDE
 
 
 class TestSubprocessExitCode:
@@ -114,3 +116,133 @@ class TestSubprocessExitCode:
         # 不调用 read/write，直接 close
         pty.close()
         # 不应抛出异常
+
+
+class TestSubprocessNoWindow:
+    """SubprocessPseudoTerminal 隐藏窗口标志测试
+
+    验证所有 Popen 调用均设置了 CREATE_NO_WINDOW 和 STARTUPINFO(SW_HIDE)，
+    确保控制台程序不会弹出可见窗口。
+    """
+
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="CREATE_NO_WINDOW 仅 Windows 有效",
+    )
+    def test_list_command_popen_args(self, monkeypatch):
+        """列表命令 Popen 传入 creationflags=CREATE_NO_WINDOW 和 startupinfo"""
+        captured = {}
+        original_popen = subprocess.Popen
+
+        def mock_popen(*args, **kwargs):
+            captured.update(kwargs)
+            return original_popen(*args, **kwargs)
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+        pty = SubprocessPseudoTerminal(
+            [sys.executable, "-c", "import sys; sys.exit(0)"],
+        )
+        try:
+            assert captured.get("creationflags") == _CREATE_NO_WINDOW
+            si = captured.get("startupinfo")
+            assert si is not None
+            assert si.dwFlags & _STARTF_USESHOWWINDOW
+            assert si.wShowWindow == _SW_HIDE
+        finally:
+            pty.close()
+
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="CREATE_NO_WINDOW 仅 Windows 有效",
+    )
+    def test_shell_cmd_popen_args(self, monkeypatch):
+        """shell='cmd' (shell=True) Popen 传入 CREATE_NO_WINDOW 和 startupinfo"""
+        captured = {}
+        original_popen = subprocess.Popen
+
+        def mock_popen(*args, **kwargs):
+            captured.update(kwargs)
+            return original_popen(*args, **kwargs)
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+        pty = SubprocessPseudoTerminal(
+            "exit 0", cols=80, rows=24, shell="cmd",
+        )
+        try:
+            assert captured.get("creationflags") == _CREATE_NO_WINDOW
+            si = captured.get("startupinfo")
+            assert si is not None
+            assert si.dwFlags & _STARTF_USESHOWWINDOW
+            assert si.wShowWindow == _SW_HIDE
+        finally:
+            pty.close()
+
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="CREATE_NO_WINDOW 仅 Windows 有效",
+    )
+    def test_shell_powershell_popen_args(self, monkeypatch):
+        """shell='powershell' Popen 传入 CREATE_NO_WINDOW 和 startupinfo"""
+        import shutil
+        if not shutil.which("powershell"):
+            pytest.skip("powershell.exe 不在 PATH 中")
+        captured = {}
+        original_popen = subprocess.Popen
+
+        def mock_popen(*args, **kwargs):
+            captured.update(kwargs)
+            return original_popen(*args, **kwargs)
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+        pty = SubprocessPseudoTerminal(
+            "exit 0", cols=80, rows=24, shell="powershell",
+        )
+        try:
+            assert captured.get("creationflags") == _CREATE_NO_WINDOW
+            si = captured.get("startupinfo")
+            assert si is not None
+            assert si.dwFlags & _STARTF_USESHOWWINDOW
+            assert si.wShowWindow == _SW_HIDE
+        finally:
+            pty.close()
+
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="CREATE_NO_WINDOW 仅 Windows 有效",
+    )
+    def test_string_command_default_shell_popen_args(self, monkeypatch):
+        """字符串命令默认 shell Popen 传入 CREATE_NO_WINDOW 和 startupinfo"""
+        captured = {}
+        original_popen = subprocess.Popen
+
+        def mock_popen(*args, **kwargs):
+            captured.update(kwargs)
+            return original_popen(*args, **kwargs)
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+        pty = SubprocessPseudoTerminal(
+            "exit 0", cols=80, rows=24,
+        )
+        try:
+            assert captured.get("creationflags") == _CREATE_NO_WINDOW
+            si = captured.get("startupinfo")
+            assert si is not None
+            assert si.dwFlags & _STARTF_USESHOWWINDOW
+            assert si.wShowWindow == _SW_HIDE
+        finally:
+            pty.close()
+
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="CREATE_NO_WINDOW 仅 Windows 有效",
+    )
+    def test_no_visible_console_window(self):
+        """启动控制台程序后不产生可见的控制台窗口"""
+        pty = SubprocessPseudoTerminal(
+            [sys.executable, "-c", "import time; time.sleep(5)"],
+        )
+        try:
+            gui_windows = pty.poll_gui_windows()
+            assert len(gui_windows) == 0
+        finally:
+            pty.close()

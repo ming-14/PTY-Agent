@@ -23,7 +23,14 @@ from ..config import (
     AUTH_TOKEN_ROTATE_INTERVAL,
     AUTH_TOKEN_GRACE_PERIOD,
 )
-from ..session.shm_utils import write_port_to_shm, generate_auth_token, write_auth_token, cleanup_auth_shm
+from ..session.shm_utils import (
+    write_port_to_shm,
+    generate_auth_token,
+    write_auth_token,
+    cleanup_auth_shm,
+    write_pid_file,
+    cleanup_pid_file,
+)
 from ..session.manager import SessionManager
 from .handler import RequestHandler
 
@@ -51,6 +58,7 @@ class DaemonServer:
         self.manager = SessionManager()
         self._server_socket: Optional[socket.socket] = None
         self._running = False
+        self._cleaned_up = False
         self._port_shm: Optional[mmap.mmap] = None  # 保持引用以防销毁
         self._auth_shm: Optional[mmap.mmap] = None  # 认证令牌共享内存
         self._auth_token: str = generate_auth_token()
@@ -119,6 +127,9 @@ class DaemonServer:
         self._server_socket.settimeout(1.0)
         self._running = True
 
+        # 写入 PID 文件（用于单实例检查和孤儿清理）
+        write_pid_file(os.getpid(), actual_port)
+
         _logger.info("守护进程启动，监听 %s:%s", self.host, self.port)
 
         self._handler = RequestHandler(self.manager, server=self, auth_token=self._auth_token)
@@ -160,7 +171,10 @@ class DaemonServer:
         self._cleanup()
 
     def _cleanup(self):
-        """清理资源：停止所有会话 + 关闭 socket + 释放共享内存"""
+        """清理资源：停止所有会话 + 关闭 socket + 释放共享内存 + 清理 PID 文件"""
+        if self._cleaned_up:
+            return
+        self._cleaned_up = True
         self._running = False
         if self._rotate_timer:
             self._rotate_timer.cancel()
@@ -185,4 +199,6 @@ class DaemonServer:
         except (ValueError, OSError):
             pass
         self._auth_shm = None
+        # 清理 PID 文件
+        cleanup_pid_file()
         _logger.info("守护进程已停止")

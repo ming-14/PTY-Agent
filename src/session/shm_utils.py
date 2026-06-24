@@ -1,7 +1,7 @@
-"""共享内存工具 — 认证令牌与端口传递
+"""共享内存工具 — 认证令牌、端口传递与 PID 文件
 
 提供守护进程与客户端之间的共享内存读写操作，
-将业务函数从 config.py 中分离，使 config.py 保持纯配置定位。
+以及 PID 文件管理用于单实例检查和孤儿进程清理。
 """
 
 import logging
@@ -14,6 +14,7 @@ from ..config import (
     DEFAULT_DAEMON_PORT,
     DATA_DIR,
     PORT_FILE,
+    PID_FILE,
     MMAP_NAME,
     MMAP_SIZE,
     AUTH_TOKEN_NAME,
@@ -156,3 +157,48 @@ def cleanup_port_shm():
                 os.remove(PORT_FILE)
         except OSError:
             pass
+
+
+def write_pid_file(pid: int, port: int):
+    """将守护进程 PID 和端口写入 PID 文件
+
+    PID 文件格式：第一行 PID，第二行端口。用于单实例检查和孤儿清理。
+
+    Args:
+        pid: 守护进程 PID。
+        port: 守护进程监听端口。
+    """
+    os.makedirs(DATA_DIR, exist_ok=True)
+    try:
+        with open(PID_FILE, "w") as f:
+            f.write(f"{pid}\n{port}\n")
+        _logger.info("write_pid_file: pid=%d port=%d", pid, port)
+    except OSError as e:
+        _logger.warning("write_pid_file failed: %s", e)
+
+
+def read_pid_file() -> Optional[tuple]:
+    """从 PID 文件读取守护进程 PID 和端口
+
+    Returns:
+        (pid, port) 元组，读取失败或文件不存在返回 None。
+    """
+    try:
+        with open(PID_FILE, "r") as f:
+            lines = f.read().strip().split("\n")
+            pid = int(lines[0].strip())
+            port = int(lines[1].strip()) if len(lines) > 1 else DEFAULT_DAEMON_PORT
+            _logger.debug("read_pid_file: pid=%d port=%d", pid, port)
+            return (pid, port)
+    except (FileNotFoundError, ValueError, IndexError, OSError) as e:
+        _logger.debug("read_pid_file: failed %s", e)
+        return None
+
+
+def cleanup_pid_file():
+    """清理 PID 文件"""
+    try:
+        if os.path.exists(PID_FILE):
+            os.remove(PID_FILE)
+    except OSError:
+        pass

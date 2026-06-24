@@ -23,6 +23,8 @@ _logger = logging.getLogger("pty-client")
 _USE_COLOR = False
 # JSON 模式：True=输出 JSON 到 stdout，False=自然语言格式化（默认 True）
 _USE_JSON = True
+# Debug 输出：True=输出 debug 段（进程树/GUI 窗口/事件），False=隐藏
+_SHOW_DEBUG = True
 
 
 def set_color_mode(enabled: bool):
@@ -43,6 +45,16 @@ def set_output_mode(json_mode: bool):
     """
     global _USE_JSON
     _USE_JSON = json_mode
+
+
+def set_debug_mode(enabled: bool):
+    """设置 debug 输出模式
+
+    Args:
+        enabled: True=输出 debug 段，False=隐藏。
+    """
+    global _SHOW_DEBUG
+    _SHOW_DEBUG = enabled
 
 
 def _meta_file():
@@ -106,6 +118,8 @@ def print_response(resp: dict):
         return
 
     if _USE_JSON:
+        if not _SHOW_DEBUG:
+            resp = {k: v for k, v in resp.items() if k != "debug"}
         safe_print(json.dumps(resp, ensure_ascii=False))
         return
 
@@ -225,8 +239,8 @@ def _print_result(resp: dict):
         safe_print(f"# current time: {now_str}", file=mf())
 
     # ── debug ──
-    processes = debug.get("processes")
-    gui_windows = debug.get("gui_windows")
+    processes = debug.get("processes") if _SHOW_DEBUG else None
+    gui_windows = debug.get("gui_windows") if _SHOW_DEBUG else None
 
     has_debug = processes or gui_windows
     if has_debug:
@@ -262,7 +276,7 @@ def _print_result(resp: dict):
                 )
 
     # ── pending events ──
-    pending_events = debug.get("pending_events")
+    pending_events = debug.get("pending_events") if _SHOW_DEBUG else None
     if pending_events:
         has_crash = any(ev.get("type") == "process_crash" for ev in pending_events)
         if has_crash:

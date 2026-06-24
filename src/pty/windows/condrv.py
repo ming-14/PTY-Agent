@@ -1,20 +1,28 @@
-"""ConDrvPseudoTerminal — 仿 Windows Terminal 直连 ConDrv + conhost.exe
+"""ConDrvPseudoTerminal — 完全复刻 Windows Terminal winconpty.cpp 方案
 
-**已禁用**：当前 _CONDRV_OK = False，整个后端无法通过正常路径实例化。
-保留源码供后续调试/恢复使用（需补全 IOCTL 握手序列）。
+通过 NtOpenFile("\\Device\\ConDrv\\Server") + conhost.exe --headless 创建伪终端，
+流程与 Windows Terminal src/winconpty/winconpty.cpp _CreatePseudoConsole 完全一致：
 
-若后续需要重新开启，需参考 Windows Terminal 源码实现完整的
-IOCTL 握手序列，而非仅依赖 HANDLE_LIST + CreatePipe。
+  1. CreateServerHandle → NtOpenFile("\\Device\\ConDrv\\Server", GENERIC_ALL, Inheritable=TRUE)
+  2. CreateClientHandle → NtOpenFile("\\Reference", parent=serverHandle, Inheritable=FALSE)
+  3. CreatePipe → 信号管道（sa.bInheritHandle=FALSE, conhost 侧单独 SetHandleInformation INHERIT）
+  4. 构建 conhost.exe --headless --width X --height Y --signal 0x<sigR> --server 0x<serverH>
+  5. HANDLE_LIST = [serverHandle, hInput, hOutput, signalPipeConhostSide]
+  6. CreateProcessAsUserW(conhost, ..., EXTENDED_STARTUPINFO_PRESENT)
+  7. 子进程通过 PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE (HPCON) 附着
 
-管道架构（对齐 Windows Terminal winconpty.cpp）:
-  - _inR / _inW  : 输入管道（conhost 读 _inR，我们写 _inW）
-  - _outR / _outW: 输出管道（conhost 写 _outW，我们读 _outR）
-  - sig_r / sig_w: 信号管道（conhost 读 sig_r，我们写 sig_w）
+管道架构（对齐 winconpty.cpp）:
+  - _inW  : 父进程写端（我们写 VT 输入）
+  - _outR : 父进程读端（我们读 VT 输出）
+  - sig_w : 信号管道写端（resize/showhide/clear）
+  - hPtyReference : 引用句柄（保持 conhost 存活）
+  - hConPtyProcess : conhost 进程句柄
 """
 
 import os
 import ctypes
 import subprocess
+import logging
 from ctypes import wintypes as W
 from typing import Optional, List
 
@@ -22,10 +30,6 @@ from ..base import PseudoTerminal
 from .convars import (
     K,
     _CONDRV_OK,
-    _CreateNamedPipeW,
-    _CreateFileW,
-    _ConnectNamedPipe,
-    _ClosePseudoConsole,
     _ReadFile,
     _WriteFile,
     _GetOverlappedResult,
@@ -41,6 +45,7 @@ from .convars import (
     _CreateProcessAsUserW,
     _GetExitCodeProcess,
     _NtOpenFile,
+    _NtSetSystemInformation,
     _HPCON,
     _UNICODE_STRING,
     _OBJECT_ATTRIBUTES,
@@ -55,29 +60,117 @@ from .error_msg import STILL_ACTIVE
 from .job import ProcessJob
 from .gui_monitor import GuiWindowMonitor, GuiWindowInfo
 
-_SIGNAL_CMD_CLOSE = b"\x00\x00\x00\x00"
+_logger = logging.getLogger("pty-condrv")
+
+_OBJ_CASE_INSENSITIVE = 0x00000040
+_OBJ_INHERIT = 0x00000002
+_FILE_SYNCHRONOUS_IO_NONALERT = 0x00000020
+_GENERIC_ALL = 0x10000000
+_GENERIC_READ = 0x80000000
+_GENERIC_WRITE = 0x40000000
+_SYNCHRONIZE = 0x00100000
+_FILE_SHARE_READ = 0x00000001
+_FILE_SHARE_WRITE = 0x00000002
+_FILE_SHARE_DELETE = 0x00000004
+_HANDLE_FLAG_INHERIT = 0x00000001
+_EXTENDED_STARTUPINFO_PRESENT = 0x00000400
+_CREATE_UNICODE_ENVIRONMENT = 0x00080000
+_CREATE_NO_WINDOW = 0x08000000
+_PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002
+_PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016
+_PTY_SIGNAL_RESIZE_WINDOW = 8
+
+
+def _nt_create_handle(handle, device_name, desired_access, parent, inheritable, open_options):
+    """对齐 DeviceHandle::_CreateHandle — NtOpenFile 封装"""
+    flags = _OBJ_CASE_INSENSITIVE
+    if inheritable:
+        flags |= _OBJ_INHERIT
+
+    name_buf = ctypes.create_unicode_buffer(device_name)
+    us = _UNICODE_STRING(
+        len(device_name) * 2,
+        (len(device_name) + 1) * 2,
+        ctypes.cast(name_buf, W.LPWSTR),
+    )
+    oa = _OBJECT_ATTRIBUTES(
+        ctypes.sizeof(_OBJECT_ATTRIBUTES),
+        parent,
+        ctypes.pointer(us),
+        flags,
+        None,
+        None,
+    )
+    iosb = _IO_STATUS_BLOCK()
+    return _NtOpenFile(
+        ctypes.byref(handle),
+        desired_access,
+        ctypes.byref(oa),
+        ctypes.byref(iosb),
+        _FILE_SHARE_READ | _FILE_SHARE_WRITE | _FILE_SHARE_DELETE,
+        open_options,
+    )
+
+
+def _create_server_handle(handle, inheritable=True):
+    """对齐 DeviceHandle::CreateServerHandle
+
+    NtOpenFile("\\Device\\ConDrv\\Server", GENERIC_ALL, Inheritable, OpenOptions=0)
+    """
+    return _nt_create_handle(
+        handle,
+        "\\Device\\ConDrv\\Server",
+        _GENERIC_ALL,
+        None,
+        inheritable,
+        0,
+    )
+
+
+def _create_client_handle(handle, server_handle, name, inheritable=False):
+    """对齐 DeviceHandle::CreateClientHandle
+
+    NtOpenFile(name, GENERIC_READ|GENERIC_WRITE|SYNCHRONIZE, parent=serverHandle,
+               Inheritable, OpenOptions=FILE_SYNCHRONOUS_IO_NONALERT)
+    """
+    return _nt_create_handle(
+        handle,
+        name,
+        _GENERIC_READ | _GENERIC_WRITE | _SYNCHRONIZE,
+        server_handle,
+        inheritable,
+        _FILE_SYNCHRONOUS_IO_NONALERT,
+    )
+
+
+def _ensure_driver_is_loaded():
+    """对齐 winconpty::_EnsureDriverIsLoaded
+
+    通过 NtSetSystemInformation(SystemConsoleInformation=132) 加载 ConDrv 驱动
+    """
+    info = W.ULONG(1)
+    _NtSetSystemInformation(132, ctypes.byref(info), ctypes.sizeof(W.ULONG))
 
 
 class ConDrvPseudoTerminal(PseudoTerminal):
-    """直接通过 ConDrv + conhost.exe 创建伪终端
+    """完全复刻 Windows Terminal winconpty.cpp _CreatePseudoConsole 的 ConDrv 直连方案
 
-    完全绕过 kernel32.CreatePseudoConsole，仿 Windows Terminal 做法:
-      1. 双独立 I/O 管道（输入/输出分离，对齐 Termial）
-      2. NtOpenFile("\\Device\\ConDrv\\Server")
-      3. 创建 Reference Handle
-      4. 创建 Signal Pipe
-      5. 启动 conhost.exe --headless（HANDLE_LIST 传递 server/inR/outW/sigR）
-      6. 子进程通过 HPCON 附着到本控制台
+    流程与 winconpty.cpp:119-278 完全一致：
+      1. CreateServerHandle (Inheritable=TRUE)
+      2. CreateClientHandle("\\Reference", Inheritable=FALSE)
+      3. CreatePipe 信号管道 (sa.bInheritHandle=FALSE, conhost 侧 SetHandleInformation INHERIT)
+      4. 构造 conhost.exe --headless 命令行
+      5. HANDLE_LIST = [serverHandle, hInput, hOutput, signalPipeConhostSide]
+      6. CreateProcessAsUserW 启动 conhost
+      7. 子进程通过 PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE 附着
     """
 
     def __init__(self, command, cols: int = 80, rows: int = 24, env=None):
         if not _CONDRV_OK:
             raise OSError("ConDrv 驱动不可用（需要管理员权限或系统不支持）")
 
-        self._inR:  Optional[int] = None   # conhost stdin 读端
-        self._inW:  Optional[int] = None   # 父进程写端
-        self._outR: Optional[int] = None   # 父进程读端
-        self._outW: Optional[int] = None   # conhost stdout/stderr 写端
+        self._inW: Optional[int] = None
+        self._outR: Optional[int] = None
         self._hpc = None
         self._ph = None
         self._child_pid = None
@@ -91,146 +184,177 @@ class ConDrvPseudoTerminal(PseudoTerminal):
         self._job = ProcessJob(name=f"pty-con-{id(self)}")
         self._gui_monitor = GuiWindowMonitor(job=self._job)
 
-        # ── 1. 双独立 I/O 管道（对齐 Terminal：创建即 inheritable）──
-        # 关键：conhost 通过 GetStdHandle 读 I/O pipe，需要 handle 可继承
-        # CreatePipe 默认 non-inheritable → 必须用 SECURITY_ATTRIBUTES 设 bInheritHandle=TRUE
-        class _SECURITY_ATTRIBUTES(ctypes.Structure):
-            _fields_ = [
-                ("nLength",              W.DWORD),
-                ("lpSecurityDescriptor", ctypes.c_void_p),
-                ("bInheritHandle",       W.BOOL),
-            ]
-        sa = _SECURITY_ATTRIBUTES()
-        sa.nLength = ctypes.sizeof(_SECURITY_ATTRIBUTES)
-        sa.bInheritHandle = True
-        sa.lpSecurityDescriptor = None
-
+        # ── 1. I/O 管道（对齐 winconpty.cpp: hInput/hOutput 由调用方传入）──
+        # winconpty.cpp 中 hInput/hOutput 由 ConptyCreatePseudoConsole 的调用方提供，
+        # 这里我们自行创建双管道。Terminal 使用 Overlapped Named Pipe，
+        # 我们使用同步匿名管道（足够用，conhost 侧通过 hStdInput/hStdOutput 访问）。
         inR, inW = W.HANDLE(), W.HANDLE()
         outR, outW = W.HANDLE(), W.HANDLE()
-        if not K.CreatePipe(ctypes.byref(inR), ctypes.byref(inW), ctypes.byref(sa), 0):
-            raise OSError("CreatePipe (in) 失败")
-        if not K.CreatePipe(ctypes.byref(outR), ctypes.byref(outW), ctypes.byref(sa), 0):
-            _CloseHandle(inR); _CloseHandle(inW)
-            raise OSError("CreatePipe (out) 失败")
-        self._inR, self._inW, self._outR, self._outW = inR, inW, outR, outW
 
-        # ── 2. 打开 ConDrv Server ──
+        class _SECURITY_ATTRIBUTES(ctypes.Structure):
+            _fields_ = [
+                ("nLength", W.DWORD),
+                ("lpSecurityDescriptor", ctypes.c_void_p),
+                ("bInheritHandle", W.BOOL),
+            ]
+
+        sa_inherit = _SECURITY_ATTRIBUTES()
+        sa_inherit.nLength = ctypes.sizeof(_SECURITY_ATTRIBUTES)
+        sa_inherit.bInheritHandle = True
+        sa_inherit.lpSecurityDescriptor = None
+
+        if not K.CreatePipe(ctypes.byref(inR), ctypes.byref(inW), ctypes.byref(sa_inherit), 0):
+            raise OSError("CreatePipe (in) 失败")
+        if not K.CreatePipe(ctypes.byref(outR), ctypes.byref(outW), ctypes.byref(sa_inherit), 0):
+            _CloseHandle(inR)
+            _CloseHandle(inW)
+            raise OSError("CreatePipe (out) 失败")
+
+        # 对齐 winconpty.cpp: DuplicateHandle 使 hInput/hOutput 可继承
+        # （CreatePipe 已通过 sa_inherit 设为可继承，无需额外 DuplicateHandle）
+
+        # ── 2. CreateServerHandle (Inheritable=TRUE) ──
+        # 对齐 winconpty.cpp:141-147
         server_h = W.HANDLE()
-        sname = "\\Device\\ConDrv\\Server"
-        sbuf = ctypes.create_unicode_buffer(sname)
-        us = _UNICODE_STRING(
-            len(sname) * 2, (len(sname) + 1) * 2,
-            ctypes.cast(sbuf, W.LPWSTR),
-        )
-        oa = _OBJECT_ATTRIBUTES(
-            ctypes.sizeof(_OBJECT_ATTRIBUTES),
-            None, ctypes.pointer(us), 0x42, None, None,
-        )
-        iosb = _IO_STATUS_BLOCK()
-        st = _NtOpenFile(
-            ctypes.byref(server_h), 0x10000000,
-            ctypes.byref(oa), ctypes.byref(iosb), 7, 0,
-        )
+        st = _create_server_handle(server_h, inheritable=True)
+        if st != 0:
+            _logger.info("CreateServerHandle 失败 0x%08x, 尝试加载驱动后重试", st)
+            _ensure_driver_is_loaded()
+            st = _create_server_handle(server_h, inheritable=True)
         if st != 0:
             self._cleanup_handles(inR, inW, outR, outW)
-            raise OSError(f"NtOpenFile ConDrv 失败: 0x{st:08x}")
+            raise OSError(f"CreateServerHandle 失败: 0x{st:08x}")
+        _logger.info("CreateServerHandle OK: 0x%x", server_h.value or 0)
 
-        # ── 3. Reference Handle ──
+        # ── 3. CreateClientHandle("\\Reference", Inheritable=FALSE) ──
+        # 对齐 winconpty.cpp:149-155
         ref_h = W.HANDLE()
-        rname = "\\Reference"
-        rbuf = ctypes.create_unicode_buffer(rname)
-        us2 = _UNICODE_STRING(
-            len(rname) * 2, (len(rname) + 1) * 2,
-            ctypes.cast(rbuf, W.LPWSTR),
-        )
-        oa2 = _OBJECT_ATTRIBUTES(
-            ctypes.sizeof(_OBJECT_ATTRIBUTES), server_h,
-            ctypes.pointer(us2), 0x42, None, None,
-        )
-        st2 = _NtOpenFile(
-            ctypes.byref(ref_h), 0xC0100000,
-            ctypes.byref(oa2), ctypes.byref(iosb), 7, 0x20,
-        )
+        st2 = _create_client_handle(ref_h, server_h, "\\Reference", inheritable=False)
         if st2 != 0:
             _CloseHandle(server_h)
             self._cleanup_handles(inR, inW, outR, outW)
-            raise OSError(f"Reference 失败: 0x{st2:08x}")
+            raise OSError(f"CreateClientHandle Reference 失败: 0x{st2:08x}")
+        _logger.info("CreateClientHandle Reference OK: 0x%x", ref_h.value or 0)
 
         # ── 4. Signal Pipe ──
+        # 对齐 winconpty.cpp:157-167
+        # sa.bInheritHandle = FALSE, 然后 SetHandleInformation(conhostSide, INHERIT, INHERIT)
         sig_r, sig_w = W.HANDLE(), W.HANDLE()
-        K.CreatePipe(ctypes.byref(sig_r), ctypes.byref(sig_w), None, 0)
+        sa_signal = _SECURITY_ATTRIBUTES()
+        sa_signal.nLength = ctypes.sizeof(_SECURITY_ATTRIBUTES)
+        sa_signal.bInheritHandle = False
+        sa_signal.lpSecurityDescriptor = None
+
+        if not K.CreatePipe(ctypes.byref(sig_r), ctypes.byref(sig_w), ctypes.byref(sa_signal), 0):
+            _CloseHandle(server_h)
+            _CloseHandle(ref_h)
+            self._cleanup_handles(inR, inW, outR, outW)
+            raise OSError("CreatePipe (signal) 失败")
+
         K.SetHandleInformation.restype = W.BOOL
         K.SetHandleInformation.argtypes = [W.HANDLE, W.DWORD, W.DWORD]
-        K.SetHandleInformation(sig_r, 1, 1)
+        K.SetHandleInformation(sig_r, _HANDLE_FLAG_INHERIT, _HANDLE_FLAG_INHERIT)
 
-        # ── 5. 启动 conhost.exe（对齐 Terminal: 双管道 + HANDLE_LIST）──
+        # ── 5. 构造 conhost.exe 命令行 ──
+        # 对齐 winconpty.cpp:189-204
         conhost = "\\\\?\\" + os.path.join(
             os.environ.get("SystemRoot", "C:\\Windows"),
             "System32", "conhost.exe",
         )
         cmd = (
             f'"{conhost}" --headless --width {cols} --height {rows}'
-            f' --signal 0x{sig_r.value:x} --server 0x{server_h.value:x}'
+            f" --signal 0x{sig_r.value:x} --server 0x{server_h.value:x}"
         )
+        _logger.info("conhost cmd: %s", cmd)
 
+        # ── 6. HANDLE_LIST + CreateProcessAsUserW ──
+        # 对齐 winconpty.cpp:206-271
         hlist_size = ctypes.c_size_t(0)
         _InitAttrList(None, 1, 0, ctypes.byref(hlist_size))
         hlist_buf = ctypes.create_string_buffer(hlist_size.value)
         if not _InitAttrList(hlist_buf, 1, 0, ctypes.byref(hlist_size)):
+            _CloseHandle(server_h)
+            _CloseHandle(ref_h)
+            self._cleanup_handles(inR, inW, outR, outW, sig_r, sig_w)
             raise OSError("InitAttrList 失败 (conhost)")
 
-        # HANDLE_LIST 对齐 Terminal: [serverHandle, hInput, hOutput, signalPipe]
+        # HANDLE_LIST 对齐 winconpty.cpp:214-219
         inh = (W.HANDLE * 4)(server_h, inR, outW, sig_r)
         if not _UpdateAttr(
-            hlist_buf, 0, 0x00020002,
-            ctypes.byref(inh), ctypes.sizeof(inh), None, None,
+            hlist_buf,
+            0,
+            _PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            ctypes.byref(inh),
+            ctypes.sizeof(inh),
+            None,
+            None,
         ):
             _DeleteAttrList(hlist_buf)
+            _CloseHandle(server_h)
+            _CloseHandle(ref_h)
+            self._cleanup_handles(inR, inW, outR, outW, sig_r, sig_w)
             raise OSError("UpdateAttr HANDLE_LIST 失败")
 
         sie = _SIE()
         sie.StartupInfo.cb = ctypes.sizeof(_SIE)
-        sie.StartupInfo.dwFlags = 0x00000100  # STARTF_USESTDHANDLES
-        sie.StartupInfo.hStdInput = inR       # conhost 从输入管道读
-        sie.StartupInfo.hStdOutput = outW     # conhost 写输出管道
-        sie.StartupInfo.hStdError = outW      # stderr 也走输出管道
+        sie.StartupInfo.dwFlags = 0x00000100
+        sie.StartupInfo.hStdInput = inR
+        sie.StartupInfo.hStdOutput = outW
+        sie.StartupInfo.hStdError = outW
         sie.lpAttributeList = ctypes.cast(hlist_buf, ctypes.c_void_p)
 
         pi = _PI()
+        # 对齐 winconpty.cpp:259-270: CreateProcessAsUserW + EXTENDED_STARTUPINFO_PRESENT
         ok = _CreateProcessAsUserW(
-            None,                    # hToken = NULL（本地用户）
-            conhost,                 # lpApplicationName — 对齐 Terminal
-            cmd, None, None, True,
-            0x00000400,              # EXTENDED_STARTUPINFO_PRESENT
-            None, None,
-            ctypes.byref(sie.StartupInfo), ctypes.byref(pi),
+            None,
+            conhost,
+            cmd,
+            None,
+            None,
+            True,
+            _EXTENDED_STARTUPINFO_PRESENT,
+            None,
+            None,
+            ctypes.byref(sie.StartupInfo),
+            ctypes.byref(pi),
         )
         _DeleteAttrList(hlist_buf)
         if not ok:
+            err = ctypes.get_last_error()
             _CloseHandle(server_h)
             _CloseHandle(ref_h)
             self._cleanup_handles(inR, inW, outR, outW, sig_r, sig_w)
-            raise OSError(ctypes.get_last_error(), "conhost.exe 启动失败")
+            raise OSError(err, "conhost.exe 启动失败")
 
-        _CloseHandle(pi.hThread)
         _CloseHandle(pi.hThread)
         self._conhost_proc = pi.hProcess
         self._ref_h = ref_h
         self._signal = sig_w
+        _logger.info("conhost.exe 启动成功 pid=%d", pi.dwProcessId)
+
+        # 对齐 winconpty.cpp:273-275: 保存 PseudoConsole 成员
+        # pPty->hSignal = signalPipeOurSide.release()
+        # pPty->hPtyReference = referenceHandle.release()
+        # pPty->hConPtyProcess = pi.hProcess
+
         # 关闭父进程中已继承给 conhost 的句柄副本
+        # （winconpty.cpp 中 wil::unique_handle 自动管理，这里手动关闭）
         for h in (server_h, inR, outW, sig_r):
             _CloseHandle(h)
-        self._inR = None   # conhost 持有
-        self._outW = None  # conhost 持有
 
-        # ── 6. 创建伪 HPCON ──
+        # 保存我们持有的管道端
+        self._inW = inW
+        self._outR = outR
+
+        # ── 7. 创建伪 HPCON（用于子进程附着）──
+        # 对齐 winconpty.cpp 中 ConptyPackPseudoConsole 的做法
         self._pc = _PSEUDO_CONSOLE()
         self._pc.hSignal = sig_w
         self._pc.hPtyReference = ref_h
         self._pc.hConPtyProcess = pi.hProcess
         self._hpc = ctypes.cast(ctypes.pointer(self._pc), _HPCON)
 
-        # ── 7. 启动子进程 ──
+        # ── 8. 启动子进程（通过 PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE 附着）──
         self._start_child(command, env)
 
         # ── Overlapped I/O（从 _outR 读取）──
@@ -248,7 +372,11 @@ class ConDrvPseudoTerminal(PseudoTerminal):
                     pass
 
     def _start_child(self, command, env):
-        """启动与 HPCON 绑定的子进程"""
+        """启动与 HPCON 绑定的子进程
+
+        对齐 winconpty.cpp 中子进程启动方式：
+        PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE + CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT
+        """
         cmdline = subprocess.list2cmdline(command)
         attr_size = ctypes.c_size_t(0)
         _InitAttrList(None, 1, 0, ctypes.byref(attr_size))
@@ -256,11 +384,16 @@ class ConDrvPseudoTerminal(PseudoTerminal):
         if not _InitAttrList(buf, 1, 0, ctypes.byref(attr_size)):
             raise OSError("InitAttrList 失败")
         if not _UpdateAttr(
-            buf, 0, 0x00020016,
-            ctypes.byref(self._hpc), ctypes.sizeof(_HPCON), None, None,
+            buf,
+            0,
+            _PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+            ctypes.byref(self._hpc),
+            ctypes.sizeof(_HPCON),
+            None,
+            None,
         ):
             _DeleteAttrList(buf)
-            raise OSError("UpdateAttr 失败")
+            raise OSError("UpdateAttr PSEUDOCONSOLE 失败")
         si = _SIE()
         si.StartupInfo.cb = ctypes.sizeof(_SIE)
         si.lpAttributeList = ctypes.cast(buf, ctypes.c_void_p)
@@ -274,9 +407,16 @@ class ConDrvPseudoTerminal(PseudoTerminal):
                 "\0".join(f"{k}={v}" for k, v in m.items()) + "\0\0",
             )
         ok = _CreateProcess(
-            None, cmdline, None, None, True,
-            0x00080000 | 0x00000400, env_block, None,
-            ctypes.byref(si.StartupInfo), ctypes.byref(pi),
+            None,
+            cmdline,
+            None,
+            None,
+            True,
+            _CREATE_UNICODE_ENVIRONMENT | _CREATE_NO_WINDOW | _EXTENDED_STARTUPINFO_PRESENT,
+            env_block,
+            None,
+            ctypes.byref(si.StartupInfo),
+            ctypes.byref(pi),
         )
         _DeleteAttrList(buf)
         if not ok:
@@ -285,6 +425,7 @@ class ConDrvPseudoTerminal(PseudoTerminal):
         self._ph = pi.hProcess
         _CloseHandle(pi.hThread)
         self._job.assign(pi.hProcess)
+        _logger.info("子进程启动成功 pid=%d", self._child_pid)
 
     def read(self, n: int = 65536) -> bytes:
         """从输出管道读取 conhost 输出"""
@@ -296,32 +437,40 @@ class ConDrvPseudoTerminal(PseudoTerminal):
             self._ov.Offset = 0
             self._ov.OffsetHigh = 0
             ok = _ReadFile(
-                self._outR, self._buf, min(n, len(self._buf)),
-                None, ctypes.byref(self._ov),
+                self._outR,
+                self._buf,
+                min(n, len(self._buf)),
+                None,
+                ctypes.byref(self._ov),
             )
             if ok:
                 br = W.DWORD(0)
                 _GetOverlappedResult(
-                    self._outR, ctypes.byref(self._ov), ctypes.byref(br), False,
+                    self._outR,
+                    ctypes.byref(self._ov),
+                    ctypes.byref(br),
+                    False,
                 )
                 self._pending = False
-                return self._buf.raw[:br.value] if br.value else b""
+                return self._buf.raw[: br.value] if br.value else b""
             err = ctypes.get_last_error()
-            if err == 109:  # ERROR_BROKEN_PIPE
+            if err == 109:
                 self._pending = False
                 return b""
-            if err != 997:  # ERROR_IO_PENDING
+            if err != 997:
                 self._pending = False
                 raise OSError(err, "ReadFile 失败")
-        # 等待数据事件或进程退出（任一触发都尝试读取已缓存数据）
         hs = (W.HANDLE * 2)(self._evt, self._ph)
-        r = _WaitMultiple(2, hs, False, 0xFFFFFFFF)
+        _WaitMultiple(2, hs, False, 0xFFFFFFFF)
         self._pending = False
         br = W.DWORD(0)
         ok = _GetOverlappedResult(
-            self._outR, ctypes.byref(self._ov), ctypes.byref(br), False,
+            self._outR,
+            ctypes.byref(self._ov),
+            ctypes.byref(br),
+            False,
         )
-        data = self._buf.raw[:br.value] if ok and br.value else b""
+        data = self._buf.raw[: br.value] if ok and br.value else b""
         return data
 
     def write(self, data):
@@ -335,24 +484,28 @@ class ConDrvPseudoTerminal(PseudoTerminal):
             raise OSError(ctypes.get_last_error(), "WriteFile 失败")
 
     def close(self):
-        """关闭所有句柄并清理资源"""
-        if self._hpc:
-            _ClosePseudoConsole(self._hpc)
-            self._hpc = None
-        # 关闭我们持有的管道端
-        for h in (self._inW, self._outR, self._inR, self._outW):
+        """关闭所有句柄并清理资源
+
+        对齐 winconpty.cpp _ClosePseudoConsoleMembers:
+        关闭 hSignal / hPtyReference / hConPtyProcess
+        """
+        for h in (self._inW, self._outR):
             if h is not None:
                 try:
                     _CancelIoEx(h, None)
                 except Exception:
                     pass
                 _CloseHandle(h)
-        self._inW = self._outR = self._inR = self._outW = None
-        self._inR_close = self._outW_close = None
+        self._inW = None
+        self._outR = None
         for h in (self._evt, self._ph, self._signal, self._ref_h, self._conhost_proc):
             if h:
                 _CloseHandle(h)
-        self._evt = self._ph = self._signal = self._ref_h = self._conhost_proc = None
+        self._evt = None
+        self._ph = None
+        self._signal = None
+        self._ref_h = None
+        self._conhost_proc = None
         self._job.close()
         self._gui_monitor.close()
 
@@ -364,14 +517,7 @@ class ConDrvPseudoTerminal(PseudoTerminal):
         return self._child_pid
 
     def get_exit_code(self) -> Optional[int]:
-        """获取子进程退出码
-
-        通过 GetExitCodeProcess 获取子进程的退出码。
-        注意：子进程在 conhost.exe 内部运行，退出码通过进程句柄获取。
-
-        Returns:
-            退出码（int），若进程仍在运行则返回 None。
-        """
+        """获取子进程退出码"""
         if not self._ph:
             return None
         try:
@@ -383,8 +529,6 @@ class ConDrvPseudoTerminal(PseudoTerminal):
             return code.value
         except Exception:
             return None
-
-    # ---- Job Object + GUI 窗口检测 ----
 
     def get_process_list(self) -> List[int]:
         """获取进程树所有进程的 PID 列表"""

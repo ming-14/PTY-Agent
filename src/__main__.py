@@ -14,7 +14,7 @@ import ctypes.wintypes
 from typing import Optional
 
 from .client.transport import Client
-from .client.formatter import set_color_mode, set_output_mode
+from .client.formatter import set_color_mode, set_output_mode, set_debug_mode
 from .client.config_manager import ConfigManager
 from .daemon.lifecycle import setup_client_logging
 
@@ -27,6 +27,7 @@ _CONFIG_KEYS = (
     "newline",
     "keep-ansi",
     "encoding",
+    "debug",
 )
 
 
@@ -138,10 +139,11 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
                         help="使用自然语言输出（默认 JSON）")
     parser.add_argument("--encoding", default=None,
                         help="终端编码（如 utf-8、gbk），本次调用记忆")
+
     parser.add_argument("--default", nargs=2, metavar=("KEY", "VALUE"),
                         default=None,
                         help="设置默认配置 "
-                             "(output-by-natural-language/timeout/newline/keep-ansi/encoding)")
+                             "(output-by-natural-language/timeout/newline/keep-ansi/encoding/debug)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -159,8 +161,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="查看配置值（不指定 KEY 则显示全部）")
     parser.add_argument("--default", nargs=2, metavar=("KEY", "VALUE"),
                         default=None,
-                        help="临时覆盖默认配置 "
-                             "(output-by-natural-language/timeout/newline/keep-ansi/encoding)")
+                         help="临时覆盖默认配置 "
+                              "(output-by-natural-language/timeout/newline/keep-ansi/encoding/debug)")
     parser.add_argument("--color", action="store_true", default=False,
                         help="启用终端颜色输出（默认禁用）")
     parser.add_argument("--output-by-natural-language", action="store_true",
@@ -168,6 +170,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="使用自然语言输出（默认 JSON）")
     parser.add_argument("--encoding", default=None,
                         help="终端编码（如 utf-8、gbk），本次调用记忆")
+    parser.add_argument("--no-debug", action="store_true", default=False,
+                        help="禁用响应中的 debug 输出（进程树/GUI 窗口/事件）")
 
     sub = parser.add_subparsers(dest="subcmd", help="可用命令")
 
@@ -451,6 +455,19 @@ def main():
     if config_overrides is None:
         # 单独使用 --show-config 或无子命令时退出
         return
+
+    # --no-debug 等价于 --default debug off（全局和子命令级别均可设置）
+    if getattr(args, "no_debug", False):
+        if "debug" not in config_overrides:
+            config_overrides["debug"] = False
+
+    # 设置 debug 输出模式
+    debug_enabled = True
+    if config_overrides and "debug" in config_overrides:
+        debug_enabled = config_overrides["debug"]
+    elif getattr(args, "no_debug", False):
+        debug_enabled = False
+    set_debug_mode(debug_enabled)
 
     # 无子命令时显示帮助
     if args.subcmd is None:

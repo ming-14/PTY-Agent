@@ -8,6 +8,7 @@ import logging
 import sys
 import socket
 import shlex
+import time
 from typing import Optional
 
 from ..protocol.message import Message
@@ -99,7 +100,7 @@ class Client:
             已连接的 socket。
 
         Raises:
-            SystemExit: 无法连接或启动守护进程。
+             SystemExit: 无法连接或启动守护进程。
         """
         port = _read_daemon_port()
         _logger.debug("_connect: port=%d", port)
@@ -112,11 +113,26 @@ class Client:
                 _logger.error("启动守护进程失败")
                 print("error: failed to start daemon", file=sys.stderr)
                 sys.exit(1)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(CONNECT_TIMEOUT)
-        sock.connect((self.host, port))
-        _logger.info("已连接守护进程 %s:%s", self.host, port)
-        return sock
+        # 冷启动时守护进程可能尚未 bind/listen，短暂重试
+        last_err = None
+        for attempt in range(5):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(CONNECT_TIMEOUT)
+                sock.connect((self.host, port))
+                _logger.info("已连接守护进程 %s:%s", self.host, port)
+                return sock
+            except ConnectionRefusedError as e:
+                last_err = e
+                _logger.debug("_connect: attempt %d refused, retrying...", attempt + 1)
+                time.sleep(0.2)
+                # 重新读取端口（可能守护进程分配了不同端口）
+                new_port = _read_daemon_port()
+                if new_port != port:
+                    port = new_port
+        _logger.error("连接守护进程失败: %s", last_err)
+        print(f"error: {last_err}", file=sys.stderr)
+        sys.exit(1)
 
     def _apply_config_defaults(
         self,

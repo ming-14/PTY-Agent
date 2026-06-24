@@ -85,10 +85,14 @@ class WindowsPseudoTerminal(PseudoTerminal):
         si.StartupInfo.hStdOutput = self._outW
         si.StartupInfo.hStdError = self._outW
         si.lpAttributeList = ctypes.cast(buf, ctypes.c_void_p)
+        _CREATE_UNICODE_ENVIRONMENT = 0x00080000
+        _CREATE_NO_WINDOW = 0x08000000
+        _EXTENDED_STARTUPINFO_PRESENT = 0x00000400
         pi = _PI()
         ok = _CreateProcess(
             None, cmdline, None, None, True,
-            0x00080000, None, None,
+            _CREATE_UNICODE_ENVIRONMENT | _CREATE_NO_WINDOW | _EXTENDED_STARTUPINFO_PRESENT,
+            None, None,
             ctypes.byref(si.StartupInfo), ctypes.byref(pi),
         )
         _DeleteAttrList(buf)
