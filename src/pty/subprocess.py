@@ -247,6 +247,18 @@ class SubprocessPseudoTerminal(PseudoTerminal):
     def fileno(self):
         return self._proc.stdout.fileno()
 
+    def kill_tree(self):
+        """强杀整个进程树：先关闭 Job（KILL_ON_JOB_CLOSE），再 kill 子进程"""
+        if IS_WINDOWS and self._job:
+            try:
+                self._job.close()
+                _logger.info("kill_tree: Job closed, KILL_ON_JOB_CLOSE triggered")
+                return
+            except Exception as e:
+                _logger.warning("kill_tree: Job close failed: %s", e)
+        if self._proc and self._proc.poll() is None:
+            self._proc.kill()
+
     def close(self):
         """关闭子进程管道并终止进程
 

@@ -90,6 +90,13 @@ class UnixPseudoTerminal(PseudoTerminal):
     def fileno(self):
         return self._master
 
+    def kill_tree(self):
+        """强杀进程树：发送 SIGKILL"""
+        try:
+            os.kill(self._child_pid, 9)
+        except Exception:
+            pass
+
     def close(self):
         _logger.info("close: pid=%d", self._child_pid)
         try:

@@ -669,12 +669,22 @@ class RequestHandler:
         if not session_id:
             Message.send(conn, {"type": "error", "error": "缺少会话 id"})
             return
+        session = self.manager.get_session(session_id)
+        if not session:
+            Message.send(conn, {"type": "error", "error": f"会话 '{session_id}' 不存在"})
+            return
+        Message.send(conn, {"type": "ok", "note": f"会话 {session_id} 已终止"})
+        try:
+            conn.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+        conn.close()
+        conn = None
         try:
             self.manager.remove_session(session_id)
             _logger.info("会话 '%s' 已终止", session_id)
         except Exception:
             _logger.warning("终止会话 '%s' 时发生异常", session_id, exc_info=True)
-        Message.send(conn, {"type": "ok"})
 
     def _handle_closewin(self, conn, msg: dict):
         """处理 closewin 指令：关闭指定 GUI 窗口

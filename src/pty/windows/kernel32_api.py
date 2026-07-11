@@ -161,14 +161,16 @@ class WindowsPseudoTerminal(PseudoTerminal):
         wr = W.DWORD(0)
         _WriteFile(self._inW, data, len(data), ctypes.byref(wr), None)
 
-    def close(self):
-        """关闭伪终端并终止子进程
+    def kill_tree(self):
+        """强杀整个进程树：关闭 Job（KILL_ON_JOB_CLOSE）"""
+        if self._job:
+            try:
+                self._job.close()
+            except Exception:
+                pass
 
-        顺序关键：必须先关闭伪控制台和进程句柄（让子进程退出 →
-        管道写端关闭 → reader 线程的阻塞 ReadFile 收到 EOF 返回），
-        再关闭读端管道句柄。否则 reader 线程卡在 ReadFile，
-        _CloseHandle(outR) 无法中断它，导致 session.stop() 死锁。
-        """
+    def close(self):
+        """关闭伪终端并清理资源"""
         _logger.info("close: pid=%d", self._child_pid)
         # 1. 先关闭伪控制台（子进程的 ConPTY 写端关闭）
         if self._hpc:

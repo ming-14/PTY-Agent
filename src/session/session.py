@@ -160,7 +160,7 @@ class Session:
             time.sleep(0.1)
 
     def stop(self, timeout: float = 3.0):
-        """停止会话：关闭 PTY + 等待读者线程退出
+        """停止会话：强杀进程树 + 关闭 PTY + 等待读者线程退出
 
         Args:
             timeout: 等待读者线程退出的超时秒数。
@@ -175,6 +175,10 @@ class Session:
             self._update_exit_info()
 
         if self._pty:
+            try:
+                self._pty.kill_tree()
+            except Exception as e:
+                _logger.warning("强杀进程树时异常: %s", e)
             try:
                 self._pty.close()
             except Exception as e:

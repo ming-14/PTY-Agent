@@ -483,12 +483,16 @@ class ConDrvPseudoTerminal(PseudoTerminal):
         if not _WriteFile(self._inW, data, len(data), ctypes.byref(wr), None):
             raise OSError(ctypes.get_last_error(), "WriteFile 失败")
 
-    def close(self):
-        """关闭所有句柄并清理资源
+    def kill_tree(self):
+        """强杀整个进程树：关闭 Job（KILL_ON_JOB_CLOSE）"""
+        if self._job:
+            try:
+                self._job.close()
+            except Exception:
+                pass
 
-        对齐 winconpty.cpp _ClosePseudoConsoleMembers:
-        关闭 hSignal / hPtyReference / hConPtyProcess
-        """
+    def close(self):
+        """关闭所有句柄并清理资源"""
         for h in (self._inW, self._outR):
             if h is not None:
                 try:

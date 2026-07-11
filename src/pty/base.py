@@ -60,6 +60,9 @@ class PseudoTerminal:
         """关闭 PTY 并清理资源"""
         raise NotImplementedError
 
+    def kill_tree(self):
+        """强杀整个进程树（不等待退出），close() 仍需调用以清理资源"""
+
     def fileno(self):
         """返回 PTY 的文件描述符（如适用）"""
         return None
