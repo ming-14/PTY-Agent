@@ -1,0 +1,318 @@
+"""统一响应构造器
+
+所有面向用户的输出（错误、警告、信息、命令结果）都通过此类构造，
+确保字段命名和结构在 TCP handler / WebSocket handler / CLI 之间一致。
+
+字段命名约定：
+- 错误描述统一使用 "message" 字段（不再使用 "error" 字段）
+- TCP 成功响应保留 "commandType" 字段
+- WS 成功响应保留 "type" 字段
+"""
+
+
+class Response:
+    """统一响应构造器 — 只负责构造 dict，不负责发送"""
+
+    # ════════════════════════════════════════════════════════════
+    #  通用消息（CLI + TCP + WS 共用）
+    # ════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def error(message: str, **extra) -> dict:
+        """错误响应
+
+        Args:
+            message: 错误描述。
+            **extra: 额外字段（如 suggest）。
+        """
+        return {"type": "error", "message": message, **extra}
+
+    @staticmethod
+    def warning(message: str) -> dict:
+        """警告响应"""
+        return {"type": "warning", "message": message}
+
+    @staticmethod
+    def info(message: str) -> dict:
+        """信息响应"""
+        return {"type": "info", "message": message}
+
+    @staticmethod
+    def pong() -> dict:
+        """Pong 响应"""
+        return {"type": "pong"}
+
+    @staticmethod
+    def config(content: str) -> dict:
+        """配置内容响应"""
+        return {"type": "config", "content": content}
+
+    # ════════════════════════════════════════════════════════════
+    #  TCP 命令响应（使用 commandType）
+    # ════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def command_result(command_type: str, session_id: str, **fields) -> dict:
+        """TCP 命令结果骨架
+
+        Args:
+            command_type: 命令类型（exec/send/read/mouse/kill/stop/list/events/closewin）。
+            session_id:   会话 ID。
+            **fields:     额外字段。
+        """
+        result = {"commandType": command_type}
+        if session_id is not None:
+            result["sessionId"] = session_id
+        result.update(fields)
+        return result
+
+    @staticmethod
+    def session_program(
+        raw_start_command,
+        start_time: str,
+        now_time: str,
+        running: bool,
+        pty_type: str,
+        exit_code=None,
+        error_message=None,
+        debug_information=None,
+    ) -> dict:
+        """构造 program 子对象
+
+        Args:
+            raw_start_command: 原始启动命令。
+            start_time:        ISO 格式启动时间。
+            now_time:          ISO 格式当前时间。
+            running:           是否正在运行。
+            pty_type:          PTY 后端类型。
+            exit_code:         退出码（条件字段）。
+            error_message:     错误消息（条件字段）。
+            debug_information: 调试信息子对象（条件字段）。
+        """
+        program = {
+            "rawStartCommand": raw_start_command,
+            "startTime": start_time,
+            "nowTime": now_time,
+            "running": running,
+            "ptyType": pty_type,
+        }
+        if exit_code is not None:
+            program["exitCode"] = exit_code
+        if error_message is not None:
+            program["errorMessage"] = error_message
+        if debug_information:
+            program["debugInformation"] = debug_information
+        return program
+
+    @staticmethod
+    def debug_information(
+        processes=None,
+        gui_windows=None,
+        pending_events=None,
+        hint=None,
+        elapsed_ms=None,
+    ) -> dict:
+        """构造 debugInformation 子对象
+
+        仅包含非空字段。
+        """
+        info = {}
+        if processes:
+            info["processes"] = processes
+        if gui_windows:
+            info["guiWindows"] = gui_windows
+        if pending_events:
+            info["pendingEvents"] = pending_events
+        if hint:
+            info["hint"] = hint
+        if elapsed_ms is not None:
+            info["elapsedMs"] = elapsed_ms
+        return info
+
+    @staticmethod
+    def list_result(sessions: list, hint: str) -> dict:
+        """List 命令响应"""
+        return {"commandType": "list", "sessions": sessions, "hint": hint}
+
+    @staticmethod
+    def kill_result(code: int, msg: str) -> dict:
+        """Kill 命令响应"""
+        return {"commandType": "kill", "code": code, "msg": msg}
+
+    @staticmethod
+    def stop_result(code: int, msg: str) -> dict:
+        """Stop 命令响应"""
+        return {"commandType": "stop", "code": code, "msg": msg}
+
+    @staticmethod
+    def closewin_result(closed: bool, hwnd: int, message: str = None) -> dict:
+        """Closewin 命令响应
+
+        Args:
+            closed: 是否成功关闭。
+            hwnd:   窗口句柄。
+            message: 错误描述（条件字段，仅 closed=False 时使用）。
+        """
+        result = {"commandType": "closewin", "closed": closed, "hwnd": hwnd}
+        if message is not None:
+            result["message"] = message
+        return result
+
+    @staticmethod
+    def events_result(session_id: str, events: list, count: int, hint: str) -> dict:
+        """Events 命令响应"""
+        return {
+            "commandType": "events",
+            "sessionId": session_id,
+            "pendingEvents": events,
+            "count": count,
+            "hint": hint,
+        }
+
+    @staticmethod
+    def status_result(
+        running: bool,
+        pid: int,
+        port: int,
+        uptime,
+        active_sessions: int,
+        ended_sessions: int,
+        web_url: str,
+    ) -> dict:
+        """Status 响应"""
+        return {
+            "type": "status",
+            "running": running,
+            "pid": pid,
+            "port": port,
+            "uptime": uptime,
+            "activeSessions": active_sessions,
+            "endedSessions": ended_sessions,
+            "webUrl": web_url,
+        }
+
+    # ════════════════════════════════════════════════════════════
+    #  WebSocket 响应（使用 type）
+    # ════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def ws_session_list(sessions: list) -> dict:
+        return {"type": "session_list", "sessions": sessions}
+
+    @staticmethod
+    def ws_shell_list(shells: dict) -> dict:
+        return {"type": "shell_list", "shells": shells}
+
+    @staticmethod
+    def ws_system_stats(cpu, memory) -> dict:
+        return {"type": "system_stats", "cpu": cpu, "memory": memory}
+
+    @staticmethod
+    def ws_history_list(sessions: list) -> dict:
+        return {"type": "history_list", "sessions": sessions}
+
+    @staticmethod
+    def ws_history_detail(session_id: str, **fields) -> dict:
+        return {"type": "history_detail", "id": session_id, **fields}
+
+    @staticmethod
+    def ws_subscribed(session_id: str, **fields) -> dict:
+        return {"type": "subscribed", "sessionId": session_id, **fields}
+
+    @staticmethod
+    def ws_output(session_id: str, data: str, stream: str, encoding: str) -> dict:
+        return {
+            "type": "output",
+            "sessionId": session_id,
+            "data": data,
+            "stream": stream,
+            "encoding": encoding,
+        }
+
+    @staticmethod
+    def ws_session_ended(session_id: str, exit_code, error_message) -> dict:
+        return {
+            "type": "session_ended",
+            "sessionId": session_id,
+            "exitCode": exit_code,
+            "errorMessage": error_message,
+        }
+
+    @staticmethod
+    def ws_session_event(session_id: str, event: dict) -> dict:
+        return {"type": "session_event", "sessionId": session_id, "event": event}
+
+    @staticmethod
+    def ws_unsubscribed() -> dict:
+        return {"type": "unsubscribed"}
+
+    @staticmethod
+    def ws_history_deleted(session_id: str) -> dict:
+        return {"type": "history_deleted", "sessionId": session_id}
+
+    @staticmethod
+    def ws_session_detail(session_id: str, source: str, **fields) -> dict:
+        return {"type": "session_detail", "id": session_id, "source": source, **fields}
+
+    @staticmethod
+    def ws_session_detail_refresh(session_id: str, tab: str, **fields) -> dict:
+        return {"type": "session_detail_refresh", "id": session_id, "tab": tab, **fields}
+
+    # ════════════════════════════════════════════════════════════
+    #  WebSocket 响应 — VNC 远程桌面
+    # ════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def ws_vnc_status(status: dict) -> dict:
+        """VNC 状态响应（包含运行状态/端口/密码/可用性）。
+
+        Args:
+            status: VncAdapter.get_status() 返回的字典。
+        """
+        return {"type": "vnc_status", **status}
+
+    @staticmethod
+    def ws_vnc_started(connection_info: dict) -> dict:
+        """VNC 启动成功响应（包含前端连接所需信息）。
+
+        Args:
+            connection_info: {vnc_port, password, vnc_pid}
+        """
+        return {"type": "vnc_started", **connection_info}
+
+    @staticmethod
+    def ws_vnc_stopped() -> dict:
+        """VNC 停止响应。"""
+        return {"type": "vnc_stopped"}
+
+    @staticmethod
+    def ws_vnc_error(message: str) -> dict:
+        """VNC 错误响应。"""
+        return {"type": "vnc_error", "message": message}
+
+    # ════════════════════════════════════════════════════════════
+    #  WebSocket 响应 — FastScreen 屏幕查看
+    # ════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def ws_fs_status(status: dict) -> dict:
+        """FastScreen 状态响应（包含可用性 + 活跃会话数）。
+
+        Args:
+            status: FastScreenAdapter.get_status() 返回的字典。
+        """
+        return {"type": "fs_status", **status}
+
+    @staticmethod
+    def ws_fs_targets(targets: dict) -> dict:
+        """FastScreen 目标列表响应（显示器 + 窗口）。
+
+        Args:
+            targets: FastScreenAdapter.list_targets() 返回的字典。
+        """
+        return {"type": "fs_targets", **targets}
+
+    @staticmethod
+    def ws_fs_error(message: str) -> dict:
+        """FastScreen 错误响应。"""
+        return {"type": "fs_error", "message": message}

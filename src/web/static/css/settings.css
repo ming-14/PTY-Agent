@@ -1,0 +1,347 @@
+/**
+ * 设置 tab 视图样式
+ *
+ * 复用 --wt-* 主题变量，自动适配深色/浅色主题。
+ * 布局：左侧分类导航 + 右侧表单内容（设置变更由 settingsStore 自动保存）。
+ */
+
+/*
+ * 贴边模式：取消 terminal-stage 的 padding，让 frame 贴边显示（不悬浮）。
+ * settings / vnc / fastscreen 三个 frame 切换到时都进入贴边模式（内容填满，无留白）。
+ * terminal-frame（终端）仍保留原 padding（终端浮在中间是设计预期）。
+ * stage-flush class 由各自 switchToXxxFrame 添加，由 switchTab / showEmptyState 移除。
+ * 同时覆盖 touch-device 的 padding: 8px（优先级需高于 body.touch-device .terminal-stage）。
+ */
+.terminal-stage.stage-flush,
+body.touch-device .terminal-stage.stage-flush {
+  padding: 0;
+}
+
+/* 设置 frame 容器：贴边填满 terminal-stage（stage-flush 时 padding 已为 0） */
+.settings-frame {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--wt-term-bg);
+  color: var(--wt-term-fg);
+  font-family: var(--wt-font-ui);
+  border-radius: 4px;
+  /* 与 .terminal-frame / .vnc-frame 一致的外部投影（视觉边界分界线） */
+  box-shadow:
+    0 0 0 1px var(--wt-term-border),
+    0 4px 24px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+}
+
+/* 主体：左导航 + 右内容 */
+.settings-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* 左侧分类导航 */
+.settings-nav {
+  width: 200px;
+  flex-shrink: 0;
+  background: var(--wt-tab-bar-bg);
+  border-right: 1px solid var(--wt-tab-border);
+  padding: 10px 8px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  color: var(--wt-tab-text);
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 120ms, border-color 120ms;
+  user-select: none;
+}
+
+.settings-nav-item:hover {
+  background: var(--wt-tab-hover-bg);
+}
+
+.settings-nav-item.active {
+  background: var(--wt-tab-selected-bg);
+  border-color: var(--wt-term-border-focused);
+  color: var(--wt-tab-text);
+}
+
+.settings-nav-item svg {
+  flex-shrink: 0;
+  color: var(--wt-tab-text-muted);
+}
+
+.settings-nav-item.active svg {
+  color: var(--wt-accent);
+}
+
+.settings-nav-item .nav-badge-future {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--wt-tab-unselected-bg);
+  color: var(--wt-tab-text-muted);
+  border: 1px solid var(--wt-tab-border);
+}
+
+/* 右侧内容区 */
+.settings-content {
+  flex: 1;
+  padding: 20px 28px;
+  overflow-y: auto;
+  min-width: 0;
+}
+
+/* 内容区分组标题 */
+.settings-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--wt-tab-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0 0 12px 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--wt-tab-border);
+}
+
+.settings-section-title:not(:first-child) {
+  margin-top: 24px;
+}
+
+/* 单行设置项：左侧标签描述 + 右侧控件 */
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  gap: 16px;
+}
+
+.settings-row-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-row-label {
+  font-size: 13px;
+  color: var(--wt-tab-text);
+  margin-bottom: 2px;
+}
+
+.settings-row-desc {
+  font-size: 12px;
+  color: var(--wt-tab-text-muted);
+  line-height: 1.5;
+}
+
+/* 控件区：占据右侧固定空间 */
+.settings-control {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 开关 toggle */
+.settings-toggle {
+  width: 38px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--wt-tab-border);
+  position: relative;
+  cursor: pointer;
+  transition: background 150ms;
+  border: 1px solid var(--wt-input-border);
+}
+
+.settings-toggle::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ffffff;
+  top: 2px;
+  left: 2px;
+  transition: left 150ms;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.settings-toggle.on {
+  background: var(--wt-accent);
+  border-color: var(--wt-accent);
+}
+
+.settings-toggle.on::after {
+  left: 21px;
+}
+
+.settings-toggle.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 下拉/输入框 */
+.settings-select,
+.settings-input {
+  background: var(--wt-input-bg);
+  border: 1px solid var(--wt-input-border);
+  color: var(--wt-tab-text);
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-family: inherit;
+  min-width: 160px;
+  outline: none;
+  transition: border-color 120ms;
+}
+
+.settings-select:focus,
+.settings-input:focus {
+  border-color: var(--wt-accent);
+}
+
+.settings-select:disabled,
+.settings-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 步进器 */
+.settings-stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-stepper button {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--wt-btn-bg);
+  border: 1px solid var(--wt-input-border);
+  color: var(--wt-tab-text);
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms;
+}
+
+@media (hover: hover) {
+  .settings-stepper button:hover {
+    background: var(--wt-btn-hover);
+  }
+}
+
+.settings-stepper .stepper-value {
+  min-width: 56px;
+  text-align: center;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--wt-tab-text);
+}
+
+/* 主题选择 pills */
+.settings-pills {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-pill {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--wt-input-border);
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--wt-tab-text);
+  background: var(--wt-input-bg);
+  transition: background 120ms, border-color 120ms;
+}
+
+.settings-pill:hover {
+  background: var(--wt-btn-hover);
+}
+
+.settings-pill.active {
+  border-color: var(--wt-accent);
+  background: var(--wt-tab-selected-bg);
+  color: var(--wt-accent);
+}
+
+/* 文本域（命令白名单等） */
+.settings-textarea {
+  width: 100%;
+  min-height: 80px;
+  background: var(--wt-input-bg);
+  border: 1px solid var(--wt-input-border);
+  color: var(--wt-tab-text);
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-family: var(--wt-font-mono);
+  outline: none;
+  resize: vertical;
+  transition: border-color 120ms;
+}
+
+.settings-textarea:focus {
+  border-color: var(--wt-accent);
+}
+
+.settings-textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 安全设置占位提示 */
+.settings-placeholder {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--wt-tab-text-muted);
+  font-size: 13px;
+}
+
+.settings-placeholder svg {
+  color: var(--wt-tab-text-muted);
+  margin-bottom: 12px;
+}
+
+/* 触摸端适配：导航变为顶部横向滚动 */
+@media (pointer: coarse) {
+  .settings-body {
+    flex-direction: column;
+  }
+  .settings-nav {
+    width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: none;
+    border-bottom: 1px solid var(--wt-tab-border);
+    padding: 8px;
+  }
+  .settings-nav-item {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .settings-content {
+    padding: 16px;
+  }
+}

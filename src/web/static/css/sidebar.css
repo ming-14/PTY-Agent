@@ -1,0 +1,217 @@
+.sidebar {
+  width: 220px;
+  min-width: 220px;
+  max-width: 500px;
+  background: var(--wt-sidebar-bg);
+  border-right: 1px solid var(--wt-tab-border);
+  display: flex;
+  flex-direction: column;
+  transition: width 0.2s ease, min-width 0.2s ease;
+  user-select: none;
+  position: relative;
+}
+.sidebar.collapsed {
+  width: 40px;
+  min-width: 40px;
+  max-width: 40px;
+}
+.sidebar-resizer {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 10;
+  transition: background 0.15s;
+}
+.sidebar-resizer:hover,
+.sidebar-resizing .sidebar-resizer {
+  background: var(--wt-accent);
+}
+body[data-theme="dark"] .sidebar-resizer:hover,
+body[data-theme="dark"] .sidebar-resizing .sidebar-resizer {
+  background: var(--wt-accent);
+}
+.sidebar.collapsed .sidebar-title,
+.sidebar.collapsed .sidebar-section-title,
+.sidebar.collapsed .sidebar-item-label,
+.sidebar.collapsed .sidebar-item-cmd,
+.sidebar.collapsed .sidebar-item-time {
+  display: none;
+}
+.sidebar.collapsed .sidebar-item {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+.sidebar.collapsed .sidebar-item-icon {
+  margin: 0;
+}
+.sidebar.collapsed .sidebar-item-text {
+  display: none;
+}
+.sidebar.collapsed #sidebar-history .sidebar-item {
+  display: none;
+}
+.sidebar-header {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--wt-tab-border);
+  gap: 8px;
+}
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--wt-tab-text-muted);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.1s, color 0.1s;
+}
+.sidebar-toggle:hover {
+  background: var(--wt-tab-hover-bg);
+  color: var(--wt-tab-text);
+}
+.sidebar-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--wt-tab-text);
+}
+.sidebar-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  scrollbar-width: none;
+}
+.sidebar-content::-webkit-scrollbar { display: none; }
+.sidebar-section-title {
+  font-size: 11px;
+  color: var(--wt-tab-text-muted);
+  text-transform: uppercase;
+  padding: 12px 12px 6px;
+  flex-shrink: 0;
+}
+.sidebar-list {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  scrollbar-width: none;
+}
+.sidebar-list::-webkit-scrollbar { display: none; }
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--wt-tab-text);
+  transition: background 0.1s;
+}
+.sidebar-item:hover { background: var(--wt-tab-hover-bg); }
+.sidebar-item.active {
+  background: var(--wt-tab-selected-bg);
+  position: relative;
+}
+.sidebar-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  background: var(--wt-accent);
+  border-radius: 0 2px 2px 0;
+}
+.sidebar-item-icon {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.sidebar-item-icon.running { background: var(--wt-success); }
+.sidebar-item-icon.ended { background: #a0a1a7; }
+.sidebar-item-initial {
+  display: none;
+  flex-shrink: 0;
+}
+.sidebar-item-text { min-width: 0; flex: 1; }
+.sidebar-item.flip-move {
+  transition: transform 0.25s ease, opacity 0.25s ease;
+  z-index: 1;
+}
+.sidebar-item.ending {
+  opacity: 0.7;
+}
+.sidebar-item-label { font-weight: 600; }
+.sidebar-item-cmd {
+  color: var(--wt-tab-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-item-time {
+  color: var(--wt-tab-text-muted);
+  font-size: 11px;
+  opacity: 0.8;
+  margin-top: 2px;
+}
+.sidebar.collapsed .sidebar-item-time {
+  display: none;
+}
+
+/* ── 侧边栏底部栏（设置按钮） ── */
+.sidebar-footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--wt-tab-border);
+  padding: 6px 8px;
+}
+/*
+ * sidebar 展开时隐藏底部设置按钮，空间留给历史会话列表；
+ * 收起时显示设置图标入口（用户需收起 sidebar 才能点击进入设置）。
+ */
+.sidebar:not(.collapsed) .sidebar-footer {
+  display: none;
+}
+.sidebar-footer-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  background: transparent;
+  color: var(--wt-tab-text-muted);
+  font-family: var(--wt-font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.1s, color 0.1s;
+}
+@media (hover: hover) {
+  .sidebar-footer-btn:hover {
+    background: var(--wt-tab-hover-bg);
+    color: var(--wt-tab-text);
+  }
+}
+.sidebar-footer-btn.active {
+  background: var(--wt-tab-selected-bg);
+  color: var(--wt-accent);
+}
+/* 收起状态：仅显示图标，居中 */
+.sidebar.collapsed .sidebar-footer-btn {
+  justify-content: center;
+  padding: 7px 0;
+}
+.sidebar.collapsed .sidebar-footer-label {
+  display: none;
+}

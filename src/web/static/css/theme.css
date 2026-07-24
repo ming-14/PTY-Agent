@@ -1,0 +1,64 @@
+:root {
+  --wt-tab-bar-bg: #f3f3f3;
+  --wt-tab-bar-unfocused-bg: #f3f3f3;
+  --wt-tab-selected-bg: #ffffff;
+  --wt-tab-unselected-bg: rgba(0,0,0,0.03);
+  --wt-tab-hover-bg: rgba(0,0,0,0.06);
+  --wt-tab-text: #323232;
+  --wt-tab-text-muted: #717171;
+  --wt-tab-border: rgba(0,0,0,0.08);
+  --wt-term-bg: #fafafa;
+  --wt-term-fg: #383a42;
+  --wt-term-border: rgba(0,0,0,0.12);
+  --wt-term-border-focused: rgba(0,120,212,0.45);
+  --wt-term-padding: 8px;
+  --wt-sidebar-bg: #f3f3f3;
+  --wt-accent: #0078d4;
+  --wt-close-hover: #c42b1c;
+  --wt-close-active: rgba(196,43,28,0.9);
+  --wt-scrollbar-thumb: rgba(0,0,0,0.25);
+  --wt-scrollbar-track: transparent;
+  --wt-font-mono: 'Cascadia Mono', 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+  --wt-font-ui: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --wt-font-icon: 'Segoe MDL2 Assets';
+  --wt-overlay-bg: rgba(0,0,0,0.35);
+  --wt-dialog-bg: #ffffff;
+  --wt-dialog-border: rgba(0,0,0,0.12);
+  --wt-input-bg: #ffffff;
+  --wt-input-border: rgba(0,0,0,0.15);
+  --wt-input-focus-border: var(--wt-accent);
+  --wt-btn-bg: rgba(0,0,0,0.04);
+  --wt-btn-hover: rgba(0,0,0,0.08);
+  --wt-btn-primary: var(--wt-accent);
+  --wt-btn-primary-hover: #106ebe;
+  --wt-dropdown-bg: #ffffff;
+  --wt-dropdown-border: rgba(0,0,0,0.08);
+  --wt-dropdown-hover: rgba(0,0,0,0.04);
+  --wt-toast-bg: #323232;
+  --wt-toast-fg: #ffffff;
+  --wt-error: #d13438;
+  --wt-success: #107c10;
+}
+
+body[data-theme="dark"] {
+  --wt-tab-bar-bg: #1f1f1f;
+  --wt-tab-bar-unfocused-bg: #1f1f1f;
+  --wt-tab-selected-bg: #2d2d2d;
+  --wt-tab-unselected-bg: rgba(255,255,255,0.03);
+  --wt-tab-hover-bg: rgba(255,255,255,0.06);
+  --wt-tab-text: #cccccc;
+  --wt-tab-text-muted: #999999;
+  --wt-tab-border: rgba(255,255,255,0.08);
+  --wt-term-bg: #0c0c0c;
+  --wt-term-fg: #cccccc;
+  --wt-term-border: rgba(255,255,255,0.12);
+  --wt-term-border-focused: rgba(0,120,212,0.55);
+  --wt-sidebar-bg: #1f1f1f;
+  --wt-scrollbar-thumb: rgba(255,255,255,0.3);
+  --wt-dialog-bg: #1f1f1f;
+  --wt-input-bg: #1f1f1f;
+  --wt-input-border: rgba(255,255,255,0.15);
+  --wt-dropdown-bg: #2d2d2d;
+  --wt-btn-bg: rgba(255,255,255,0.06);
+  --wt-btn-hover: rgba(255,255,255,0.12);
+}

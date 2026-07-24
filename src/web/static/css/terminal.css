@@ -1,0 +1,132 @@
+.terminal-stage {
+  flex: 1;
+  position: relative;
+  background: var(--wt-term-bg);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.terminal-frame {
+  position: relative;
+  /* v7: 移除 border，用 box-shadow 外部投影代替（不占空间，不裁切内容）
+       旧方案 border: 1px solid + box-sizing: border-box 导致 frame 内容区
+       = width - 2px，.xterm (100%) 比 .xterm-screen 小 2px，xterm 内部
+       canvas 渲染区与 buffer 不匹配，可能引发列宽/行高错位 */
+  background: var(--wt-term-bg);
+  box-shadow:
+    0 0 0 1px var(--wt-term-border),
+    0 4px 24px rgba(0,0,0,0.08);
+  /* v8 fix: flex-shrink: 0 防止 stage(flex 容器) 非等比压缩 frame。
+     旧值 flex-shrink:1 + min-width:0/min-height:0 导致 frame 内容超出 stage 时
+     被 flex 沿主轴/交叉轴压缩，宽高比改变。改为 0 后 frame 始终保持 .xterm-screen
+     实际尺寸，超出 stage 由 overflow:hidden 裁切 + applySessionFrameRatio 按比例调整字号适应。 */
+  flex-shrink: 0;
+  /* box-sizing: content-box（默认值）— width/height 即内容区尺寸，
+     frame 占位 = width + 2*border-width，但因无 border，占位 = width */
+  box-sizing: content-box;
+  /* v8: 移除 max-width/max-height，frame 始终 = .xterm-screen 尺寸保持宽高比。
+       旧方案 max-width:100%/max-height:100% 在界面变小时非等比压缩 frame
+       （width 被限制但 height 可能不被限制），导致框宽高比改变。
+       v9: 由 applySessionFrameRatio 按会话保存的 frameRatio + stage 尺寸反算字号，
+       保持比例且完整显示。 */
+  overflow: hidden;
+  border-radius: 4px;
+  transition: box-shadow 0.15s ease;
+}
+
+.terminal-frame.focused {
+  box-shadow:
+    0 0 0 1px var(--wt-term-border-focused),
+    0 0 0 2px var(--wt-term-border-focused),
+    0 4px 24px rgba(0,0,0,0.08);
+}
+
+.terminal-container {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.term-instance {
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  display: none !important;
+}
+
+.term-instance.active {
+  display: block !important;
+}
+
+body.touch-device .term-instance {
+  display: block !important;
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+}
+body.touch-device .term-instance.active {
+  visibility: visible;
+  z-index: 1;
+}
+
+.term-instance .xterm {
+  width: 100%;
+  height: 100%;
+}
+
+.term-instance .xterm-viewport {
+  background-color: transparent !important;
+  overflow-y: auto !important;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.term-instance.readonly,
+.term-instance.readonly .xterm,
+.term-instance.readonly .xterm:focus,
+.term-instance.readonly .xterm.focus,
+.term-instance.readonly .xterm.xterm-focus {
+  outline: none !important;
+  cursor: default;
+}
+.term-instance.readonly .xterm-screen {
+  cursor: default;
+}
+.term-instance.readonly .xterm-cursor,
+.term-instance.readonly .xterm-cursor-layer {
+  display: none !important;
+}
+
+.xterm-viewport::-webkit-scrollbar {
+  display: none;
+}
+
+/* 移动端长按选择后显示的复制按钮 */
+.term-copy-btn {
+  position: absolute;
+  z-index: 10;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-family: var(--wt-font-ui);
+  background: var(--wt-accent);
+  color: #ffffff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  white-space: nowrap;
+}
+.term-copy-btn:active {
+  opacity: 0.8;
+}
+
+

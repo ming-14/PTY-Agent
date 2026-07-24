@@ -1,0 +1,43 @@
+# 共有配置 —— Daemon 与 Client 均需使用的常量
+
+[terminal]
+DEFAULT_COLS = 80
+DEFAULT_ROWS = 24
+
+[network]
+DAEMON_HOST = "127.0.0.1"
+
+[compression]
+GZIP_COMPRESS_LEVEL = 6
+
+[input_limit]
+MAX_SESSION_ID_LEN = 128
+MAX_COMMAND_LEN    = 65536
+MAX_INPUT_LEN      = 65536
+MAX_PATTERN_LEN    = 4096
+
+[auth]
+# 认证模式开关
+# ENABLE_TOKEN_AUTH=true:  服务端支持 Token 身份认证 + HMAC 消息签名（对称，双向）
+# ENABLE_PUBKEY_AUTH=true: 服务端支持 Ed25519 公私钥认证（非对称，仅请求方向）
+# 两者都开为双端口架构：明文端口（token 认证，SHM 同机发现）+ TLS 端口（pubkey 认证，跨机访问）
+# 仅开 pubkey 为 TLS-only 模式（无明文端口，无 SHM 发布，需客户端显式指定 host:port）
+# 都关为无认证（仅本地调试，明文端口）
+ENABLE_TOKEN_AUTH = true
+ENABLE_PUBKEY_AUTH = false
+
+# 客户端单选认证方式（客户端只能选一种，必须在上面 ENABLE 列表内）
+# "token":  使用 Token + HMAC（请求 HMAC 签 + 响应 HMAC 验，双向对称）
+# "pubkey": 使用 Ed25519 公私钥（请求 Ed25519 签，响应不验签，单向认证）
+# "none":   无认证（要求 ENABLE_TOKEN_AUTH 与 ENABLE_PUBKEY_AUTH 均为 false）
+CLIENT_AUTH_METHOD = "token"
+
+# 公私钥认证配置（ENABLE_PUBKEY_AUTH=true 时生效）
+PUBKEY_ALGORITHM       = "ed25519"                                  # 预留算法字段，当前仅支持 ed25519
+PUBKEY_PRIVATE_KEY_PATH = "~/.pty-agent/keys/id_ed25519"            # 客户端私钥
+PUBKEY_PUBLIC_KEY_PATH  = "~/.pty-agent/keys/id_ed25519.pub"        # 客户端公钥（参考）
+PUBKEY_AUTHORIZED_KEYS  = "~/.pty-agent/authorized_keys"            # 服务端授权公钥列表
+PUBKEY_KEY_DIR          = "~/.pty-agent/keys"                        # 密钥目录
+
+# TLS 服务端配置 → daemon.toml [auth] 段（仅守护进程使用）
+# TLS 客户端配置 → client.toml [auth] 段（仅客户端使用，跨机部署时各机器独立配置）

@@ -1,0 +1,75 @@
+.status-bar {
+  height: 24px;
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  background: var(--wt-tab-bar-bg);
+  border-top: 1px solid var(--wt-tab-border);
+  font-size: 11px;
+  color: var(--wt-tab-text-muted);
+  gap: 16px;
+  user-select: none;
+}
+
+.status-left,
+.status-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.status-right {
+  margin-left: auto;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.status-dot.connected { background: var(--wt-success); }
+.status-dot.disconnected { background: var(--wt-error); }
+.status-dot.connecting { background: #c19c00; }
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--wt-tab-text-muted);
+  font-family: var(--wt-font-ui);
+  gap: 16px;
+}
+.empty-state-icon {
+  display: flex;
+  opacity: 0.4;
+}
+.empty-state-text {
+  font-size: 14px;
+  opacity: 0.8;
+}
+.empty-state-shortcut {
+  font-size: 12px;
+  opacity: 0.6;
+}
+.empty-state-shortcut kbd {
+  background: rgba(0,0,0,0.04);
+  border: 1px solid var(--wt-tab-border);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-family: var(--wt-font-ui);
+  font-size: 11px;
+}
+.empty-new-btn {
+  margin-top: 4px;
+  padding: 8px 18px;
+  border-radius: 6px;
+  font-size: 14px;
+}

@@ -1,0 +1,10 @@
+{
+  "vnc_port": null,
+  "ws_port": null,
+  "admin_port": null,
+  "admin_host": "127.0.0.1",
+  "vnc_password": null,
+  "remove_wallpaper": true,
+  "log_level": "INFO",
+  "log_dir": ""
+}

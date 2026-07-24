@@ -1,0 +1,47 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+.coverage
+htmlcov/
+*.cover
+
+logs/
+*.log
+
+dist/
+build/
+*.egg-info/
+*.egg
+
+.eggs/
+venv/
+.env
+*.swp
+*.swo
+*~
+
+.dbg/
+.idea/
+.vscode/
+.trae/
+*.code-workspace
+
+.DS_Store
+Thumbs.db
+
+# PTY-Agent
+.pty-agent/
+
+# PyInstaller
+*.spec
+
+Compaction.txt
+Prompt.txt
+reference/
+
+# web-rime 构建产物
+node_modules/
+web-rime/plugin/.webpack-copy-tmp/

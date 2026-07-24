@@ -1,0 +1,243 @@
+/* ────────────────────────────────────────────────────────────
+ * VNC 远程桌面视图样式
+ *
+ * 功能域：远程桌面 tab 的控制工具条、状态指示、iframe viewer。
+ * 与 .terminal-frame 同级，在 #terminal-stage 内互斥显示。
+ * 复用全局 CSS 变量（--wt-*）以保持深/浅色主题一致。
+ * ──────────────────────────────────────────────────────────── */
+
+/* VNC 视图根容器：纵向 flex，填充 terminal-stage 内容区 */
+.vnc-frame {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--wt-term-bg);
+  border-radius: 4px;
+  /* 与 .terminal-frame 一致的外部投影（视觉边界分界线） */
+  box-shadow:
+    0 0 0 1px var(--wt-term-border),
+    0 4px 24px rgba(0,0,0,0.08);
+  overflow: hidden;
+}
+
+/* ── 控制工具条 ── */
+.vnc-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0 14px;
+  background: var(--wt-tab-bar-bg);
+  border-bottom: 1px solid var(--wt-tab-border);
+  font-family: var(--wt-font-ui);
+  font-size: 12px;
+  color: var(--wt-tab-text);
+  user-select: none;
+}
+
+.vnc-status-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* 状态指示点：各状态颜色与 .status-dot / .tab-icon 体系一致 */
+.vnc-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #a0a1a7; /* stopped 默认灰 */
+  transition: background 0.2s ease;
+}
+.vnc-status-dot.stopped   { background: #a0a1a7; }
+.vnc-status-dot.starting  { background: #c19c00; }
+.vnc-status-dot.stopping  { background: #c19c00; }
+.vnc-status-dot.running   { background: var(--wt-success); }
+.vnc-status-dot.error     { background: var(--wt-error); }
+.vnc-status-dot.disabled  { background: var(--wt-tab-text-muted); opacity: 0.5; }
+
+.vnc-status-text {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+
+/* 密码/端口信息区（仅运行中显示） */
+.vnc-info-area {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.vnc-info-item {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--wt-font-mono);
+  font-size: 12px;
+  color: var(--wt-tab-text);
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--wt-dropdown-hover);
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* 密码项可点击复制 */
+#vnc-info-password {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+@media (hover: hover) {
+  #vnc-info-password:hover {
+    background: var(--wt-dropdown-border);
+  }
+}
+
+.vnc-action-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* 启动/停止按钮：在 .btn 基础上稍小 */
+.btn-vnc-action {
+  height: 28px;
+  padding: 0 14px;
+  font-size: 12px;
+  border-radius: 5px;
+}
+
+/* ── Viewer 容器：填充工具条下方剩余空间 ── */
+.vnc-viewer-container {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--wt-term-bg); /* 占位时跟随主题，流播放时被 iframe 覆盖 */
+}
+
+/* 占位符：未启动/错误时居中提示（参考 .empty-state） */
+.vnc-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--wt-tab-text-muted);
+  font-family: var(--wt-font-ui);
+  text-align: center;
+  padding: 24px;
+}
+
+.vnc-placeholder-icon {
+  display: flex;
+  opacity: 0.4;
+}
+
+.vnc-placeholder-text {
+  font-size: 13px;
+  opacity: 0.8;
+  max-width: 360px;
+  word-break: break-word;
+}
+
+/* noVNC iframe：填满 viewer 容器 */
+.vnc-iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: none;
+  margin: 0;
+  padding: 0;
+  background: #1a1a1a;
+}
+
+/* ── VNC tab（复用 .tab，仅补充运行点颜色已由 .tab-icon.running 提供） ── */
+.vnc-tab {
+  /* 复用 .tab 全部样式，此处无需额外覆盖 */
+}
+
+/* ── 触摸设备适配 ── */
+body.touch-device .vnc-toolbar {
+  height: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+}
+body.touch-device .btn-vnc-action {
+  height: 34px;
+  padding: 0 18px;
+  font-size: 13px;
+}
+body.touch-device .vnc-info-item {
+  padding: 5px 10px;
+  font-size: 13px;
+}
+
+/* ────────────────────────────────────────────────────────────
+ * 全屏自动隐藏模式（tab-bar + VNC/FastScreen 工具条共用）
+ *
+ * 触发条件（全部满足）：对应 tab 激活 + 浏览器全屏 + sidebar 收起
+ * - 终端活跃会话：隐藏 tab-bar（历史会话不隐藏）
+ * - VNC：额外要求运行中
+ * - FastScreen：额外要求流已连接（state.fastscreen.connected）
+ *
+ * 效果：标签栏收起为 3px 半透明细条（触发区），工具条高度归零。
+ * 鼠标端：悬停顶部细条时展开，移开后延时 1.5s 自动收起。
+ * 触摸端：点击顶部细条（含 ::after 扩大触摸区）展开，延时自动收起。
+ * ──────────────────────────────────────────────────────────── */
+
+/* 标签栏收起：3px 半透明细条 */
+.tab-bar.autohide-collapsed {
+  height: 3px;
+  min-height: 3px;
+  overflow: hidden;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.12);
+  background: rgba(128, 128, 128, 0.1);
+  cursor: default;
+  transition: height 0.25s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+/* 工具条收起：高度归零（!important 覆盖 touch-device 的 44px） */
+.vnc-toolbar.autohide-collapsed,
+.fs-toolbar.autohide-collapsed {
+  height: 0 !important;
+  min-height: 0 !important;
+  overflow: hidden;
+  border-bottom: none;
+  padding: 0 !important;
+  transition: height 0.25s ease;
+}
+
+/* 触摸端：收起时用 ::after 伪元素扩大触摸区到 16px，方便点击展开 */
+/* 显式设置 height/min-height 覆盖 responsive.css 中 body.touch-device .tab-bar 的 40px */
+body.touch-device .tab-bar.autohide-collapsed {
+  height: 3px;
+  min-height: 3px;
+  position: relative;
+  overflow: visible;  /* 覆盖 overflow: hidden，让 ::after 可见可点击 */
+}
+body.touch-device .tab-bar.autohide-collapsed::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 16px;       /* 扩大触摸区到 16px */
+  z-index: 10;
+  cursor: pointer;
+}
