@@ -1,0 +1,46 @@
+# -*- coding: utf-8 -*-
+
+# ===================== 运行时核心依赖 =====================
+
+# 认证：Ed25519 公私钥签名、OpenSSH 密钥格式解析（ENABLE_PUBKEY_AUTH=true 时需要）
+cryptography>=41.0
+
+# Web 前端 / 终端网关 (FastAPI 应用、WebSocket 服务)
+fastapi>=0.111
+uvicorn[standard]>=0.30
+starlette>=0.37
+websockets>=12.0
+
+# 屏幕捕获网关 (src/fastscreen/server.py)：基于 aiohttp 的 HTTP/WS 服务
+aiohttp>=3.9
+
+# H.264 视频流编码 (src/fastscreen/streamers/encoding/h264.py)
+#   av    — PyAV，封装 ffmpeg 做视频编码/解码
+#   numpy — 帧数据数值处理
+numpy>=1.24
+av>=11.0
+
+# ===================== 可选依赖（缺失时自动降级） =====================
+# 以下包在代码中均以 try/except ImportError 保护，未安装时相关功能降级，不影响主流程。
+# 按需取消注释安装即可。
+
+# PySide6   — 本地 GUI 窗口 (src/process/gui.py)
+PySide6>=6.0
+
+# pyte      — 终端模拟/回放 (src/terminal)，缺失时终端网格功能不可用
+pyte>=0.8
+
+# wcwidth   — 终端字符显示宽度计算（CJK/零宽字符），通常与 pyte 配合使用
+wcwidth>=0.2
+
+# scour     — SVG 压缩（--svg-compression-level 1/2），缺失时降级为 level 0
+scour
+
+# Pillow    — PNG/JPG/BMP 终端快照渲染 (src/client/renderer.py)，缺失时仅支持 .svg
+Pillow>=10.0
+
+# psutil    — 系统 CPU/内存统计 (src/web/.../stats_provider.py) 及调试脚本 (dumps/)
+psutil>=5.9
+
+# ===================== 测试依赖 =====================
+pytest>=7.0

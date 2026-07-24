@@ -1,0 +1,528 @@
+/**
+ * 终端基础设施：终端生命周期（创建、销毁、输出、只读状态）
+ */
+
+import { state, getSessionFontSize, clearSessionFontSize, isSizeUILocked } from '../../domain/state.js';
+import { debug } from '../../domain/logger.js';
+import { $ } from '../domUtils.js';
+import { wsSend } from '../wsClient.js';
+import { DEFAULT_FONT_SIZE, DEFAULT_COLS, DEFAULT_ROWS } from '../../domain/constants.js';
+import { currentTheme } from '../storage.js';
+import { applyTerminalSizeFromSession } from './shared.js';
+import { trackAppMouseMode, getInitialMouseOverride } from './mouseMode.js';
+import { shouldTrackFocus } from '../rimeManager.js?v=42';
+import { trackCursorSequences } from './cursorDebug.js';
+import { attachCustomKeyEventHandler, setLineMode, handleLineModeInput } from './input.js';
+export { setLineMode };
+import { applyTerminalFrameSize, applySessionFrameRatio } from './scale.js';
+import { isTermAtBottom, scrollTermToBottom, scrollTermToTop } from './scroll.js';
+import { bindTerminalEvents } from './events.js';
+import { getTerminalFontFamily } from '../fontLoader.js';
+
+export function ensureTerminal(sid) {
+  if (state.termInstances[sid]) return;
+
+  const s = state.sessions[sid];
+  const container = $('terminal-container');
+  const div = document.createElement('div');
+  div.id = 'term-' + sid;
+  div.className = 'term-instance';
+  container.appendChild(div);
+
+  // xterm.js 需要在可见容器上初始化才能拿到正确尺寸，
+  // 临时让 frame 和当前 div 可见，初始化完成后再恢复状态。
+  const frame = $('terminal-frame');
+  const empty = $('empty-state');
+  const wasFrameHidden = frame && getComputedStyle(frame).display === 'none';
+  if (wasFrameHidden) {
+    if (empty) empty.style.display = 'none';
+    frame.style.display = 'block';
+  }
+  div.classList.add('active');
+
+  const Terminal = window.Terminal;
+  const WebLinksAddon = window.WebLinksAddon;
+  const FitAddon = window.FitAddon;
+
+  // 自适应模式：先以默认尺寸初始化，term.open 后由 FitAddon.fit() 计算实际尺寸
+  // 其它模式：使用 applyTerminalSizeFromSession 返回的目标尺寸
+  const size = applyTerminalSizeFromSession(s);
+  const initCols = size ? size.cols : (s.cols || DEFAULT_COLS);
+  const initRows = size ? size.rows : (s.rows || DEFAULT_ROWS);
+
+  const term = new Terminal({
+    theme: currentTheme(),
+    fontFamily: getTerminalFontFamily(),
+    // v9: 字号按会话独立维护（state.sessionFontSizes[sid]）。
+    // 新会话首次打开时未设置 → getSessionFontSize 返回 DEFAULT_FONT_SIZE，
+    // 随后 ensureTerminal 末尾的 applySessionFrameRatio 会用渲染后的 cell 尺寸
+    // 反算 frameRatio 并保存；再次打开该会话时按保存的 ratio 反算字号恢复框大小。
+    fontSize: getSessionFontSize(sid),
+    fontWeight: 'normal',
+    cursorBlink: true,
+    cursorStyle: 'bar',
+    cursorInactiveStyle: 'block',
+    scrollback: 10000,
+    allowProposedApi: true,
+    allowTransparency: true,
+    screenReaderMode: false,
+    rightClickSelectsWord: false,
+    macOptionIsMeta: false,
+    cols: initCols,
+    rows: initRows,
+    altClickMovesCursor: false,
+  });
+
+  if (WebLinksAddon) {
+    term.loadAddon(new WebLinksAddon.WebLinksAddon());
+  }
+  // FitAddon：与 ttyd 一致，使用官方 addon 计算自适应尺寸
+  // 替代旧版手动 measureTerminalCellSize + computeAdaptiveSize 的方式
+  let fitAddon = null;
+  if (FitAddon && FitAddon.FitAddon) {
+    fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+  }
+  term.open(div);
+
+  const inst = {
+    term, div, lineMode: false, lineBuffer: '',
+    appMouseMode: false, appMouseModeDecset: false, appMouseModeDaemon: false,
+    appMouseModePs: null, appMouseEncoding: 'sgr',
+    appAlternateScroll: false, appAlternateBuffer: false,
+    mouseInputOverride: getInitialMouseOverride(s && s.uid),
+    _pressedMouseButton: null, _focused: false, _touchAnchor: null,
+    _wheelAccum: 0, _vtWheelAccum: 0,
+    fitAddon,
+    // 方案 G: resize 期间缓冲 ConPTY output，避免 partial repaint 污染 xterm.js
+    // _resizePending=true 时 handleOutput 将 output 推入 _resizeBuffer 而非直接写入
+    // resize_complete 重建 buffer 后丢弃缓冲（snapshot 已含 resize 期间的有效输出）
+    // _resizeStartedAt 用于超时保护：2 秒未收到匹配 resize_complete 则强制清除
+    _resizePending: false,
+    _resizeBuffer: [],
+    _resizeStartedAt: 0,
+  };
+
+  trackAppMouseMode(term, inst);
+  trackCursorSequences(term, sid);
+  attachCustomKeyEventHandler(term, sid);
+  bindTerminalEvents(term, inst, sid);
+
+  try {
+    term.resize(initCols, initRows);
+  } catch (e) {
+    console.error('initial resize failed', e);
+  }
+
+  // 若当前会话不是活动标签，恢复隐藏状态
+  if (sid !== state.activeTab) {
+    div.classList.remove('active');
+    if (wasFrameHidden) {
+      frame.style.display = 'none';
+      if (empty) empty.style.display = 'flex';
+    }
+  }
+
+  term.onData(data => {
+    const s = state.sessions[sid];
+    const inst = state.termInstances[sid];
+
+    // 鼠标/焦点序列过滤（最后一道防线）：
+    // xterm.js 内置的事件处理可能绕过 capture 阶段的 stopPropagation，
+    // 仍通过 term.onData 生成转义序列。此处按用户开关拦截：
+    // - 用户关闭鼠标输入（mouseInputOverride=false）：阻止 SGR 鼠标序列发送
+    const c0 = data.charCodeAt(0);
+    const c1 = data.charCodeAt(1);
+    const c2 = data.charCodeAt(2);
+    if (c0 === 0x1b && c1 === 0x5b) {
+      if (c2 === 0x3c) {
+        // \x1b[< — SGR 鼠标编码
+        debug('mouse', 'onData SGR: %s', JSON.stringify(data));
+        const dbg = document.getElementById('terminal-mouse-debug');
+        if (dbg) dbg.textContent = data;
+        if (inst && inst.appMouseMode && !inst.mouseInputOverride) {
+          debug('mouse', 'onData SGR dropped: mouseInputOverride off sid=%s', sid);
+          return;
+        }
+      } else if (c2 === 0x4d) {
+        // \x1b[M — X10/UTF-8 鼠标编码
+        debug('mouse', 'onData X10 mouse: %s', JSON.stringify(data));
+      } else if (c2 === 0x49 || c2 === 0x4f) {
+        // \x1b[I / \x1b[O — 焦点报告（Focus In/Out）
+        debug('focus', 'onData focus report: %s', JSON.stringify(data));
+        if (!shouldTrackFocus(sid)) {
+          debug('focus', 'onData focus report dropped: keyboard+mouse disabled sid=%s', sid);
+          return;
+        }
+      }
+    }
+
+    if (!s || !s.running || s.closing) {
+      debug('terminal', 'onData dropped: sid=%s running=%s closing=%s', sid, s && s.running, s && s.closing);
+      return;
+    }
+    if (inst && inst._readonly) {
+      debug('terminal', 'onData ignored: sid=%s readonly (history)', sid);
+      return;
+    }
+    if (inst && inst.lineMode && data) {
+      handleLineModeInput(sid, data);
+    } else {
+      wsSend({ type: 'input', session_id: sid, data: data });
+    }
+  });
+
+  term.onResize(({ cols, rows }) => {
+    // v5 单路径同步（与 ttyd 一致）：
+    //   所有 resize 都通过此回调统一发送给守护进程
+    //   不再有 _skipResizeSend 标志位（旧的双路径是光标错位根因之一）
+    //   FitAddon.fit() / 用户切模式 / 窗口 resize 都会触发此回调
+    debug('terminal', 'onResize sid=%s cols=%s rows=%s', sid, cols, rows);
+    // frame 尺寸需跟随 cell 像素变化（fontSize 不变时 cell 尺寸也不变，但 cols/rows 变了）
+    // 用 requestAnimationFrame 避免在 resize 内同步触发布局抖动
+    requestAnimationFrame(() => {
+      try { applyTerminalFrameSize(sid); } catch (_) {}
+    });
+    const s2 = state.sessions[sid];
+    if (!s2 || !s2.running || s2.history || s2.closing) return;
+
+    // 问题2：本端未持自适应锁时，禁止向后端发送 resize。
+    // 被锁期间 onResize 仍可能由 FitAddon.fit() / ResizeObserver / 窗口 resize 触发，
+    // 若放行会导致后端 ResizeHandler 拒绝并回弹"另一端正在自适应控制尺寸，请先接管"错误提示。
+    // 直接 return：不设 _resizePending、不更新 s2.cols/rows、不发 wsSend，
+    // 后续由 size_mode_changed 触发的 reapplyAllTerminalSizes 将 xterm 尺寸纠正回 fixed 模式。
+    if (isSizeUILocked(sid)) {
+      debug('terminal', 'onResize skipped: sid=%s locked by another connection', sid);
+      return;
+    }
+
+    // 方案 G: 标记 resize 进行中，缓冲后续 ConPTY output。
+    // rapid adaptive resize 场景：多次 onResize 连续触发时，前一次 resize 期间缓冲的
+    // output 对应旧尺寸，已被新 resize 取代 → 丢弃旧缓冲，重新开始收集。
+    if (inst._resizePending && inst._resizeBuffer.length > 0) {
+      debug('terminal',
+            'onResize sid=%s: nested resize, discard %d buffered outputs (old size)',
+            sid, inst._resizeBuffer.length);
+      inst._resizeBuffer = [];
+    }
+    inst._resizePending = true;
+    inst._resizeStartedAt = Date.now();
+
+    // 更新会话状态缓存
+    s2.cols = cols;
+    s2.rows = rows;
+    wsSend({ type: 'resize', session_id: sid, cols: cols, rows: rows });
+  });
+
+  state.termInstances[sid] = inst;
+  setLineMode(sid);
+
+  // 历史会话设为只读，禁止焦点/输入反馈
+  applyReadonlyState(sid, !!(s && s.history));
+
+  // 初始化完成后立即应用一次 frame 尺寸，确保首次渲染正确
+  applyTerminalFrameSize(sid);
+
+  // v9: 初始化/恢复该会话的 frameRatio。
+  // - 新会话首次打开（frameRatio=null）：用当前字号渲染后的 frame 尺寸反算 ratio 并保存
+  // - 已有 ratio（再次打开该会话）：按当前 stage 尺寸 + ratio 反算字号并应用
+  // - adaptive 模式：同样按 ratio 设 frame 尺寸再 fit()，不再填满 stage
+  // 用 rAF 等一帧确保 xterm 内部 dimensions 已刷新，能读到正确 cell 尺寸
+  requestAnimationFrame(() => {
+    try { applySessionFrameRatio(sid); } catch (e) {
+      debug('terminal', 'ensureTerminal applySessionFrameRatio failed sid=%s: %s', sid, e);
+    }
+  });
+}
+
+export function applyReadonlyState(sid, readonly) {
+  const inst = state.termInstances[sid];
+  if (!inst) return;
+  inst._readonly = readonly;
+  inst.term.options.disableStdin = readonly;
+  inst.div.classList.toggle('readonly', readonly);
+  inst.div.tabIndex = readonly ? -1 : 0;
+  // 历史会话隐藏光标：透明颜色 + ANSI DECTCEM 关闭
+  const theme = { ...inst.term.options.theme };
+  theme.cursor = readonly ? 'transparent' : (currentTheme().cursor || '#cccccc');
+  inst.term.options.theme = theme;
+  if (readonly) {
+    inst._focused = false;
+    try {
+      const frame = $('terminal-frame');
+      if (frame) frame.classList.remove('focused');
+    } catch (_) {}
+    try { inst.term.blur(); } catch (_) {}
+    try { inst.term.write('\x1b[?25l'); } catch (_) {}
+  }
+}
+
+/**
+ * 恢复 scrollback 并写入 snapshot（用于首次订阅/resize_complete 场景）
+ *
+ * Phase 3: 守护进程返回 scrollback + snapshot，前端需要：
+ *   1. \x1b[3J 清空 scrollback
+ *   2. \x1b[2J\x1b[1;1H 清空可见屏幕 + 光标定位到 (0, 0)
+ *   3. 写入 scrollback 行 + 额外 \r\n 推入 scrollback 区
+ *   4. \x1b[2J + snapshot 清空可见屏幕 + 写入 snapshot
+ *
+ * 视口修复（解决自适应模式滚动跳回顶端 bug）：
+ * - \x1b[3J 会同步重置 xterm.js ydisp=0（视口到顶端）
+ * - term.write 是异步的，写入内容前视口停在顶端，用户看到"跳回顶端"
+ * - "过一会自己好了" = write 完成后视口跟随到底部
+ * - 修复：在最后一次 term.write 的 callback 中执行 scroll，确保 write 完成后再滚动
+ *
+ * @param {Terminal} term xterm.js 终端实例
+ * @param {string[]} scrollbackLines scrollback 行的 ANSI 字符串数组
+ * @param {string} snapshot 后端返回的屏幕快照（含 VT 序列与光标定位）
+ * @param {boolean} isHistory 是否历史会话（true 滚到顶端，false 滚到底部）
+ */
+export function restoreScrollbackAndSnapshot(term, scrollbackLines, snapshot, isHistory = false) {
+  const hasScrollback = !!(scrollbackLines && scrollbackLines.length > 0);
+
+  // 视口修复：write 完成后再 scroll，避免 \x1b[3J 重置 ydisp=0 后视口停在顶端
+  const doScroll = () => {
+    try {
+      if (isHistory) scrollTermToTop(term);
+      else scrollTermToBottom(term);
+    } catch (_) {}
+    // 诊断：write 完成后读取 xterm.js 实际光标位置（resize 光标排查）
+    try {
+      const buf = term.buffer.active;
+      const bx = buf.cursorX;
+      const by = buf.cursorY;
+      const blen = buf.length;
+      const ydisp = buf.baseY;  // viewport 顶部在 buffer 中的行号
+      // 读取光标所在行内容（getLine 使用绝对 buffer 索引 = baseY + 视口相对 y）
+      const cursorLine = buf.getLine(ydisp + by);
+      const lineText = cursorLine ? cursorLine.translateToString(true) : '';
+      // 搜索视口内 prompt 行（含 PTY-Agent>），promptY 为视口内行号
+      let promptY = -1;
+      const R = term.rows;
+      for (let r = 0; r < R; r++) {
+        const line = buf.getLine(ydisp + r);
+        const text = line ? line.translateToString(true) : '';
+        if (text.includes('PTY-Agent>')) {
+          promptY = r;
+          break;
+        }
+      }
+      // 诊断：打印视口内最后 6 行内容
+      const tailRows = [];
+      for (let r = Math.max(0, R - 6); r < R; r++) {
+        const line = buf.getLine(ydisp + r);
+        const text = line ? line.translateToString(true).trim() : '';
+        tailRows.push(`[${r}]=${text.slice(0, 60)}`);
+      }
+      debug('terminal',
+            'restoreScrollbackAndSnapshot AFTER WRITE: cursor=(x=%d y=%d) buffer.length=%d ydisp=%d | cursorLine=%j | promptY=%d | tailRows=%s',
+            bx, by, blen, ydisp, lineText.trim().slice(0, 80), promptY, tailRows.join(' | '));
+    } catch (e) {
+      debug('terminal', 'restoreScrollbackAndSnapshot AFTER WRITE: read cursor failed: %s', e);
+    }
+  };
+
+  // 诊断：记录入参摘要
+  debug('terminal',
+        'restoreScrollbackAndSnapshot: hasScrollback=%s sb_lines=%d snapshot_len=%d isHistory=%s term=%dx%d',
+        hasScrollback, scrollbackLines ? scrollbackLines.length : 0,
+        snapshot ? snapshot.length : 0, isHistory, term.cols, term.rows);
+  if (hasScrollback) {
+    // 诊断：scrollback 首/末行内容
+    try {
+      const stripAnsi = (s) => s.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
+      debug('terminal', 'restoreScrollback sb_first=%j sb_last=%j',
+            stripAnsi(scrollbackLines[0]).trim(),
+            stripAnsi(scrollbackLines[scrollbackLines.length - 1]).trim());
+    } catch (_) {}
+  }
+
+  if (hasScrollback) {
+    // 模式 A：有 scrollback，清空 + 恢复 + 写 snapshot
+    term.write('\x1b[3J\x1b[2J\x1b[1;1H');
+
+    const R = term.rows;
+    const parts = [];
+    for (const line of scrollbackLines) {
+      parts.push(line);
+      parts.push('\r\n');
+    }
+    for (let i = 0; i < R - 1; i++) {
+      parts.push('\r\n');
+    }
+    term.write(parts.join(''));
+    debug('terminal', 'restoreScrollback: wrote %d lines + %d extra \\r\\n',
+          scrollbackLines.length, R - 1);
+
+    if (snapshot && snapshot.length > 0) {
+      // 最后一次 write 用 callback，确保 scroll 在 write 完成后执行
+      term.write('\x1b[2J' + snapshot, doScroll);
+    } else {
+      // 无 snapshot，用空 write 触发 callback
+      term.write('', doScroll);
+    }
+  } else {
+    // 模式 B：无 scrollback，只清可见屏幕 + 写 snapshot
+    debug('terminal', 'restoreScrollback: no capture, preserve existing scrollback');
+    if (snapshot && snapshot.length > 0) {
+      term.write('\x1b[2J\x1b[1;1H' + snapshot, doScroll);
+    } else {
+      doScroll();
+    }
+  }
+
+  try { term.refresh(0, term.rows - 1); } catch (_) {}
+}
+
+export function replayPending(sid) {
+  const s = state.sessions[sid];
+  const inst = state.termInstances[sid];
+  if (!s || !inst) return;
+  const isHistory = s.history || false;
+
+  // Phase 3: 首次订阅时守护进程返回 scrollback（GridScreen 历史区）+ replay（visible snapshot）
+  // 写入流程：
+  //   1. \x1b[3J\x1b[2J\x1b[1;1H 清空 scrollback + 可见屏幕 + 光标定位到 (0, 0)
+  //   2. 写入 scrollback 行 + (R-1) 个 \r\n 推入 scrollback 区
+  //   3. \x1b[2J + replay 清空可见屏幕 + 写入 snapshot（含每行 CSI row;col H 定位 + 末尾光标序列）
+  //
+  // C2 改造（已订阅会话切回）：
+  // - pendingScrollback + pendingReplay 均为空（handlers.py 已订阅时返回 ""）
+  // - 不 clear()，保留 xterm.js 实例的 scrollback
+  if (s.pendingScrollback && s.pendingReplay) {
+    // Phase 3: 首次订阅，有 scrollback + replay
+    const scrollbackLines = s.pendingScrollback.split('\r\n');
+    // 去除末尾空字符串（capture_scrollback 末尾 \r\n 导致 split 产生空元素）
+    if (scrollbackLines.length > 0 && scrollbackLines[scrollbackLines.length - 1] === '') {
+      scrollbackLines.pop();
+    }
+    try {
+      // isHistory 传入：restoreScrollbackAndSnapshot 内部会在 write 完成后
+      // 通过 callback 执行正确的 scroll（避免 \x1b[3J 后视口停在顶端）
+      restoreScrollbackAndSnapshot(inst.term, scrollbackLines, s.pendingReplay, isHistory);
+      debug('terminal', 'replayPending sid=%s: wrote scrollback=%d lines + replay len=%d',
+            sid, scrollbackLines.length, s.pendingReplay.length);
+    } catch (e) {
+      console.error('replayPending: restoreScrollbackAndSnapshot failed', e);
+      // 回退：只写 replay
+      try { inst.term.clear(); } catch (_) {}
+      inst.term.write(s.pendingReplay);
+    }
+    s.pendingScrollback = null;
+    s.pendingReplay = null;
+    // scroll 已由 restoreScrollbackAndSnapshot 内部 callback 处理，无需重复调用
+  } else if (s.pendingReplay) {
+    // C2: 首次订阅但无 scrollback（旧守护进程兼容或 scrollback 为空）
+    try { inst.term.clear(); } catch (e) {}
+    inst.term.write(s.pendingReplay);
+    s.pendingReplay = null;
+    s.pendingScrollback = null;
+    if (isHistory) scrollTermToTop(inst.term);
+    else scrollTermToBottom(inst.term);
+  } else if (s.pendingSnapshot) {
+    // 历史会话回放
+    try { inst.term.clear(); } catch (e) {}
+    inst.term.write(s.pendingSnapshot);
+    scrollTermToTop(inst.term);
+    s.pendingSnapshot = null;
+  }
+
+  if (Array.isArray(s.pendingOutput) && s.pendingOutput.length) {
+    for (const text of s.pendingOutput) inst.term.write(text);
+    s.pendingOutput = [];
+    if (!isHistory) scrollTermToBottom(inst.term);
+    setTimeout(() => updateTerminalSnapshot(sid), 50);
+  }
+}
+
+export function queuePendingOutput(sid, text) {
+  const s = state.sessions[sid];
+  if (!s) return;
+  if (!Array.isArray(s.pendingOutput)) s.pendingOutput = [];
+  s.pendingOutput.push(text);
+}
+
+export function handleOutput(msg) {
+  const sid = msg.sessionId;
+  const inst = state.termInstances[sid];
+  let text = String(msg.data || '');
+  debug('terminal', 'handleOutput sid=%s inst=%s activeTab=%s len=%d',
+        sid, !!inst, state.activeTab, text.length);
+  if (inst) {
+    // 方案 G: resize 进行中时缓冲 output，不直接写入 xterm.js。
+    // 原因：ConPTY 在 resize 期间会发出针对旧/中间尺寸的 partial repaint
+    // （如 \e[24;34H\e[J...），直接写入会污染 xterm.js 内部状态，导致
+    // resize_complete 重建后仍出现错位/吞输出。
+    // 缓冲的 output 会在 resize_complete 重建后被丢弃 —— 因为后端 pyte.Screen
+    // 持续 feed ConPTY output，resize 期间的有效输出已包含在 snapshot 中，
+    // 缓冲的只是冗余的 partial repaint。
+    if (inst._resizePending) {
+      // 超时保护：2 秒内未收到匹配的 resize_complete，强制清除并丢弃缓冲。
+      // 防止 WebSocket 断开/后端异常导致 _resizePending 永久卡住（用户看不到任何输出）。
+      if (Date.now() - inst._resizeStartedAt > 2000) {
+        debug('terminal',
+              'handleOutput sid=%s: resize pending timeout (%dms), discard %d buffered, resume normal',
+              sid, Date.now() - inst._resizeStartedAt, inst._resizeBuffer.length);
+        inst._resizePending = false;
+        inst._resizeBuffer = [];
+        // 继续走下面的正常写入路径（不 return）
+      } else {
+        inst._resizeBuffer.push(text);
+        debug('terminal',
+              'handleOutput sid=%s BUFFERED (resize pending) len=%d buf_count=%d',
+              sid, text.length, inst._resizeBuffer.length);
+        return;
+      }
+    }
+    const s = state.sessions[sid];
+    const isHistory = s && s.history;
+    // C2 改造（模拟 WT）：不再排队，直接写入对应 xterm 实例
+    // xterm.js 在 display:none 时 write 仍正常累积 scrollback（已验证）
+    // 这样切回会话时 scrollback 完整，无需 replay
+    const wasAtBottom = isTermAtBottom(inst.term);
+    debug('terminal', 'handleOutput write sid=%s history=%s wasAtBottom=%s divActive=%s',
+          sid, isHistory, wasAtBottom, inst.div.classList.contains('active'));
+    inst.term.write(text);
+    if (isHistory) scrollTermToTop(inst.term);
+    else if (wasAtBottom && state.activeTab === sid) scrollTermToBottom(inst.term);
+    setTimeout(() => updateTerminalSnapshot(sid), 50);
+  } else {
+    queuePendingOutput(sid, text);
+  }
+}
+
+export function updateTerminalSnapshot(sid) {
+  const targetSid = sid || state.activeTab;
+  if (!targetSid) return;
+  const inst = state.termInstances[targetSid];
+  if (!inst) return;
+  try {
+    const buf = inst.term.buffer.active;
+    const rows = inst.term.rows;
+    const lines = [];
+    for (let r = 0; r < rows; r++) {
+      const line = buf.getLine(r);
+      if (line) lines.push(line.translateToString(true));
+    }
+    const snap = document.getElementById('terminal-snapshot');
+    if (snap) snap.textContent = lines.join('\n');
+  } catch (e) {}
+}
+
+export function applyTheme() {
+  const theme = currentTheme();
+  for (const sid of Object.keys(state.termInstances)) {
+    state.termInstances[sid].term.options.theme = theme;
+  }
+}
+
+export function disposeTerminal(sid) {
+  const inst = state.termInstances[sid];
+  if (inst) {
+    try { inst.term.dispose(); } catch (e) {}
+    inst.div.remove();
+    delete state.termInstances[sid];
+  }
+  // v9: 清理运行时字号（frameRatio 已持久化在 sessionSizeConfigs，不受影响）
+  clearSessionFontSize(sid);
+}

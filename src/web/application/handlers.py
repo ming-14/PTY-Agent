@@ -1,0 +1,1112 @@
+"""WebSocket 消息用例处理器。
+
+每个处理器对应一种前端消息类型，负责执行业务逻辑并返回响应消息。
+所有处理器只依赖应用端口和领域实体，不依赖具体框架或基础设施。
+"""
+
+import logging
+import shlex
+from abc import ABC, abstractmethod
+from typing import Any, Callable, Optional
+
+from ...config.common import IS_WINDOWS, MAX_COMMAND_LEN, MAX_INPUT_LEN, MAX_SESSION_ID_LEN, DEFAULT_COLS, DEFAULT_ROWS
+from ...protocol.response import Response
+from ..domain.entities import SessionDetail
+from ...vnc.ports import VncServicePort
+from ...fastscreen.ports import FastScreenServicePort
+from .ports import (
+    ConnectionContext,
+    EventPublisher,
+    HistoryRepository,
+    OutboundMessageChannel,
+    SessionRepository,
+    ShellProvider,
+    SystemStatsProvider,
+    ThreadExecutor,
+)
+from .services import MessageEncoderService, SubscriptionService
+from .adaptive_lock import AdaptiveLockService
+
+_logger = logging.getLogger("pty-web")
+
+
+def _split_windows_command(cmd: str) -> list:
+    """按 Windows 命令行规则拆分字符串，正确处理引号。
+
+    与 shlex.split(posix=False) 不同，本函数会去掉参数两端的引号，
+    避免 PTY 模式下把引号当作路径的一部分传给子进程。
+    """
+    args = []
+    current = []
+    in_quotes = False
+    i = 0
+    n = len(cmd)
+    while i < n:
+        c = cmd[i]
+        if c == '"':
+            # 连续的引号在 Windows 命令行里表示一个转义引号
+            if i + 1 < n and cmd[i + 1] == '"':
+                current.append('"')
+                i += 2
+                continue
+            in_quotes = not in_quotes
+        elif c in (' ', '\t') and not in_quotes:
+            if current:
+                args.append(''.join(current))
+                current = []
+        else:
+            current.append(c)
+        i += 1
+    if current:
+        args.append(''.join(current))
+    return args
+
+
+def _command_to_string(command) -> str:
+    """将命令转换为可显示的字符串。"""
+    return command if isinstance(command, str) else " ".join(command)
+
+
+class HandlerContext:
+    """处理器共享的上下文对象。"""
+
+    def __init__(
+        self,
+        session_repo: SessionRepository,
+        history_repo: Optional[HistoryRepository],
+        system_stats: SystemStatsProvider,
+        shell_provider: ShellProvider,
+        executor: ThreadExecutor,
+        encoder: MessageEncoderService,
+        subscription: SubscriptionService,
+        publisher: EventPublisher,
+        connection: ConnectionContext,
+        channel: OutboundMessageChannel,
+        enqueue: Callable[[dict], None],
+        adaptive_lock: Optional[AdaptiveLockService] = None,
+        vnc_service: Optional[VncServicePort] = None,
+        fastscreen_service: Optional[FastScreenServicePort] = None,
+    ):
+        self.session_repo = session_repo
+        self.history_repo = history_repo
+        self.system_stats = system_stats
+        self.shell_provider = shell_provider
+        self.executor = executor
+        self.encoder = encoder
+        self.subscription = subscription
+        self.publisher = publisher
+        self.connection = connection
+        self.channel = channel
+        self.enqueue = enqueue
+        self.adaptive_lock = adaptive_lock
+        self.vnc_service = vnc_service
+        self.fastscreen_service = fastscreen_service
+
+
+class MessageHandler(ABC):
+    """消息处理器抽象基类。"""
+
+    @abstractmethod
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        """处理消息并返回响应消息列表。"""
+
+
+# --------------------------------------------------------------------------- #
+# 具体处理器
+# --------------------------------------------------------------------------- #
+
+
+class PingHandler(MessageHandler):
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        return [Response.pong()]
+
+
+class ListSessionsHandler(MessageHandler):
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        sessions = ctx.session_repo.list_sessions()
+        return [
+            Response.ws_session_list([
+                {
+                    "id": s.id,
+                    "uid": s.uid,
+                    "command": s.command,
+                    "running": s.running,
+                    "startTime": s.start_time,
+                }
+                for s in sessions
+            ])
+        ]
+
+
+class ListShellsHandler(MessageHandler):
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        try:
+            shells = ctx.shell_provider.list_shells()
+            available = {name: path for name, path in shells.items() if path}
+            return [Response.ws_shell_list(available)]
+        except Exception as e:
+            _logger.warning("list_shells failed: %s", e)
+            return [Response.ws_shell_list({})]
+
+
+class SystemStatsHandler(MessageHandler):
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        stats = await ctx.system_stats.get_stats()
+        return [Response.ws_system_stats(stats.cpu, stats.memory)]
+
+
+class ListHistoryHandler(MessageHandler):
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        if not ctx.history_repo:
+            return [Response.ws_history_list([])]
+        sessions = ctx.history_repo.list_sessions()
+        return [
+            Response.ws_history_list([
+                {
+                    "id": s.id,
+                    "command": s.command,
+                    "ptyType": s.pty_type,
+                    "encoding": s.encoding,
+                    "startTime": s.start_time,
+                    "endTime": s.end_time,
+                    "exitCode": s.exit_code,
+                    "errorMessage": s.error_message,
+                    "running": False,
+                }
+                for s in sessions
+            ])
+        ]
+
+
+class HistoryDetailHandler(MessageHandler):
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        if not ctx.history_repo:
+            return [Response.error("no history store")]
+        sid = msg.get("session_id", "")
+        detail = ctx.history_repo.get_session_detail(sid)
+        if not detail:
+            return [Response.error(f"session '{sid}' not found in history")]
+        payload = {
+            "type": "history_detail",
+            "id": detail.id,
+            "uid": detail.uid,
+            "command": detail.command,
+            "ptyType": detail.pty_type,
+            "cols": detail.cols,
+            "rows": detail.rows,
+            "encoding": detail.encoding,
+            "startTime": detail.start_time,
+            "endTime": detail.end_time,
+            "exitCode": detail.exit_code,
+            "errorMessage": detail.error_message,
+            "running": False,
+            "replay": detail.replay,
+            "snapshot": detail.snapshot,
+        }
+        if detail.screen_buffer_z:
+            payload["screenBufferZ"] = detail.screen_buffer_z
+            payload["screenBufferMeta"] = detail.screen_buffer_meta
+        if detail.output_gz:
+            payload["outputGz"] = detail.output_gz
+            payload["outputGzOriginalLen"] = detail.output_gz_original_len
+        if detail.events:
+            payload["events"] = detail.events
+        return [payload]
+
+
+class CreateSessionHandler(MessageHandler):
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        session_id = msg.get("session_id", "")
+        command = msg.get("command")
+        if not session_id or not command:
+            _logger.warning("create: missing session_id or command")
+            return [Response.error("missing session_id or command")]
+        if len(session_id) > MAX_SESSION_ID_LEN:
+            return [Response.error(f"session_id too long (max {MAX_SESSION_ID_LEN})")]
+        if isinstance(command, str) and len(command) > MAX_COMMAND_LEN:
+            return [Response.error(f"command too long (max {MAX_COMMAND_LEN})")]
+
+        existing = ctx.session_repo.get_session(session_id)
+        if existing:
+            return [Response.error(f"session '{session_id}' already exists")]
+
+        cwd = msg.get("cwd")
+        env = msg.get("env")
+
+        parsed_command = command
+        if isinstance(command, str):
+            try:
+                if IS_WINDOWS:
+                    parsed_command = _split_windows_command(command)
+                else:
+                    parsed_command = shlex.split(command)
+            except ValueError as e:
+                return [Response.error(f"failed to parse command: {e}")]
+            if not parsed_command:
+                return [Response.error("empty command after parsing")]
+
+        try:
+            session = await ctx.executor.run(
+                ctx.session_repo.create_session,
+                session_id,
+                parsed_command,
+                cwd=cwd,
+                env=env,
+                cols=msg.get("cols"),
+                rows=msg.get("rows"),
+            )
+        except Exception as e:
+            _logger.exception("create failed: sid=%s", session_id)
+            try:
+                ctx.session_repo.remove_session(session_id)
+            except Exception:
+                pass
+            return [Response.error(f"create failed: {e}")]
+
+        # 创建成功后自动订阅
+        subscribe_handler = SubscribeSessionHandler()
+        return await subscribe_handler.handle(ctx, {"session_id": session_id})
+
+
+class SubscribeSessionHandler(MessageHandler):
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        session_id = msg.get("session_id", "")
+        session = ctx.session_repo.get_session(session_id)
+        if not session:
+            return [Response.error(f"session '{session_id}' not found")]
+
+        # v3: 查询当前自适应锁状态，随 ws_subscribed 响应返回给前端。
+        # 前端刷新后据此得知锁持有者，正确恢复 UI（持锁者高亮 / 非持锁者显示接管按钮）。
+        adaptive_owner_active = False
+        adaptive_owner_uid = None
+        if ctx.adaptive_lock is not None:
+            adaptive_owner_uid = ctx.adaptive_lock.get_owner(session_id)
+            adaptive_owner_active = adaptive_owner_uid is not None
+
+        # C2 改造（模拟 WT）：不再 unsubscribe 之前的订阅，支持多会话同时订阅
+        # 切换标签时前端不再重新 subscribe（已订阅的会话直接切显示）
+        # 只有首次打开该会话时才会 subscribe
+        if session_id in ctx.connection.subscribed_session_ids:
+            # 已订阅：返回已订阅状态，不重新注册回调
+            _logger.info("subscribed: sid=%s already subscribed (C2 multi-sub)",
+                         session_id)
+            return [
+                Response.ws_subscribed(
+                    session_id,
+                    replay="",  # 已订阅不返回 replay，避免前端重放
+                    snapshot=None,
+                    scrollback="",  # 已订阅不返回 scrollback，前端 xterm.js 实例已保留
+                    ptyType=session.pty_type,
+                    cols=session.cols,
+                    rows=session.rows,
+                    outputOffset=session.output_offset,
+                    running=session.running,
+                    exitCode=session.exit_code,
+                    errorMessage=session.error_message,
+                    encoding=session.encoding or "utf-8",
+                    startTime=session.start_time,
+                    appMouseMode=bool(session.input_interceptor.app_mouse_mode),
+                    adaptiveOwnerActive=adaptive_owner_active,
+                    adaptiveOwnerUid=adaptive_owner_uid,
+                )
+            ]
+
+        # 添加到订阅集合
+        ctx.connection.add_subscription(session_id)
+
+        # C2 改造：首次订阅用 pyte snapshot 作为 replay，而非原始输出缓冲区
+        # 原因：原始输出缓冲区包含 ConPTY 增量光标序列（CSI row;col H），
+        # 在 term.clear() 后重放会导致错位。pyte snapshot 是当前屏幕的"真相"，
+        # 与 ConPTY repaint 同源，显示正确。
+        # 后续实时输出通过 publisher 持续推送。
+        # Phase 3: 同时返回 scrollback（GridScreen 历史区），前端写入 xterm.js
+        # 推入 scrollback 区，实现 F5 刷新/重开浏览器后历史不丢。
+        sub_data = await ctx.subscription.prepare_subscription(session_id, session)
+        replay_text = sub_data["replay"]
+        scrollback_ansi = sub_data["scrollback"]
+
+        # v6 fix: 在 replay 末尾追加光标定位 VT 序列
+        # 前端 replayPending 会 term.clear()+write(replay)，replay 是原始输出缓冲区，
+        # 可能不以光标定位序列结尾（如最后输出是 prompt 文本而非 CUP 序列），
+        # 导致前端写入后光标停在 replay 末尾而非 PTY 真实位置。
+        # 追加 pyte screen 当前光标位置序列，强制光标定位到正确位置。
+        try:
+            cursor_seq = session.get_cursor_seq()
+            if cursor_seq:
+                replay_text = replay_text + cursor_seq
+                _logger.debug("subscribed: appended cursor seq sid=%s seq=%r",
+                              session_id, cursor_seq)
+        except Exception as e:
+            _logger.warning("subscribed: append cursor seq failed sid=%s: %s",
+                            session_id, e)
+
+        # 注册输出回调（C2 改造：每个会话独立回调）
+        def _on_data(data: bytes, stream: str):
+            try:
+                text = ctx.encoder.decode_output(
+                    session_id, session.encoding or "utf-8", data
+                )
+                ctx.enqueue(
+                    Response.ws_output(
+                        session_id, text, stream, session.encoding or "utf-8"
+                    )
+                )
+            except Exception:
+                _logger.exception("output callback error sid=%s", session_id)
+
+        # 注册结束回调
+        def _on_end(ended_session):
+            try:
+                # C2 改造：不再检查 subscribed_session_id，因为多订阅
+                # 会话结束时无论是否活动都要通知前端
+                ctx.enqueue(
+                    Response.ws_session_ended(session_id, ended_session.exit_code, ended_session.error_message)
+                )
+            except Exception:
+                _logger.exception("end callback error sid=%s", session_id)
+
+        # 注册事件回调
+        def _on_event(ev: dict):
+            try:
+                # C2 改造：不再检查 subscribed_session_id，因为多订阅
+                ctx.enqueue(
+                    Response.ws_session_event(session_id, ev)
+                )
+            except Exception:
+                _logger.exception("event callback error sid=%s", session_id)
+
+        # C2 改造：按 session_id 存储回调
+        ctx.connection.set_callbacks(session_id, {
+            "output": _on_data,
+            "end": _on_end,
+            "event": _on_event,
+        })
+
+        session.publisher.subscribe(_on_data)
+        session.publisher.add_on_end_callback(_on_end)
+        session.event_history.add_event_listener(_on_event)
+
+        pty_type = session.pty_type
+        output_offset = session.output_offset
+
+        _logger.info(
+            "subscribed: sid=%s pty=%s size=%dx%d running=%s (C2 multi-sub, total=%d)",
+            session_id, pty_type, session.cols, session.rows, session.running,
+            len(ctx.connection.subscribed_session_ids),
+        )
+
+        messages = [
+            Response.ws_subscribed(
+                session_id,
+                replay=replay_text,
+                snapshot=None,
+                scrollback=scrollback_ansi,
+                ptyType=pty_type,
+                cols=session.cols,
+                rows=session.rows,
+                outputOffset=output_offset,
+                running=session.running,
+                exitCode=session.exit_code,
+                errorMessage=session.error_message,
+                encoding=session.encoding or "utf-8",
+                startTime=session.start_time,
+                appMouseMode=bool(session.input_interceptor.app_mouse_mode),
+                # v3: 携带自适应锁状态，前端刷新后据此恢复 UI
+                adaptiveOwnerActive=adaptive_owner_active,
+                adaptiveOwnerUid=adaptive_owner_uid,
+            )
+        ]
+        if not session.running:
+            messages.append(
+                Response.ws_session_ended(session_id, session.exit_code, session.error_message)
+            )
+        return messages
+
+
+class UnsubscribeSessionHandler(MessageHandler):
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        # C2 改造：支持指定 sid 的 unsubscribe，不再清空所有订阅
+        # msg 中可指定 session_id，未指定时清空所有（连接关闭场景）
+        target_sid = msg.get("session_id")
+
+        if target_sid:
+            # 只移除指定会话的订阅
+            sids_to_remove = [target_sid]
+        else:
+            # 兼容旧行为：未指定时清空所有
+            sids_to_remove = list(ctx.connection.subscribed_session_ids)
+
+        for sid in sids_to_remove:
+            callbacks = ctx.connection.get_callbacks(sid)
+            cb = callbacks.get("output")
+            end_cb = callbacks.get("end")
+            event_cb = callbacks.get("event")
+
+            if sid:
+                session = ctx.session_repo.get_session(sid)
+                if session:
+                    if cb:
+                        session.publisher.unsubscribe(cb)
+                    if end_cb:
+                        session.publisher.remove_on_end_callback(end_cb)
+                    if event_cb:
+                        try:
+                            session.event_history.remove_event_listener(event_cb)
+                        except Exception:
+                            pass
+                ctx.connection.remove_decoder(sid)
+
+            ctx.connection.remove_subscription(sid)
+            ctx.connection.clear_callbacks(sid)
+
+        return [Response.ws_unsubscribed()]
+
+
+class InputHandler(MessageHandler):
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        session_id = msg.get("session_id", "")
+        data = msg.get("data", "")
+        if len(data) > MAX_INPUT_LEN:
+            return [Response.error(f"input too long (max {MAX_INPUT_LEN})")]
+
+        session = ctx.session_repo.get_session(session_id)
+        if not session or not session.running:
+            return []
+
+        def _write():
+            tail = session.output_buffer.get_slice(max(0, session.output_buffer.length - 4096))
+            session.detect_encoding(tail)
+            session.write_input(data)
+
+        try:
+            await ctx.executor.run(_write)
+        except Exception as e:
+            _logger.warning("input write failed: sid=%s err=%s", session_id, e)
+            return [Response.error(f"write failed: {e}")]
+        return []
+
+
+class SignalHandler(MessageHandler):
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        session_id = msg.get("session_id", "")
+        sig = msg.get("signal", "")
+        _logger.info("SignalHandler: sid=%s sig=%s", session_id, sig)
+        session = ctx.session_repo.get_session(session_id)
+        if not session:
+            _logger.warning("SignalHandler: session not found sid=%s", session_id)
+            return []
+        if not session.running:
+            _logger.warning("SignalHandler: session not running sid=%s", session_id)
+            return []
+        if sig == "SIGINT":
+            try:
+                await ctx.executor.run(session.send_signal, sig)
+                _logger.info("SignalHandler: SIGINT sent sid=%s", session_id)
+            except Exception as e:
+                _logger.warning("signal send failed: sid=%s sig=%s err=%s", session_id, sig, e)
+                return [Response.error(f"signal failed: {e}")]
+        else:
+            return [Response.error(f"unsupported signal: {sig}")]
+        return []
+
+
+class ResizeHandler(MessageHandler):
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        session_id = msg.get("session_id", "")
+        cols = int(msg.get("cols", DEFAULT_COLS))
+        rows = int(msg.get("rows", DEFAULT_ROWS))
+        session = ctx.session_repo.get_session(session_id)
+        if not session:
+            _logger.warning("resize: session not found sid=%s", session_id)
+            return []
+
+        # 问题2：自适应排他锁 —— 如果存在自适应持有者且当前连接不是持有者，拒绝 resize
+        # 避免非持有者的自适应调整抢占持有者的尺寸控制权
+        # v3 改造：持有者标识从 conn_id 改为 client_uid（localStorage 持久化，刷新不变）
+        # 同一 client_uid 的多个连接（多标签页）都允许 resize
+        if ctx.adaptive_lock is not None:
+            initiator_uid = ctx.connection.client_uid
+            owner = ctx.adaptive_lock.get_owner(session_id)
+            if owner is not None and owner != initiator_uid:
+                _logger.warning(
+                    "resize rejected: sid=%s initiator_uid=%s not adaptive owner (owner=%s)",
+                    session_id, initiator_uid, owner,
+                )
+                return [Response.error("另一端正在自适应控制尺寸，请先接管")]
+
+        try:
+            # v5: session.resize() 按 ConPTY 语义重排并返回 pyte.buffer snapshot
+            #     （可见区内容 + 光标均与 ConPTY 坐标系一致，杜绝光标错位）
+            snapshot = await ctx.executor.run(session.resize, cols, rows)
+        except Exception as e:
+            _logger.warning("resize failed: sid=%s err=%s", session_id, e)
+            return []
+        # 捕获 scrollback（Grid.reflow 已按 ConPTY 语义分区 rewrap，
+        # grow 不再从 scrollback 抽行，scrollback 与可见区边界一致）
+        scrollback_ansi = ""
+        try:
+            scrollback_ansi = await ctx.executor.run(session.capture_scrollback)
+        except Exception as e:
+            _logger.warning("resize: capture_scrollback failed sid=%s: %s", session_id, e)
+        snapshot_len = len(snapshot) if snapshot else 0
+        scrollback_len = len(scrollback_ansi) if scrollback_ansi else 0
+        _logger.info("resize: sid=%s cols=%dx%d snapshot_len=%d scrollback_len=%d",
+                     session_id, cols, rows, snapshot_len, scrollback_len)
+
+        # 问题1：尺寸变更通知 —— 立刻定向广播给其他订阅客户端
+        # 发起方（当前连接）通过 resize_complete 完成本地调整，需排除避免重复处理。
+        # conn_id = id(transport)，与 server.py 中 self._connections[conn_id] 的 key 一致。
+        try:
+            initiator_conn_id = id(ctx.channel)
+            ctx.publisher.publish_session_resized(
+                session_id=session_id,
+                cols=cols,
+                rows=rows,
+                snapshot=snapshot or "",
+                scrollback=scrollback_ansi or "",
+                exclude_conn_id=initiator_conn_id,
+            )
+            _logger.info("resize: broadcast session_resized sid=%s %dx%d excluded initiator=0x%x",
+                         session_id, cols, rows, initiator_conn_id)
+        except Exception as e:
+            _logger.exception("resize: publish_session_resized failed sid=%s: %s", session_id, e)
+
+        # snapshot 含 PTY 真实光标定位（\x1b[row;colH），前端 \x1b[3J + scrollback
+        # + \x1b[2J + snapshot 重建 buffer 后与 ConPTY 坐标系完全一致
+        return [{
+            "type": "resize_complete",
+            "sessionId": session_id,
+            "cols": cols,
+            "rows": rows,
+            "snapshot": snapshot or "",
+            "scrollback": scrollback_ansi or "",
+        }]
+
+
+class KillSessionHandler(MessageHandler):
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        session_id = msg.get("session_id", "")
+        session = ctx.session_repo.get_session(session_id)
+        if not session:
+            return [Response.error(f"session '{session_id}' not found")]
+
+        # 先取消订阅，避免残留回调
+        unsubscribe_handler = UnsubscribeSessionHandler()
+        await unsubscribe_handler.handle(ctx, {})
+
+        try:
+            await ctx.executor.run(ctx.session_repo.remove_session, session_id)
+        except Exception as e:
+            _logger.exception("kill failed: sid=%s", session_id)
+            return [Response.error(f"kill failed: {e}")]
+
+        return [
+            Response.ws_session_ended(session_id, session.exit_code, session.error_message)
+        ]
+
+
+class DeleteHistoryHandler(MessageHandler):
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        session_id = msg.get("session_id", "")
+        if ctx.history_repo:
+            ctx.history_repo.delete_session(session_id)
+        return [Response.ws_history_deleted(session_id)]
+
+
+class SessionDetailHandler(MessageHandler):
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        session_id = msg.get("session_id", "")
+        session = ctx.session_repo.get_session(session_id)
+        if not session:
+            if ctx.history_repo:
+                detail = ctx.history_repo.get_session_detail(session_id)
+                if detail:
+                    payload = {
+                        "type": "session_detail",
+                        "source": "history",
+                        "id": detail.id,
+                        "command": detail.command,
+                        "ptyType": detail.pty_type,
+                        "cols": detail.cols,
+                        "rows": detail.rows,
+                        "encoding": detail.encoding,
+                        "startTime": detail.start_time,
+                        "endTime": detail.end_time,
+                        "exitCode": detail.exit_code,
+                        "errorMessage": detail.error_message,
+                        "running": False,
+                    }
+                    if detail.screen_buffer_z:
+                        payload["screenBufferZ"] = detail.screen_buffer_z
+                        payload["screenBufferMeta"] = detail.screen_buffer_meta
+                    if detail.output_gz:
+                        payload["outputGz"] = detail.output_gz
+                        payload["outputGzOriginalLen"] = detail.output_gz_original_len
+                    if detail.events:
+                        payload["events"] = detail.events
+                    return [payload]
+            return [Response.error(f"session '{session_id}' not found")]
+
+        detail = await self._build_active_detail(ctx, session)
+        return [self._detail_to_message(detail, source="active")]
+
+    async def _build_active_detail(self, ctx: HandlerContext, session: Any) -> SessionDetail:
+        from ...process.info import (
+            _get_process_detail,
+            _get_process_tree,
+        )
+
+        command = _command_to_string(session.command)
+        pids = []
+        try:
+            pids = await ctx.executor.run(lambda: session.get_pty_process_list())
+        except Exception:
+            pass
+        pids = [p for p in pids if p > 0]
+
+        child_pid = None
+        try:
+            child_pid = await ctx.executor.run(lambda: session.get_pty_child_pid())
+        except Exception:
+            pass
+
+        process_tree, process_details_raw = await ctx.executor.run(
+            _get_process_tree, pids, root_pid=child_pid or 0
+        )
+        process_details = {str(pid): d for pid, d in process_details_raw.items()}
+        events = await ctx.executor.run(session.get_all_events)
+        gui_windows = session.gui_windows
+
+        return SessionDetail(
+            id=session.id,
+            uid=session.uid,
+            command=command,
+            pty_type=session.pty_type,
+            cols=session.cols,
+            rows=session.rows,
+            encoding=session.encoding or "utf-8",
+            start_time=session.start_time,
+            running=session.running,
+            exit_code=session.exit_code,
+            error_message=session.error_message,
+            cwd=session.cwd or "",
+            process_tree=process_tree,
+            process_details=process_details,
+            events=events,
+            gui_windows=gui_windows,
+            output_size=session.output_offset,
+        )
+
+    @staticmethod
+    def _detail_to_message(detail: SessionDetail, source: str) -> dict:
+        return {
+            "type": "session_detail",
+            "source": source,
+            "id": detail.id,
+            "uid": detail.uid,
+            "command": detail.command,
+            "ptyType": detail.pty_type,
+            "cols": detail.cols,
+            "rows": detail.rows,
+            "encoding": detail.encoding,
+            "startTime": detail.start_time,
+            "running": detail.running,
+            "exitCode": detail.exit_code,
+            "errorMessage": detail.error_message,
+            "cwd": detail.cwd,
+            "processTree": detail.process_tree,
+            "processDetails": detail.process_details,
+            "events": detail.events,
+            "guiWindows": detail.gui_windows,
+            "outputSize": detail.output_size,
+        }
+
+
+class SessionDetailRefreshHandler(MessageHandler):
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        session_id = msg.get("session_id", "")
+        tab = msg.get("tab", "info")
+        session = ctx.session_repo.get_session(session_id)
+        if not session:
+            return []
+
+        result = {"type": "session_detail_refresh", "id": session_id, "tab": tab}
+        if tab == "info":
+            result.update(
+                {
+                    "running": session.running,
+                    "exitCode": session.exit_code,
+                    "errorMessage": session.error_message,
+                    "outputSize": session.output_offset,
+                }
+            )
+        elif tab == "process":
+            from ...process.info import _get_process_detail
+
+            pids = []
+            try:
+                pids = await ctx.executor.run(lambda: session.get_pty_process_list())
+            except Exception:
+                pass
+            pids = [p for p in pids if p > 0]
+            process_details = {}
+            for pid in pids:
+                d = await ctx.executor.run(_get_process_detail, pid)
+                if d:
+                    process_details[str(pid)] = {
+                        "pid": d["pid"],
+                        "memoryMb": d.get("memoryMb"),
+                        "cpuSeconds": d.get("cpuSeconds"),
+                    }
+            result["processDetails"] = process_details
+        return [result]
+
+
+# --------------------------------------------------------------------------- #
+# VNC 远程桌面处理器
+# --------------------------------------------------------------------------- #
+
+
+class VncStatusHandler(MessageHandler):
+    """查询 VNC 服务状态。
+
+    返回 {type: vnc_status, running, disabled, winvnc_available, ...}。
+    VNC 未启用时返回 disabled=true，前端据此隐藏 UI 入口。
+    """
+
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        if not ctx.vnc_service:
+            return [Response.ws_vnc_status({
+                "running": False,
+                "disabled": True,
+                "winvnc_available": False,
+                "vnc_port": None,
+                "password": None,
+            })]
+        status = await ctx.executor.run(ctx.vnc_service.get_status)
+        return [Response.ws_vnc_status(status)]
+
+
+class VncStartHandler(MessageHandler):
+    """启动 VNC 服务（按需启动 winvnc.exe）。
+
+    单例语义：若已在运行，直接返回当前连接信息。
+    启动是同步阻塞操作（最多 30 秒），通过 ThreadExecutor 调度避免阻塞事件循环。
+    WebSocket→VNC TCP 代理由守护进程 /vnc/websockify 端点实现，无需 websockify。
+    """
+
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        if not ctx.vnc_service:
+            return [Response.ws_vnc_error("VNC service not available")]
+        if not ctx.vnc_service.is_available():
+            return [Response.ws_vnc_error(
+                "VNC 不可用：未启用或 winvnc.exe 缺失"
+            )]
+        try:
+            connection_info = await ctx.executor.run(ctx.vnc_service.start)
+            _logger.info(
+                "VNC started: vnc_port=%s",
+                connection_info.get("vnc_port"),
+            )
+            return [Response.ws_vnc_started(connection_info)]
+        except Exception as e:
+            _logger.exception("VNC start failed")
+            return [Response.ws_vnc_error(f"VNC 启动失败：{e}")]
+
+
+class VncStopHandler(MessageHandler):
+    """停止 VNC 服务。"""
+
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        if not ctx.vnc_service:
+            return [Response.ws_vnc_error("VNC service not available")]
+        try:
+            await ctx.executor.run(ctx.vnc_service.stop)
+            _logger.info("VNC stopped")
+            return [Response.ws_vnc_stopped()]
+        except Exception as e:
+            _logger.exception("VNC stop failed")
+            return [Response.ws_vnc_error(f"VNC 停止失败：{e}")]
+
+
+# --------------------------------------------------------------------------- #
+# FastScreen 屏幕查看处理器
+# --------------------------------------------------------------------------- #
+
+
+class FsStatusHandler(MessageHandler):
+    """查询 FastScreen 服务状态。
+
+    返回 {type: fs_status, disabled, available, active_sessions}。
+    FastScreen 未启用时返回 disabled=true，前端据此隐藏 UI 入口。
+    """
+
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        if not ctx.fastscreen_service:
+            return [Response.ws_fs_status({
+                "disabled": True,
+                "available": False,
+                "active_sessions": 0,
+            })]
+        status = await ctx.executor.run(ctx.fastscreen_service.get_status)
+        return [Response.ws_fs_status(status)]
+
+
+class FsListTargetsHandler(MessageHandler):
+    """列出可查看目标（显示器 + 窗口）。
+
+    前端打开 FastScreen tab 或点击"刷新"按钮时调用。
+    """
+
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        if not ctx.fastscreen_service:
+            return [Response.ws_fs_targets({
+                "disabled": True,
+                "monitors": [],
+                "windows": [],
+            })]
+        try:
+            targets = await ctx.executor.run(ctx.fastscreen_service.list_targets)
+            return [Response.ws_fs_targets(targets)]
+        except Exception as e:
+            _logger.exception("FastScreen list_targets failed")
+            return [Response.ws_fs_error(f"列出目标失败：{e}")]
+
+
+class FsBringToFrontHandler(MessageHandler):
+    """将指定窗口置于前台（恢复最小化 + 激活）。
+
+    前端在窗口最小化提示中点击"置于前台"按钮时调用。
+    仅 Windows 平台、窗口模式可用，使用 ShowWindowAsync(SW_RESTORE) + SetForegroundWindow。
+    """
+
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        if not IS_WINDOWS:
+            return [Response.ws_fs_error("仅 Windows 支持置于前台")]
+
+        target_type = msg.get("target_type", "monitor")
+        if target_type != "window":
+            return [Response.ws_fs_error("仅窗口模式支持置于前台")]
+
+        hwnd = msg.get("target_id", 0)
+        try:
+            hwnd = int(hwnd)
+        except (TypeError, ValueError):
+            return [Response.ws_fs_error("无效的窗口句柄")]
+
+        if hwnd == 0:
+            return [Response.ws_fs_error("无效的窗口句柄")]
+
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            SW_RESTORE = 9
+            # 先恢复（如果最小化了），再置于前台
+            user32.ShowWindowAsync(hwnd, SW_RESTORE)
+            user32.SetForegroundWindow(hwnd)
+            _logger.info("FastScreen bring window to front: hwnd=%d", hwnd)
+            return []
+        except Exception as e:
+            _logger.exception("FastScreen bring to front failed: hwnd=%d", hwnd)
+            return [Response.ws_fs_error(f"置于前台失败：{e}")]
+
+
+# --------------------------------------------------------------------------- #
+# 问题2：自适应排他锁 - 接管与模式设定处理器
+# --------------------------------------------------------------------------- #
+
+
+class TakeoverSizeControlHandler(MessageHandler):
+    """处理接管尺寸控制权请求。
+
+    前端非自适应持有者点击"接管"按钮时发送 takeover_size_control。
+    后端清空自适应锁（旧持有者降级），允许接管者随后设定新模式。
+
+    v3 改造：锁持有者标识从 conn_id 改为 client_uid。
+    """
+
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        session_id = msg.get("session_id", "")
+        if not session_id:
+            return [Response.error("missing session_id")]
+        if ctx.adaptive_lock is None:
+            return [Response.error("adaptive lock service unavailable")]
+
+        # 清空自适应锁：旧持有者将被降级（前端收到 size_mode_changed 后切 fixed）
+        old_owner = ctx.adaptive_lock.clear(session_id)
+        _logger.info(
+            "takeover_size_control: sid=%s initiator_uid=%s old_owner=%s",
+            session_id, ctx.connection.client_uid,
+            old_owner if old_owner is not None else "None",
+        )
+
+        # 广播模式变更：adaptive_owner_active=False（无人持有锁）
+        # 不排除发起方：发起方前端需据此解锁 UI
+        try:
+            ctx.publisher.publish_size_mode_changed(
+                session_id=session_id,
+                adaptive_owner_active=False,
+            )
+        except Exception as e:
+            _logger.exception("takeover: publish_size_mode_changed failed sid=%s: %s", session_id, e)
+
+        return [{"type": "takeover_ack", "sessionId": session_id}]
+
+
+class SetSizeModeHandler(MessageHandler):
+    """处理设定尺寸模式请求。
+
+    前端选择尺寸模式（adaptive/fixed/custom/default）时发送 set_size_mode。
+    - adaptive：夺取自适应锁（旧持有者降级），持有者可自由自适应调整
+    - fixed/custom/default：释放锁（若自己是持有者），按模式 resize 并广播
+
+    v3 改造：锁持有者标识从 conn_id 改为 client_uid（localStorage 持久化）。
+    广播 size_mode_changed 时携带 adaptive_owner_uid，前端据此判断"自己是否持锁"。
+    """
+
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        session_id = msg.get("session_id", "")
+        mode = msg.get("mode", "")
+        if not session_id or not mode:
+            return [Response.error("missing session_id or mode")]
+        if mode not in ("adaptive", "fixed", "custom", "default"):
+            return [Response.error(f"invalid mode: {mode}")]
+        if ctx.adaptive_lock is None:
+            return [Response.error("adaptive lock service unavailable")]
+
+        session = ctx.session_repo.get_session(session_id)
+        if not session:
+            return [Response.error(f"session '{session_id}' not found")]
+
+        # v3: 用 client_uid 作为锁持有者标识（刷新不变，同 uid 多连接共享）
+        initiator_uid = ctx.connection.client_uid
+        initiator_conn_id = id(ctx.channel)  # 仍用于广播排除发起方连接
+
+        if mode == "adaptive":
+            # 夺取自适应锁：旧持有者降级，自己成为新持有者
+            old_owner = ctx.adaptive_lock.acquire(session_id, initiator_uid)
+            _logger.info(
+                "set_size_mode adaptive: sid=%s new_owner=%s old_owner=%s",
+                session_id, initiator_uid,
+                old_owner if old_owner is not None else "None",
+            )
+            # 广播：adaptive_owner_active=True（有人持有锁）
+            # 携带 adaptive_owner_uid，其他客户端据此判断"自己是否持锁"
+            # 排除发起方（发起方前端已自行切换到 adaptive 模式）
+            try:
+                ctx.publisher.publish_size_mode_changed(
+                    session_id=session_id,
+                    adaptive_owner_active=True,
+                    mode="adaptive",
+                    adaptive_owner_uid=initiator_uid,
+                    exclude_conn_id=initiator_conn_id,
+                )
+            except Exception as e:
+                _logger.exception("set_size_mode adaptive: publish failed sid=%s: %s", session_id, e)
+            return [{"type": "size_mode_ack", "sessionId": session_id, "mode": "adaptive"}]
+
+        # 非 adaptive 模式：释放锁（若自己是持有者）+ 按模式 resize
+        ctx.adaptive_lock.release(session_id, initiator_uid)
+
+        cols = msg.get("cols")
+        rows = msg.get("rows")
+        actual_cols = session.cols
+        actual_rows = session.rows
+
+        # fixed/custom 模式需要指定尺寸；default 用守护进程当前尺寸
+        if mode in ("fixed", "custom"):
+            if not cols or not rows:
+                return [Response.error(f"mode {mode} requires cols and rows")]
+            cols = int(cols)
+            rows = int(rows)
+            # 执行 resize（复用 ResizeHandler 逻辑）
+            try:
+                snapshot = await ctx.executor.run(session.resize, cols, rows)
+            except Exception as e:
+                _logger.exception("set_size_mode %s resize failed sid=%s: %s", mode, session_id, e)
+                return [Response.error(f"resize failed: {e}")]
+            actual_cols = cols
+            actual_rows = rows
+            # 广播尺寸变更（session_resized）给其他客户端，让它们跟随新尺寸
+            try:
+                scrollback_ansi = await ctx.executor.run(session.capture_scrollback)
+            except Exception as e:
+                _logger.warning("set_size_mode: capture_scrollback failed sid=%s: %s", session_id, e)
+                scrollback_ansi = ""
+            try:
+                ctx.publisher.publish_session_resized(
+                    session_id=session_id,
+                    cols=cols,
+                    rows=rows,
+                    snapshot=snapshot or "",
+                    scrollback=scrollback_ansi or "",
+                    exclude_conn_id=initiator_conn_id,
+                )
+            except Exception as e:
+                _logger.exception("set_size_mode: publish_session_resized failed sid=%s: %s", session_id, e)
+        elif mode == "default":
+            # default 模式：不主动 resize，由前端根据缓存的 daemonCols/daemonRows 自行处理
+            # （守护进程当前尺寸可能已是 default，无需变更）
+            actual_cols = session.cols
+            actual_rows = session.rows
+
+        # 广播模式变更：adaptive_owner_active=False（非 adaptive 模式不持有锁）
+        try:
+            ctx.publisher.publish_size_mode_changed(
+                session_id=session_id,
+                adaptive_owner_active=ctx.adaptive_lock.has_owner(session_id),
+                mode=mode,
+                cols=actual_cols,
+                rows=actual_rows,
+                exclude_conn_id=initiator_conn_id,
+            )
+        except Exception as e:
+            _logger.exception("set_size_mode %s: publish failed sid=%s: %s", mode, session_id, e)
+
+        _logger.info(
+            "set_size_mode %s: sid=%s cols=%dx%d initiator_uid=%s",
+            mode, session_id, actual_cols, actual_rows, initiator_uid,
+        )
+        return [{
+            "type": "size_mode_ack",
+            "sessionId": session_id,
+            "mode": mode,
+            "cols": actual_cols,
+            "rows": actual_rows,
+        }]
+
+
+# --------------------------------------------------------------------------- #
+# 处理器注册表
+# --------------------------------------------------------------------------- #
+
+
+def build_handler_registry() -> dict[str, MessageHandler]:
+    """构建消息类型到处理器的映射。"""
+    return {
+        "ping": PingHandler(),
+        "list": ListSessionsHandler(),
+        "shells": ListShellsHandler(),
+        "system_stats": SystemStatsHandler(),
+        "history": ListHistoryHandler(),
+        "history_detail": HistoryDetailHandler(),
+        "create": CreateSessionHandler(),
+        "subscribe": SubscribeSessionHandler(),
+        "unsubscribe": UnsubscribeSessionHandler(),
+        "input": InputHandler(),
+        "signal": SignalHandler(),
+        "resize": ResizeHandler(),
+        "kill": KillSessionHandler(),
+        "delete_history": DeleteHistoryHandler(),
+        "session_detail": SessionDetailHandler(),
+        "session_detail_refresh": SessionDetailRefreshHandler(),
+        "vnc_status": VncStatusHandler(),
+        "vnc_start": VncStartHandler(),
+        "vnc_stop": VncStopHandler(),
+        "fs_status": FsStatusHandler(),
+        "fs_list_targets": FsListTargetsHandler(),
+        "fs_bring_to_front": FsBringToFrontHandler(),
+        # 问题2：自适应排他锁
+        "takeover_size_control": TakeoverSizeControlHandler(),
+        "set_size_mode": SetSizeModeHandler(),
+    }

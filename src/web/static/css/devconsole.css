@@ -1,0 +1,648 @@
+/**
+ * 悬浮日志视窗样式
+ *
+ * 复用 --wt-* 主题变量，自动适配深色/浅色主题。
+ * 布局：标题栏（可拖拽）+ 工具栏（过滤/搜索/操作）+ 日志列表（等宽、各等级色条）+ 缩放手柄。
+ * position:fixed，z-index 2500，置于 dialog-overlay 之下、toast 之上。
+ */
+
+/* ── 视窗容器 ── */
+.devconsole {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  width: 560px;
+  height: 360px;
+  min-width: 320px;
+  min-height: 200px;
+  background: var(--wt-dialog-bg);
+  color: var(--wt-term-fg);
+  border: 1px solid var(--wt-dialog-border);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  z-index: 2500;
+  overflow: hidden;
+  font-family: var(--wt-font-ui);
+  font-size: 12px;
+}
+
+.devconsole.devconsole-hidden {
+  display: none;
+}
+
+/* ── 标题栏（拖拽区） ── */
+.devconsole-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px 0 12px;
+  background: var(--wt-tab-bar-bg);
+  border-bottom: 1px solid var(--wt-tab-border);
+  cursor: move;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.devconsole-titlebar .dc-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--wt-tab-text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.devconsole-titlebar .dc-title svg {
+  color: var(--wt-accent);
+}
+
+.devconsole-titlebar .dc-status {
+  font-size: 11px;
+  color: var(--wt-tab-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.devconsole-titlebar .dc-spacer {
+  flex: 1;
+}
+
+.devconsole-titlebar .dc-iconbtn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--wt-tab-text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s, color 0.1s;
+}
+
+@media (hover: hover) {
+  .devconsole-titlebar .dc-iconbtn:hover {
+    background: var(--wt-btn-hover);
+    color: var(--wt-tab-text);
+  }
+}
+
+.devconsole-titlebar .dc-iconbtn.dc-close:hover {
+  background: var(--wt-close-hover);
+  color: #fff;
+}
+
+/* ── 工具栏 ── */
+.devconsole-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--wt-dropdown-bg);
+  border-bottom: 1px solid var(--wt-tab-border);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+/* 等级过滤 chip */
+.devconsole-toolbar .dc-level-group {
+  display: flex;
+  gap: 4px;
+}
+
+.dc-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--wt-input-border);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  background: var(--wt-input-bg);
+  color: var(--wt-tab-text-muted);
+  user-select: none;
+  transition: opacity 0.1s, border-color 0.1s;
+  opacity: 0.45;
+}
+
+.dc-chip.active {
+  opacity: 1;
+}
+
+.dc-chip[data-level="0"].active { border-color: #888; color: #888; }
+.dc-chip[data-level="1"].active { border-color: #08f; color: #08f; }
+.dc-chip[data-level="2"].active { border-color: #f80; color: #f80; }
+.dc-chip[data-level="3"].active { border-color: #f00; color: #f00; }
+
+.devconsole-toolbar .dc-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--wt-tab-border);
+  margin: 0 2px;
+}
+
+/* 搜索框 */
+.devconsole-toolbar .dc-search {
+  flex: 1;
+  min-width: 100px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--wt-input-bg);
+  border: 1px solid var(--wt-input-border);
+  border-radius: 4px;
+  padding: 0 6px;
+  height: 24px;
+}
+
+.devconsole-toolbar .dc-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--wt-term-fg);
+  font-size: 12px;
+  outline: none;
+  font-family: var(--wt-font-mono);
+}
+
+.devconsole-toolbar .dc-search.dc-search-invalid {
+  border-color: var(--wt-error);
+}
+
+.devconsole-toolbar .dc-search .dc-regex-btn {
+  border: none;
+  background: transparent;
+  color: var(--wt-tab-text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: var(--wt-font-mono);
+}
+
+.devconsole-toolbar .dc-search .dc-regex-btn.active {
+  background: var(--wt-accent);
+  color: #fff;
+}
+
+/* 操作按钮组 */
+.devconsole-toolbar .dc-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.devconsole-toolbar .dc-btn {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--wt-input-border);
+  border-radius: 4px;
+  background: var(--wt-btn-bg);
+  color: var(--wt-tab-text);
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: background 0.1s;
+  font-family: inherit;
+}
+
+@media (hover: hover) {
+  .devconsole-toolbar .dc-btn:hover {
+    background: var(--wt-btn-hover);
+  }
+}
+
+.devconsole-toolbar .dc-btn.active {
+  background: var(--wt-accent);
+  border-color: var(--wt-accent);
+  color: #fff;
+}
+
+.devconsole-toolbar .dc-btn svg {
+  flex-shrink: 0;
+}
+
+/* ── 主体：左栏 + 日志列表（flex row） ── */
+.devconsole-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  background: var(--wt-term-bg);
+}
+
+/* ── 左栏容器 ── */
+.devconsole-left {
+  width: 150px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--wt-tab-border);
+  padding: 8px 10px;
+  overflow-y: auto;
+  font-family: var(--wt-font-ui);
+  font-size: 11px;
+  color: var(--wt-tab-text);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.devconsole-left .dc-left-section {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.devconsole-left .dc-left-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--wt-tab-text-muted);
+  font-weight: 600;
+  margin-bottom: 1px;
+}
+
+/* ── 左栏：tag 筛选 ── */
+.devconsole-left .dc-left-tag-toggle {
+  font-size: 10px;
+  color: var(--wt-accent);
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.devconsole-left .dc-left-tag-toggle:hover {
+  text-decoration: underline;
+}
+
+.devconsole-left .dc-left-tags {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.devconsole-left .dc-left-tag-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: var(--wt-font-mono);
+  user-select: none;
+  color: var(--wt-tab-text-muted);
+  transition: background 0.1s, color 0.1s;
+}
+
+@media (hover: hover) {
+  .devconsole-left .dc-left-tag-row:hover {
+    background: var(--wt-tab-hover-bg);
+  }
+}
+
+.devconsole-left .dc-left-tag-row.active {
+  color: var(--wt-tab-text);
+  font-weight: 500;
+}
+
+.devconsole-left .dc-left-tag-dot {
+  font-size: 8px;
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.devconsole-left .dc-left-tag-name {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 左栏：弹性分隔（把统计推到底部） */
+.devconsole-left .dc-left-spacer {
+  flex: 1;
+  min-height: 8px;
+}
+
+/* 左栏：等级统计 */
+.devconsole-left .dc-left-level-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.6;
+}
+
+.devconsole-left .dc-left-dot {
+  font-size: 8px;
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.devconsole-left .dc-left-lvl-name {
+  color: var(--wt-tab-text);
+  min-width: 40px;
+}
+
+.devconsole-left .dc-left-lvl-count {
+  margin-left: auto;
+  font-weight: 600;
+  font-family: var(--wt-font-mono);
+  color: var(--wt-tab-text);
+}
+
+/* 左栏：缓冲进度条 */
+.devconsole-left .dc-left-buffer {
+  font-size: 10px;
+  color: var(--wt-tab-text-muted);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--wt-font-mono);
+  margin-top: 4px;
+}
+
+.devconsole-left .dc-left-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--wt-tab-border);
+  overflow: hidden;
+  margin-top: 2px;
+}
+
+.devconsole-left .dc-left-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--wt-accent);
+  transition: width 0.2s;
+  width: 0%;
+}
+
+/* ── 右栏：日志列表 ── */
+.devconsole-right {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  font-family: var(--wt-font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.devconsole-right .dc-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--wt-tab-text-muted);
+  font-size: 12px;
+  font-family: var(--wt-font-ui);
+}
+
+/* ── 滚动条配色 ── */
+.devconsole-right::-webkit-scrollbar,
+.devconsole-left::-webkit-scrollbar,
+.devconsole-left .dc-left-tags::-webkit-scrollbar {
+  width: 8px;
+}
+
+.devconsole-right::-webkit-scrollbar-track,
+.devconsole-left::-webkit-scrollbar-track,
+.devconsole-left .dc-left-tags::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.devconsole-right::-webkit-scrollbar-thumb,
+.devconsole-left::-webkit-scrollbar-thumb,
+.devconsole-left .dc-left-tags::-webkit-scrollbar-thumb {
+  background: var(--wt-scrollbar-thumb);
+  border-radius: 4px;
+}
+
+/* 现代浏览器 scrollbar-color 兜底 */
+.devconsole-right,
+.devconsole-left,
+.devconsole-left .dc-left-tags {
+  scrollbar-color: var(--wt-scrollbar-thumb) transparent;
+  scrollbar-width: thin;
+}
+
+/* 单行日志 */
+.dc-log-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 1px 8px 1px 4px;
+  border-left: 3px solid transparent;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.dc-log-line[data-level="0"] { border-left-color: #888; }
+.dc-log-line[data-level="1"] { border-left-color: #08f; }
+.dc-log-line[data-level="2"] { border-left-color: #f80; background: rgba(255,136,0,0.06); }
+.dc-log-line[data-level="3"] { border-left-color: #f00; background: rgba(255,0,0,0.06); }
+
+@media (hover: hover) {
+  .dc-log-line:hover {
+    background: var(--wt-tab-hover-bg);
+  }
+}
+
+.dc-log-line .dc-ts {
+  color: var(--wt-tab-text-muted);
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.dc-log-line .dc-lvl {
+  flex-shrink: 0;
+  font-weight: 700;
+  min-width: 38px;
+}
+
+.dc-log-line[data-level="0"] .dc-lvl { color: #888; }
+.dc-log-line[data-level="1"] .dc-lvl { color: #08f; }
+.dc-log-line[data-level="2"] .dc-lvl { color: #f80; }
+.dc-log-line[data-level="3"] .dc-lvl { color: #f00; }
+
+.dc-log-line .dc-tag {
+  flex-shrink: 0;
+  font-weight: 700;
+}
+
+.dc-log-line .dc-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--wt-term-fg);
+  white-space: pre-wrap;
+}
+
+/* 搜索高亮 */
+.dc-log-line .dc-text mark {
+  background: #ffe066;
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+body[data-theme="dark"] .dc-log-line .dc-text mark {
+  background: #b8860b;
+  color: #fff;
+}
+
+/* ── 展开图标 ── */
+.dc-log-line .dc-expand-icon {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+  font-size: 8px;
+  color: var(--wt-tab-text-muted);
+  user-select: none;
+  line-height: inherit;
+}
+
+.dc-log-line.has-stack {
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .dc-log-line.has-stack:hover {
+    background: var(--wt-tab-hover-bg);
+  }
+}
+
+/* ── 展开详情 ── */
+.dc-log-line .dc-line-detail {
+  display: none;
+  width: 100%;
+  white-space: pre;
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 6px 8px 6px 20px;
+  margin: 2px 0 -2px;
+  background: var(--wt-tab-bar-bg);
+  border-radius: 3px;
+  color: var(--wt-tab-text);
+  overflow-x: auto;
+  font-family: var(--wt-font-mono);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.dc-log-line.expanded .dc-line-detail {
+  display: block;
+}
+
+/* ── 缩放手柄 ── */
+.devconsole-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  z-index: 2501;
+}
+
+.devconsole-resize::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid var(--wt-tab-text-muted);
+  border-bottom: 2px solid var(--wt-tab-text-muted);
+}
+
+/* 拖拽/缩放进行中禁用正文文本选择 */
+.devconsole.dragging,
+.devconsole.resizing {
+  user-select: none;
+}
+
+.devconsole.dragging .devconsole-body,
+.devconsole.resizing .devconsole-body {
+  pointer-events: none;
+}
+
+/* ── 触摸端适配 ── */
+body.touch-device .devconsole-titlebar {
+  height: 34px;
+}
+
+body.touch-device .devconsole-titlebar .dc-iconbtn {
+  width: 28px;
+  height: 28px;
+}
+
+body.touch-device .devconsole-toolbar .dc-btn {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+body.touch-device .dc-log-line {
+  padding-top: 3px;
+  padding-bottom: 3px;
+  font-size: 12px;
+}
+
+body.touch-device .devconsole-resize {
+  width: 20px;
+  height: 20px;
+}
+
+body.touch-device .devconsole-left {
+  width: 170px;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+body.touch-device .devconsole-left .dc-left-tag-row {
+  padding: 5px 6px;
+  font-size: 12px;
+}
+
+body.touch-device .devconsole-left .dc-left-level-row {
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+body.touch-device .dc-log-line .dc-expand-icon {
+  font-size: 10px;
+  width: 18px;
+}
+
+body.touch-device .dc-log-line .dc-line-detail {
+  font-size: 12px;
+  padding: 8px 10px 8px 24px;
+  max-height: 400px;
+}
+
+/* ── 深色主题下调亮日志视窗背景 ── */
+body[data-theme="dark"] .devconsole {
+  background: #252525;
+}
+
+body[data-theme="dark"] .devconsole-body,
+body[data-theme="dark"] .devconsole-left {
+  background: #1a1a1a;
+}
+
+body[data-theme="dark"] .dc-log-line .dc-line-detail {
+  background: #2a2a2a;
+}
+
+body[data-theme="dark"] .dc-log-line[data-level="2"] {
+  background: rgba(255, 136, 0, 0.04);
+}
+
+body[data-theme="dark"] .dc-log-line[data-level="3"] {
+  background: rgba(255, 0, 0, 0.04);
+}

@@ -1,0 +1,12 @@
+node_modules
+dist
+*.local
+*.wasm
+build
+*.woff2
+.vscode
+.idea
+.DS_Store
+*.suo
+*.sw?
+*~

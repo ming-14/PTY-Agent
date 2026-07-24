@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>RIME 拼音输入法演示</title>
+<style>
+:root{
+  --bg:#101014;--surface:rgba(24,24,28,.92);--border:rgba(255,255,255,.08);
+  --text:rgba(255,255,255,.82);--text2:rgba(255,255,255,.45);--text3:rgba(255,255,255,.28);
+  --accent:#70c0e8;--accent2:#63e2b7;--danger:#e88080;
+  --radius:8px;--radius-sm:6px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{height:100%}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  background:var(--bg);color:var(--text);min-height:100%;
+  display:flex;flex-direction:column;align-items:center;
+  padding:0 16px 320px;
+}
+
+/* ─── 顶部栏 ─── */
+.header{width:100%;max-width:780px;padding:24px 0 12px;text-align:center}
+.header h1{font-size:20px;font-weight:600;color:var(--accent2);letter-spacing:.5px}
+.header p{font-size:12px;color:var(--text3);margin-top:4px}
+
+/* ─── 标签页 ─── */
+.tabs{
+  width:100%;max-width:780px;display:flex;gap:4px;
+  padding:4px;background:var(--surface);border-radius:var(--radius-sm);margin-bottom:12px;
+}
+.tabs button{
+  flex:1;padding:7px 0;border:none;border-radius:4px;
+  background:transparent;color:var(--text2);font-size:13px;cursor:pointer;
+  transition:all .15s;white-space:nowrap;
+}
+.tabs button:hover{color:var(--text);background:rgba(255,255,255,.04)}
+.tabs button.active{background:rgba(112,192,232,.15);color:var(--accent)}
+
+/* ─── 编辑器 ─── */
+.editor-wrap{
+  width:100%;max-width:780px;position:relative;
+}
+#editor{
+  width:100%;height:180px;background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--radius);
+  padding:14px 16px;font-size:16px;line-height:1.8;color:var(--text);
+  resize:vertical;outline:none;font-family:inherit;transition:border-color .15s;
+}
+#editor:focus{border-color:rgba(112,192,232,.4)}
+#editor::placeholder{color:var(--text3)}
+.editor-info{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:6px 2px 0;font-size:11px;color:var(--text3);
+}
+
+/* ─── 配置面板 ─── */
+.cfg-section{
+  width:100%;max-width:780px;margin-top:12px;
+}
+.cfg-section-title{
+  font-size:11px;color:var(--text3);text-transform:uppercase;
+  letter-spacing:1px;margin-bottom:8px;padding-left:2px;
+}
+.cfg-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
+  gap:8px;
+}
+.cfg-item{display:flex;flex-direction:column;gap:4px}
+.cfg-item label{font-size:11px;color:var(--text2)}
+.cfg-item input,.cfg-item select{
+  background:var(--surface);border:1px solid var(--border);
+  color:var(--text);padding:7px 10px;border-radius:var(--radius-sm);
+  font-size:13px;outline:none;transition:border-color .15s;width:100%;
+}
+.cfg-item input:focus,.cfg-item select:focus{border-color:rgba(112,192,232,.4)}
+.cfg-item select option{background:#18181c}
+
+/* ─── 按钮 ─── */
+.btn-row{
+  width:100%;max-width:780px;margin-top:14px;
+  display:flex;gap:8px;flex-wrap:wrap;align-items:center;
+}
+.btn{
+  padding:7px 18px;border-radius:var(--radius-sm);font-size:13px;
+  cursor:pointer;border:1px solid transparent;transition:all .15s;
+  white-space:nowrap;
+}
+.btn-primary{
+  background:rgba(99,226,183,.12);border-color:rgba(99,226,183,.3);color:var(--accent2);
+}
+.btn-primary:hover{background:rgba(99,226,183,.2)}
+.btn-primary:disabled{opacity:.35;cursor:default}
+.btn-danger{
+  background:rgba(232,128,128,.1);border-color:rgba(232,128,128,.25);color:var(--danger);
+}
+.btn-danger:hover{background:rgba(232,128,128,.18)}
+.btn-ghost{
+  background:rgba(255,255,255,.04);border-color:var(--border);color:var(--text2);
+}
+.btn-ghost:hover{background:rgba(255,255,255,.08);color:var(--text)}
+.btn-ghost.active{background:rgba(112,192,232,.12);border-color:rgba(112,192,232,.3);color:var(--accent)}
+
+/* ─── 状态栏 ─── */
+.status-bar{
+  width:100%;max-width:780px;margin-top:10px;
+  display:flex;align-items:center;gap:8px;font-size:12px;
+}
+.status-dot{
+  width:7px;height:7px;border-radius:50%;flex-shrink:0;
+  background:var(--text3);transition:background .3s;
+}
+.status-dot.connected{background:var(--accent2);box-shadow:0 0 6px rgba(99,226,183,.4)}
+.status-dot.error{background:var(--danger)}
+.status-text{color:var(--text2)}
+
+/* ─── 说明区域 ─── */
+.info-section{
+  width:100%;max-width:780px;margin-top:20px;
+  padding:14px 16px;background:var(--surface);border-radius:var(--radius);
+  border:1px solid var(--border);
+}
+.info-section h3{font-size:13px;color:var(--accent);margin-bottom:8px}
+.info-section p{font-size:12px;color:var(--text2);line-height:1.7}
+.info-section code{
+  background:rgba(112,192,232,.08);color:var(--accent);
+  padding:1px 5px;border-radius:3px;font-size:11px;
+}
+.info-section .api-list{margin-top:8px}
+.info-section .api-list dt{font-size:12px;color:var(--accent2);margin-top:6px}
+.info-section .api-list dd{font-size:11px;color:var(--text3);margin-left:12px}
+
+/* ─── 调试面板 ─── */
+#debugPanel{
+  position:fixed;top:0;left:0;right:0;z-index:999999;
+  background:rgba(0,0,0,.88);color:#0f0;font:11px/1.5 monospace;
+  padding:4px 8px;pointer-events:none;max-height:40vh;overflow-y:auto;
+  white-space:pre-wrap;word-break:break-all;display:none;
+}
+#debugPanel.show{display:block;pointer-events:auto}
+#debugToggle{
+  position:fixed;top:4px;right:4px;z-index:1000000;
+  background:rgba(0,0,0,.7);color:#0f0;border:1px solid #0f0;
+  font:10px monospace;padding:2px 6px;border-radius:3px;cursor:pointer;
+}
+
+/* ─── 响应式 ─── */
+@media(max-width:480px){
+  .header h1{font-size:17px}
+  .cfg-grid{grid-template-columns:1fr}
+  #editor{height:140px;font-size:15px}
+  .btn{padding:6px 12px;font-size:12px}
+  .info-section{display:none}
+}
+</style>
+</head>
+<body>
+
+<div id="debugPanel"></div>
+<button id="debugToggle" onclick="toggleDebug()">DBG</button>
+
+<div class="header">
+  <h1>RIME 拼音输入法</h1>
+  <p>Web 插件演示 &mdash; WASM 模式（本地）</p>
+</div>
+
+<div class="tabs">
+  <button id="tabPanel" class="active" onclick="switchTab('panel')">桌面端（面板 + 工具栏）</button>
+  <button id="tabKeyboard" onclick="switchTab('keyboard')">移动端（键盘）</button>
+  <button id="tabTKL" onclick="switchTab('tkl')">TKL 键盘 + 面板</button>
+</div>
+
+<div class="editor-wrap">
+  <textarea id="editor" placeholder="点击此处开始输入…"></textarea>
+  <div class="editor-info">
+    <span id="charCount">0 个字符</span>
+    <span id="detectedDevice"></span>
+  </div>
+</div>
+
+<div class="cfg-section">
+  <div class="cfg-section-title">连接</div>
+  <div class="cfg-grid">
+    <div class="cfg-item">
+      <label>连接模式</label>
+      <select id="cfgMode">
+        <option value="wasm" selected>WASM（本地，无需服务器）</option>
+        <option value="remote">远程（WebSocket）</option>
+      </select>
+    </div>
+    <div class="cfg-item" id="cfgSrvWrap" style="display:none">
+      <label>服务器地址</label>
+      <input type="text" id="cfgSrv" value="">
+    </div>
+  </div>
+</div>
+
+<div class="cfg-section" id="kbOptions" style="display:none">
+  <div class="cfg-section-title">键盘选项</div>
+  <div class="cfg-grid">
+    <div class="cfg-item">
+      <label>布局</label>
+      <select id="cfgKbMode">
+        <option value="docked">停靠（底部）</option>
+        <option value="floating">浮动（可拖拽）</option>
+      </select>
+    </div>
+    <div class="cfg-item">
+      <label>主题</label>
+      <select id="cfgKbTheme">
+        <option value="dark">深色</option>
+        <option value="light">浅色</option>
+      </select>
+    </div>
+    <div class="cfg-item">
+      <label>尺寸</label>
+      <select id="cfgKbSize">
+        <option value="compact">紧凑</option>
+        <option value="normal" selected>普通</option>
+        <option value="large">大</option>
+      </select>
+    </div>
+    <div class="cfg-item">
+      <label>震动反馈</label>
+      <select id="cfgHaptic">
+        <option value="true" selected>开启</option>
+        <option value="false">关闭</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="cfg-section" id="panelOptions" style="display:none">
+  <div class="cfg-section-title">面板选项</div>
+  <div class="cfg-grid">
+    <div class="cfg-item">
+      <label>主题</label>
+      <select id="cfgPanelTheme">
+        <option value="dark">深色</option>
+        <option value="light">浅色</option>
+      </select>
+    </div>
+    <div class="cfg-item">
+      <label>尺寸</label>
+      <select id="cfgPanelSize">
+        <option value="compact">紧凑</option>
+        <option value="normal" selected>普通</option>
+        <option value="large">大</option>
+      </select>
+    </div>
+    <div class="cfg-item">
+      <label>工具栏位置</label>
+      <select id="cfgTbPos">
+        <option value="bottom">编辑器下方</option>
+        <option value="top">编辑器上方</option>
+        <option value="float">浮动</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="cfg-section" id="tklOptions" style="display:none">
+  <div class="cfg-section-title">TKL 键盘选项</div>
+  <div class="cfg-grid">
+    <div class="cfg-item">
+      <label>主题</label>
+      <select id="cfgTKLTheme">
+        <option value="dark">深色</option>
+        <option value="light">浅色</option>
+      </select>
+    </div>
+    <div class="cfg-item">
+      <label>面板主题</label>
+      <select id="cfgTKLPanelTheme">
+        <option value="dark">深色</option>
+        <option value="light">浅色</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="btn-row">
+  <button class="btn btn-primary" id="btnConn" onclick="connect()">连接</button>
+  <button class="btn btn-ghost" id="btnDeploy" onclick="doDeploy()" disabled>部署</button>
+  <button class="btn btn-ghost" id="btnReset" onclick="doReset()" disabled>重置</button>
+  <button class="btn btn-ghost" id="btnClear" onclick="clearEditor()">清除</button>
+</div>
+
+<div class="status-bar">
+  <span class="status-dot" id="statusDot"></span>
+  <span class="status-text" id="statusText">未连接</span>
+</div>
+
+<div class="info-section">
+  <h3>快速参考</h3>
+  <p>
+    桌面模式：使用物理键盘输入，面板显示候选词，工具栏提供选项开关。<br>
+    移动模式：虚拟键盘支持震动反馈，点击输入，长按可输入候选变体。<br>
+    TKL 模式：87键悬浮虚拟键盘 + 独立候选词面板，修饰键支持组合键发送。
+  </p>
+  <dl class="api-list">
+    <dt><code>RimePanel</code></dt>
+    <dd>init() / destroy() / handleKey(key) / setTheme(theme) / setSize(size) / getIME()</dd>
+    <dt><code>RimeToolbar</code></dt>
+    <dd>与面板自动同步。方案选择器 + 选项开关。支持拖拽。</dd>
+    <dt><code>RimeKeyboard</code></dt>
+    <dd>init() / destroy() / show() / hide() / setTheme(theme) / setSize(size) / setMode(mode) / getIME()</dd>
+    <dt><code>RimeTKLKeyboard</code></dt>
+    <dd>init() / destroy() / show() / hide() / setTheme(theme) / getIME() / getElement()</dd>
+    <dt><code>RimeManager</code></dt>
+    <dd>init() / destroy() / getIME() / getPanel() / getKeyboard() / getTKLKeyboard() / getToolbar() / getMode()</dd>
+    <dt><code>RimeIME</code></dt>
+    <dd>processKey(key) / selectCandidate(idx) / changePage(back) / setOption(opt,val) / setIME(schema) / getState()</dd>
+  </dl>
+</div>
+
+<script src="plugin/dist/rime-plugin.js?v=8"></script>
+<script>
+// ─── 诊断日志 ───
+function log(...args) {
+  console.log('[demo]', ...args)
+}
+window.addEventListener('error', function (e) {
+  log('未捕获错误：', e.message, e.filename + ':' + e.lineno)
+})
+window.addEventListener('unhandledrejection', function (e) {
+  log('未处理的 Promise 拒绝：', e.reason && (e.reason.stack || e.reason.message || e.reason))
+})
+
+// ─── 状态 ───
+let panel = null
+let toolbar = null
+let kbToolbar = null
+let keyboard = null
+let tklManager = null
+let currentTab = 'panel'
+let connected = false
+
+// 自动重连退避时长（必须在 init() 之前声明，避免 TDZ）
+const AUTO_RETRY_DELAYS = [1000, 2000, 5000, 10000]
+let autoRetryTimer = null
+
+// ─── 设备检测 ───
+function detectDevice() {
+  const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0
+  const isCoarse = window.matchMedia('(pointer: coarse)').matches
+  const isMobile = hasTouch && isCoarse
+  const label = isMobile ? '移动端' : '桌面端'
+  document.getElementById('detectedDevice').textContent = '已检测：' + label
+  return isMobile
+}
+
+// ─── 加载时自动选择标签页 ───
+(function init() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+  document.getElementById('cfgSrv').value = proto + '://' + location.host
+  // 根据连接模式切换服务器地址输入框可见性
+  function syncSrvVisibility() {
+    const mode = document.getElementById('cfgMode').value
+    document.getElementById('cfgSrvWrap').style.display = mode === 'remote' ? '' : 'none'
+  }
+  document.getElementById('cfgMode').addEventListener('change', syncSrvVisibility)
+  syncSrvVisibility()
+  const isMobile = detectDevice()
+  if (isMobile) switchTab('keyboard')
+  else switchTab('panel')
+
+  document.getElementById('editor').addEventListener('input', function() {
+    document.getElementById('charCount').textContent = this.value.length + ' 个字符'
+  })
+
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', function() {
+    if (!connected) return
+    const theme = this.matches ? 'light' : 'dark'
+    if (currentTab === 'panel' && panel) panel.setTheme(theme)
+    if (currentTab === 'keyboard' && keyboard) keyboard.setTheme(theme)
+  })
+
+  // 启动时自动连接，失败按退避策略重连
+  log('init 完成，准备调用 autoConnect()，currentTab=', currentTab)
+  autoConnect()
+})()
+
+// ─── 切换标签页（销毁旧实例，重建新实例） ───
+function switchTab(tab) {
+  currentTab = tab
+  document.getElementById('tabPanel').classList.toggle('active', tab === 'panel')
+  document.getElementById('tabKeyboard').classList.toggle('active', tab === 'keyboard')
+  document.getElementById('tabTKL').classList.toggle('active', tab === 'tkl')
+  document.getElementById('panelOptions').style.display = tab === 'panel' ? '' : 'none'
+  document.getElementById('kbOptions').style.display = tab === 'keyboard' ? '' : 'none'
+  document.getElementById('tklOptions').style.display = tab === 'tkl' ? '' : 'none'
+  // 切换标签页时重建连接
+  if (connected) {
+    destroyCurrentInstance()
+    buildCurrentInstance()
+  }
+}
+
+// ─── 销毁当前标签页的实例 ───
+function destroyCurrentInstance() {
+  if (toolbar) { toolbar.destroy(); toolbar = null }
+  if (kbToolbar) { kbToolbar.destroy(); kbToolbar = null }
+  if (panel) { panel.destroy(); panel = null }
+  if (keyboard) { keyboard.destroy(); keyboard = null }
+  if (tklManager) { tklManager.destroy(); tklManager = null }
+}
+
+// ─── 构建当前标签页的实例 ───
+async function buildCurrentInstance() {
+  const mode = document.getElementById('cfgMode').value
+  const srv = document.getElementById('cfgSrv').value.trim()
+  const schema = 'luna_pinyin'
+  const editor = document.getElementById('editor')
+
+  const commonOpts = { schema }
+  if (mode === 'wasm') {
+    commonOpts.mode = 'wasm'
+    commonOpts.wasmUrl = new URL('./wasm/', location.href).href
+  } else {
+    commonOpts.mode = 'remote'
+    commonOpts.serverUrl = srv
+  }
+
+  try {
+    if (currentTab === 'panel') {
+      const pTheme = document.getElementById('cfgPanelTheme').value
+      const pSize = document.getElementById('cfgPanelSize').value
+      panel = new RimePlugin.RimePanel({
+        target: editor, theme: pTheme, size: pSize, ...commonOpts
+      })
+      await panel.init()
+      const tbPos = document.getElementById('cfgTbPos').value
+      toolbar = new RimePlugin.RimeToolbar({
+        provider: panel, target: editor, position: tbPos
+      })
+    } else if (currentTab === 'keyboard') {
+      const kbMode = document.getElementById('cfgKbMode').value
+      const kbTheme = document.getElementById('cfgKbTheme').value
+      const kbSize = document.getElementById('cfgKbSize').value
+      const haptic = document.getElementById('cfgHaptic').value === 'true'
+      keyboard = new RimePlugin.RimeKeyboard({
+        target: editor, theme: kbTheme, size: kbSize, kbMode, haptic, ...commonOpts
+      })
+      await keyboard.init()
+      keyboard.show()
+      kbToolbar = new RimePlugin.RimeToolbar({
+        provider: keyboard, position: 'float'
+      })
+    } else if (currentTab === 'tkl') {
+      const tklTheme = document.getElementById('cfgTKLTheme').value
+      const tklPanelTheme = document.getElementById('cfgTKLPanelTheme').value
+      tklManager = new RimePlugin.RimeManager({
+        target: editor, managerMode: 'tkl+panel',
+        tklTheme: tklTheme, panelTheme: tklPanelTheme,
+        ...commonOpts
+      })
+      await tklManager.init()
+      tklManager.getTKLKeyboard().show()
+    }
+    editor.focus()
+  } catch (e) {
+    log('buildCurrentInstance 失败：', e && (e.stack || e.message))
+    setStatus('error', '切换失败：' + e.message)
+  }
+}
+
+// ─── 连接（单次尝试） ───
+async function attemptConnect() {
+  const mode = document.getElementById('cfgMode').value  // 'wasm' | 'remote'
+  const srv = document.getElementById('cfgSrv').value.trim()
+  const schema = 'luna_pinyin'
+  const editor = document.getElementById('editor')
+  const btn = document.getElementById('btnConn')
+
+  if (mode === 'remote' && !srv) { setStatus('error', '请输入服务器地址'); return false }
+
+  log('attemptConnect 开始，mode=', mode, ' srv=', srv, ' schema=', schema, ' tab=', currentTab)
+  disconnect()
+  setStatus('connecting', mode === 'wasm' ? '正在加载 WASM…' : '正在连接…')
+
+  // 构造两端共同的连接参数
+  const commonOpts = { schema }
+  if (mode === 'wasm') {
+    commonOpts.mode = 'wasm'
+    commonOpts.wasmUrl = new URL('./wasm/', location.href).href
+  } else {
+    commonOpts.mode = 'remote'
+    commonOpts.serverUrl = srv
+  }
+
+  try {
+    await buildCurrentInstance()
+
+    connected = true
+    btn.textContent = 'Disconnect'
+    btn.className = 'btn btn-danger'
+    btn.onclick = disconnect
+    document.getElementById('btnDeploy').disabled = false
+    document.getElementById('btnReset').disabled = false
+    const modeLabel = mode === 'wasm' ? 'WASM' : '远程'
+    setStatus('connected', '已连接 · ' + modeLabel + ' · ' + schema)
+    editor.focus()
+    return true
+
+  } catch (e) {
+    log('attemptConnect 失败：', e && (e.stack || e.message))
+    setStatus('error', '连接失败：' + e.message)
+    btn.className = 'btn btn-primary'
+    return false
+  }
+}
+
+// ─── 手动连接（按钮） ───
+async function connect() {
+  log('手动 connect() 被调用')
+  cancelAutoRetry()
+  await attemptConnect()
+}
+
+// ─── 启动时自动连接 + 退避重连 ───
+// 失败后依次等待 1s / 2s / 5s / 10s 重试，超过则停止
+async function autoConnect() {
+  log('autoConnect() 被调用')
+  const ok = await attemptConnect()
+  if (ok) { log('autoConnect 首次即成功'); return }
+  log('autoConnect 首次失败，进入退避重连')
+  autoRetry(0)
+}
+
+function autoRetry(i) {
+  if (i >= AUTO_RETRY_DELAYS.length) {
+    log('已用尽所有重连次数，停止自动重连')
+    setStatus('error', '连接失败，已停止自动重连')
+    return
+  }
+  const delay = AUTO_RETRY_DELAYS[i]
+  log('计划第 ' + (i + 1) + ' 次重连，' + (delay / 1000) + 's 后')
+  setStatus('error', '连接失败，' + (delay / 1000) + ' 秒后重试（' + (i + 1) + '/' + AUTO_RETRY_DELAYS.length + '）')
+  autoRetryTimer = setTimeout(async () => {
+    log('触发第 ' + (i + 1) + ' 次重连')
+    const ok = await attemptConnect()
+    if (ok) { cancelAutoRetry(); log('重连成功'); return }
+    autoRetry(i + 1)
+  }, delay)
+}
+
+function cancelAutoRetry() {
+  if (autoRetryTimer) { clearTimeout(autoRetryTimer); autoRetryTimer = null }
+}
+
+// ─── 断开连接 ───
+function disconnect() {
+  cancelAutoRetry()
+  destroyCurrentInstance()
+  connected = false
+
+  const btn = document.getElementById('btnConn')
+  btn.textContent = '连接'
+  btn.className = 'btn btn-primary'
+  btn.onclick = connect
+  document.getElementById('btnDeploy').disabled = true
+  document.getElementById('btnReset').disabled = true
+  setStatus('idle', '未连接')
+}
+
+// ─── 操作 ───
+async function doDeploy() {
+  if (!connected) return
+  var ime = panel?.getIME() || keyboard?.getIME() || tklManager?.getIME()
+  if (!ime) return
+  setStatus('connecting', '正在部署…')
+  try {
+    await ime.deploy()
+    setStatus('connected', '部署成功')
+  } catch (e) {
+    setStatus('error', '部署失败：' + e.message)
+  }
+}
+
+async function doReset() {
+  if (!connected) return
+  var ime = panel?.getIME() || keyboard?.getIME() || tklManager?.getIME()
+  if (!ime) return
+  try {
+    await ime.setIME(ime.getCurrentSchema())
+    setStatus('connected', '重置完成')
+  } catch (e) {
+    setStatus('error', '重置失败：' + e.message)
+  }
+}
+
+function clearEditor() {
+  const editor = document.getElementById('editor')
+  editor.value = ''
+  document.getElementById('charCount').textContent = '0 个字符'
+}
+
+// ─── 状态栏 ───
+function setStatus(state, text) {
+  const dot = document.getElementById('statusDot')
+  const txt = document.getElementById('statusText')
+  dot.className = 'status-dot'
+  if (state === 'connected') dot.classList.add('connected')
+  else if (state === 'error') dot.classList.add('error')
+  txt.textContent = text
+}
+
+// ─── 选项实时生效 ───
+document.getElementById('cfgKbMode').addEventListener('change', function() {
+  if (keyboard) keyboard.setMode(this.value)
+})
+document.getElementById('cfgKbTheme').addEventListener('change', function() {
+  if (keyboard) keyboard.setTheme(this.value)
+})
+document.getElementById('cfgKbSize').addEventListener('change', function() {
+  if (keyboard) keyboard.setSize(this.value)
+})
+document.getElementById('cfgPanelTheme').addEventListener('change', function() {
+  if (panel) panel.setTheme(this.value)
+})
+document.getElementById('cfgPanelSize').addEventListener('change', function() {
+  if (panel) panel.setSize(this.value)
+})
+document.getElementById('cfgTKLTheme').addEventListener('change', function() {
+  if (tklManager) tklManager.getTKLKeyboard()?.setTheme(this.value)
+})
+document.getElementById('cfgTKLPanelTheme').addEventListener('change', function() {
+  if (tklManager) tklManager.getPanel()?.setTheme(this.value)
+})
+
+// ─── 调试面板 ───
+let debugOn = false
+let debugTimer = null
+let lastDebugText = ''
+
+function toggleDebug() {
+  debugOn = !debugOn
+  document.getElementById('debugPanel').classList.toggle('show', debugOn)
+  if (debugOn) startDebugLoop()
+  else { clearTimeout(debugTimer); debugTimer = null }
+}
+
+function startDebugLoop() {
+  function tick() {
+    if (!debugOn) return
+    updateDebugInfo()
+    debugTimer = setTimeout(tick, 500)
+  }
+  tick()
+}
+
+function getSafeAreaBottom() {
+  const el = document.createElement('div')
+  el.style.cssText = 'position:fixed;bottom:0;left:0;width:1px;height:env(safe-area-inset-bottom,0px);pointer-events:none;visibility:hidden'
+  document.body.appendChild(el)
+  const h = el.getBoundingClientRect().height
+  el.remove()
+  return h
+}
+
+function updateDebugInfo() {
+  const vv = window.visualViewport
+  const kb = document.querySelector('.rime-kb')
+  const editor = document.getElementById('editor')
+  const lines = []
+  lines.push('=== Viewport ===')
+  lines.push('innerH: ' + window.innerHeight + '  innerW: ' + window.innerWidth)
+  lines.push('outerH: ' + window.outerHeight + '  outerW: ' + window.outerWidth)
+  lines.push('screenH: ' + screen.height + '  screenW: ' + screen.width)
+  lines.push('screenAvailH: ' + screen.availHeight + '  screenAvailW: ' + screen.availWidth)
+  lines.push('docEl.clientH: ' + document.documentElement.clientHeight)
+  lines.push('dpr: ' + window.devicePixelRatio)
+  lines.push('safeAreaBottom: ' + getSafeAreaBottom().toFixed(1))
+  if (vv) {
+    lines.push('vv.height: ' + vv.height.toFixed(2) + '  vv.width: ' + vv.width.toFixed(2))
+    lines.push('vv.offsetTop: ' + vv.offsetTop.toFixed(2) + '  vv.offsetLeft: ' + vv.offsetLeft.toFixed(2))
+    lines.push('vv.pageTop: ' + vv.pageTop.toFixed(2) + '  vv.pageLeft: ' + vv.pageLeft.toFixed(2))
+    lines.push('vv.scale: ' + vv.scale)
+    const bottomOffset = window.innerHeight - vv.offsetTop - vv.height
+    lines.push('bottomOffset(iH-vvTop-vvH): ' + bottomOffset.toFixed(2))
+  } else {
+    lines.push('visualViewport: N/A')
+  }
+  lines.push('')
+  lines.push('=== Keyboard ===')
+  if (kb) {
+    const rect = kb.getBoundingClientRect()
+    lines.push('class: ' + kb.className)
+    lines.push('style.bottom: ' + kb.style.bottom)
+    lines.push('style.top: ' + kb.style.top)
+    lines.push('style.height: ' + kb.style.height)
+    lines.push('rect: top=' + rect.top.toFixed(1) + ' bottom=' + rect.bottom.toFixed(1) + ' h=' + rect.height.toFixed(1))
+    lines.push('rect.bottom - innerH: ' + (rect.bottom - window.innerHeight).toFixed(1))
+    const visibleBottom = vv ? vv.offsetTop + vv.height : window.innerHeight
+    lines.push('rect.bottom - vvBottom: ' + (rect.bottom - visibleBottom).toFixed(1))
+  } else {
+    lines.push('keyboard element not found')
+  }
+  lines.push('')
+  lines.push('=== Editor ===')
+  if (editor) {
+    const eRect = editor.getBoundingClientRect()
+    lines.push('rect: top=' + eRect.top.toFixed(1) + ' bottom=' + eRect.bottom.toFixed(1))
+    lines.push('focused: ' + (document.activeElement === editor))
+  }
+  lines.push('')
+  lines.push('=== UA ===')
+  lines.push(navigator.userAgent)
+  lines.push('')
+  lines.push('[TAP HERE TO COPY]')
+  lastDebugText = lines.join('\n')
+  document.getElementById('debugPanel').textContent = lastDebugText
+}
+
+function copyDebugInfo() {
+  updateDebugInfo()
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(lastDebugText).then(function() {
+      flashCopyOk()
+    }).catch(function() {
+      fallbackCopy()
+    })
+  } else {
+    fallbackCopy()
+  }
+}
+
+function fallbackCopy() {
+  const ta = document.createElement('textarea')
+  ta.value = lastDebugText
+  ta.style.cssText = 'position:fixed;left:-9999px'
+  document.body.appendChild(ta)
+  ta.select()
+  try { document.execCommand('copy'); flashCopyOk() } catch(e) {}
+  ta.remove()
+}
+
+function flashCopyOk() {
+  const dp = document.getElementById('debugPanel')
+  const orig = dp.style.background
+  dp.style.background = 'rgba(0,180,0,.88)'
+  setTimeout(function() { dp.style.background = orig }, 400)
+}
+
+document.getElementById('debugPanel').addEventListener('click', function(e) {
+  e.stopPropagation()
+  copyDebugInfo()
+})
+document.getElementById('debugPanel').addEventListener('touchend', function(e) {
+  e.stopPropagation()
+  copyDebugInfo()
+})
+
+// Ctrl+Alt+Shift+A 快捷键复制
+document.addEventListener('keydown', function(e) {
+  if (e.ctrlKey && e.altKey && e.shiftKey && e.key.toLowerCase() === 'a') {
+    e.preventDefault()
+    copyDebugInfo()
+  }
+})
+
+// visualViewport 事件也触发一次更新
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', function() { if (debugOn) updateDebugInfo() })
+  window.visualViewport.addEventListener('scroll', function() { if (debugOn) updateDebugInfo() })
+}
+</script>
+</body>
+</html>
