@@ -1,0 +1,27 @@
+# 日志配置常量
+# 集中管理所有日志相关的配置：级别、格式、轮转策略、logger 分组。
+
+[level]
+DAEMON_LOG_LEVEL = "DEBUG"
+WEB_LOG_LEVEL    = "DEBUG"
+CLIENT_LOG_LEVEL = "DEBUG"
+CLIENT_DEBUG     = true
+
+[format]
+LOG_FORMAT      = "%(asctime)s.%(msecs)03d [%(levelname)-8s] [%(name)s:%(threadName)s] %(filename)s:%(lineno)d - %(message)s"
+LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+[rotation]
+LOG_MAX_BYTES    = 10_485_760   # 10 MB
+LOG_BACKUP_COUNT = 5
+
+[loggers]
+DAEMON_LOGGERS = [
+    "pty-daemon", "pty-session", "pty-protocol", "pty-factory",
+    "pty-windows", "pty-windows-error", "pty-condrv",
+    "pty-job", "pty-gui-monitor",
+    "pty-unix", "pty-unix-process",
+    "pty-grid", "pty-grid-screen",
+]
+WEB_LOGGERS    = ["pty-web", "pty-web-fastscreen", "pty-vnc", "fastscreen", "fastscreen.manager", "fastscreen.h264_mse", "fastscreen.fmp4"]
+CLIENT_LOGGERS = ["pty-client", "pty-protocol", "pty-factory"]

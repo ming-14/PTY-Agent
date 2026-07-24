@@ -1,0 +1,370 @@
+.btn {
+  height: 34px;
+  padding: 0 18px;
+  border: 1px solid var(--wt-input-border);
+  border-radius: 6px;
+  background: var(--wt-btn-bg);
+  color: var(--wt-term-fg);
+  font-family: var(--wt-font-ui);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.1s, transform 0.05s;
+}
+.btn:active { transform: scale(0.98); }
+.btn:hover { background: var(--wt-btn-hover); }
+
+.btn-primary {
+  background: var(--wt-btn-primary);
+  border-color: var(--wt-btn-primary);
+  color: #ffffff;
+}
+.btn-primary:hover { background: var(--wt-btn-primary-hover); }
+
+.history-dropdown {
+  position: absolute;
+  top: 0;
+  left: 0;
+  min-width: 300px;
+  max-width: min(420px, calc(100vw - 24px));
+  max-height: min(400px, calc(100vh - 80px));
+  overflow-y: auto;
+  background: var(--wt-dropdown-bg);
+  border: 1px solid var(--wt-dropdown-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+  z-index: 999;
+  padding: 4px;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s;
+  font-size: 12px;
+  color: var(--wt-tab-text);
+}
+.history-item:hover { background: var(--wt-dropdown-hover); }
+.history-item.opened { opacity: 0.5; }
+
+.history-item-icon {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--wt-accent);
+  flex-shrink: 0;
+}
+
+.history-item-info {
+  flex: 1;
+  min-width: 0;
+}
+.history-item-id {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.history-item-cmd {
+  color: var(--wt-tab-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-item-delete {
+  opacity: 0;
+  color: var(--wt-tab-text-muted);
+  font-size: 10px;
+  padding: 4px;
+  border-radius: 3px;
+  transition: opacity 0.1s, background 0.1s;
+}
+.history-item:hover .history-item-delete { opacity: 1; }
+.history-item-delete:hover {
+  background: rgba(0,0,0,0.04);
+  color: var(--wt-close-hover);
+}
+
+.history-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--wt-tab-text-muted);
+  font-size: 12px;
+}
+
+/* ── 终端尺寸选择器 ── */
+/* 状态栏中的尺寸项可点击，加 hover/cursor 反馈 */
+#status-size {
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.1s;
+  user-select: none;
+}
+@media (hover: hover) {
+  #status-size:hover {
+    background: var(--wt-dropdown-hover);
+  }
+}
+#status-size.size-active {
+  color: var(--wt-accent);
+}
+
+.size-dropdown {
+  position: absolute;
+  top: 0;
+  left: 0;
+  min-width: 180px;
+  max-width: min(260px, calc(100vw - 24px));
+  max-height: min(420px, calc(100vh - 80px));
+  overflow-y: auto;
+  background: var(--wt-dropdown-bg);
+  border: 1px solid var(--wt-dropdown-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+  z-index: 999;
+  padding: 4px;
+}
+
+.size-dropdown-section {
+  padding: 4px 8px 2px;
+  font-size: 10px;
+  color: var(--wt-tab-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.size-dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s;
+  font-size: 12px;
+  color: var(--wt-tab-text);
+  gap: 8px;
+  user-select: none;
+}
+.size-dropdown-item:hover { background: var(--wt-dropdown-hover); }
+.size-dropdown-item.selected {
+  color: var(--wt-accent);
+  background: var(--wt-dropdown-hover);
+}
+.size-dropdown-item.selected::after {
+  content: '✓';
+  font-size: 11px;
+  margin-left: auto;
+  color: var(--wt-accent);
+}
+.size-dropdown-item .size-item-value {
+  color: var(--wt-tab-text-muted);
+  font-size: 11px;
+  font-family: var(--wt-font-mono);
+}
+.size-dropdown-item.selected .size-item-value {
+  color: var(--wt-accent);
+}
+
+.size-dropdown-divider {
+  height: 1px;
+  background: var(--wt-tab-border);
+  margin: 4px 8px;
+}
+
+/* 自定义尺寸输入区域 */
+.size-custom-input {
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--wt-tab-text);
+}
+.size-custom-input input {
+  width: 56px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--wt-input-border);
+  border-radius: 4px;
+  background: var(--wt-input-bg);
+  color: var(--wt-term-fg);
+  font-family: var(--wt-font-mono);
+  font-size: 12px;
+  text-align: center;
+}
+.size-custom-input input:focus {
+  outline: none;
+  border-color: var(--wt-input-focus-border);
+}
+.size-custom-input .size-x {
+  color: var(--wt-tab-text-muted);
+  font-family: var(--wt-font-mono);
+}
+.size-custom-input button {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--wt-input-border);
+  border-radius: 4px;
+  background: var(--wt-btn-primary);
+  border-color: var(--wt-btn-primary);
+  color: #ffffff;
+  font-size: 11px;
+  cursor: pointer;
+  margin-left: auto;
+}
+.size-custom-input button:hover { background: var(--wt-btn-primary-hover); }
+.size-custom-input button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 问题2：自适应排他锁 —— 被其他连接持锁时尺寸选项灰显 */
+.size-dropdown-item.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.size-custom-input.disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* 问题2：接管尺寸控制按钮 */
+.size-takeover-btn {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--wt-input-border);
+  border-radius: 4px;
+  background: var(--wt-btn-primary);
+  color: var(--wt-btn-primary-text, #fff);
+  font-size: 12px;
+  cursor: pointer;
+}
+.size-takeover-btn:hover { background: var(--wt-btn-primary-hover); }
+.touch-device .size-takeover-btn {
+  padding: 12px 14px;
+  font-size: 13px;
+}
+
+/* 触摸端增大点击目标 */
+.touch-device .size-dropdown-item {
+  padding: 12px 14px;
+  font-size: 13px;
+}
+.touch-device .size-custom-input input {
+  height: 32px;
+  font-size: 13px;
+}
+.touch-device .size-custom-input button {
+  height: 32px;
+  font-size: 12px;
+}
+
+.toast-container {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 2000;
+  pointer-events: none;
+}
+
+.toast {
+  max-width: 360px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: var(--wt-toast-bg);
+  color: var(--wt-toast-fg);
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: auto;
+}
+.toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+.toast.error {
+  background: var(--wt-error);
+}
+.toast.success {
+  background: var(--wt-success);
+}
+
+.context-menu {
+  position: fixed;
+  min-width: 140px;
+  background: var(--wt-dropdown-bg);
+  border: 1px solid var(--wt-dropdown-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+  z-index: 3000;
+  padding: 4px;
+}
+.context-menu-item {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--wt-tab-text);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.context-menu-item:hover { background: var(--wt-dropdown-hover); }
+.context-menu-item.danger:hover { color: var(--wt-close-hover); }
+
+/* ── 屏幕共享下拉菜单（电脑图标点击弹出） ── */
+.screen-share-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  min-width: 220px;
+  background: var(--wt-dropdown-bg);
+  border: 1px solid var(--wt-dropdown-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+  z-index: 3000;
+  padding: 4px;
+}
+.screen-share-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--wt-tab-text);
+  white-space: nowrap;
+}
+@media (hover: hover) {
+  .screen-share-item:hover { background: var(--wt-dropdown-hover); }
+}
+.screen-share-item .ss-item-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--wt-tab-text);
+}
+.screen-share-item .ss-item-text {
+  font-size: 13px;
+  font-weight: 500;
+}
+.screen-share-item .ss-item-desc {
+  font-size: 11px;
+  color: var(--wt-tab-text);
+  opacity: 0.6;
+  margin-left: auto;
+}
+/* 触摸设备适配 */
+body.touch-device .screen-share-item {
+  padding: 10px 12px;
+}

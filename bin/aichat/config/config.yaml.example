@@ -1,0 +1,5 @@
+model: openai:sensenova-6.7-flash-lite
+clients:
+  - type: openai
+    name: openai
+    api_base: https://token.sensenova.cn/v1

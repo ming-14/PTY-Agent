@@ -1,0 +1,12 @@
+{
+  "vnc_port": null,
+  "ws_port": null,
+  "admin_port": null,
+  "admin_host": "127.0.0.1",
+  "vnc_password_encrypted": "",
+  "vnc_password": null,
+  "auto_start": false,
+  "remove_wallpaper": true,
+  "log_level": "CRITICAL",
+  "log_dir": ""
+}

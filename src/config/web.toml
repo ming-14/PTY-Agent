@@ -1,0 +1,43 @@
+# Web 服务器配置常量
+# 集中管理 Web 服务器相关的配置：监听地址、端口、VNC 远程桌面集成、网页端设置默认值。
+
+[server]
+WEB_HOST = "0.0.0.0"
+WEB_PORT = 18766
+
+[vnc]
+ENABLE_VNC         = true
+VNC_WINVNC_PATH    = ""
+VNC_MODULE_DIR = ""
+
+[fastscreen]
+ENABLE_FASTSCREEN           = true
+FASTSCREEN_PACKAGE_DIR      = ""
+FASTSCREEN_DEFAULT_FPS      = 30
+FASTSCREEN_DEFAULT_QUALITY  = 0.8
+FASTSCREEN_DEFAULT_BITRATE  = 2_000_000
+FASTSCREEN_DEFAULT_GOP_SIZE = 30
+FASTSCREEN_DEFAULT_METHOD   = "auto"
+# 传输协议默认值（auto/mjpeg/mse/webcodecs），可被 web_user_choice.json 覆盖
+FASTSCREEN_DEFAULT_STREAM_FORMAT = "mse"
+
+# 网页端设置默认值 —— 守护进程启动时读取，作为 /api/settings 返回的默认值
+# 用户覆盖项存储在 ~/.pty-agent/web_user_choice.json，优先级 > 本节
+[web_settings]
+DEFAULT_THEME         = "dark"     # basic.theme: light/dark/system
+IME_ENABLED           = true       # ime.enabled: 启用 Web RIME
+IME_CANDIDATE_COUNT   = 5          # ime.candidateCount: 候选词数量
+IME_VERTICAL          = false      # ime.vertical: 竖排候选
+IME_DEFAULT_STATE     = "chinese"  # ime.defaultState: chinese/english/last
+# ime.keyboardLayout: 移动端键盘布局（compact=普通键盘 / full=全键盘），仅影响移动端
+IME_KEYBOARD_LAYOUT   = "compact"
+# ime.toolbarDisplay: 工具栏显示模式（never=始终不显示 / desktop_only=仅电脑端显示 / always=始终显示）
+IME_TOOLBAR_DISPLAY   = "always"
+# ime.tbOpacity: 工具栏透明度（30-100，百分比）
+IME_TB_OPACITY        = 100
+# ime.kbOpacity: 键盘透明度（30-100，百分比，仅移动端）
+IME_KB_OPACITY        = 100
+# ime.tbScale: 工具栏缩放比例（0.8/1.0/1.2/1.5）
+IME_TB_SCALE          = 1.0
+# ime.kbScale: 键盘缩放比例（0.8/1.0/1.2/1.5，仅移动端）
+IME_KB_SCALE          = 1.0

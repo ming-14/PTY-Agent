@@ -1,0 +1,221 @@
+body.touch-device #app {
+  flex-direction: row;
+}
+
+body.touch-device .sidebar.collapsed {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 40px;
+  min-width: 40px;
+  max-width: 40px;
+  z-index: 1100;
+  transform: none;
+  box-shadow: none;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+}
+body.touch-device .sidebar.collapsed .sidebar-header {
+  justify-content: center;
+  padding: 0;
+  height: 40px;
+  min-height: 40px;
+}
+body.touch-device .sidebar.collapsed .sidebar-title,
+body.touch-device .sidebar.collapsed .sidebar-resizer,
+body.touch-device .sidebar.collapsed .sidebar-section-title,
+body.touch-device .sidebar.collapsed .sidebar-item-text,
+body.touch-device .sidebar.collapsed .sidebar-item-time {
+  display: none;
+}
+body.touch-device .sidebar-list {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+body.touch-device .sidebar.collapsed .sidebar-item {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+  align-items: center;
+  -webkit-tap-highlight-color: rgba(0,0,0,0.08);
+}
+body.touch-device .sidebar.collapsed .sidebar-item-icon {
+  display: none;
+}
+body.touch-device .sidebar.collapsed .sidebar-item-initial {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--wt-tab-text);
+  background: var(--wt-btn-bg);
+  text-transform: uppercase;
+}
+body.touch-device .sidebar.collapsed .sidebar-item.active .sidebar-item-initial {
+  background: var(--wt-accent);
+  color: #ffffff;
+}
+body.touch-device .sidebar.collapsed .sidebar-item[data-running="true"] .sidebar-item-initial {
+  background: var(--wt-success);
+  color: #ffffff;
+}
+body.touch-device .sidebar.collapsed #sidebar-history .sidebar-item {
+  display: none;
+}
+body.touch-device .sidebar.collapsed ~ .main-area {
+  width: calc(100% - 40px);
+  margin-left: 40px;
+}
+
+body.touch-device .tab-bar {
+  height: 40px;
+  min-height: 40px;
+}
+body.touch-device .tab {
+  height: 38px;
+  padding: 0 6px 0 10px;
+  font-size: 13px;
+  max-width: 160px;
+}
+body.touch-device .tab-title {
+  line-height: 38px;
+}
+/* 触摸端关闭按钮缩小，减少误触（24px->20px） */
+body.touch-device .tab-close {
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+}
+body.touch-device .tab-bar-actions {
+  padding: 0 2px;
+}
+body.touch-device .tab-bar-btn {
+  width: 36px;
+  height: 32px;
+}
+body.touch-device .win-btn {
+  width: 44px;
+  height: 40px;
+}
+
+body.touch-device .terminal-stage {
+  padding: 8px;
+}
+/* v8: 移动端 frame 不再撑满/限制尺寸，与桌面端一致跟随 .xterm-screen 实际渲染区。
+     旧方案 width:100%/height:100% + max-width/max-height 非等比压缩 frame，
+     导致框宽高比改变。v9: 由 applySessionFrameRatio 按会话 frameRatio 反算字号保持比例。 */
+body.touch-device .terminal-frame {
+  /* 不设置 width/height/max-width/max-height，由 JS applyTerminalFrameSize 设置 */
+}
+
+body.touch-device .status-bar {
+  height: 28px;
+  min-height: 28px;
+  font-size: 10px;
+  gap: 8px;
+  padding: 0 8px;
+}
+body.touch-device .status-left,
+body.touch-device .status-right {
+  gap: 8px;
+}
+
+body.touch-device .history-dropdown {
+  min-width: unset;
+  width: calc(100vw - 24px);
+  max-width: 360px;
+}
+
+body.touch-device .toast-container {
+  left: 12px;
+  right: 12px;
+  top: 8px;
+}
+body.touch-device .toast {
+  max-width: unset;
+}
+
+body.touch-device .tab {
+  max-width: 120px;
+}
+body.touch-device .status-item:not(:first-child) {
+  display: none;
+}
+body.touch-device #status-cpu,
+body.touch-device #status-mem {
+  display: flex !important;
+}
+
+button, .tab, .sidebar-item, .history-item, .context-menu-item {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tab-bar-btn, .win-btn, .sidebar-toggle, .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.empty-state {
+  animation: fadeIn 0.4s ease;
+}
+.empty-state-icon {
+  opacity: 0.35;
+}
+.empty-state-text {
+  font-size: 15px;
+  font-weight: 500;
+}
+.empty-state-shortcut kbd {
+  box-shadow: 0 1px 0 var(--wt-tab-border);
+}
+
+.status-bar {
+  backdrop-filter: blur(2px);
+}
+
+.form-input:focus,
+.form-select:focus,
+.btn:focus-visible,
+.tab-bar-btn:focus-visible,
+.win-btn:focus-visible,
+.sidebar-toggle:focus-visible,
+.sidebar-item:focus-visible,
+.tab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0,120,212,0.35);
+}
+
+body[data-theme="dark"] .terminal-frame {
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.06),
+    0 8px 32px rgba(0,0,0,0.45);
+}
+body[data-theme="dark"] .history-dropdown {
+  box-shadow: 0 12px 40px rgba(0,0,0,0.4);
+}
+
+.tab-close {
+  border-radius: 5px;
+}
+@media (hover: hover) {
+  .tab-close:hover {
+    background: rgba(0,0,0,0.1);
+  }
+  body[data-theme="dark"] .tab-close:hover {
+    background: rgba(255,255,255,0.12);
+  }
+}
+
+.sidebar-item.active::before {
+  box-shadow: 0 0 8px var(--wt-accent);
+}

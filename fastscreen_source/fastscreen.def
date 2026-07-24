@@ -1,0 +1,19 @@
+LIBRARY fastscreen
+EXPORTS
+    fs_init
+    fs_shutdown
+    fs_enum_monitors
+    fs_enum_windows
+    fs_free_enum
+    fs_create_session
+    fs_destroy_session
+    fs_capture_frame
+    fs_frame_save
+    fs_frame_encode_to_buffer
+    fs_frame_encode_to_buffer_scaled
+    fs_free_buffer
+    fs_frame_copy_data
+    fs_frame_release
+    fs_start_continuous
+    fs_stop_continuous
+    fs_session_is_running

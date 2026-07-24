@@ -1,0 +1,258 @@
+.tab-bar {
+  display: flex;
+  align-items: flex-end;
+  height: 32px;
+  min-height: 32px;
+  background: var(--wt-tab-bar-bg);
+  padding: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  border-bottom: 1px solid var(--wt-tab-border);
+}
+
+.tab-bar.unfocused {
+  background: var(--wt-tab-bar-unfocused-bg);
+}
+
+.tab-scroll {
+  display: flex;
+  align-items: flex-end;
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.tab-scroll::-webkit-scrollbar { display: none; }
+
+.tab {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  min-width: 0;
+  max-width: 200px;
+  padding: 0 8px 0 12px;
+  background: var(--wt-tab-unselected-bg);
+  color: var(--wt-tab-text-muted);
+  font-size: 12px;
+  font-family: var(--wt-font-ui);
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  position: relative;
+  transition: background 0.1s ease, color 0.1s ease;
+  white-space: nowrap;
+  gap: 6px;
+}
+
+/* 仅在支持 hover 的设备（桌面端鼠标）应用 :hover 样式，避免移动端 Sticky Hover */
+@media (hover: hover) {
+  .tab:hover {
+    background: var(--wt-tab-hover-bg);
+    color: var(--wt-tab-text);
+  }
+}
+
+.tab.active {
+  background: var(--wt-tab-selected-bg);
+  color: var(--wt-tab-text);
+  border-color: var(--wt-tab-border);
+  border-bottom-color: var(--wt-tab-selected-bg);
+  margin-bottom: -1px;
+  padding-bottom: 1px;
+}
+
+.tab.active::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--wt-accent);
+  border-radius: 6px 6px 0 0;
+}
+
+.tab-icon {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.tab-icon.running { background: var(--wt-success); }
+.tab-icon.ended { background: #a0a1a7; }
+
+.tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  line-height: 30px;
+}
+
+.tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: inherit;
+  opacity: 0.55;
+  transition: opacity 0.1s, background 0.1s;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+@media (hover: hover) {
+  .tab:hover .tab-close { opacity: 0.85; }
+}
+.tab.active .tab-close { opacity: 0.95; }
+@media (hover: hover) {
+  .tab-close:hover {
+    opacity: 1 !important;
+    background: rgba(0,0,0,0.08);
+  }
+}
+
+.tab-bar-actions {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 4px;
+  gap: 2px;
+  position: relative; /* 为屏幕共享下拉菜单提供定位上下文 */
+}
+
+.tab-bar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 31px;
+  height: 24px;
+  margin: 4px 0;
+  border: none;
+  background: transparent;
+  color: var(--wt-tab-text-muted);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.1s, color 0.1s;
+}
+@media (hover: hover) {
+  .tab-bar-btn:hover {
+    background: rgba(0,0,0,0.06);
+    color: var(--wt-tab-text);
+  }
+}
+
+.tab-bar-btn.active {
+  background: rgba(0,120,212,0.12);
+  color: #0078d4;
+}
+
+@media (hover: hover) {
+  .tab-bar-btn.active:hover {
+    background: rgba(0,120,212,0.2);
+    color: #0078d4;
+  }
+}
+
+.window-controls {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  margin-left: auto;
+}
+
+.win-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--wt-tab-text);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+@media (hover: hover) {
+  .win-btn:hover { background: rgba(0,0,0,0.04); }
+  .win-btn.close:hover {
+    background: var(--wt-close-hover);
+    color: #ffffff;
+  }
+}
+.win-btn.close:active {
+  background: var(--wt-close-active);
+  color: rgba(255,255,255,0.7);
+}
+
+/* IME 切换按钮（3 态：系统 A / Web 中 / 禁用 —） */
+.ime-btn {
+  font-size: 12px;
+  font-weight: 600;
+  width: 28px;
+  letter-spacing: 0;
+  user-select: none;
+}
+.ime-btn.ime-active {
+  background: rgba(0,120,212,0.18);
+  color: #0078d4;
+}
+@media (hover: hover) {
+  .ime-btn.ime-active:hover {
+    background: rgba(0,120,212,0.28);
+    color: #0078d4;
+  }
+}
+.ime-btn.ime-disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+@media (hover: hover) {
+  .ime-btn.ime-disabled:hover {
+    background: transparent;
+    color: var(--wt-tab-text-muted);
+  }
+}
+.ime-btn.ime-nokeyboard {
+  opacity: 0.55;
+  color: #d13438;
+}
+@media (hover: hover) {
+  .ime-btn.ime-nokeyboard:hover {
+    background: rgba(209,52,56,0.1);
+    color: #d13438;
+  }
+}
+
+/* 隐藏 RimeToolbar 自带的设置按钮（⚙），设置已由全局设置面板管理 */
+.rime-tb-settings {
+  display: none !important;
+}
+
+/* IME 键盘外观：通过 CSS 变量控制透明度/大小，避免 inline style 覆盖 rime-plugin.js 的 hidden class
+ *
+ * rime-plugin.js 的 hidden 机制（.rime-kb-hidden / .rime-tkl-hidden）：
+ *   opacity:0 + transform:translateY(100vh) + pointer-events:none
+ * 若通过 inline style 设置 opacity/transform，会覆盖 hidden class 的 opacity/transform，
+ * 导致 hide() 后键盘仍可见（opacity/translateY 被覆盖）但 pointer-events:none 生效（无法点击）。
+ *
+ * 解决方案：rimeManager.js 通过 CSS 变量设置外观，此处规则消费变量并正确处理 hidden 状态。
+ * - 正常显示：opacity/transform 使用变量值
+ * - hidden 状态：双 class 提高优先级，opacity:0 + translateY(100vh) 确保隐藏
+ *   transform 同时包含 translateY 和 scale，平移距离 100vh 不受 scale 影响
+ */
+.rime-kb,
+.rime-tkl {
+  opacity: var(--ime-kb-opacity, 1);
+  transform: scale(var(--ime-kb-scale, 1));
+  transform-origin: bottom center;
+}
+
+.rime-kb.rime-kb-hidden,
+.rime-tkl.rime-tkl-hidden {
+  opacity: 0;
+  transform: translateY(100vh) scale(var(--ime-kb-scale, 1));
+  pointer-events: none;
+}

@@ -1,0 +1,303 @@
+/* ────────────────────────────────────────────────────────────
+ * FastScreen 屏幕查看视图样式
+ *
+ * 功能域：屏幕查看 tab 的控制工具条、状态指示、流渲染区。
+ * 与 .terminal-frame / .vnc-frame 同级，在 #terminal-stage 内互斥显示。
+ * 复用全局 CSS 变量（--wt-*）以保持深/浅色主题一致。
+ * ──────────────────────────────────────────────────────────── */
+
+/* FastScreen 视图根容器：纵向 flex，填充 terminal-stage 内容区 */
+.fastscreen-frame {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--wt-term-bg);
+  border-radius: 4px;
+  /* 与 .terminal-frame / .vnc-frame 一致的外部投影（视觉边界分界线） */
+  box-shadow:
+    0 0 0 1px var(--wt-term-border),
+    0 4px 24px rgba(0,0,0,0.08);
+  overflow: hidden;
+}
+
+/* ── 控制工具条 ── */
+.fs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0 14px;
+  background: var(--wt-tab-bar-bg);
+  border-bottom: 1px solid var(--wt-tab-border);
+  font-family: var(--wt-font-ui);
+  font-size: 12px;
+  color: var(--wt-tab-text);
+  user-select: none;
+}
+
+.fs-status-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* 状态指示点：颜色与 .vnc-status-dot 体系一致 */
+.fs-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #a0a1a7; /* stopped 默认灰 */
+  transition: background 0.2s ease;
+}
+.fs-status-dot.stopped   { background: #a0a1a7; }
+.fs-status-dot.running   { background: var(--wt-success); }
+.fs-status-dot.error     { background: var(--wt-error); }
+.fs-status-dot.disabled  { background: var(--wt-tab-text-muted); opacity: 0.5; }
+
+.fs-status-text {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+
+/* 目标类型切换按钮组（桌面/窗口） */
+.fs-target-type-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: rgba(128, 128, 128, 0.1);
+  border-radius: 4px;
+  padding: 2px;
+  flex-shrink: 0;  /* 防止窄屏下按钮组被压缩导致文字换行 */
+}
+.fs-target-type-btn {
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 3px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--wt-tab-text-muted);
+  border: none;
+  font-family: var(--wt-font-ui);
+  font-weight: 500;
+  white-space: nowrap;  /* 防止窄屏下文字换行导致按钮高度增加 */
+  transition: background 0.1s, color 0.1s;
+}
+@media (hover: hover) {
+  .fs-target-type-btn:hover {
+    background: rgba(128, 128, 128, 0.15);
+    color: var(--wt-tab-text);
+  }
+}
+.fs-target-type-btn.active {
+  background: var(--wt-accent, #0078D4);
+  color: #FFFFFF;
+}
+
+/* 目标选择下拉 */
+.fs-target-select {
+  background: var(--wt-term-bg);
+  color: var(--wt-tab-text);
+  border: 1px solid var(--wt-tab-border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-family: var(--wt-font-ui);
+  height: 26px;
+  min-width: 160px;
+  max-width: 280px;
+  cursor: pointer;
+}
+.fs-target-select:focus {
+  outline: none;
+  border-color: var(--wt-accent, #0078D4);
+  box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.25);
+}
+
+/* 刷新按钮 */
+.fs-refresh-btn {
+  background: none;
+  border: 1px solid var(--wt-tab-border);
+  color: var(--wt-tab-text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  height: 26px;
+  transition: background 0.1s, color 0.1s;
+}
+@media (hover: hover) {
+  .fs-refresh-btn:hover {
+    background: rgba(128, 128, 128, 0.15);
+    color: var(--wt-tab-text);
+  }
+}
+
+/* 流格式切换按钮组 */
+.fs-format-group {
+  display: flex;
+  gap: 2px;
+  background: rgba(128, 128, 128, 0.1);
+  border-radius: 4px;
+  padding: 2px;
+  margin-left: auto;
+}
+.fs-format-btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 3px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--wt-tab-text-muted);
+  border: none;
+  font-family: var(--wt-font-mono);
+  font-weight: 500;
+  transition: background 0.1s, color 0.1s;
+}
+@media (hover: hover) {
+  .fs-format-btn:hover {
+    background: rgba(128, 128, 128, 0.15);
+    color: var(--wt-tab-text);
+  }
+}
+.fs-format-btn.active {
+  background: var(--wt-accent, #0078D4);
+  color: #FFFFFF;
+}
+
+/* 帧率选择 */
+.fs-fps-select {
+  background: var(--wt-term-bg);
+  color: var(--wt-tab-text);
+  border: 1px solid var(--wt-tab-border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 11px;
+  font-family: var(--wt-font-mono);
+  height: 26px;
+  cursor: pointer;
+}
+
+/* ── Viewer 容器：填充工具条下方剩余空间 ── */
+.fs-viewer-container {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--wt-term-bg); /* 占位时跟随主题，流播放时被画面覆盖 */
+}
+
+/* 占位符：未启用/错误时居中提示 */
+.fs-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--wt-tab-text-muted);
+  font-family: var(--wt-font-ui);
+  text-align: center;
+  padding: 24px;
+}
+
+.fs-placeholder-icon {
+  display: flex;
+  opacity: 0.4;
+}
+
+.fs-placeholder-text {
+  font-size: 13px;
+  opacity: 0.8;
+  max-width: 360px;
+  word-break: break-word;
+}
+
+/* 占位符操作按钮（如"置于前台"） */
+.fs-placeholder-action {
+  margin-top: 4px;
+  padding: 6px 16px;
+  font-size: 13px;
+  font-family: var(--wt-font-ui);
+  color: #ffffff;
+  background: var(--wt-accent);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.fs-placeholder-action:hover {
+  opacity: 0.85;
+}
+
+/* MJPEG <img>：填满 viewer 容器，保持比例 */
+.fs-mjpeg-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border: none;
+  margin: 0;
+  padding: 0;
+  background: var(--wt-term-bg);
+}
+
+/* MSE <video>：填满 viewer 容器 */
+.fs-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border: none;
+  margin: 0;
+  padding: 0;
+  background: var(--wt-term-bg);
+}
+
+/* WebCodecs <canvas>：填满 viewer 容器 */
+.fs-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border: none;
+  margin: 0;
+  padding: 0;
+  background: var(--wt-term-bg);
+}
+
+/* ── FastScreen tab（复用 .tab） ── */
+.fastscreen-tab {
+  /* 复用 .tab 全部样式，此处无需额外覆盖 */
+}
+
+/* ── 触摸设备适配 ── */
+body.touch-device .fs-toolbar {
+  height: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+}
+body.touch-device .fs-target-type-btn,
+body.touch-device .fs-format-btn {
+  padding: 5px 14px;
+  font-size: 13px;
+}
+body.touch-device .fs-target-select,
+body.touch-device .fs-fps-select {
+  height: 32px;
+  font-size: 13px;
+}
+body.touch-device .fs-refresh-btn {
+  height: 32px;
+  font-size: 13px;
+}
