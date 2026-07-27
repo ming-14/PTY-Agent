@@ -13,6 +13,7 @@ from .web.fastapi_transport import FastAPIWebSocketTransport
 from .web.connection_context import WebSocketConnectionContext
 from .web.event_publisher import EventPublisherImpl
 from .thread_executor import ThreadExecutorImpl
+from .cursor_locator_adapter import CursorLocatorAdapter
 from ...vnc import VncAdapter
 from ...fastscreen import FastScreenAdapter
 
@@ -25,6 +26,7 @@ __all__ = [
     "WebSocketConnectionContext",
     "EventPublisherImpl",
     "ThreadExecutorImpl",
+    "CursorLocatorAdapter",
     "VncAdapter",
     "FastScreenAdapter",
 ]

@@ -83,6 +83,12 @@ export function handleMsg(msg) {
     case 'fs_error':
       handleFastScreenMessage(msg);
       break;
+    case 'cursor_locator_status':
+    case 'cursor_locator_started':
+    case 'cursor_locator_stopped':
+    case 'cursor_locator_error':
+      handleFastScreenMessage(msg);
+      break;
     case 'error':
       handleError(msg.message);
       break;

@@ -22,6 +22,8 @@ _DEFAULTS: dict = {
     "response_format": "stream",
     "svg_compression_level": 1,
     "terminal_size": "80x24",
+    "ai_analyse": "none",
+    "ai_prompt": "全面分析该内容，只按内容说话，不给出下一步，不提建议",
 }
 
 _SEND_EOL_MAP: dict = {
@@ -107,6 +109,21 @@ class ConfigManager:
                 raise ValueError(
                     f"Invalid svg-compression-level value: {value!r}, "
                     f"available: 0, 1, 2",
+                )
+
+        # ai_analyse: AI 分析模式（none/fileOutput/responseOutput）
+        if key == "ai_analyse":
+            if value not in ("none", "fileOutput", "responseOutput"):
+                raise ValueError(
+                    f"Invalid ai-analyse value: {value!r}, "
+                    f"available: none, fileOutput, responseOutput",
+                )
+
+        # ai_prompt: 分析提示词（非空字符串）
+        if key == "ai_prompt":
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"Invalid ai-prompt value: {value!r}, expected non-empty string",
                 )
 
         # send_eol: 名称映射 -> 实际字符

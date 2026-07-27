@@ -144,20 +144,19 @@ class InputInterceptor:
         has_inject_mouse = hasattr(pty, 'inject_mouse_event')
         has_inject_vt = hasattr(pty, 'inject_vt_bytes')
 
-        if vt_input and has_inject_vt and matches:
-            for m in matches:
-                sgr_bytes = m.group(0)
-                if is_str:
-                    sgr_bytes = sgr_bytes.encode('utf-8')
-                try:
-                    ok = pty.inject_vt_bytes(sgr_bytes)
-                    _logger.info("intercept: inject_vt_bytes (vt_input=ON) ok=%s sid=%s sgr=%r",
-                                 ok, session_id, sgr_bytes[:60])
-                except Exception as e:
-                    _logger.warning("inject_vt_bytes 失败: sid=%s sgr=%r err=%s",
-                                    session_id, sgr_bytes[:60], e)
-
-        elif not vt_input and has_inject_mouse and matches:
+        if has_inject_mouse and matches:
+            # 统一走 inject_mouse_events 路径，不再区分 vt_input=ON/OFF。
+            # 原分支：vt_input=ON 走 inject_vt_bytes（KEY_EVENT_RECORD），
+            #         vt_input=OFF 走 inject_mouse_events（MOUSE_EVENT_RECORD）。
+            # 问题：conhost 在 VT_INPUT 模式下会丢弃通过 KEY_EVENT_RECORD 注入的
+            #       SGR 序列（ActionCsiDispatch return false），inject_vt_bytes
+            #       路径下子进程根本收不到 SGR 字节。
+            # 修复：vt_input=ON 时也走 inject_mouse_events，conhost 的
+            #       InputStateMachineEngine 会把 MOUSE_EVENT_RECORD 翻译为
+            #       SGR 1006 字节流通过 stdin 送达子进程。前提是 conhost 自己
+            #       启用了 ?1006 鼠标模式——由 mediator 在子进程启用 VT_INPUT
+            #       时发送 [?1002h[?1006h 到 ConPTY 输入端启用
+            #       （见 Mediator.cpp:408 OnModeChange）。
             events = []
             for m in matches:
                 button = int(m.group(1))
@@ -193,15 +192,15 @@ class InputInterceptor:
             try:
                 if hasattr(pty, 'inject_mouse_events'):
                     ok = pty.inject_mouse_events(enhanced_events)
-                    _logger.info("intercept: inject_mouse_events (vt_input=OFF) batch=%d ok=%s sid=%s",
-                                 len(enhanced_events), ok, session_id)
+                    _logger.info("intercept: inject_mouse_events (vt_input=%s) batch=%d ok=%s sid=%s",
+                                 vt_input, len(enhanced_events), ok, session_id)
                 else:
                     ok = True
                     for ev in enhanced_events:
                         x, y, button, is_release = ev[0], ev[1], ev[2], ev[3]
                         ok = pty.inject_mouse_event(x, y, button, is_release) and ok
-                    _logger.info("intercept: inject_mouse_event (loop, vt_input=OFF) count=%d ok=%s sid=%s",
-                                 len(enhanced_events), ok, session_id)
+                    _logger.info("intercept: inject_mouse_event (loop, vt_input=%s) count=%d ok=%s sid=%s",
+                                 vt_input, len(enhanced_events), ok, session_id)
             except Exception as e:
                 _logger.warning("inject_mouse_events 失败: sid=%s count=%d err=%s",
                                 session_id, len(events), e)

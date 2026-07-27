@@ -2,6 +2,7 @@
 # 集中管理 Web 服务器相关的配置：监听地址、端口、VNC 远程桌面集成、网页端设置默认值。
 
 [server]
+ENABLE_WEB          = true       # Web 服务器启用开关；关闭时自动禁用 VNC 和 FastScreen
 WEB_HOST = "0.0.0.0"
 WEB_PORT = 18766
 
@@ -24,6 +25,7 @@ FASTSCREEN_DEFAULT_STREAM_FORMAT = "mse"
 # 网页端设置默认值 —— 守护进程启动时读取，作为 /api/settings 返回的默认值
 # 用户覆盖项存储在 ~/.pty-agent/web_user_choice.json，优先级 > 本节
 [web_settings]
+RIKKA_ENABLED         = true       # rikka.enabled: 获取一只rikka桌宠
 DEFAULT_THEME         = "dark"     # basic.theme: light/dark/system
 IME_ENABLED           = true       # ime.enabled: 启用 Web RIME
 IME_CANDIDATE_COUNT   = 5          # ime.candidateCount: 候选词数量

@@ -216,11 +216,12 @@ function _renderRow(item) {
     default:
       controlHtml = '<span style="color:var(--wt-tab-text-muted)">未实现的控件类型: ' + item.type + '</span>';
   }
+  const label = item.key === 'rikka.enabled' ? _rikkaLabel() : _escHtml(item.label);
   return (
     '<div class="settings-row">' +
       '<div class="settings-row-info">' +
-        '<div class="settings-row-label">' + _escHtml(item.label) + '</div>' +
-        '<div class="settings-row-desc">' + _escHtml(item.desc) + '</div>' +
+        '<div class="settings-row-label">' + label + '</div>' +
+        '<div class="settings-row-desc">' + item.desc + '</div>' +
       '</div>' +
       '<div class="settings-control">' + controlHtml + '</div>' +
     '</div>'
@@ -278,8 +279,19 @@ function _bindContentEvents() {
   // toggle 点击
   content.querySelectorAll('.settings-toggle').forEach(el => {
     if (el.dataset.disabled === '1') return;
+    const key = el.dataset.key;
+    // remote.cursorLocator 是服务端状态，初始值从 state 同步，点击时发 WS 消息
+    if (key === 'remote.cursorLocator') {
+      const running = state.fastscreen.cursorLocatorRunning;
+      el.classList.toggle('on', running);
+      el.onclick = () => {
+        const next = !el.classList.contains('on');
+        el.classList.toggle('on', next);
+        store.set(key, next);
+      };
+      return;
+    }
     el.onclick = () => {
-      const key = el.dataset.key;
       const next = !el.classList.contains('on');
       el.classList.toggle('on', next);
       store.set(key, next);
@@ -343,6 +355,16 @@ function _bindContentEvents() {
       store.set(el.dataset.key, el.value);
     };
   });
+}
+
+// ── 内部：rikka label 动态生成 ──
+function _rikkaCnNum(n) {
+  const map = { 1: '一', 2: '两', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '十' };
+  return map[n] || String(n);
+}
+function _rikkaLabel() {
+  const n = parseInt(localStorage.getItem('pty_rikka_count'), 10) || 1;
+  return n === 1 ? '获取一只rikka' : '获取' + _rikkaCnNum(n) + '只rikka';
 }
 
 // ── 内部：HTML 转义（避免引入 formatters 循环依赖，本地实现） ──

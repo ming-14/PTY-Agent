@@ -316,3 +316,31 @@ class Response:
     def ws_fs_error(message: str) -> dict:
         """FastScreen 错误响应。"""
         return {"type": "fs_error", "message": message}
+
+    # ════════════════════════════════════════════════════════════
+    #  WebSocket 响应 — 鼠标增强光标定位器
+    # ════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def ws_cursor_locator_status(status: dict) -> dict:
+        """光标定位器状态响应。
+
+        Args:
+            status: CursorLocatorAdapter.get_status() 返回的字典。
+        """
+        return {"type": "cursor_locator_status", **status}
+
+    @staticmethod
+    def ws_cursor_locator_started() -> dict:
+        """光标定位器启动成功响应。"""
+        return {"type": "cursor_locator_started"}
+
+    @staticmethod
+    def ws_cursor_locator_stopped() -> dict:
+        """光标定位器停止响应。"""
+        return {"type": "cursor_locator_stopped"}
+
+    @staticmethod
+    def ws_cursor_locator_error(message: str) -> dict:
+        """光标定位器错误响应。"""
+        return {"type": "cursor_locator_error", "message": message}

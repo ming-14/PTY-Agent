@@ -1,5 +1,6 @@
-model: openai:sensenova-6.7-flash-lite
+model: openai:deepseek-v4-flash-free
 clients:
   - type: openai
     name: openai
-    api_base: https://token.sensenova.cn/v1
+    api_base: https://opencode.ai/zen/v1
+    api_key: public

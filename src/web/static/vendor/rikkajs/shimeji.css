@@ -1,0 +1,20 @@
+.shimeji-mascot {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 128px;
+  height: 128px;
+  z-index: 2147483647;
+  pointer-events: auto;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  image-rendering: pixelated;
+  background-image: url('img/spritesheet.png');
+  background-repeat: no-repeat;
+  background-size: 1024px 768px;
+}
+
+.shimeji-mascot:active {
+  cursor: grabbing;
+}

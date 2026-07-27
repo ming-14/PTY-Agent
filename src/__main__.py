@@ -110,7 +110,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--default", nargs=2, metavar=("KEY", "VALUE"),
                         action="append", default=None,
                         help="设置默认配置 "
-                             "(timeout/newline/keep-ansi/encoding/debug/send-eol/always-return-snapshot/response-format/svg-compression-level/terminal-size)")
+                             "(timeout/newline/keep-ansi/encoding/debug/send-eol/always-return-snapshot/response-format/svg-compression-level/terminal-size/ai-analyse/ai-prompt)")
     parser.add_argument("--no-debug", action="store_true", default=False,
                         help="禁用响应中的 debugInformation 输出（进程树/GUI 窗口/事件）")
 
@@ -135,7 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_set_default = sub.add_parser("set-default", help="覆盖默认配置（会话级）")
     p_set_default.add_argument("key", metavar="KEY",
-                               help="配置键名 (timeout/newline/keep-ansi/encoding/debug/send-eol/always-return-snapshot/response-format/svg-compression-level)")
+                               help="配置键名 (timeout/newline/keep-ansi/encoding/debug/send-eol/always-return-snapshot/response-format/svg-compression-level/terminal-size/ai-analyse/ai-prompt)")
     p_set_default.add_argument("value", metavar="VALUE", help="配置值")
 
     p_start = sub.add_parser("start", help="启动后台守护进程")
@@ -193,6 +193,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_exec.add_argument("--svg-compression-level", type=int, default=None,
                         choices=[0, 1, 2], dest="svg_compression_level",
                         help="SVG 压缩等级（0=不压缩; 1=轻度; 2=深度，默认）")
+    p_exec.add_argument("--ai-analyse", default=None,
+                        choices=["none", "fileOutput", "responseOutput"], dest="ai_analyse",
+                        help="对响应输出做 AI 分析并覆盖 outputStream（none=不分析；fileOutput=读 -o 文件喂 AI；responseOutput=把 outputStream 拼进 prompt 喂 AI）")
+    p_exec.add_argument("--ai-prompt", default=None, dest="ai_prompt",
+                        help="AI 分析提示词（默认 --default ai-prompt 或内置默认）")
 
     # send
     p_send = sub.add_parser("send", help="向运行中的会话发送输入")
@@ -230,8 +235,13 @@ def build_parser() -> argparse.ArgumentParser:
                         dest="response_format",
                         help="响应格式（默认 stream；svg 需屏幕快照模式）")
     p_send.add_argument("--svg-compression-level", type=int, default=None,
-                        choices=[0, 1, 2], dest="svg_compression_level",
-                        help="SVG 压缩等级（0=不压缩; 1=轻度; 2=深度，默认）")
+                            choices=[0, 1, 2], dest="svg_compression_level",
+                            help="SVG 压缩等级（0=不压缩; 1=轻度; 2=深度，默认）")
+    p_send.add_argument("--ai-analyse", default=None,
+                            choices=["none", "fileOutput", "responseOutput"], dest="ai_analyse",
+                            help="对响应输出做 AI 分析并覆盖 outputStream")
+    p_send.add_argument("--ai-prompt", default=None, dest="ai_prompt",
+                            help="AI 分析提示词（默认 --default ai-prompt 或内置默认）")
 
     # read
     p_read = sub.add_parser("read", help="读取会话终端输出")
@@ -267,8 +277,13 @@ def build_parser() -> argparse.ArgumentParser:
                         dest="response_format",
                         help="响应格式（默认 stream；svg 需屏幕快照模式）")
     p_read.add_argument("--svg-compression-level", type=int, default=None,
-                        choices=[0, 1, 2], dest="svg_compression_level",
-                        help="SVG 压缩等级（0=不压缩; 1=轻度; 2=深度，默认）")
+                            choices=[0, 1, 2], dest="svg_compression_level",
+                            help="SVG 压缩等级（0=不压缩; 1=轻度; 2=深度，默认）")
+    p_read.add_argument("--ai-analyse", default=None,
+                            choices=["none", "fileOutput", "responseOutput"], dest="ai_analyse",
+                            help="对响应输出做 AI 分析并覆盖 outputStream")
+    p_read.add_argument("--ai-prompt", default=None, dest="ai_prompt",
+                            help="AI 分析提示词（默认 --default ai-prompt 或内置默认）")
     p_read.add_argument("--column", type=int, default=None, metavar="N",
                         help="输出第 N 列（1-based，仅 PTY 快照模式）")
 
@@ -333,10 +348,15 @@ def build_parser() -> argparse.ArgumentParser:
                          dest="response_format",
                          help="响应格式（默认 stream；svg 需屏幕快照模式）")
     p_mouse.add_argument("--svg-compression-level", type=int, default=None,
-                         choices=[0, 1, 2], dest="svg_compression_level",
-                         help="SVG 压缩等级（0=不压缩; 1=轻度; 2=深度，默认）")
+                             choices=[0, 1, 2], dest="svg_compression_level",
+                             help="SVG 压缩等级（0=不压缩; 1=轻度; 2=深度，默认）")
+    p_mouse.add_argument("--ai-analyse", default=None,
+                             choices=["none", "fileOutput", "responseOutput"], dest="ai_analyse",
+                             help="对响应输出做 AI 分析并覆盖 outputStream")
+    p_mouse.add_argument("--ai-prompt", default=None, dest="ai_prompt",
+                             help="AI 分析提示词（默认 --default ai-prompt 或内置默认）")
 
-    # wait
+        # wait
     p_wait = sub.add_parser("wait", help="恒等待指定秒数（守护进程侧等待）")
     _add_common_args(p_wait)
     p_wait.add_argument("--timeout", type=float, default=None,
@@ -708,70 +728,76 @@ def main():
         elif args.subcmd == "list":
             client.cmd_list()
         elif args.subcmd == "exec":
-            client.cmd_exec(
-                session_id=args.id,
-                command=args.command,
-                trigger=args.trigger,
-                newline=args.newline,
-                fresh=True,
-                timeout=args.timeout,
-                encoding=args.encoding,
-                full=args.full,
-                keep_ansi=args.keep_ansi,
-                idle_timeout=args.idle_timeout,
-                idle_after_first_output=args.idle_after_first_output,
-                force=args.force_pty_mode,
-                cwd=args.cwd,
-                env=args.env,
-                snapshot_mode=args.snapshot_mode,
-                output_path=args.output_path,
-                response_format=args.response_format,
-                svg_compression_level=args.svg_compression_level,
-                snapshot_diff=args.snapshot_diff,
-                size=args.size,
-            )
+                client.cmd_exec(
+                    session_id=args.id,
+                    command=args.command,
+                    trigger=args.trigger,
+                    newline=args.newline,
+                    fresh=True,
+                    timeout=args.timeout,
+                    encoding=args.encoding,
+                    full=args.full,
+                    keep_ansi=args.keep_ansi,
+                    idle_timeout=args.idle_timeout,
+                    idle_after_first_output=args.idle_after_first_output,
+                    force=args.force_pty_mode,
+                    cwd=args.cwd,
+                    env=args.env,
+                    snapshot_mode=args.snapshot_mode,
+                    output_path=args.output_path,
+                    response_format=args.response_format,
+                    svg_compression_level=args.svg_compression_level,
+                    snapshot_diff=args.snapshot_diff,
+                    size=args.size,
+                    ai_analyse=args.ai_analyse or config_overrides.get("ai_analyse", "none"),
+                    ai_prompt=args.ai_prompt or config_overrides.get("ai_prompt"),
+                )
         elif args.subcmd == "send":
-            client.cmd_send(
-                session_id=args.id,
-                input_text=args.input,
-                trigger=args.trigger,
-                newline=args.newline,
-                fresh=True,
-                timeout=args.timeout,
-                encoding=args.encoding,
-                full=args.full,
-                keep_ansi=args.keep_ansi,
-                idle_timeout=args.idle_timeout,
-                idle_after_first_output=args.idle_after_first_output,
-                json_escaping=args.json_escaping,
-                send_eol=args.send_eol,
-                snapshot=args.snapshot,
-                output_path=args.output_path,
-                response_format=args.response_format,
-                svg_compression_level=args.svg_compression_level,
-                snapshot_diff=args.snapshot_diff,
-            )
+                client.cmd_send(
+                    session_id=args.id,
+                    input_text=args.input,
+                    trigger=args.trigger,
+                    newline=args.newline,
+                    fresh=True,
+                    timeout=args.timeout,
+                    encoding=args.encoding,
+                    full=args.full,
+                    keep_ansi=args.keep_ansi,
+                    idle_timeout=args.idle_timeout,
+                    idle_after_first_output=args.idle_after_first_output,
+                    json_escaping=args.json_escaping,
+                    send_eol=args.send_eol,
+                    snapshot=args.snapshot,
+                    output_path=args.output_path,
+                    response_format=args.response_format,
+                    svg_compression_level=args.svg_compression_level,
+                    snapshot_diff=args.snapshot_diff,
+                    ai_analyse=args.ai_analyse or config_overrides.get("ai_analyse", "none"),
+                    ai_prompt=args.ai_prompt or config_overrides.get("ai_prompt"),
+                )
         elif args.subcmd == "read":
-            client.cmd_read(
-                session_id=args.id,
-                trigger=args.trigger,
-                newline=args.newline,
-                timeout=args.timeout,
-                idle_timeout=args.idle_timeout,
-                idle_after_first_output=args.idle_after_first_output,
-                lines=args.lines,
-                grep=args.grep,
-                offset=args.offset,
-                encoding=args.encoding,
-                full=args.full,
-                keep_ansi=args.keep_ansi,
-                snapshot=args.snapshot,
-                output_path=args.output_path,
-                response_format=args.response_format,
-                svg_compression_level=args.svg_compression_level,
-                snapshot_diff=args.snapshot_diff,
-                column=args.column,
-            )
+                client.cmd_read(
+                    session_id=args.id,
+                    trigger=args.trigger,
+                    newline=args.newline,
+                    timeout=args.timeout,
+                    idle_timeout=args.idle_timeout,
+                    idle_after_first_output=args.idle_after_first_output,
+                    lines=args.lines,
+                    grep=args.grep,
+                    offset=args.offset,
+                    encoding=args.encoding,
+                    full=args.full,
+                    keep_ansi=args.keep_ansi,
+                    snapshot=args.snapshot,
+                    output_path=args.output_path,
+                    response_format=args.response_format,
+                    svg_compression_level=args.svg_compression_level,
+                    snapshot_diff=args.snapshot_diff,
+                    column=args.column,
+                    ai_analyse=args.ai_analyse or config_overrides.get("ai_analyse", "none"),
+                    ai_prompt=args.ai_prompt or config_overrides.get("ai_prompt"),
+                )
         elif args.subcmd == "kill":
             client.cmd_kill(args.id)
         elif args.subcmd == "events":
@@ -859,20 +885,22 @@ def main():
                 pass
 
             client.cmd_mouse(
-                args.id, action,
-                trigger=args.trigger,
-                newline=args.newline,
-                timeout=args.timeout,
-                encoding=args.encoding,
-                keep_ansi=args.keep_ansi,
-                idle_timeout=args.idle_timeout,
-                idle_after_first_output=args.idle_after_first_output,
-                output_path=args.output_path,
-                response_format=args.response_format,
-                svg_compression_level=args.svg_compression_level,
-                snapshot=args.snapshot,
-                snapshot_diff=args.snapshot_diff,
-            )
+                    args.id, action,
+                    trigger=args.trigger,
+                    newline=args.newline,
+                    timeout=args.timeout,
+                    encoding=args.encoding,
+                    keep_ansi=args.keep_ansi,
+                    idle_timeout=args.idle_timeout,
+                    idle_after_first_output=args.idle_after_first_output,
+                    output_path=args.output_path,
+                    response_format=args.response_format,
+                    svg_compression_level=args.svg_compression_level,
+                    snapshot=args.snapshot,
+                    snapshot_diff=args.snapshot_diff,
+                    ai_analyse=args.ai_analyse or config_overrides.get("ai_analyse", "none"),
+                    ai_prompt=args.ai_prompt or config_overrides.get("ai_prompt"),
+                )
         elif args.subcmd == "wait":
             client.cmd_wait(timeout=args.timeout)
 

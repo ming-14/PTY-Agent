@@ -435,19 +435,6 @@ document.addEventListener('keydown', e => {
     stageObserver.observe(stageEl);
   }
 
-  window.addEventListener('beforeunload', e => {
-    if (state.ws) state.ws.close();
-    // handler 会话（FastScreen/VNC）不需要 beforeunload 确认（流连接可安全断开）
-    // 只有活跃终端会话时才提示（刷新可能导致终端状态丢失）
-    const hasActiveTerminal = state.tabOrder.some(sid =>
-      !getHandlerBySid(sid) && state.termInstances[sid]);
-    if (!hasActiveTerminal) return;
-    const message = '建议关闭标签页再重新打开以恢复会话。直接刷新可能导致终端状态丢失。';
-    e.preventDefault();
-    e.returnValue = message;
-    return message;
-  });
-
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     const sid = state.activeTab;

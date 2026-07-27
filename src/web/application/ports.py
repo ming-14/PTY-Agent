@@ -263,6 +263,53 @@ class EventPublisher(ABC):
         """
 
 
+class CursorLocatorServicePort(ABC):
+    """鼠标增强光标定位器服务抽象。
+
+    管理光标圆环定位器的启停与状态查询。
+    服务端单例：多客户端共享同一运行状态，防止重复启动。
+    """
+
+    @abstractmethod
+    def is_available(self) -> bool:
+        """光标定位器是否可用（仅 Windows，cursorlocator 模块可导入）。"""
+
+    @abstractmethod
+    def start(self) -> dict:
+        """启动光标定位器。
+
+        Returns:
+            dict: {running: True} 或 {running: False, error: str}
+        """
+
+    @abstractmethod
+    def stop(self) -> dict:
+        """停止光标定位器。
+
+        Returns:
+            dict: {running: False} 或 {running: True, error: str}
+        """
+
+    @abstractmethod
+    def get_status(self) -> dict:
+        """返回光标定位器状态。
+
+        Returns:
+            dict: {running: bool, available: bool, outer_radius: int, inner_radius: int, alpha: int}
+        """
+
+    @abstractmethod
+    def update_config(self, **kwargs) -> dict:
+        """运行时修改配置参数（outer_radius/inner_radius/alpha）。
+
+        Args:
+            **kwargs: 要修改的参数键值对。
+
+        Returns:
+            dict: {} 成功，{"error": str} 失败。
+        """
+
+
 class ThreadExecutor(ABC):
     """线程执行器抽象，用于在线程池中执行同步 I/O。"""
 

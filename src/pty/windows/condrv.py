@@ -398,6 +398,21 @@ class ConDrvPseudoTerminal(PseudoTerminal):
         # ── 8. 启动子进程（通过 PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE 附着）──
         self._start_child(command, env, cwd)
 
+        # ── 9. 启用 ConHost 鼠标跟踪模式（DECSET ?1002 + ?1006）──
+        # ConHost B 是 PTY-Agent 创建的独立 conhost，与 WT 的 conhost A 隔离。
+        # 子进程的鼠标 SGR 序列由 conhost B 翻译，但 conhost B 必须自己启用
+        # ?1002（button event mouse mode）+ ?1006（SGR extended mouse mode）后
+        # 才能把 MOUSE_EVENT_RECORD 翻译为 SGR 1006 字节流送子进程 stdin。
+        # mediator 无法影响 conhost B（其 stdout 走 conhost A），所以必须由
+        # PTY-Agent 在创建 ConPTY 后主动发 DECSET 到 _inW 启用 conhost B 鼠标模式。
+        # 对非鼠标程序无副作用（conhost 启用鼠标跟踪但没人注入 MOUSE_EVENT_RECORD
+        # 就不会有 SGR 输出）。
+        try:
+            self.write(b'\x1b[?1002h\x1b[?1006h')
+            _logger.info("ConPTY 初始化：已发送 \\x1b[?1002h\\x1b[?1006h 启用 conhost 鼠标模式")
+        except Exception as e:
+            _logger.warning("ConPTY 初始化：启用鼠标模式失败 err=%s", e)
+
     @staticmethod
     def _cleanup_handles(*handles):
         """安全关闭多个句柄，忽略 None 和关闭异常"""

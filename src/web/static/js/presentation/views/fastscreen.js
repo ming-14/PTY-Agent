@@ -21,6 +21,7 @@ import { debug, info, warn } from '../../domain/logger.js';
 import { updateScreenShareButtonVisibility } from './vnc.js';
 import { updateAutoHide } from './autohide.js';
 import { registerSessionHandler, removeTabAndSelectNext } from './sessionHandlers.js';
+import * as settingsStore from '../../application/settingsStore.js';
 
 // ── 模块级状态：当前活跃的流连接（切换格式/目标时需先断开旧连接） ──
 let _activeStream = null;  // { format, cleanup } — cleanup 是断开流的函数
@@ -150,8 +151,54 @@ export function renderFastScreenPanel() {
   // 目标选择器（桌面/窗口下拉）
   _renderTargetSelector();
 
+  // 鼠标增强光标定位器开关
+  _renderCursorLocatorToggle();
+
   // 入口按钮可见性
   updateFastScreenButtonVisibility();
+}
+
+/**
+ * 渲染鼠标增强光标定位器开关按钮状态。
+ * 按钮在 index.html 中静态定义，此处仅更新激活态和可见性。
+ */
+function _renderCursorLocatorToggle() {
+  const label = $('fs-cursor-locator-btn');
+  const cb = $('fs-cursor-locator-cb');
+  if (!label || !cb) return;
+  const fs = state.fastscreen;
+  if (!fs.cursorLocatorAvailable) {
+    label.style.display = 'none';
+    return;
+  }
+  label.style.display = 'flex';
+  cb.checked = fs.cursorLocatorRunning;
+  label.classList.toggle('active', fs.cursorLocatorRunning);
+}
+
+/**
+ * 同步鼠标增强光标定位器状态到设置面板 toggle 和工具栏复选框。
+ * @param {boolean} running 是否运行中
+ */
+function _syncCursorLocatorToggle(running) {
+  const cb = $('fs-cursor-locator-cb');
+  const label = $('fs-cursor-locator-btn');
+  if (cb) cb.checked = running;
+  if (label) label.classList.toggle('active', running);
+  const settingsToggle = document.querySelector('.settings-toggle[data-key="remote.cursorLocator"]');
+  if (settingsToggle) settingsToggle.classList.toggle('on', running);
+}
+
+/**
+ * 切换鼠标增强光标定位器开关。
+ */
+function _toggleCursorLocator() {
+  const fs = state.fastscreen;
+  if (fs.cursorLocatorRunning) {
+    wsSend({ type: 'cursor_locator_stop' });
+  } else {
+    wsSend({ type: 'cursor_locator_start' });
+  }
 }
 
 /**
@@ -326,6 +373,12 @@ export function handleFastScreenMessage(msg) {
       fs.disabled = !!msg.disabled;
       fs.available = !!msg.available;
       fs.activeSessions = msg.active_sessions || 0;
+      fs.cursorLocatorRunning = !!msg.cursor_locator_running;
+      fs.cursorLocatorAvailable = !!msg.cursor_locator_available;
+      _syncCursorLocatorToggle(fs.cursorLocatorRunning);
+      if (msg.outer_radius != null) settingsStore.set('remote.cursorLocatorOuterRadius', msg.outer_radius);
+      if (msg.inner_radius != null) settingsStore.set('remote.cursorLocatorInnerRadius', msg.inner_radius);
+      if (msg.alpha != null) settingsStore.set('remote.cursorLocatorAlpha', msg.alpha);
       break;
     case 'fs_targets':
       fs.disabled = !!msg.disabled;
@@ -342,6 +395,26 @@ export function handleFastScreenMessage(msg) {
     case 'fs_error':
       fs.error = msg.message || '未知错误';
       showToast('屏幕查看: ' + (msg.message || '错误'), 'error');
+      break;
+    case 'cursor_locator_status':
+      fs.cursorLocatorRunning = !!msg.running;
+      fs.cursorLocatorAvailable = !!msg.available;
+      if (msg.outer_radius != null) settingsStore.set('remote.cursorLocatorOuterRadius', msg.outer_radius);
+      if (msg.inner_radius != null) settingsStore.set('remote.cursorLocatorInnerRadius', msg.inner_radius);
+      if (msg.alpha != null) settingsStore.set('remote.cursorLocatorAlpha', msg.alpha);
+      _syncCursorLocatorToggle(fs.cursorLocatorRunning);
+      break;
+    case 'cursor_locator_started':
+      fs.cursorLocatorRunning = true;
+      _syncCursorLocatorToggle(true);
+      break;
+    case 'cursor_locator_stopped':
+      fs.cursorLocatorRunning = false;
+      _syncCursorLocatorToggle(false);
+      break;
+    case 'cursor_locator_error':
+      showToast('鼠标增强: ' + (msg.message || '错误'), 'error');
+      _syncCursorLocatorToggle(fs.cursorLocatorRunning);
       break;
   }
   updateFastScreenButtonVisibility();
@@ -1192,6 +1265,12 @@ export function bindFastScreenEvents() {
       debug('fastscreen', 'target changed to %s', targetSelect.value);
       _connectStream();
     };
+  }
+
+  // 鼠标增强光标定位器复选框
+  const cursorLocatorCb = $('fs-cursor-locator-cb');
+  if (cursorLocatorCb) {
+    cursorLocatorCb.onchange = () => _toggleCursorLocator();
   }
 
   // 推流方式（streamFormat）和帧率（fps）已迁移至设置面板，

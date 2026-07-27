@@ -11,6 +11,7 @@ from ....vnc.ports import VncServicePort
 from ....fastscreen.ports import FastScreenServicePort
 from ...application.ports import (
     ConnectionContext,
+    CursorLocatorServicePort,
     EventPublisher,
     HistoryRepository,
     OutboundMessageChannel,
@@ -48,6 +49,7 @@ class WebSocketController:
         adaptive_lock: Optional[AdaptiveLockService] = None,
         vnc_service: Optional[VncServicePort] = None,
         fastscreen_service: Optional[FastScreenServicePort] = None,
+        cursor_locator_service: Optional[CursorLocatorServicePort] = None,
         dispatcher: Optional[MessageDispatcher] = None,
         connections: Optional[dict] = None,
     ):
@@ -60,6 +62,7 @@ class WebSocketController:
         self._adaptive_lock = adaptive_lock
         self._vnc_service = vnc_service
         self._fastscreen_service = fastscreen_service
+        self._cursor_locator_service = cursor_locator_service
         self._dispatcher = dispatcher or MessageDispatcher()
         # v3: 引用 server.py 的 connections 字典，_cleanup 据此检查同 client_uid
         # 是否还有其他活跃连接订阅了该 sid（多标签页/刷新场景锁继承）
@@ -98,6 +101,7 @@ class WebSocketController:
             adaptive_lock=self._adaptive_lock,
             vnc_service=self._vnc_service,
             fastscreen_service=self._fastscreen_service,
+            cursor_locator_service=self._cursor_locator_service,
         )
 
         consumer = asyncio.ensure_future(self._consume(transport, handler_ctx, _enqueue))
