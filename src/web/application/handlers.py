@@ -16,6 +16,7 @@ from ...vnc.ports import VncServicePort
 from ...fastscreen.ports import FastScreenServicePort
 from .ports import (
     ConnectionContext,
+    CursorLocatorServicePort,
     EventPublisher,
     HistoryRepository,
     OutboundMessageChannel,
@@ -86,6 +87,7 @@ class HandlerContext:
         adaptive_lock: Optional[AdaptiveLockService] = None,
         vnc_service: Optional[VncServicePort] = None,
         fastscreen_service: Optional[FastScreenServicePort] = None,
+        cursor_locator_service: Optional[CursorLocatorServicePort] = None,
     ):
         self.session_repo = session_repo
         self.history_repo = history_repo
@@ -101,6 +103,7 @@ class HandlerContext:
         self.adaptive_lock = adaptive_lock
         self.vnc_service = vnc_service
         self.fastscreen_service = fastscreen_service
+        self.cursor_locator_service = cursor_locator_service
 
 
 class MessageHandler(ABC):
@@ -843,12 +846,20 @@ class FsStatusHandler(MessageHandler):
 
     async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
         if not ctx.fastscreen_service:
-            return [Response.ws_fs_status({
+            status = {
                 "disabled": True,
                 "available": False,
                 "active_sessions": 0,
-            })]
-        status = await ctx.executor.run(ctx.fastscreen_service.get_status)
+            }
+        else:
+            status = await ctx.executor.run(ctx.fastscreen_service.get_status)
+        if ctx.cursor_locator_service:
+            cl_status = await ctx.executor.run(ctx.cursor_locator_service.get_status)
+            status["cursor_locator_running"] = cl_status.get("running", False)
+            status["cursor_locator_available"] = cl_status.get("available", False)
+        else:
+            status["cursor_locator_running"] = False
+            status["cursor_locator_available"] = False
         return [Response.ws_fs_status(status)]
 
 
@@ -909,6 +920,90 @@ class FsBringToFrontHandler(MessageHandler):
         except Exception as e:
             _logger.exception("FastScreen bring to front failed: hwnd=%d", hwnd)
             return [Response.ws_fs_error(f"置于前台失败：{e}")]
+
+
+# --------------------------------------------------------------------------- #
+# 鼠标增强光标定位器处理器
+# --------------------------------------------------------------------------- #
+
+
+class CursorLocatorStartHandler(MessageHandler):
+    """启动鼠标增强光标定位器。
+
+    服务端单例：若已在运行，直接返回成功。
+    启动操作通过 ThreadExecutor 调度避免阻塞事件循环。
+    """
+
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        if not ctx.cursor_locator_service:
+            return [Response.ws_cursor_locator_error("光标定位器服务不可用")]
+        if not ctx.cursor_locator_service.is_available():
+            return [Response.ws_cursor_locator_error(
+                "光标定位器不可用：仅支持 Windows 平台"
+            )]
+        try:
+            result = await ctx.executor.run(ctx.cursor_locator_service.start)
+            if result.get("running"):
+                _logger.info("CursorLocator started")
+                return [Response.ws_cursor_locator_started()]
+            return [Response.ws_cursor_locator_error(
+                result.get("error", "启动失败")
+            )]
+        except Exception as e:
+            _logger.exception("CursorLocator start failed")
+            return [Response.ws_cursor_locator_error(f"启动失败：{e}")]
+
+
+class CursorLocatorStopHandler(MessageHandler):
+    """停止鼠标增强光标定位器。"""
+
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        if not ctx.cursor_locator_service:
+            return [Response.ws_cursor_locator_error("光标定位器服务不可用")]
+        try:
+            result = await ctx.executor.run(ctx.cursor_locator_service.stop)
+            if not result.get("running"):
+                _logger.info("CursorLocator stopped")
+                return [Response.ws_cursor_locator_stopped()]
+            return [Response.ws_cursor_locator_error(
+                result.get("error", "停止失败")
+            )]
+        except Exception as e:
+            _logger.exception("CursorLocator stop failed")
+            return [Response.ws_cursor_locator_error(f"停止失败：{e}")]
+
+
+class CursorLocatorUpdateConfigHandler(MessageHandler):
+    """修改鼠标增强光标定位器配置参数。
+
+    支持 outer_radius / inner_radius / alpha 三个参数，
+    运行时实时生效（调用 cursorlocator.update_config），同时持久化到 JSON。
+    """
+
+    async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
+        if not ctx.cursor_locator_service:
+            return [Response.ws_cursor_locator_error("光标定位器服务不可用")]
+        params = {}
+        for key in ("outer_radius", "inner_radius", "alpha"):
+            if key in msg:
+                try:
+                    params[key] = int(msg[key])
+                except (TypeError, ValueError):
+                    return [Response.ws_cursor_locator_error(f"参数 {key} 无效")]
+        if not params:
+            return [Response.ws_cursor_locator_error("未指定任何参数")]
+        try:
+            result = await ctx.executor.run(
+                ctx.cursor_locator_service.update_config, **params
+            )
+            if "error" in result:
+                return [Response.ws_cursor_locator_error(result["error"])]
+            _logger.info("CursorLocator config updated: %s", params)
+            status = await ctx.executor.run(ctx.cursor_locator_service.get_status)
+            return [Response.ws_cursor_locator_status(status)]
+        except Exception as e:
+            _logger.exception("CursorLocator update_config failed")
+            return [Response.ws_cursor_locator_error(f"配置更新失败：{e}")]
 
 
 # --------------------------------------------------------------------------- #
@@ -1106,6 +1201,9 @@ def build_handler_registry() -> dict[str, MessageHandler]:
         "fs_status": FsStatusHandler(),
         "fs_list_targets": FsListTargetsHandler(),
         "fs_bring_to_front": FsBringToFrontHandler(),
+        "cursor_locator_start": CursorLocatorStartHandler(),
+        "cursor_locator_stop": CursorLocatorStopHandler(),
+        "cursor_locator_update_config": CursorLocatorUpdateConfigHandler(),
         # 问题2：自适应排他锁
         "takeover_size_control": TakeoverSizeControlHandler(),
         "set_size_mode": SetSizeModeHandler(),

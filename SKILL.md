@@ -23,7 +23,7 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过伪终端（
 |------|------|----------|------|
 | `start/stop [options]` | 手动启动/停止守护进程；启动守护进程`exec`可直接启动，一般无需手动 | `stop --force` | |
 | `status` | 查看守护进程状态 | | |
-| `exec <new-session-id> <options>` | 执行命令以启动会话 | `-c "<command>"`(-c req), `-t "<regex>"`, `--timeout <seconds>`, `--cwd <path>`, `--env KEY=VALUE`, `--snapshot-mode`, `--size WxH`, `-o <path>` | `exec id_py -c "python -i" -t ">>>"` |
+| `exec <new-session-id> <options>` | 执行命令以启动会话 | `-c "<command>"`(-c req), `-t "<regex>"`, `--timeout <seconds>`, `--cwd <path>`, `--env KEY=VALUE`, `--snapshot-mode`, `--size WxH`, `-o <path>`, `--ai-analyse <mode>`, `--ai-prompt <text>` | `exec id_py -c "python -i" -t ">>>"` |
 | `send <session-id> "<content>" [options]` | 发送输入到运行中的会话 | `-t "<regex>"`, `-j`, `-e <lf|crlf|cr|none>`, `--timeout <seconds>`, `--snapshot` | `send id_py "print(1)" -t ">>>"`；`send id_py "{ctrl+c}" -e none` |
 | `read <session-id> [options]` | 读取会话输出 | `-l <N>`, `-g "<regex>"`, `--snapshot`, `-o <path>` | `read myid -l 10` |
 | `list` | 列出所有会话 | | |
@@ -61,6 +61,8 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过伪终端（
 - `--snapshot-mode` 屏幕快照模式，启用后始终等待固定时间后返回终端屏幕快照
 - `--size <WxH>` 终端尺寸（如 `120x40`，默认 `80x24`）
 - `-o/--output <path>` 输出到文件（.txt/.log=纯文本; .svg=矢量图; .png/.jpg/.bmp=位图，需 Pillow）
+- `--ai-analyse <none|fileOutput|responseOutput>` 对响应输出做 AI 分析并覆盖 outputStream（`fileOutput` 需配合 `-o`，AI 读输出文件；`responseOutput` 直接把 outputStream 拼进 prompt 喂 AI）
+- `--ai-prompt <text>` 自定义 AI 分析提示词（默认 `--default ai-prompt` 或内置默认）
 
 `-c "<command>"`必填
 
@@ -95,6 +97,8 @@ send 没有`-i`/`--input`参数，直接加`"<content>"`
 - `-o/--output <path>` 输出到文件
 - `--response-format <stream|svg>` 响应格式选择
 - `--svg-compression-level <0|1|2>` SVG 压缩等级
+- `--ai-analyse <none|fileOutput|responseOutput>` 对响应输出做 AI 分析并覆盖 outputStream
+- `--ai-prompt <text>` 自定义 AI 分析提示词
 
 默认情况下，"<content>"是不转义输入，如果需要输入控制字符，必须`-j`进入转义模式。发送多行、使用控制字符必须进入转义模式
 
@@ -247,6 +251,8 @@ app.py read myid --snapshot -o output.png
 - `--column <N>` 输出第 N 列（必须用全名`--column`；仅read有此参数）
 - `-o/--output <path>`：输出到文件
 - `--response-format <stream|svg>`：响应格式选择
+- `--ai-analyse <none|fileOutput|responseOutput>` 对响应输出做 AI 分析并覆盖 outputStream（`fileOutput` 需 `-o`）
+- `--ai-prompt <text>` 自定义 AI 分析提示词
 
 ## mouse 用法
 
@@ -284,6 +290,8 @@ app.py read myid --snapshot -o output.png
 - `-s/--snapshot-diff`：仅返回屏幕变化的行
 - `-o/--output <path>`：输出到文件
 - `--response-format <stream|svg>`：响应格式选择
+- `--ai-analyse <none|fileOutput|responseOutput>` 对响应输出做 AI 分析并覆盖 outputStream（`fileOutput` 需 `-o`）
+- `--ai-prompt <text>` 自定义 AI 分析提示词
 
 示例：
 
@@ -345,7 +353,7 @@ python app.py mouse myid click 10,5 -t ">>>" --timeout 10
 - `--encoding <encoding>` 通用子命令：终端编码，乱码时设置`utf-8/gbk/gb2312/gb18030/big5`，指定一次后会自动记忆
 - `--no-debug` 通用子命令：禁用响应中的 debugInformation 输出（进程树/GUI 窗口/事件）
 - `--show-config [KEY]` 查看当前调用配置
-- `--default <KEY> <VALUE>` 通用子命令：覆盖默认配置（可用键：`timeout`/`newline`/`keep-ansi`/`encoding`/`debug`/`send-eol`/`always-return-snapshot`/`response-format`/`svg-compression-level`/`terminal-size`，`<VALUE>`是配置值或者`on`/`off`；支持多个 `--default`；按 session 持久化到守护进程）
+- `--default <KEY> <VALUE>` 通用子命令：覆盖默认配置（可用键：`timeout`/`newline`/`keep-ansi`/`encoding`/`debug`/`send-eol`/`always-return-snapshot`/`response-format`/`svg-compression-level`/`terminal-size`/`ai-analyse`/`ai-prompt`，`<VALUE>`是配置值或者`on`/`off`；支持多个 `--default`；按 session 持久化到守护进程）
 
 `terminal-size`即刻生效，运行中更改终端尺寸就用`--default terminal-size NxN`
 
@@ -421,3 +429,39 @@ app.py send kill dbg1
 ```
 
 ```
+
+### **AI 分析**
+
+对命令输出做二次 AI 分析，自动覆盖 outputStream：
+
+```bash
+# responseOutput 模式（不需要 -o）：把 outputStream 拼进 prompt 喂 AI
+app.py exec myid -c "ls -la" --ai-analyse responseOutput
+
+# fileOutput 模式（需要 -o）：AI 读 -o 文件分析
+app.py exec myid -c "ls -la" -o out.txt --ai-analyse fileOutput
+
+# 自定义分析提示词
+app.py exec myid -c "git diff" --ai-analyse responseOutput --ai-prompt "用中文总结代码变更"
+
+# 设置默认 AI 分析模式
+app.py --default ai-analyse responseOutput exec myid -c "ls -la"
+
+# 设置默认分析提示词
+app.py --default ai-prompt "全面分析该内容，只按内容说话，不给出下一步，不提建议" exec myid -c "ls -la"
+
+# 关闭 AI 分析（默认）
+app.py exec myid -c "ls -la"  # 等效 --ai-analyse none
+```
+
+**分析模式说明**：
+
+| 模式 | 说明 | 需要 -o |
+|------|------|----------|
+| `none` | 不分析（默认） | 否 |
+| `fileOutput` | 先写 -o 文件，aichat -f 读文件后分析 | **是** |
+| `responseOutput` | 把 outputStream 文本拼进 prompt 喂 AI | 否 |
+
+**AI 分析失败时**自动回退输出原始 response，不阻断主流程。
+
+**会话按 uid 续聊**：AI 分析使用 daemon 返回的 session.uid 作为 aichat --session 名，同一 PTY 会话的多次 AI 分析自动上下文延续。

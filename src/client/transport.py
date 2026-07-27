@@ -57,6 +57,7 @@ from ..daemon.lifecycle import is_running, start_daemon, stop_daemon
 from .input import process_input
 from .formatter import print_response
 from .config_manager import ConfigManager, _DEFAULTS as _DEFAULTS_MAP
+from .ai_analyser import analyse_response
 
 _logger = logging.getLogger("pty-client")
 
@@ -349,6 +350,40 @@ class Client:
         if err:
             print_response(Response.error(err))
 
+    def _apply_ai_analysis(self, resp: dict, ai_analyse: str,
+                           ai_prompt: Optional[str], output_file: Optional[str]) -> dict:
+        """对 response 应用 AI 分析（--ai-analyse 钩子）
+
+        封装 src/client/ai_analyser.analyse_response 调用：
+        - none 模式直接返回原 resp（ai_analyser 内部短路）
+        - fileOutput：调用前须确保 output_file 已写入（由调用方先 _handle_output）
+        - responseOutput：把 outputStream 拼进 prompt
+
+        提示词优先级：命令行 ai_prompt > --default ai-prompt > ai_analyser 内置默认。
+        超时取自 src/config/common.toml 的 AICHAT_TIMEOUT。
+
+        Args:
+            resp:        守护进程返回的 response 字典。
+            ai_analyse:  分析模式（none/fileOutput/responseOutput）。
+            ai_prompt:   命令行/--default 传入的提示词，None 用内置默认。
+            output_file: fileOutput 模式下的 -o 文件路径。
+
+        Returns:
+            分析后的 response（outputStream 可能被覆盖）；失败/none 时原样返回。
+        """
+        if not ai_analyse or ai_analyse == "none":
+            return resp
+        from ..config.common import AICHAT_TIMEOUT
+        from .config_manager import _DEFAULTS as CFG_DEFAULTS
+        prompt = ai_prompt or CFG_DEFAULTS.get("ai_prompt")
+        return analyse_response(
+            resp,
+            mode=ai_analyse,
+            prompt=prompt,
+            output_file=output_file,
+            timeout=AICHAT_TIMEOUT,
+        )
+
     def _send_recv(self, msg: dict, *, autostart: bool = True) -> dict:
         sock = self._connect(autostart=autostart)
         # 凭证提供者可能为 None（认证全关模式），条件调用
@@ -429,9 +464,11 @@ class Client:
         svg_compression_level: Optional[int] = None,
         snapshot_diff: bool = False,
         size: Optional[str] = None,
+        ai_analyse: str = "none",
+        ai_prompt: Optional[str] = None,
     ):
-        _logger.info("cmd_exec: id=%r force=%s env=%s snapshot_mode=%s size=%s",
-                     session_id, force, env, snapshot_mode, size)
+        _logger.info("cmd_exec: id=%r force=%s env=%s snapshot_mode=%s size=%s ai_analyse=%s",
+                     session_id, force, env, snapshot_mode, size, ai_analyse)
         original_timeout = timeout
         timeout, keep_ansi, encoding, newline, send_eol = self._apply_config_defaults(
             timeout=timeout, keep_ansi=keep_ansi, encoding=encoding, newline=newline,
@@ -529,6 +566,21 @@ class Client:
         _decompress_screen_buffer(resp)
         self._merge_session_defaults(resp)
 
+        # AI 分析钩子：
+        # - fileOutput：必须先写 -o 文件，AI 才能 aichat -f 读它；故先 _handle_output 再分析
+        # - responseOutput：直接基于内存中的 outputStream 分析，不需要文件
+        # - none：跳过
+        if ai_analyse == "fileOutput":
+            if not output_path:
+                print_response(Response.error(
+                    "--ai-analyse fileOutput requires -o/--output"
+                ))
+                return
+            self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
+            resp = self._apply_ai_analysis(resp, ai_analyse, ai_prompt, output_path)
+        elif ai_analyse == "responseOutput":
+            resp = self._apply_ai_analysis(resp, ai_analyse, ai_prompt, None)
+
         if response_format == "svg":
             if resp.get("type") == "error":
                 print_response(resp)
@@ -547,7 +599,9 @@ class Client:
             print_response(display)
         else:
             print_response(resp)
-        self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
+        # fileOutput 模式已在上方先写过文件，这里跳过重复写入
+        if ai_analyse != "fileOutput":
+            self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
 
     def cmd_read(
         self,
@@ -569,10 +623,12 @@ class Client:
         svg_compression_level: Optional[int] = None,
         snapshot_diff: bool = False,
         column: Optional[int] = None,
+        ai_analyse: str = "none",
+        ai_prompt: Optional[str] = None,
     ):
         """读取会话终端输出，支持触发条件等待"""
-        _logger.info("cmd_read: id=%r trigger=%r timeout=%s idle_timeout=%s lines=%s grep=%r offset=%s full=%s snapshot=%s",
-                     session_id, trigger, timeout, idle_timeout, lines, grep, offset, full, snapshot)
+        _logger.info("cmd_read: id=%r trigger=%r timeout=%s idle_timeout=%s lines=%s grep=%r offset=%s full=%s snapshot=%s ai_analyse=%s",
+                     session_id, trigger, timeout, idle_timeout, lines, grep, offset, full, snapshot, ai_analyse)
         original_timeout = timeout
         timeout, keep_ansi, encoding, newline, _ = self._apply_config_defaults(
             timeout=timeout, keep_ansi=keep_ansi, encoding=encoding, newline=newline,
@@ -627,6 +683,18 @@ class Client:
         _decompress_screen_buffer(resp)
         self._merge_session_defaults(resp)
 
+        # AI 分析钩子（同 cmd_exec：fileOutput 先写文件再分析，responseOutput 直接分析）
+        if ai_analyse == "fileOutput":
+            if not output_path:
+                print_response(Response.error(
+                    "--ai-analyse fileOutput requires -o/--output"
+                ))
+                return
+            self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
+            resp = self._apply_ai_analysis(resp, ai_analyse, ai_prompt, output_path)
+        elif ai_analyse == "responseOutput":
+            resp = self._apply_ai_analysis(resp, ai_analyse, ai_prompt, None)
+
         if response_format == "svg":
             if resp.get("type") == "error":
                 print_response(resp)
@@ -645,7 +713,9 @@ class Client:
             print_response(display)
         else:
             print_response(resp)
-        self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
+        # fileOutput 模式已在上方先写过文件，这里跳过重复写入
+        if ai_analyse != "fileOutput":
+            self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
 
     def cmd_send(
         self,
@@ -667,6 +737,8 @@ class Client:
         response_format: Optional[str] = None,
         svg_compression_level: Optional[int] = None,
         snapshot_diff: bool = False,
+        ai_analyse: str = "none",
+        ai_prompt: Optional[str] = None,
     ):
         """向会话发送输入文本，支持触发条件等待和屏幕快照
 
@@ -693,8 +765,8 @@ class Client:
             svg_compression_level: SVG 压缩等级
             snapshot_diff: 仅返回屏幕变化行
         """
-        _logger.info("cmd_send: id=%r trigger=%r timeout=%s json_escaping=%s send_eol=%s",
-                     session_id, trigger, timeout, json_escaping, send_eol)
+        _logger.info("cmd_send: id=%r trigger=%r timeout=%s json_escaping=%s send_eol=%s ai_analyse=%s",
+                     session_id, trigger, timeout, json_escaping, send_eol, ai_analyse)
 
         # send_eol: CLI 传入的是名称（"cr"/"lf"/"crlf"/"none"），转为实际字符
         send_eol_char = None
@@ -754,6 +826,18 @@ class Client:
         _decompress_screen_buffer(resp)
         self._merge_session_defaults(resp)
 
+        # AI 分析钩子（同 cmd_exec：fileOutput 先写文件再分析，responseOutput 直接分析）
+        if ai_analyse == "fileOutput":
+            if not output_path:
+                print_response(Response.error(
+                    "--ai-analyse fileOutput requires -o/--output"
+                ))
+                return
+            self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
+            resp = self._apply_ai_analysis(resp, ai_analyse, ai_prompt, output_path)
+        elif ai_analyse == "responseOutput":
+            resp = self._apply_ai_analysis(resp, ai_analyse, ai_prompt, None)
+
         if response_format == "svg":
             if resp.get("type") == "error":
                 print_response(resp)
@@ -772,7 +856,9 @@ class Client:
             print_response(display)
         else:
             print_response(resp)
-        self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
+        # fileOutput 模式已在上方先写过文件，这里跳过重复写入
+        if ai_analyse != "fileOutput":
+            self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
 
     def cmd_list(self):
         """列出所有会话"""
@@ -857,6 +943,8 @@ class Client:
         svg_compression_level: Optional[int] = None,
         snapshot: bool = False,
         snapshot_diff: bool = False,
+        ai_analyse: str = "none",
+        ai_prompt: Optional[str] = None,
     ):
         """发送鼠标动作到会话并等待输出
 
@@ -864,8 +952,8 @@ class Client:
             session_id: 会话标识
             action: 动作描述字典，由 CLI 解析后传入
         """
-        _logger.info("cmd_mouse: id=%r action=%s trigger=%r timeout=%s",
-                     session_id, action.get("action"), trigger, timeout)
+        _logger.info("cmd_mouse: id=%r action=%s trigger=%r timeout=%s ai_analyse=%s",
+                     session_id, action.get("action"), trigger, timeout, ai_analyse)
         original_timeout = timeout
         timeout, keep_ansi, encoding, newline, _ = self._apply_config_defaults(
             timeout=timeout, keep_ansi=keep_ansi, encoding=encoding, newline=newline,
@@ -907,6 +995,18 @@ class Client:
         _decompress_screen_buffer(resp)
         self._merge_session_defaults(resp)
 
+        # AI 分析钩子（同 cmd_exec：fileOutput 先写文件再分析，responseOutput 直接分析）
+        if ai_analyse == "fileOutput":
+            if not output_path:
+                print_response(Response.error(
+                    "--ai-analyse fileOutput requires -o/--output"
+                ))
+                return
+            self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
+            resp = self._apply_ai_analysis(resp, ai_analyse, ai_prompt, output_path)
+        elif ai_analyse == "responseOutput":
+            resp = self._apply_ai_analysis(resp, ai_analyse, ai_prompt, None)
+
         if response_format == "svg":
             if resp.get("type") == "error":
                 print_response(resp)
@@ -925,4 +1025,6 @@ class Client:
             print_response(display)
         else:
             print_response(resp)
-        self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
+        # fileOutput 模式已在上方先写过文件，这里跳过重复写入
+        if ai_analyse != "fileOutput":
+            self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)

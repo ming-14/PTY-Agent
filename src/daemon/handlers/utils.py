@@ -210,6 +210,8 @@ def build_result(
     result: dict = {
         "commandType": result_type,
         "sessionId": session_id,
+        # 会话 UID（Session.uid），供客户端 AI 分析按 uid 续聊（aichat --session <uid>）
+        "uid": session.uid if session else None,
         "outputStream": output,
         "outputOffset": session.output_offset if session else 0,
         "triggerReturnReason": mapped_reason,

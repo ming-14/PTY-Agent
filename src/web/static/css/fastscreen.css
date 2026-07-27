@@ -122,6 +122,76 @@
   box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.25);
 }
 
+/* 鼠标增强光标定位器复选框 */
+.fs-cursor-locator-btn {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  background: rgba(128, 128, 128, 0.08);
+  color: var(--wt-tab-text-muted);
+  border: 1px solid var(--wt-tab-border);
+  font-family: var(--wt-font-ui);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  flex-shrink: 0;
+  user-select: none;
+  height: 26px;
+  box-sizing: border-box;
+}
+@media (hover: hover) {
+  .fs-cursor-locator-btn:hover {
+    background: rgba(128, 128, 128, 0.15);
+    color: var(--wt-tab-text);
+    border-color: rgba(128, 128, 128, 0.3);
+  }
+}
+.fs-cursor-locator-btn.active {
+  background: rgba(0, 120, 212, 0.1);
+  color: var(--wt-accent, #0078D4);
+  border-color: var(--wt-accent, #0078D4);
+  box-shadow: 0 0 0 1px rgba(0, 120, 212, 0.15);
+}
+.fs-cursor-locator-btn input[type="checkbox"] {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  margin: 0;
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid var(--wt-tab-border);
+  border-radius: 3px;
+  background: var(--wt-term-bg);
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.fs-cursor-locator-btn input[type="checkbox"]:checked {
+  background: var(--wt-accent, #0078D4);
+  border-color: var(--wt-accent, #0078D4);
+}
+.fs-cursor-locator-btn input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+.fs-cursor-locator-btn input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--wt-accent, #0078D4);
+  outline-offset: 1px;
+}
+
 /* 刷新按钮 */
 .fs-refresh-btn {
   background: none;

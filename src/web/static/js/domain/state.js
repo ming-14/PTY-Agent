@@ -174,6 +174,9 @@ export const state = {
     // 已 enumerated 的目标列表（由 fs_targets 消息填充）
     monitors: [],
     windows: [],
+    // 鼠标增强光标定位器状态（服务端单例，多客户端共享）
+    cursorLocatorRunning: false,   // 光标定位器是否运行中
+    cursorLocatorAvailable: false, // 光标定位器是否可用（仅 Windows）
   },
 };
 

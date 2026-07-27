@@ -76,6 +76,97 @@ import { initDevConsole, setVisible as setDevConsoleVisible } from './presentati
 import { init as rimeInit, onThemeChange as rimeOnThemeChange, applyImeSetting as rimeApplyImeSetting } from './infrastructure/rimeManager.js?v=42';
 import { ensureMapleMonoLoaded, applyTerminalFontAll } from './infrastructure/fontLoader.js';
 
+// ── rikkajs 桌宠管理 ──
+const _RIKKA_COUNT_LS_KEY = 'pty_rikka_count';
+let _rikkaManager = null;
+let _rikkaCssEl = null;
+let _rikkaJsLoaded = false;
+let _rikkaCount = parseInt(localStorage.getItem(_RIKKA_COUNT_LS_KEY), 10) || 1;
+let _rikkaLastDisabledTime = 0;
+let _rikkaResetTimer = null;
+
+function _rikkaCnNum(n) {
+  const map = { 1: '一', 2: '两', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '十' };
+  return map[n] || String(n);
+}
+
+function _rikkaLabel() {
+  const n = _rikkaCount;
+  return n === 1 ? '获取一只rikka' : '获取' + _rikkaCnNum(n) + '只rikka';
+}
+
+function _updateRikkaDesc() {
+  const row = document.querySelector('[data-key="rikka.enabled"]')?.closest('.settings-row');
+  if (row) {
+    const labelEl = row.querySelector('.settings-row-label');
+    if (labelEl) labelEl.textContent = _rikkaLabel();
+  }
+}
+
+function _saveRikkaCount() {
+  localStorage.setItem(_RIKKA_COUNT_LS_KEY, String(_rikkaCount));
+}
+
+function _loadRikkaAssets() {
+  return new Promise((resolve, reject) => {
+    if (_rikkaJsLoaded && window.Shimeji) { resolve(); return; }
+    if (!_rikkaCssEl) {
+      _rikkaCssEl = document.createElement('link');
+      _rikkaCssEl.rel = 'stylesheet';
+      _rikkaCssEl.href = '/static/vendor/rikkajs/shimeji.css';
+      document.head.appendChild(_rikkaCssEl);
+    }
+    const script = document.createElement('script');
+    script.src = '/static/vendor/rikkajs/shimeji.js';
+    script.onload = () => { _rikkaJsLoaded = true; resolve(); };
+    script.onerror = () => reject(new Error('shimeji.js load failed'));
+    document.head.appendChild(script);
+  });
+}
+
+function _startRikka(count) {
+  const n = count || _rikkaCount;
+  _loadRikkaAssets().then(() => {
+    if (_rikkaManager) return;
+    _rikkaManager = Shimeji.create({ maxCount: n });
+    for (let i = 0; i < n; i++) _rikkaManager.addMascot();
+    _rikkaManager.start();
+  }).catch((e) => {
+    warn('rikka', '桌宠加载失败: %s', e);
+  });
+}
+
+function _stopRikka() {
+  if (_rikkaManager) {
+    _rikkaManager.disposeAll();
+    _rikkaManager.stop();
+    _rikkaManager = null;
+  }
+}
+
+function _onRikkaEnabled(value) {
+  if (value) {
+    if (_rikkaResetTimer) { clearTimeout(_rikkaResetTimer); _rikkaResetTimer = null; }
+    const now = Date.now();
+    if (now - _rikkaLastDisabledTime < 300) {
+      _rikkaCount++;
+      _saveRikkaCount();
+    }
+    _startRikka(_rikkaCount);
+  } else {
+    _rikkaLastDisabledTime = Date.now();
+    _stopRikka();
+    if (_rikkaResetTimer) clearTimeout(_rikkaResetTimer);
+    _rikkaResetTimer = setTimeout(() => {
+      _rikkaCount = 1;
+      _saveRikkaCount();
+      _updateRikkaDesc();
+      _rikkaResetTimer = null;
+    }, 300);
+  }
+  _updateRikkaDesc();
+}
+
 // 装配端口：将基础设施/表现层实现注入应用层
 // ports.session 适配器：封装 sessionHandlers 的查询与恢复逻辑，
 // 让 application 层通过 ports 调用而不直接依赖 presentation 层
@@ -241,6 +332,18 @@ async function init() {
       applyFastScreenSetting(key, value);
     } else if (key === 'remote.fsStreamFormat') {
       applyFastScreenSetting(key, value);
+    } else if (key === 'remote.cursorLocator') {
+      wsSend({ type: value ? 'cursor_locator_start' : 'cursor_locator_stop' });
+    } else if (key === 'remote.cursorLocatorOuterRadius'
+            || key === 'remote.cursorLocatorInnerRadius'
+            || key === 'remote.cursorLocatorAlpha') {
+      const paramKey = key.replace('remote.cursorLocator', '').replace(/^./, c => c.toLowerCase());
+      const paramMap = {
+        'remote.cursorLocatorOuterRadius': 'outer_radius',
+        'remote.cursorLocatorInnerRadius': 'inner_radius',
+        'remote.cursorLocatorAlpha': 'alpha',
+      };
+      wsSend({ type: 'cursor_locator_update_config', [paramMap[key]]: value });
     } else if (key.startsWith('ime.')) {
       rimeApplyImeSetting(key, value);
     } else if (key === 'developer.logPanelEnabled') {
@@ -249,6 +352,8 @@ async function init() {
       setLogLevel(_levelNameToNum(value));
     } else if (key === 'developer.bufferSize') {
       setBufferSize(value);
+    } else if (key === 'rikka.enabled') {
+      _onRikkaEnabled(value);
     }
   });
 
@@ -274,6 +379,12 @@ async function init() {
 
   // 初始化 Web RIME 输入法管理器（按 localStorage 恢复模式，懒加载 panel）
   rimeInit();
+
+  // 初始化 rikka 桌宠（根据设置开关决定是否启动）
+  if (settingsStore.get('rikka.enabled')) {
+    _startRikka(_rikkaCount);
+  }
+  requestAnimationFrame(_updateRikkaDesc);
 
   // 终端应用鼠标模式变化时刷新状态按钮
   setMouseModeChangeCallback(() => updateMouseModeButton(state.activeTab));

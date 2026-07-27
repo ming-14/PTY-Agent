@@ -32,6 +32,7 @@ from ..config.daemon import (
     TLS_KEY_FILE,
     TLS_CERT_VALIDITY_DAYS,
     TLS_CERT_SUBJECT_CN,
+    ENABLE_WEB,
     WEB_HOST,
     WEB_PORT,
 )
@@ -315,13 +316,25 @@ class DaemonServer:
             listener.start(self._create_handler)
         _logger.info("守护进程启动完成，共 %d 个 Listener", len(self._listeners))
 
-        # 6. 启动 Web 服务器
-        self._web_server = WebServer(
-            self.manager, host=WEB_HOST, port=WEB_PORT,
-        )
-        self._web_server.start_background()
-        web_url = f"http://{WEB_HOST}:{WEB_PORT}/"
-        _logger.info("Web 服务器已启动，可通过 %s 访问", web_url)
+        # 6. 启动 Web 服务器（ENABLE_WEB=False 时跳过，同时禁用 VNC 和 FastScreen）
+        self._web_server = None
+        if ENABLE_WEB:
+            self._web_server = WebServer(
+                self.manager, host=WEB_HOST, port=WEB_PORT,
+            )
+            self._web_server.start_background()
+            web_url = f"http://{WEB_HOST}:{WEB_PORT}/"
+            _logger.info("Web 服务器已启动，可通过 %s 访问", web_url)
+        else:
+            # Web 关闭时 VNC 和 FastScreen 无访问入口，强制禁用
+            from ..config import daemon as _daemon_cfg
+            if _daemon_cfg.ENABLE_VNC:
+                _daemon_cfg.ENABLE_VNC = False
+                _logger.info("ENABLE_WEB=False，自动禁用 VNC")
+            if _daemon_cfg.ENABLE_FASTSCREEN:
+                _daemon_cfg.ENABLE_FASTSCREEN = False
+                _logger.info("ENABLE_WEB=False，自动禁用 FastScreen")
+            _logger.info("Web 服务器已禁用 (ENABLE_WEB=False)")
 
         # 标记 ended 会话为 history
         if self.manager._history_store:

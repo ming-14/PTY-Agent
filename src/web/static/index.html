@@ -17,7 +17,7 @@
   <link rel="stylesheet" href="/static/css/responsive.css?v=5">
   <link rel="stylesheet" href="/static/css/settings.css?v=5">
   <link rel="stylesheet" href="/static/css/devconsole.css?v=1">
-  <link rel="stylesheet" href="/static/vendor/css/xterm.css?v=7">
+  <link rel="stylesheet" href="/static/vendor/xterm/xterm.css?v=7">
 </head>
 <body>
   <div id="app">
@@ -140,6 +140,7 @@
               <button class="fs-target-type-btn" data-type="window">窗口</button>
             </div>
             <select id="fs-target-select" class="fs-target-select" title="选择捕获目标"></select>
+            <label id="fs-cursor-locator-btn" class="fs-cursor-locator-btn" title="开启鼠标增强显示" style="display:none"><input type="checkbox" id="fs-cursor-locator-cb"><span>增强鼠标显示</span></label>
           </div>
           <div class="fs-viewer-container">
             <div id="fs-placeholder" class="fs-placeholder">
@@ -300,9 +301,9 @@
   <!-- 悬浮日志视窗挂载点（DOM 由 devConsole.js 动态注入） -->
   <div id="devconsole-root"></div>
 
-  <script src="/static/vendor/lib/xterm.js"></script>
-  <script src="/static/vendor/lib/xterm-addon-fit.js"></script>
-  <script src="/static/vendor/lib/xterm-addon-web-links.js"></script>
+  <script src="/static/vendor/xterm/xterm.js"></script>
+  <script src="/static/vendor/xterm/xterm-addon-fit.js"></script>
+  <script src="/static/vendor/xterm/xterm-addon-web-links.js"></script>
   <script src="/static/vendor/rime/rime-plugin.js?v=44"></script>
   <script type="module" src="/static/js/app.js?v=291"></script>
 </body>

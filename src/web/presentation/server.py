@@ -20,6 +20,7 @@ from ...vnc.ports import VncServicePort
 from ...vnc import get_novnc_web_dir
 from ..history import HistoryStore
 from ..infrastructure import (
+    CursorLocatorAdapter,
     EventPublisherImpl,
     FastAPIWebSocketTransport,
     FastScreenAdapter,
@@ -88,6 +89,12 @@ class WebServer:
         except Exception:
             _logger.exception("FastScreenAdapter init failed, FastScreen disabled")
 
+        self._cursor_locator_service = None
+        try:
+            self._cursor_locator_service = CursorLocatorAdapter()
+        except Exception:
+            _logger.exception("CursorLocatorAdapter init failed, cursor locator disabled")
+
         # 控制器
         self._controller = WebSocketController(
             session_repo=self._session_repo,
@@ -99,6 +106,7 @@ class WebServer:
             adaptive_lock=self._adaptive_lock,
             vnc_service=self._vnc_service,
             fastscreen_service=self._fastscreen_service,
+            cursor_locator_service=self._cursor_locator_service,
             # v3: 注入 connections 字典，_cleanup 据此检查同 client_uid 是否还有
             # 其他活跃连接订阅了该 sid（多标签页/刷新场景锁继承）
             connections=self._connections,

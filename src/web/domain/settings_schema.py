@@ -30,6 +30,8 @@ _logger = logging.getLogger("pty-web-settings")
 _KEY_TO_CONFIG_NAME: Dict[str, str] = {
     # ── 基本设置 ──
     "basic.theme": "DEFAULT_THEME",
+    # ── 桌宠 ──
+    "rikka.enabled": "RIKKA_ENABLED",
     # ── 输入法设置 ──
     "ime.enabled": "IME_ENABLED",
     "ime.candidateCount": "IME_CANDIDATE_COUNT",

@@ -14,6 +14,7 @@
 pty-agent/
 ├── docs/          # 设计文档（架构/规范/命令参考）
 ├── src/           # 主包（模块化架构：protocol/ client/ daemon/ session/ pty/ auth/ web/ fastscreen/ vnc/）
+│   ├── client/    # 前端客户端（transport/formatter/ai_analyser/renderer/config_manager）
 │   └── session/   # 已拆分为 encoding/ output/ process/ 三个独立子包
 ├── tests/         # 测试套件
 │   ├── conftest.py                   # pytest 配置

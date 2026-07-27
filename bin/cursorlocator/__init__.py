@@ -53,10 +53,13 @@ def stop():
     with _lock:
         if _instance is None:
             return
-        _instance.request_stop()
-        _thread.join(timeout=3.0)
+        app = _instance
+        thread = _thread
         _instance = None
         _thread = None
+    app.request_stop()
+    if thread and threading.current_thread() is not thread:
+        thread.join(timeout=5.0)
 
 
 def update_config(**kwargs):
@@ -99,7 +102,6 @@ class _App:
         _PostQuitMessage(0)
 
     def request_stop(self):
-        if self._ring:
-            self._ring.running = False
-            from .win32_api import _PostMessageW
-            _PostMessageW(self._ring.hwnd, 0x0000, 0, 0)
+        if self._ring and self._ring.hwnd:
+            from .win32_api import _PostMessageW, WM_DESTROY
+            _PostMessageW(self._ring.hwnd, WM_DESTROY, 0, 0)

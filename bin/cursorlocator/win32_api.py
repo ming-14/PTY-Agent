@@ -252,6 +252,10 @@ _EnumDisplaySettingsW = user32.EnumDisplaySettingsW
 _EnumDisplaySettingsW.argtypes = [w.LPCWSTR, w.DWORD, CPOINTER(DEVMODEW)]
 _EnumDisplaySettingsW.restype = w.BOOL
 
+_UnregisterClassW = user32.UnregisterClassW
+_UnregisterClassW.argtypes = [w.LPCWSTR, c_void_p]
+_UnregisterClassW.restype = w.BOOL
+
 # ============================================================
 # 回调类型
 # ============================================================

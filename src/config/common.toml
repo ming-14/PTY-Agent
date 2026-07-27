@@ -16,6 +16,11 @@ MAX_COMMAND_LEN    = 65536
 MAX_INPUT_LEN      = 65536
 MAX_PATTERN_LEN    = 4096
 
+[ai]
+# AI 分析（aichat 二次分析）调用超时秒数
+# exec/send/read/mouse 的 --ai-analyse 启用后，phase-2 调用 aichat 的最大等待时间
+AICHAT_TIMEOUT = 120
+
 [auth]
 # 认证模式开关
 # ENABLE_TOKEN_AUTH=true:  服务端支持 Token 身份认证 + HMAC 消息签名（对称，双向）

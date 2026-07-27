@@ -312,6 +312,8 @@ class MouseRingWindow:
         if self.hwnd:
             _DestroyWindow(self.hwnd)
             self.hwnd = None
+        _UnregisterClassW('MouseRingClass', _GetModuleHandleW(None))
+        MouseRingWindow._instance = None
 
 
 # ============================================================
@@ -327,6 +329,7 @@ def _ring_wnd_proc(hwnd, msg, wparam, lparam):
         return 0
     elif msg == WM_DESTROY:
         win.running = False
+        win._stop_timer_tracking()
         return 0
     elif msg == WM_PAINT:
         ps = PAINTSTRUCT()

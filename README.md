@@ -41,14 +41,15 @@ pip install cryptography tomli
 
 | 命令 | 用途 |
 |------|------|
-| `exec <id> -c "<cmd>"` | 启动会话（执行命令） |
-| `send <id> "<input>"` | 发送输入到运行中的会话 |
-| `read <id>` | 读取会话输出 |
+| `exec <id> -c "<cmd>"` | 启动会话（执行命令），支持 `--ai-analyse` |
+| `send <id> "<input>"` | 发送输入到运行中的会话，支持 `--ai-analyse` |
+| `read <id>` | 读取会话输出，支持 `--ai-analyse` |
 | `list` | 列出所有会话 |
 | `kill <id>` | 终止会话 |
 | `events <id>` | 查看会话事件 |
 | `start` / `stop` | 手动启停守护进程 |
 | `closewin <id> <hwnd>` | 关闭 GUI 窗口 |
+| `mouse <id> <action>` | 发送鼠标动作，支持 `--ai-analyse` |
 | `keygen` | 生成 Ed25519 密钥对（公私钥认证用） |
 
 ## 核心特性
@@ -76,6 +77,7 @@ pip install cryptography tomli
 - **跨机部署**：配置分离（daemon.toml / client.toml），守护进程与客户端可部署在不同机器
 - **keygen 密钥生成**：`python -m src keygen` 生成 OpenSSH 兼容的 Ed25519 密钥对
 - **screenBuffer 传输优化**：按需返回 + 稀疏表示 + gzip 压缩，典型 94KB 数据压缩至 <1KB
+- **AI 分析**：`--ai-analyse <fileOutput|responseOutput>` 将响应输出交给 aichat 做二次分析，用 AI 结果覆盖 outputStream；`--ai-prompt` 自定义分析提示词；`--default ai-analyse`/`--default ai-prompt` 持久化默认值；会话按 uid 续聊
 
 ## 认证模式
 
@@ -125,6 +127,8 @@ python app.py exec mimo -c "mimo.exe" --snapshot-mode --timeout 5  # TUI 程序�
 python app.py exec vim -c "vim" --output screen.svg               # 输出终端快照为 SVG
 python app.py exec vim -c "vim" --snapshot-mode --response-format svg --timeout 3  # SVG 格式响应
 python app.py read myid --snapshot -o output.png                        # 快照渲染为 PNG（需 Pillow）
+python app.py exec myid -c "ls -la" --ai-analyse responseOutput          # AI 分析输出
+python app.py exec myid -c "ls -la" -o out.txt --ai-analyse fileOutput   # AI 读 -o 文件分析
 ```
 
 ### send — 发送输入
@@ -168,7 +172,7 @@ pty-agent/
 │   ├── config/            # 配置中心（TOML 文件：common/daemon/client/web/logging）
 │   ├── protocol/          # 通信协议（JSON 行编解码 + ANSI 过滤 + Response）
 │   ├── auth/              # 认证层（token/ + pubkey/ + tls/ + 共享基础设施）
-│   ├── client/            # 前端客户端（TCP/TLS 连接 + 格式化 + GDI/SVG 渲染 + TOFU）
+│   ├── client/            # 前端客户端（TCP/TLS 连接 + 格式化 + GDI/SVG 渲染 + TOFU + AI 分析）
 │   ├── daemon/            # 守护进程（双端口 TCP 服务器 + Listener + 请求处理 + 生命周期）
 │   ├── ipc/               # 共享内存 IPC（端口/令牌/HMAC 密钥传递）
 │   ├── pty/               # 伪终端后端（Unix/Windows ConPTY）
