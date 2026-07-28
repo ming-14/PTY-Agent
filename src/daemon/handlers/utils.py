@@ -184,6 +184,7 @@ def build_result(
     warning: Optional[str] = None,
     session=None,
     t_start: Optional[float] = None,
+    output_offset: Optional[int] = None,
 ) -> dict:
     if session is None:
         session = manager.get_session(session_id)
@@ -213,7 +214,7 @@ def build_result(
         # 会话 UID（Session.uid），供客户端 AI 分析按 uid 续聊（aichat --session <uid>）
         "uid": session.uid if session else None,
         "outputStream": output,
-        "outputOffset": session.output_offset if session else 0,
+        "outputOffset": output_offset if output_offset is not None else (session.output_offset if session else 0),
         "triggerReturnReason": mapped_reason,
     }
 

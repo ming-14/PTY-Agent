@@ -685,7 +685,7 @@ def main():
         return
 
     if getattr(args, "snapshot_diff", False):
-        if args.subcmd in ("exec", "send") and not is_snapshot_active:
+        if args.subcmd == "exec" and not is_snapshot_active:
             from .client.input import safe_print
             safe_print(json.dumps(
                 Response.error("--snapshot-diff requires snapshot mode (--snapshot-mode for exec; --snapshot for send/read; or --default always-return-snapshot on)"),

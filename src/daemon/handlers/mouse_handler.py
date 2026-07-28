@@ -52,7 +52,6 @@ class MouseHandler(DaemonHandler):
             _send_mouse_response(
                 ctx, conn, session, session_id, msg, performed=False,
                 error="Mouse actions require PTY mode", output=output,
-                stderr_output=stderr_output,
             )
             return
 
@@ -72,7 +71,7 @@ class MouseHandler(DaemonHandler):
                 _send_mouse_response(
                     ctx, conn, session, session_id, msg, performed=False,
                     error=error, matches=matches, output="",
-                    stderr_output="", reason="ok", has_trigger=False,
+                    reason="ok", has_trigger=False,
                     hint=error or ("grep completed" if matches else "No match found"),
                 )
                 return
