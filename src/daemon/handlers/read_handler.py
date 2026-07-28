@@ -170,10 +170,13 @@ class ReadHandler(DaemonHandler):
         read_offset = offset
         if msg.get("full"):
             read_offset = 0
-        elif read_offset is None:
-            read_offset = session.output_offset
 
-        output = session.get_output(from_offset=read_offset, encoding=encoding)
+        if read_offset is None:
+            output, cur_offset = session.get_output_with_offset(
+                from_offset=session.output_offset, encoding=encoding)
+        else:
+            output, cur_offset = session.get_output_with_offset(
+                from_offset=read_offset, encoding=encoding)
         output = strip_if_needed(output, msg)
 
         if read_offset is not None and not lines_param and not grep:
@@ -182,6 +185,7 @@ class ReadHandler(DaemonHandler):
                 has_trigger=False, result_type="read",
                 session=session,
                 t_start=msg.get("_t_start"),
+                output_offset=cur_offset,
             )
             attach_screen_buffer(result, session, msg)
             Message.send(conn, result)
@@ -219,12 +223,21 @@ class ReadHandler(DaemonHandler):
                 Message.send(conn, Response.error(f"Invalid regex: {grep}"))
                 return
 
+        column_param = msg.get("column")
+        if column_param is not None and lines:
+            col_idx = column_param - 1
+            lines = [
+                line[col_idx] if 0 <= col_idx < len(line) else ""
+                for line in lines
+            ]
+
         output = "\n".join(lines)
         result = build_result(
             ctx.manager, session_id, output, False, "ended",
             has_trigger=False, result_type="read",
             session=session,
             t_start=msg.get("_t_start"),
+            output_offset=cur_offset,
         )
         attach_screen_buffer(result, session, msg)
         Message.send(conn, result)

@@ -95,6 +95,23 @@ class OutputBuffer:
         with self._lock:
             return self._read_cycle
 
+    def get_slice_with_length(self, start: int = 0) -> tuple:
+        """原子获取缓冲区切片及当前长度（消除 TOCTOU 竞态）
+
+        Args:
+            start: 起始字节偏移。
+
+        Returns:
+            (切片 bytes, 当前缓冲区总长度) 元组。
+        """
+        with self._lock:
+            length = len(self._buffer)
+            if start < 0:
+                start = 0
+            if start >= length:
+                return b"", length
+            return bytes(memoryview(self._buffer)[start:]), length
+
     def count_byte(self, b: int) -> int:
         """统计指定字节在缓冲区中的出现次数"""
         with self._lock:

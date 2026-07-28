@@ -406,9 +406,21 @@ class Session:
         """获取会话输出"""
         data = self._out_buf.get_slice(
             start=from_offset if from_offset is not None else 0)
-        if encoding and self.pty_type and self.pty_type.startswith("win-"):
-            encoding = None
         return self._enc.detect_decode(data, encoding)
+
+    def get_output_with_offset(
+        self,
+        from_offset: Optional[int] = None,
+        encoding: Optional[str] = None,
+    ) -> tuple:
+        """原子获取会话输出及当前偏移（消除 TOCTOU 竞态）
+
+        Returns:
+            (解码后文本, 当前缓冲区字节偏移) 元组。
+        """
+        data, cur_offset = self._out_buf.get_slice_with_length(
+            start=from_offset if from_offset is not None else 0)
+        return self._enc.detect_decode(data, encoding), cur_offset
 
     def get_snapshot(self, keep_ansi: bool = False) -> str:
         """获取终端屏幕快照"""
