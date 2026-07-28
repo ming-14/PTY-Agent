@@ -7,6 +7,7 @@
 
 import errno
 import re
+import select
 import time
 import logging
 import threading
@@ -120,6 +121,19 @@ class SessionThreads:
         gui_detector = comp.gui_detector
 
         while not self._stop_event.is_set() and pty:
+            # 使用 select 等待数据，避免非阻塞 read 立即返回导致空数据误判为 EOF
+            pty_fd = pty.fileno() if hasattr(pty, 'fileno') else None
+            if pty_fd is not None:
+                try:
+                    readable, _, _ = select.select([pty_fd], [], [], 0.5)
+                    if not readable:
+                        # 超时，继续循环检查 stop_event
+                        pty = comp.pty_provider()
+                        continue
+                except (OSError, ValueError):
+                    # select 出错，PTY 可能已关闭
+                    break
+
             try:
                 data = pty.read(PTY_READ_SIZE)
             except OSError as e:
@@ -133,8 +147,9 @@ class SessionThreads:
                     "读取 PTY 异常 (会话 '%s'): %s", session_id, e)
                 break
             if not data:
+                # select  readable 后 read 返回空表示真 EOF（slave 已关闭）
                 _logger.info(
-                    "会话 '%s': reader EOF (pty read returned empty)",
+                    "会话 '%s': reader EOF (pty read returned empty after select)",
                     session_id)
                 break
 

@@ -71,6 +71,9 @@ class UnixPseudoTerminal(PseudoTerminal):
         except OSError as e:
             if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
                 return b""
+            if e.errno == errno.EIO:
+                # Slave 端已关闭，EOF
+                return b""
             _logger.warning("read error: %s", e)
             raise
 
@@ -86,6 +89,9 @@ class UnixPseudoTerminal(PseudoTerminal):
                 total += len(more)
             except OSError as e:
                 if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    break
+                if e.errno == errno.EIO:
+                    # Slave 端已关闭，停止排空
                     break
                 raise
         if total:
