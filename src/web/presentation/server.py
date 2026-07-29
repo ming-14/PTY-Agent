@@ -392,6 +392,11 @@ class WebServer:
             except Exception:
                 _logger.exception("Auth router mount failed")
 
+        # 登录页路由（密码为空时也需要能访问 login.html）
+        @app.get("/login", response_class=FileResponse)
+        async def _login_page():
+            return FileResponse(os.path.join(_STATIC_DIR, "login.html"))
+
         # HTTP 请求认证校验函数（供子路由使用）
         _http_auth = self._get_http_auth_validator()
 
