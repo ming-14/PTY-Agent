@@ -51,6 +51,7 @@ export const SETTING_TYPES = {
   STEPPER: 'stepper',   // 步进器
   INPUT: 'input',       // 文本输入
   TEXTAREA: 'textarea', // 多行文本
+  ACTION: 'action',     // 可点击操作（点击触发回调，如弹出对话框）
 };
 
 /**
@@ -108,6 +109,17 @@ export const SETTINGS_SCHEMA = [
     desc: '<a href="/static/vendor/rikkajs/LICENSE" target="_blank" style="color:var(--wt-accent)">LICENSE</a>',
     type: SETTING_TYPES.TOGGLE,
     default: true,
+  },
+
+  {
+    key: 'basic.serverAddress',
+    category: 'basic',
+    section: '连接',
+    label: '自定义服务端地址',
+    desc: '设置后页面将刷新并连接到指定服务端，留空则使用当前地址',
+    type: SETTING_TYPES.ACTION,
+    default: '',
+    placeholder: '如 192.168.1.100:18766',
   },
 
   // ── 输入法设置 ──

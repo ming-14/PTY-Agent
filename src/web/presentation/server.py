@@ -6,10 +6,12 @@ import os
 import socket
 import threading
 import time
-from typing import Optional
+from typing import Callable, Optional
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request, WebSocket
-from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
@@ -32,6 +34,8 @@ from ..infrastructure import (
     ThreadExecutorImpl,
     WebSocketConnectionContext,
 )
+from ..infrastructure.auth import SessionStore
+from .controllers.auth_controller import create_auth_router, validate_request_auth, validate_ws_auth
 from .controllers.fastscreen_controller import create_fastscreen_router
 from .controllers.settings_controller import create_settings_router
 from .controllers.websocket_controller import WebSocketController
@@ -47,10 +51,21 @@ class WebServer:
     负责启动后台 HTTP/WebSocket 服务，并保持与旧版一致的公共接口。
     """
 
-    def __init__(self, manager, host: str = "127.0.0.1", port: int = 18766):
+    def __init__(self, manager, host: str = "127.0.0.1", port: int = 18766,
+                 password_hash: str = ""):
         self.manager = manager
         self.host = host
         self.port = port
+
+        # 密码认证：空哈希=无认证（向后兼容），非空=启用
+        self._auth_enabled = bool(password_hash)
+        self._session_store: Optional[SessionStore] = None
+        self._password_hash: str = password_hash
+        if self._auth_enabled:
+            self._session_store = SessionStore()
+            _logger.info("Web auth enabled (password hash set)")
+        else:
+            _logger.info("Web auth disabled (no password)")
 
         # 基础设施层
         self._executor = ThreadExecutorImpl()
@@ -60,7 +75,8 @@ class WebServer:
         self._system_stats = SystemStatsProviderImpl(self._executor)
         self._shell_provider = ShellProviderImpl()
 
-        if manager._history_store is None:
+        existing = getattr(manager, '_history_store', None)
+        if existing is None:
             manager._history_store = self._history_store
 
         # 连接管理与事件发布
@@ -226,8 +242,158 @@ class WebServer:
             except Exception:
                 _logger.exception("WebServer loop close error")
 
+    def _get_loopback_allowed_hosts(self) -> list:
+        """当服务监听在回环地址时，返回允许的 Host 头值列表。
+
+        仅当 self.host 为回环地址（127.x.x.x / ::1 / localhost）时启用。
+        返回空列表表示不启用校验（非回环监听）。
+
+        Returns:
+            允许的 Host 头值列表（全小写），如 ["127.0.0.1:18766", "127.0.0.1", "localhost:18766", "localhost"]
+        """
+        if not self._is_loopback_host(self.host):
+            return []
+        port = self.port
+        hosts = set()
+        # 127.0.0.1 系列
+        hosts.add(f"127.0.0.1:{port}")
+        hosts.add("127.0.0.1")
+        # localhost 系列
+        hosts.add(f"localhost:{port}")
+        hosts.add("localhost")
+        # [::1] 系列（IPv6 回环）
+        hosts.add(f"[::1]:{port}")
+        hosts.add("[::1]")
+        # 如果 host 是 127.x.x.x 的其他地址，也加入
+        if self.host not in ("127.0.0.1", "localhost", "::1"):
+            hosts.add(f"{self.host}:{port}")
+            hosts.add(self.host)
+        return sorted(hosts)
+
+    @staticmethod
+    def _is_loopback_host(host: str) -> bool:
+        """判断监听地址是否为回环地址。
+
+        Args:
+            host: 监听地址字符串
+
+        Returns:
+            True 表示回环地址
+        """
+        if host in ("localhost", "::1"):
+            return True
+        # 127.x.x.x 整个段都是回环
+        try:
+            parts = host.split(".")
+            if len(parts) == 4 and parts[0] == "127":
+                return all(0 <= int(p) <= 255 for p in parts)
+        except (ValueError, IndexError):
+            pass
+        return False
+
+    def _validate_ws_auth(self, ws: WebSocket) -> bool:
+        """校验 WebSocket 连接的认证 token 是否有效。
+
+        同时支持 authToken query param（跨域）和 Cookie（同源）。
+        未启用认证时直接返回 True。
+
+        Args:
+            ws: FastAPI WebSocket 实例
+
+        Returns:
+            True 表示已认证或认证未启用
+        """
+        if not self._auth_enabled or self._session_store is None:
+            return True
+        return validate_ws_auth(ws, self._session_store)
+
+    def _get_http_auth_validator(self) -> Optional[Callable[[Request], bool]]:
+        """返回 HTTP 请求认证校验函数，供子路由使用。
+
+        未启用认证时返回 None（路由方据此跳过校验）。
+        """
+        if not self._auth_enabled or self._session_store is None:
+            return None
+        store = self._session_store
+
+        def _validator(request: Request) -> bool:
+            return validate_request_auth(request, store)
+
+        return _validator
+
     def _build_app(self) -> FastAPI:
         app = FastAPI(title="PTY-Agent Web", docs_url=None, redoc_url=None)
+
+        # CORS 中间件：允许跨域访问认证端点（登录页可能从其他源发起请求）
+        # 使用 allow_origin_regex 而非 allow_origins=["*"]，因为 credentials=True 时
+        # 浏览器不允许 Access-Control-Allow-Origin 为通配符 *，必须回显具体 Origin
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origin_regex=".*",
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["*"],
+            allow_credentials=True,
+        )
+
+        # 回环地址 Host/Origin/Referer 校验中间件
+        # 当服务监听在 127.0.0.1 等本地回环地址时，严格校验请求的 Host 头
+        # 和 Origin/Referer 头，防止 DNS 重绑定攻击。校验失败返回 403。
+        _loopback_allowed_hosts = self._get_loopback_allowed_hosts()
+        if _loopback_allowed_hosts:
+            _logger.info(
+                "Loopback host validation enabled, allowed hosts: %s",
+                _loopback_allowed_hosts,
+            )
+
+            @app.middleware("http")
+            async def _loopback_host_middleware(request: Request, call_next):
+                host_header = request.headers.get("host", "")
+                if host_header.lower() not in _loopback_allowed_hosts:
+                    remote = request.client.host if request.client else "-"
+                    _logger.warning(
+                        "Loopback host check rejected: Host=%r from %s (allowed=%s)",
+                        host_header, remote, _loopback_allowed_hosts,
+                    )
+                    return JSONResponse(
+                        status_code=403,
+                        content={"error": "forbidden", "message": "Invalid Host header"},
+                    )
+                # 校验 Origin 头（若存在）
+                origin = request.headers.get("origin", "")
+                if origin:
+                    parsed = urlparse(origin)
+                    origin_host = parsed.hostname or ""
+                    origin_port = parsed.port
+                    if origin_port:
+                        origin_host_port = f"{origin_host}:{origin_port}".lower()
+                    else:
+                        origin_host_port = origin_host.lower()
+                    # 构造允许的 origin host 列表（含/不含端口）
+                    if origin_host_port not in _loopback_allowed_hosts and origin_host.lower() not in [
+                        h.split(":")[0] for h in _loopback_allowed_hosts
+                    ]:
+                        remote = request.client.host if request.client else "-"
+                        _logger.warning(
+                            "Loopback origin check rejected: Origin=%r from %s",
+                            origin, remote,
+                        )
+                        return JSONResponse(
+                            status_code=403,
+                            content={"error": "forbidden", "message": "Invalid Origin"},
+                        )
+                return await call_next(request)
+
+        # 认证路由（/api/auth/* + /login）——密码非空时注册
+        if self._auth_enabled and self._session_store is not None:
+            try:
+                auth_router = create_auth_router(self._session_store, self._password_hash)
+                app.include_router(auth_router)
+                _logger.info("Auth router mounted at /api/auth + /login")
+            except Exception:
+                _logger.exception("Auth router mount failed")
+
+        # HTTP 请求认证校验函数（供子路由使用）
+        _http_auth = self._get_http_auth_validator()
 
         @app.middleware("http")
         async def _request_logging_middleware(request: Request, call_next):
@@ -286,7 +452,7 @@ class WebServer:
         # 复用 StreamManager 多客户端共享会话；按需连接，断开即停止捕获
         if self._fastscreen_service is not None:
             try:
-                fs_router = create_fastscreen_router(self._fastscreen_service)
+                fs_router = create_fastscreen_router(self._fastscreen_service, auth_validator=_http_auth, session_store=self._session_store)
                 app.include_router(fs_router)
                 _logger.info(
                     "FastScreen router mounted: available=%s",
@@ -302,6 +468,16 @@ class WebServer:
         async def _vnc_websockify(ws: WebSocket):
             await ws.accept()
             remote = ws.client.host if ws.client else "-"
+
+            # 端点级认证校验
+            if not self._validate_ws_auth(ws):
+                _logger.warning("VNC proxy: auth failed from %s", remote)
+                try:
+                    await ws.close(code=4001, reason="Unauthorized")
+                except Exception:
+                    pass
+                return
+
             # 从 VNC 服务获取当前 vnc_port
             vnc_port = None
             if self._vnc_service is not None:
@@ -363,7 +539,7 @@ class WebServer:
         # 设置 REST 端点（/api/settings*）
         # 默认值来自 web.toml，用户覆盖项持久化到 ~/.pty-agent/web_user_choice.json
         try:
-            settings_router = create_settings_router()
+            settings_router = create_settings_router(auth_validator=_http_auth)
             app.include_router(settings_router)
             _logger.info("Settings router mounted at /api/settings")
         except Exception:
@@ -379,6 +555,20 @@ class WebServer:
             client_uid = ws.query_params.get("clientUid") or ""
             _logger.info("WebSocket /ws connect from %s clientUid=%s", remote, client_uid or "(none)")
             await ws.accept()
+
+            # 端点级认证校验：Cookie 无效时发送 auth_required 后关闭
+            if not self._validate_ws_auth(ws):
+                _logger.warning("WebSocket /ws auth failed from %s", remote)
+                try:
+                    await ws.send_json({"type": "auth_required"})
+                except Exception:
+                    pass
+                try:
+                    await ws.close(code=4001, reason="Unauthorized")
+                except Exception:
+                    pass
+                return
+
             _logger.info("WebSocket /ws accepted for %s", remote)
 
             transport = FastAPIWebSocketTransport(ws)

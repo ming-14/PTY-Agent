@@ -155,11 +155,13 @@ export function handleSessionList(list) {
   ports.ui.renderTabs();
   ports.ui.renderSidebar();
 
-  for (const sid of state.tabOrder) {
-    const s = state.sessions[sid];
-    if (!s) continue;
-    if (s.running && !s.subscribed && !state.termInstances[sid]) {
-      ports.transport.send({ type: 'subscribe', session_id: sid });
+  if (!state.restoreState.pending) {
+    for (const sid of state.tabOrder) {
+      const s = state.sessions[sid];
+      if (!s) continue;
+      if (s.running && !s.subscribed && !state.termInstances[sid]) {
+        ports.transport.send({ type: 'subscribe', session_id: sid });
+      }
     }
   }
 
@@ -744,7 +746,10 @@ export function handleSessionResized(msg) {
   s.rows = newRows;
 
   // 调整 xterm.js 尺寸（非发起方被动接受后端新尺寸）
+  // 设 _externalResize 标志跳过 onResize 回调，避免向服务端发送冗余 resize
+  // 消息（session_resized 已含完整 snapshot，不需要再触发 resize_complete）
   if (inst.term.cols !== newCols || inst.term.rows !== newRows) {
+    inst._externalResize = true;
     inst.term.resize(newCols, newRows);
   }
 

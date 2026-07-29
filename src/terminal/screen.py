@@ -241,6 +241,22 @@ class TerminalScreen:
                 _logger.debug("capture_scrollback 异常: %s", e)
                 return ""
 
+    def clear_scrollback(self) -> None:
+        """清除 Grid scrollback 历史区
+
+        resize 后 ConPTY repaint 可能触发 index() 将可见区顶部行推入
+        scrollback，导致 scrollback 与 snapshot（读 pyte.buffer）内容重叠。
+        resize 场景下 snapshot 已包含完整可见区，scrollback 是冗余的，
+        清除后由后续正常输出滚动重新产生。
+        """
+        if not self._screen or not hasattr(self._screen, "clear_scrollback"):
+            return
+        with self._lock:
+            try:
+                self._screen.clear_scrollback()
+            except Exception as e:
+                _logger.debug("clear_scrollback 异常: %s", e)
+
     @property
     def scrollback_lines_count(self) -> int:
         """当前 scrollback 行数（供诊断/调试）"""

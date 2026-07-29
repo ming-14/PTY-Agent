@@ -269,6 +269,27 @@
       </div>
     </div>
 
+    <!-- Server Address Dialog -->
+    <div id="server-addr-overlay" class="dialog-overlay" style="display:none">
+      <div class="dialog dialog-sm">
+        <div class="sheet-handle"></div>
+        <div class="dialog-header">
+          <div class="dialog-title">自定义服务端地址</div>
+        </div>
+        <div class="dialog-body">
+          <div class="confirm-text" style="margin-bottom:12px">设置后页面将刷新并连接到指定服务端，留空则恢复默认</div>
+          <div class="form-group">
+            <label class="form-label">服务端地址</label>
+            <input id="server-addr-input" class="form-input" placeholder="如 192.168.1.100:18766" autocomplete="off">
+          </div>
+        </div>
+        <div class="dialog-actions">
+          <button id="server-addr-cancel" class="btn">取消</button>
+          <button id="server-addr-ok" class="btn btn-primary">确定</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Detail Dialog -->
     <div id="detail-overlay" class="dialog-overlay" style="display:none">
       <div class="dialog detail-dialog">

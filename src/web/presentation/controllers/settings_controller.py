@@ -14,9 +14,13 @@
 remote.vncEnabled / remote.fsEnabled 属部署级配置，由 web.toml 的
 ENABLE_VNC / ENABLE_FASTSCREEN 提供，守护进程启动时读取，前端不可修改，
 故不在 VALID_KEYS 中，GET 不返回。
+
+认证：
+auth_validator 非 None 时，每个端点先校验认证，未认证返回 401。
 """
 
 import logging
+from typing import Callable, Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -29,8 +33,13 @@ from ...domain.settings_schema import (
 _logger = logging.getLogger("pty-web-settings")
 
 
-def create_settings_router() -> APIRouter:
+def create_settings_router(
+    auth_validator: Optional[Callable] = None,
+) -> APIRouter:
     """创建设置 REST 路由。
+
+    Args:
+        auth_validator: 认证校验函数，接收 Request 返回 bool；None 时跳过认证
 
     Returns:
         APIRouter: 包含 /api/settings* 端点的路由器
@@ -47,6 +56,8 @@ def create_settings_router() -> APIRouter:
         Returns:
             JSONResponse: 扁平 key→value 的默认值对象
         """
+        if auth_validator is not None and not auth_validator(request):
+            return JSONResponse(status_code=401, content={"error": "unauthorized"})
         client = request.client.host if request.client else "-"
         try:
             defaults = get_defaults()
@@ -71,6 +82,8 @@ def create_settings_router() -> APIRouter:
         Returns:
             JSONResponse: { ok: True }
         """
+        if auth_validator is not None and not auth_validator(request):
+            return JSONResponse(status_code=401, content={"error": "unauthorized"})
         client = request.client.host if request.client else "-"
         _logger.info("POST /api/settings from %s: noop (localStorage-only mode)", client)
         return JSONResponse({"ok": True})
@@ -84,6 +97,8 @@ def create_settings_router() -> APIRouter:
         Returns:
             JSONResponse: { valid_keys, defaults }
         """
+        if auth_validator is not None and not auth_validator(request):
+            return JSONResponse(status_code=401, content={"error": "unauthorized"})
         client = request.client.host if request.client else "-"
         _logger.info("GET /api/settings/schema from %s", client)
         return JSONResponse({

@@ -73,33 +73,47 @@ def download_and_extract(target: str, ext: str, version: str) -> None:
 
     with tempfile.TemporaryFile(suffix=ext) as tmp:
         req = urllib.request.Request(url, headers={"Accept": "application/octet-stream"})
-        with urllib.request.urlopen(req) as resp:
-            while chunk := resp.read(8192):
-                tmp.write(chunk)
+        try:
+            with urllib.request.urlopen(req) as resp:
+                while chunk := resp.read(8192):
+                    tmp.write(chunk)
+        except KeyboardInterrupt:
+            sys.stderr.write("\nDownload interrupted\n")
+            raise
         tmp.seek(0)
 
-        if ext == ".zip":
-            with zipfile.ZipFile(tmp) as zf:
-                for member in zf.infolist():
-                    if member.filename.endswith("/aichat.exe") or member.filename == "aichat.exe":
-                        zf.extract(member, SCRIPT_DIR)
-                        extracted = os.path.join(SCRIPT_DIR, member.filename)
-                        if extracted != AICHAT_EXE:
-                            os.rename(extracted, AICHAT_EXE)
-                        break
-                else:
-                    sys.exit("aichat.exe not found in zip archive")
-        else:
-            with tarfile.open(fileobj=tmp, mode="r:gz") as tf:
-                for member in tf.getmembers():
-                    if member.name.endswith("/aichat") or member.name == "aichat":
-                        tf.extract(member, SCRIPT_DIR, filter="data")
-                        extracted = os.path.join(SCRIPT_DIR, member.name)
-                        if extracted != AICHAT_EXE:
-                            os.rename(extracted, AICHAT_EXE)
-                        break
-                else:
-                    sys.exit("aichat binary not found in archive")
+        extracted_paths = []
+        try:
+            if ext == ".zip":
+                with zipfile.ZipFile(tmp) as zf:
+                    for member in zf.infolist():
+                        if member.filename.endswith("/aichat.exe") or member.filename == "aichat.exe":
+                            zf.extract(member, SCRIPT_DIR)
+                            extracted_paths.append(os.path.join(SCRIPT_DIR, member.filename))
+                            extracted = os.path.join(SCRIPT_DIR, member.filename)
+                            if extracted != AICHAT_EXE:
+                                os.rename(extracted, AICHAT_EXE)
+                            break
+                    else:
+                        sys.exit("aichat.exe not found in zip archive")
+            else:
+                with tarfile.open(fileobj=tmp, mode="r:gz") as tf:
+                    for member in tf.getmembers():
+                        if member.name.endswith("/aichat") or member.name == "aichat":
+                            tf.extract(member, SCRIPT_DIR, filter="data")
+                            extracted_paths.append(os.path.join(SCRIPT_DIR, member.name))
+                            extracted = os.path.join(SCRIPT_DIR, member.name)
+                            if extracted != AICHAT_EXE:
+                                os.rename(extracted, AICHAT_EXE)
+                            break
+                    else:
+                        sys.exit("aichat binary not found in archive")
+        except KeyboardInterrupt:
+            for p in extracted_paths:
+                if os.path.exists(p):
+                    os.remove(p)
+            sys.stderr.write("\nExtraction interrupted\n")
+            raise
 
     os.chmod(AICHAT_EXE, 0o755)
     sys.stderr.write(f"Downloaded to {AICHAT_EXE}\n")
@@ -174,6 +188,11 @@ def run_aichat(
         proc.wait()
         sys.stderr.write(f"aichat timed out after {timeout} seconds\n")
         return 1
+    except KeyboardInterrupt:
+        proc.kill()
+        proc.wait()
+        sys.stderr.write("\nInterrupted\n")
+        return 130
 
 
 def run_aichat_capture(

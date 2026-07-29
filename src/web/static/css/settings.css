@@ -310,6 +310,27 @@ body.touch-device .terminal-stage.stage-flush {
   cursor: not-allowed;
 }
 
+/* 可点击操作项（如自定义服务端地址） */
+.settings-action {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--wt-input-border);
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--wt-tab-text);
+  background: var(--wt-input-bg);
+  transition: background 120ms, border-color 120ms;
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-action:hover {
+  background: var(--wt-btn-hover);
+  border-color: var(--wt-accent);
+}
+
 /* 安全设置占位提示 */
 .settings-placeholder {
   padding: 40px 20px;

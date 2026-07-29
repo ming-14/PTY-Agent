@@ -14,6 +14,7 @@ import { state, loadTabState } from './domain/state.js';
 import { warn, setLogLevel, setBufferSize } from './domain/logger.js';
 import { setBodyTheme, applySidebarWidth } from './infrastructure/storage.js';
 import { connect, wsSend, setMessageHandler } from './infrastructure/wsClient.js';
+import { checkAuthStatus } from './infrastructure/auth.js';
 import {
   handleOutput,
   setLineMode,
@@ -256,6 +257,12 @@ function _levelNameToNum(name) {
 }
 
 async function init() {
+  // 先检查认证状态：若启用认证且未登录，跳转登录页
+  const authStatus = await checkAuthStatus();
+  if (authStatus.enabled && !authStatus.authenticated) {
+    return; // checkAuthStatus 内部已跳转
+  }
+
   // 先加载用户设置（合并 web.toml 默认值 + web_user_choice.json + localStorage 缓存）
   // 主题、IME、远程桌面等配置均依赖此步完成
   try {

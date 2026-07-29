@@ -101,7 +101,6 @@ tests/e2e/_repro_keys/
 # ===================== AI Agent 工作目录 =====================
 .mimocode/
 .codeartsdoer/
-.agents/
 .mimocode/.cron-lock
 
 # ===================== 其他 =====================

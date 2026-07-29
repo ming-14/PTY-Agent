@@ -35,6 +35,7 @@ from ..config.daemon import (
     ENABLE_WEB,
     WEB_HOST,
     WEB_PORT,
+    WEB_PASSWORD_HASH,
 )
 from ..ipc.shm import (
     write_daemon_info_to_shm,
@@ -321,6 +322,7 @@ class DaemonServer:
         if ENABLE_WEB:
             self._web_server = WebServer(
                 self.manager, host=WEB_HOST, port=WEB_PORT,
+                password_hash=WEB_PASSWORD_HASH,
             )
             self._web_server.start_background()
             web_url = f"http://{WEB_HOST}:{WEB_PORT}/"
