@@ -77,12 +77,19 @@ class WebSocketController:
         """处理一个 WebSocket 连接直到断开。"""
         sid = id(transport)
         _logger.info("ws handle started conn_id=0x%x", sid)
+        _ws_loop = asyncio.get_running_loop()
 
-        def _enqueue(message: dict) -> None:
+        def _do_put_nowait(message):
             try:
                 queue.put_nowait(message)
             except asyncio.QueueFull:
                 _logger.warning("ws queue full, dropping message type=%s", message.get("type"))
+
+        def _enqueue(message: dict) -> None:
+            try:
+                _ws_loop.call_soon_threadsafe(_do_put_nowait, message)
+            except RuntimeError:
+                pass  # event loop已关闭，丢弃消息
 
         encoder = MessageEncoderService(context)
         subscription = SubscriptionService(context, encoder, self._executor)

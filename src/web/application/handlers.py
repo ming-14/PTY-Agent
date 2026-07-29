@@ -469,6 +469,8 @@ class InputHandler(MessageHandler):
     async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
         session_id = msg.get("session_id", "")
         data = msg.get("data", "")
+        if not isinstance(data, str):
+            return [Response.error("input data must be a string")]
         if len(data) > MAX_INPUT_LEN:
             return [Response.error(f"input too long (max {MAX_INPUT_LEN})")]
 
@@ -516,8 +518,13 @@ class SignalHandler(MessageHandler):
 class ResizeHandler(MessageHandler):
     async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
         session_id = msg.get("session_id", "")
-        cols = int(msg.get("cols", DEFAULT_COLS))
-        rows = int(msg.get("rows", DEFAULT_ROWS))
+        cols_raw = msg.get("cols")
+        rows_raw = msg.get("rows")
+        try:
+            cols = int(cols_raw) if cols_raw is not None else DEFAULT_COLS
+            rows = int(rows_raw) if rows_raw is not None else DEFAULT_ROWS
+        except (TypeError, ValueError):
+            return [Response.error("invalid cols or rows")]
         session = ctx.session_repo.get_session(session_id)
         if not session:
             _logger.warning("resize: session not found sid=%s", session_id)
@@ -544,13 +551,19 @@ class ResizeHandler(MessageHandler):
         except Exception as e:
             _logger.warning("resize failed: sid=%s err=%s", session_id, e)
             return []
-        # 捕获 scrollback（Grid.reflow 已按 ConPTY 语义分区 rewrap，
-        # grow 不再从 scrollback 抽行，scrollback 与可见区边界一致）
-        scrollback_ansi = ""
+        # resize 场景下 scrollback 始终为空：
+        # ConPTY repaint 可能触发 index() 将可见区行推入 Grid scrollback，
+        # 导致 scrollback 与 snapshot（读 pyte.buffer）内容重叠，
+        # 前端 restoreScrollbackAndSnapshot 会将同一内容写两遍。
+        # session.resize() 已在 snapshot 前清除 scrollback，但 resize 返回后
+        # reader 线程可能继续 feed repaint 残余字节再次产生 scrollback，
+        # 此处再次清除确保 resize_complete/session_resized 中 scrollback 为空。
+        # 后续正常输出滚动会重新产生正确的 scrollback。
         try:
-            scrollback_ansi = await ctx.executor.run(session.capture_scrollback)
-        except Exception as e:
-            _logger.warning("resize: capture_scrollback failed sid=%s: %s", session_id, e)
+            await ctx.executor.run(session.clear_scrollback)
+        except Exception:
+            pass
+        scrollback_ansi = ""
         snapshot_len = len(snapshot) if snapshot else 0
         scrollback_len = len(scrollback_ansi) if scrollback_ansi else 0
         _logger.info("resize: sid=%s cols=%dx%d snapshot_len=%d scrollback_len=%d",
@@ -593,9 +606,9 @@ class KillSessionHandler(MessageHandler):
         if not session:
             return [Response.error(f"session '{session_id}' not found")]
 
-        # 先取消订阅，避免残留回调
+        # 先取消订阅指定会话，避免残留回调，不影响其他会话的订阅
         unsubscribe_handler = UnsubscribeSessionHandler()
-        await unsubscribe_handler.handle(ctx, {})
+        await unsubscribe_handler.handle(ctx, {"session_id": session_id})
 
         try:
             await ctx.executor.run(ctx.session_repo.remove_session, session_id)
@@ -1123,11 +1136,12 @@ class SetSizeModeHandler(MessageHandler):
             actual_cols = cols
             actual_rows = rows
             # 广播尺寸变更（session_resized）给其他客户端，让它们跟随新尺寸
+            # resize 场景下 scrollback 始终为空（同 ResizeHandler，见其注释）
             try:
-                scrollback_ansi = await ctx.executor.run(session.capture_scrollback)
-            except Exception as e:
-                _logger.warning("set_size_mode: capture_scrollback failed sid=%s: %s", session_id, e)
-                scrollback_ansi = ""
+                await ctx.executor.run(session.clear_scrollback)
+            except Exception:
+                pass
+            scrollback_ansi = ""
             try:
                 ctx.publisher.publish_session_resized(
                     session_id=session_id,

@@ -7,6 +7,7 @@
 import { state } from '../domain/state.js';
 import { setStatus, updateSystemStatsUI } from './domUtils.js';
 import { debug, info, warn, error } from '../domain/logger.js';
+import { handleUnauthorized, getAuthToken } from './auth.js';
 
 let messageHandler = null;
 let systemStatsTimer = null;
@@ -15,6 +16,8 @@ export function setMessageHandler(fn) {
   messageHandler = fn;
 }
 
+const LS_SERVER_ADDR_KEY = 'pty_server_address';
+
 export function connect() {
   if (state.ws && (state.ws.readyState === WebSocket.CONNECTING || state.ws.readyState === WebSocket.OPEN)) {
     return;
@@ -22,8 +25,13 @@ export function connect() {
   info('ws', 'connecting...');
   setStatus('connecting', '连接中...');
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const customAddr = localStorage.getItem(LS_SERVER_ADDR_KEY);
+  const host = customAddr || location.host;
+  let wsUrl = proto + '//' + host + '/ws?clientUid=' + encodeURIComponent(state.clientUid);
+  const authToken = getAuthToken();
+  if (authToken) wsUrl += '&authToken=' + encodeURIComponent(authToken);
   try {
-    state.ws = new WebSocket(proto + '//' + location.host + '/ws');
+    state.ws = new WebSocket(wsUrl);
   } catch (e) {
     error('ws', 'connect failed:', e.message);
     setStatus('disconnected', '连接失败');
@@ -45,6 +53,11 @@ export function connect() {
     try {
       const msg = JSON.parse(e.data);
       debug('ws', 'recv type=%s sid=%s', msg.type, msg.sessionId || msg.session_id || '');
+      if (msg.type === 'auth_required') {
+        warn('ws', 'auth required, redirecting to login');
+        handleUnauthorized();
+        return;
+      }
       if (messageHandler) messageHandler(msg);
     } catch (err) {
       error('ws', 'parse error:', err);
@@ -53,6 +66,10 @@ export function connect() {
 
   state.ws.onclose = e => {
     warn('ws', 'disconnected code=%s reason=%s', e.code, e.reason || '');
+    if (e.code === 4001) {
+      handleUnauthorized();
+      return;
+    }
     setStatus('disconnected', '已断开');
     _stopSystemStatsTimer();
     scheduleReconnect();

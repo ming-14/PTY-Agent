@@ -15,13 +15,14 @@ import asyncio
 import json
 import logging
 import time
-from typing import Optional
+from typing import Callable, Optional
 
-from fastapi import APIRouter, WebSocket, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Request, WebSocket, Query
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from ....fastscreen.ports import FastScreenServicePort
 from ....config.common import IS_WINDOWS
+from ...presentation.controllers.auth_controller import validate_ws_auth
 
 _logger = logging.getLogger("pty-web-fastscreen")
 
@@ -150,17 +151,24 @@ def _clampf(v, lo, hi, default=0.8):
     return max(lo, min(hi, x))
 
 
-def create_fastscreen_router(service: FastScreenServicePort) -> APIRouter:
+def create_fastscreen_router(
+    service: FastScreenServicePort,
+    auth_validator: Optional[Callable] = None,
+    session_store: "SessionStore" = None,
+) -> APIRouter:
     """构造 FastScreen 流媒体路由器。
 
     Args:
         service: FastScreenServicePort 实例（用于获取 StreamManager 与可用性检查）
+        auth_validator: 认证校验函数，接收 Request 返回 bool；None 时跳过认证
+        session_store: SessionStore 实例，用于 WebSocket 认证；None 时跳过
     """
     router = APIRouter(prefix="/fastscreen", tags=["fastscreen"])
 
     # ── GET /fastscreen/mjpeg — MJPEG 流 ──
     @router.get("/mjpeg")
     async def fastscreen_mjpeg(
+        request: Request,
         target_type: str = Query("monitor"),
         target_id: str = Query("0"),
         method: str = Query("auto"),
@@ -170,6 +178,8 @@ def create_fastscreen_router(service: FastScreenServicePort) -> APIRouter:
         height: int = Query(0, ge=0),
     ):
         """MJPEG 流（multipart/x-mixed-replace）。"""
+        if auth_validator is not None and not auth_validator(request):
+            return JSONResponse(status_code=401, content={"error": "unauthorized"})
         if not service.is_available():
             return StreamingResponse(
                 iter([b"--frame\r\nContent-Type: text/plain\r\n\r\nFastScreen unavailable\r\n"]),
@@ -260,6 +270,21 @@ def create_fastscreen_router(service: FastScreenServicePort) -> APIRouter:
     async def fastscreen_ws_mse(ws: WebSocket):
         await ws.accept()
         remote = ws.client.host if ws.client else "-"
+
+        # 端点级认证校验
+        if session_store is not None:
+            if not validate_ws_auth(ws, session_store):
+                _logger.warning("FastScreen WS/MSE auth failed from %s", remote)
+                try:
+                    await ws.send_json({"type": "auth_required"})
+                except Exception:
+                    pass
+                try:
+                    await ws.close(code=4001, reason="Unauthorized")
+                except Exception:
+                    pass
+                return
+
         _logger.info("FastScreen WS/MSE connect from %s", remote)
 
         if not service.is_available():
@@ -406,6 +431,21 @@ def create_fastscreen_router(service: FastScreenServicePort) -> APIRouter:
     async def fastscreen_ws_webcodecs(ws: WebSocket):
         await ws.accept()
         remote = ws.client.host if ws.client else "-"
+
+        # 端点级认证校验
+        if session_store is not None:
+            if not validate_ws_auth(ws, session_store):
+                _logger.warning("FastScreen WS/WebCodecs auth failed from %s", remote)
+                try:
+                    await ws.send_json({"type": "auth_required"})
+                except Exception:
+                    pass
+                try:
+                    await ws.close(code=4001, reason="Unauthorized")
+                except Exception:
+                    pass
+                return
+
         _logger.info("FastScreen WS/WebCodecs connect from %s", remote)
 
         if not service.is_available():

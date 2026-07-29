@@ -15,6 +15,7 @@
  */
 
 import { debug, warn } from '../domain/logger.js';
+import { handleUnauthorized, authHeaders } from './auth.js';
 
 const LS_KEY = 'pty_user_settings';
 
@@ -56,11 +57,19 @@ export function saveToLocal(settings) {
  */
 export async function loadFromServer() {
   try {
-    const resp = await fetch('/api/settings', {
+    const customAddr = (localStorage.getItem('pty_server_address') || '').trim();
+    const baseUrl = customAddr ? (location.protocol === 'https:' ? 'https:' : 'http:') + '//' + customAddr : '';
+    const url = baseUrl ? baseUrl + '/api/settings' : '/api/settings';
+    const resp = await fetch(url, {
       method: 'GET',
-      headers: { 'Accept': 'application/json' },
+      headers: authHeaders(),
+      credentials: 'include',
     });
     if (!resp.ok) {
+      if (resp.status === 401) {
+        handleUnauthorized();
+        return {};
+      }
       warn('settings', 'loadFromServer: HTTP %d', resp.status);
       return {};
     }

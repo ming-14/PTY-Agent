@@ -25,6 +25,8 @@ import {
 } from '../../domain/settingsSchema.js';
 import * as store from '../../application/settingsStore.js';
 
+const LS_SERVER_ADDR_KEY = 'pty_server_address';
+
 // 当前选中的分类 id
 let _activeCategory = 'basic';
 
@@ -192,7 +194,10 @@ function _renderContent() {
 // ── 内部：渲染单行设置项 ──
 function _renderRow(item) {
   const enabled = item.enabled !== false;  // 默认启用
-  const value = store.get(item.key);
+  let value = store.get(item.key);
+  if (item.key === 'basic.serverAddress') {
+    value = localStorage.getItem(LS_SERVER_ADDR_KEY) || '';
+  }
   let controlHtml = '';
   switch (item.type) {
     case SETTING_TYPES.PILLS:
@@ -212,6 +217,9 @@ function _renderRow(item) {
       break;
     case SETTING_TYPES.TEXTAREA:
       controlHtml = _renderTextarea(item, value, enabled);
+      break;
+    case SETTING_TYPES.ACTION:
+      controlHtml = _renderAction(item, value, enabled);
       break;
     default:
       controlHtml = '<span style="color:var(--wt-tab-text-muted)">未实现的控件类型: ' + item.type + '</span>';
@@ -269,6 +277,11 @@ function _renderTextarea(item, value, enabled) {
   return '<textarea class="settings-textarea" data-key="' + item.key + '" rows="3"' +
     (item.placeholder ? ' placeholder="' + _escAttr(item.placeholder) + '"' : '') +
     (enabled ? '' : ' disabled') + '>' + _escHtml(value == null ? '' : value) + '</textarea>';
+}
+
+function _renderAction(item, value, enabled) {
+  const display = value ? _escHtml(value) : '<span style="color:var(--wt-tab-text-muted)">默认</span>';
+  return '<div class="settings-action" data-key="' + item.key + '"' + (enabled ? '' : ' data-disabled="1"') + '>' + display + '</div>';
 }
 
 // ── 内部：绑定右侧内容区控件事件 ──
@@ -355,6 +368,17 @@ function _bindContentEvents() {
       store.set(el.dataset.key, el.value);
     };
   });
+
+  // action 点击（弹出对话框）
+  content.querySelectorAll('.settings-action').forEach(el => {
+    if (el.dataset.disabled === '1') return;
+    el.onclick = () => {
+      const key = el.dataset.key;
+      if (key === 'basic.serverAddress') {
+        _showServerAddrDialog();
+      }
+    };
+  });
 }
 
 // ── 内部：rikka label 动态生成 ──
@@ -380,6 +404,52 @@ function _escAttr(s) {
   return _escHtml(s);
 }
 
+// ── 内部：服务端地址对话框 ──
+function _showServerAddrDialog() {
+  const overlay = $('server-addr-overlay');
+  const input = $('server-addr-input');
+  if (!overlay || !input) return;
+  const current = localStorage.getItem(LS_SERVER_ADDR_KEY) || '';
+  input.value = current;
+  overlay.style.display = 'flex';
+  setTimeout(() => input.focus(), 50);
+}
+
+function _hideServerAddrDialog() {
+  const overlay = $('server-addr-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function _confirmServerAddr() {
+  const input = $('server-addr-input');
+  if (!input) return;
+  const addr = input.value.trim();
+  if (addr) {
+    localStorage.setItem(LS_SERVER_ADDR_KEY, addr);
+  } else {
+    localStorage.removeItem(LS_SERVER_ADDR_KEY);
+  }
+  _hideServerAddrDialog();
+  info('settings', 'server address set to: %s, reloading...', addr || '(default)');
+  location.reload();
+}
+
+function _bindServerAddrDialogEvents() {
+  const okBtn = $('server-addr-ok');
+  const cancelBtn = $('server-addr-cancel');
+  const overlay = $('server-addr-overlay');
+  const input = $('server-addr-input');
+  if (okBtn) okBtn.onclick = _confirmServerAddr;
+  if (cancelBtn) cancelBtn.onclick = _hideServerAddrDialog;
+  if (overlay) overlay.onclick = e => {
+    if (e.target === overlay) _hideServerAddrDialog();
+  };
+  if (input) input.onkeydown = e => {
+    if (e.key === 'Enter') { e.preventDefault(); _confirmServerAddr(); }
+    if (e.key === 'Escape') { e.preventDefault(); _hideServerAddrDialog(); }
+  };
+}
+
 /**
  * 绑定设置相关 DOM 事件（由 events.js 调用）。
  */
@@ -401,6 +471,7 @@ export function bindSettingsEvents() {
  */
 export function initSettingsView() {
   bindSettingsEvents();
+  _bindServerAddrDialogEvents();
 
   // 订阅外部设置变更：当 developer.logPanelEnabled / basic.theme 被其他模块
   // （如 devConsole 关闭按钮、状态栏主题按钮）修改时，即时刷新设置面板中的 UI。

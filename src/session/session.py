@@ -445,6 +445,14 @@ class Session:
         """
         return self._screen.capture_scrollback()
 
+    def clear_scrollback(self) -> None:
+        """清除 Grid scrollback 历史区
+
+        resize 后 ConPTY repaint 可能触发 index() 将可见区顶部行推入
+        scrollback，导致 scrollback 与 snapshot 内容重叠。
+        """
+        self._screen.clear_scrollback()
+
     def get_snapshot_diff(self, keep_ansi: bool = False) -> str:
         """获取终端屏幕快照中与上次相比变化的行"""
         current_text = self._screen.snapshot(keep_ansi=keep_ansi)
@@ -606,6 +614,18 @@ class Session:
 
         _logger.debug("resize: END, returning snapshot")
         try:
+            # 清除 Grid scrollback：resize 后 ConPTY repaint 可能触发 index()
+            # 将可见区顶部行推入 scrollback，导致 scrollback 与 snapshot
+            # （读 pyte.buffer 可见区）内容重叠，前端 restoreScrollbackAndSnapshot
+            # 会将同一内容写两遍（scrollback 区 + 可见区各一份）。
+            # resize snapshot 已包含完整可见区状态，scrollback 在 resize 场景下
+            # 是 repaint 竞态产生的冗余，清除后由后续正常输出滚动重新产生。
+            try:
+                self._screen.clear_scrollback()
+                _logger.debug("resize: cleared Grid scrollback before snapshot")
+            except Exception as e:
+                _logger.debug("resize: clear_scrollback failed (non-fatal): %s", e)
+
             # 关键：snapshot 必须来自 pyte.buffer（ConPTY 真实可见区状态）。
             # GridScreen.resize 已按 ConPTY 语义重排并写回 pyte.buffer，
             # 此处读出的内容和光标与 ConPTY 坐标系完全一致，

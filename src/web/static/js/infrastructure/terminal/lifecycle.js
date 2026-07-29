@@ -14,7 +14,7 @@ import { shouldTrackFocus } from '../rimeManager.js?v=42';
 import { trackCursorSequences } from './cursorDebug.js';
 import { attachCustomKeyEventHandler, setLineMode, handleLineModeInput } from './input.js';
 export { setLineMode };
-import { applyTerminalFrameSize, applySessionFrameRatio } from './scale.js';
+import { applyTerminalFrameSize } from './scale.js';
 import { isTermAtBottom, scrollTermToBottom, scrollTermToTop } from './scroll.js';
 import { bindTerminalEvents } from './events.js';
 import { getTerminalFontFamily } from '../fontLoader.js';
@@ -178,6 +178,14 @@ export function ensureTerminal(sid) {
     //   不再有 _skipResizeSend 标志位（旧的双路径是光标错位根因之一）
     //   FitAddon.fit() / 用户切模式 / 窗口 resize 都会触发此回调
     debug('terminal', 'onResize sid=%s cols=%s rows=%s', sid, cols, rows);
+    // 外部 resize（session_resized / resize_complete 已含完整 snapshot，
+    // 不需要再向服务端发 resize，否则会触发冗余的 resize_complete 导致
+    // buffer 被写两遍 + _resizePending 竞态）
+    if (inst._externalResize) {
+      inst._externalResize = false;
+      debug('terminal', 'onResize skipped: sid=%s external resize (session_resized)', sid);
+      return;
+    }
     // frame 尺寸需跟随 cell 像素变化（fontSize 不变时 cell 尺寸也不变，但 cols/rows 变了）
     // 用 requestAnimationFrame 避免在 resize 内同步触发布局抖动
     requestAnimationFrame(() => {
@@ -223,16 +231,6 @@ export function ensureTerminal(sid) {
   // 初始化完成后立即应用一次 frame 尺寸，确保首次渲染正确
   applyTerminalFrameSize(sid);
 
-  // v9: 初始化/恢复该会话的 frameRatio。
-  // - 新会话首次打开（frameRatio=null）：用当前字号渲染后的 frame 尺寸反算 ratio 并保存
-  // - 已有 ratio（再次打开该会话）：按当前 stage 尺寸 + ratio 反算字号并应用
-  // - adaptive 模式：同样按 ratio 设 frame 尺寸再 fit()，不再填满 stage
-  // 用 rAF 等一帧确保 xterm 内部 dimensions 已刷新，能读到正确 cell 尺寸
-  requestAnimationFrame(() => {
-    try { applySessionFrameRatio(sid); } catch (e) {
-      debug('terminal', 'ensureTerminal applySessionFrameRatio failed sid=%s: %s', sid, e);
-    }
-  });
 }
 
 export function applyReadonlyState(sid, readonly) {
@@ -362,10 +360,12 @@ export function restoreScrollbackAndSnapshot(term, scrollbackLines, snapshot, is
       term.write('', doScroll);
     }
   } else {
-    // 模式 B：无 scrollback，只清可见屏幕 + 写 snapshot
-    debug('terminal', 'restoreScrollback: no capture, preserve existing scrollback');
+    // 模式 B：无 scrollback，清空 scrollback + 可见屏幕 + 写 snapshot
+    // \x1b[3J 清 xterm.js scrollback（term.resize() 重排可能残留旧内容），
+    // \x1b[2J 清可见区，确保 snapshot 写入前 buffer 完全干净
+    debug('terminal', 'restoreScrollback: no capture, clear scrollback + visible');
     if (snapshot && snapshot.length > 0) {
-      term.write('\x1b[2J\x1b[1;1H' + snapshot, doScroll);
+      term.write('\x1b[3J\x1b[2J\x1b[1;1H' + snapshot, doScroll);
     } else {
       doScroll();
     }

@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PTY-Agent - 登录</title>
+  <style>
+    :root {
+      --bg: #0c0c0c;
+      --surface: #1f1f1f;
+      --border: rgba(255,255,255,0.12);
+      --text: #cccccc;
+      --text-muted: #999999;
+      --accent: #0078d4;
+      --accent-hover: #106ebe;
+      --error: #d13438;
+      --font-ui: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      --font-mono: 'Cascadia Mono', 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .login-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 40px 36px;
+      width: 360px;
+      max-width: 90vw;
+    }
+    .login-logo {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+    .login-logo svg {
+      width: 48px;
+      height: 48px;
+      color: var(--accent);
+    }
+    .login-title {
+      text-align: center;
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 24px;
+      color: var(--text);
+    }
+    .form-group {
+      margin-bottom: 20px;
+    }
+    .form-label {
+      display: block;
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    .form-input {
+      width: 100%;
+      padding: 8px 12px;
+      font-size: 14px;
+      font-family: var(--font-mono);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-input:focus {
+      border-color: var(--accent);
+    }
+    .form-input::placeholder {
+      color: var(--text-muted);
+      font-family: var(--font-ui);
+    }
+    .btn-login {
+      width: 100%;
+      padding: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      background: var(--accent);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-login:hover {
+      background: var(--accent-hover);
+    }
+    .btn-login:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .error-msg {
+      color: var(--error);
+      font-size: 13px;
+      text-align: center;
+      margin-top: 12px;
+      min-height: 20px;
+    }
+    .server-addr {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+    }
+    .server-addr .form-input {
+      font-family: var(--font-ui);
+    }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="login-logo">
+      <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="4" y="6" width="40" height="32" rx="3" stroke="currentColor" stroke-width="2.5"/>
+        <line x1="4" y1="14" x2="44" y2="14" stroke="currentColor" stroke-width="2.5"/>
+        <circle cx="10" cy="10" r="1.5" fill="currentColor" opacity="0.5"/>
+        <circle cx="16" cy="10" r="1.5" fill="currentColor" opacity="0.5"/>
+        <circle cx="22" cy="10" r="1.5" fill="currentColor" opacity="0.5"/>
+        <text x="12" y="30" font-family="monospace" font-size="10" fill="currentColor" opacity="0.7">$_</text>
+      </svg>
+    </div>
+    <div class="login-title">PTY-Agent</div>
+    <form id="login-form" autocomplete="off">
+      <div class="form-group">
+        <label class="form-label" for="password">密码</label>
+        <input id="password" class="form-input" type="password" placeholder="输入访问密码" autofocus autocomplete="off">
+      </div>
+      <button id="btn-login" class="btn-login" type="submit">登录</button>
+      <div id="error-msg" class="error-msg"></div>
+      <div class="server-addr">
+        <div class="form-group">
+          <label class="form-label" for="server-addr">服务器地址（可选）</label>
+          <input id="server-addr" class="form-input" type="text" placeholder="例如: 192.168.1.100:18766" autocomplete="off">
+        </div>
+      </div>
+    </form>
+  </div>
+  <script>
+    (function() {
+      var LS_SERVER_KEY = 'pty_server_address';
+      var serverInput = document.getElementById('server-addr');
+      var savedAddr = localStorage.getItem(LS_SERVER_KEY);
+      if (savedAddr) serverInput.value = savedAddr;
+
+      function getBaseUrl() {
+        var addr = serverInput.value.trim();
+        if (!addr) return '';
+        var proto = location.protocol === 'https:' ? 'https:' : 'http:';
+        return proto + '//' + addr;
+      }
+
+      document.getElementById('login-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        var btn = document.getElementById('btn-login');
+        var errEl = document.getElementById('error-msg');
+        var pwd = document.getElementById('password').value;
+        if (!pwd) {
+          errEl.textContent = '请输入密码';
+          return;
+        }
+        btn.disabled = true;
+        errEl.textContent = '';
+        var baseUrl = getBaseUrl();
+        var url = baseUrl ? baseUrl + '/api/auth/login' : '/api/auth/login';
+        fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pwd }),
+          credentials: 'include',
+        }).then(function(resp) {
+          if (resp.ok) {
+            return resp.json().then(function(data) {
+              var addr = serverInput.value.trim();
+              if (addr) localStorage.setItem(LS_SERVER_KEY, addr);
+              else localStorage.removeItem(LS_SERVER_KEY);
+              // 存储 token（跨域场景通过 X-Auth-Token 头发送）
+              if (data.token) localStorage.setItem('pty_auth_token', data.token);
+              else localStorage.removeItem('pty_auth_token');
+              window.location.href = '/';
+            });
+          } else if (resp.status === 401) {
+            errEl.textContent = '密码错误';
+            btn.disabled = false;
+          } else {
+            errEl.textContent = '登录失败 (' + resp.status + ')';
+            btn.disabled = false;
+          }
+        }).catch(function(err) {
+          errEl.textContent = '网络错误: ' + err.message;
+          btn.disabled = false;
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
