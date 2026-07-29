@@ -422,16 +422,7 @@ class WebServer:
                 )
                 raise
 
-        @app.get("/")
-        async def _index():
-            _logger.info("WebServer HTTP / request")
-            try:
-                return FileResponse(os.path.join(_STATIC_DIR, "index.html"))
-            except Exception:
-                _logger.exception("WebServer HTTP / error")
-                raise
-
-        # VNC 前端静态资源（必须在 /static 之前 mount，避免被通配覆盖）
+        # VNC 前端静态资源（必须在 / 之前 mount，避免被通配覆盖）
         # 路径示例：/static/novnc/vnc.html → src/vnc/src/static/novnc/vnc.html
         if self._vnc_service is not None:
             try:
@@ -545,8 +536,6 @@ class WebServer:
         except Exception:
             _logger.exception("Settings router mount failed")
 
-        app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
-
         @app.websocket("/ws")
         async def _ws(ws: WebSocket):
             remote = ws.client.host if ws.client else "-"
@@ -587,6 +576,8 @@ class WebServer:
                 _logger.exception("WebSocket /ws error from %s", remote)
             finally:
                 self._connections.pop(conn_id, None)
+
+        app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="static")
 
         return app
 

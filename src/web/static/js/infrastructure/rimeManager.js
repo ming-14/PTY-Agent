@@ -376,7 +376,7 @@ async function ensurePanel() {
       throw new Error('RimeManager 未加载');
     }
     const target = document.getElementById('terminal-frame') || document.body;
-    const wasmUrl = new URL('/static/vendor/rime/wasm/', location.href).href;
+    const wasmUrl = new URL('/vendor/rime/wasm/', location.href).href;
     // 检测当前页面实际主题，避免页面加载时 RIME 组件使用硬编码的 dark 主题
     const actualTheme = document.body.dataset.theme === 'dark' ? 'dark' : 'light';
     // 从 settingsStore 读取 IME 配置（由 app.js init 中 await settingsStore.load() 预载）
