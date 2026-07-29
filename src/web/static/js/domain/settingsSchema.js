@@ -106,7 +106,7 @@ export const SETTINGS_SCHEMA = [
     category: 'basic',
     section: 'rikka',
     label: '获取一只rikka',
-    desc: '<a href="/static/vendor/rikkajs/LICENSE" target="_blank" style="color:var(--wt-accent)">LICENSE</a>',
+    desc: '<a href="/vendor/rikkajs/LICENSE" target="_blank" style="color:var(--wt-accent)">LICENSE</a>',
     type: SETTING_TYPES.TOGGLE,
     default: true,
   },

@@ -2,7 +2,7 @@
  * 基础设施：终端字体加载器
  *
  * 负责异步加载 MapleMono 字体资源并应用到终端。
- * 字体文件位于 /static/fonts/，包含 Regular/Bold/Italic/BoldItalic 四个 woff2 文件。
+ * 字体文件位于 /fonts/，包含 Regular/Bold/Italic/BoldItalic 四个 woff2 文件。
  *
  * 加载策略：
  * - 注入 @font-face CSS（font-display: swap，浏览器按需加载具体字重/样式）
@@ -38,28 +38,28 @@ function _injectFontFace() {
   style.textContent = `
 @font-face {
   font-family: '${MAPLE_MONO_FONT_FAMILY}';
-  src: url('/static/fonts/MapleMono-NF-CN-Regular.woff2') format('woff2');
+  src: url('/fonts/MapleMono-NF-CN-Regular.woff2') format('woff2');
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: '${MAPLE_MONO_FONT_FAMILY}';
-  src: url('/static/fonts/MapleMono-NF-CN-Bold.woff2') format('woff2');
+  src: url('/fonts/MapleMono-NF-CN-Bold.woff2') format('woff2');
   font-weight: 700;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: '${MAPLE_MONO_FONT_FAMILY}';
-  src: url('/static/fonts/MapleMono-NF-CN-Italic.woff2') format('woff2');
+  src: url('/fonts/MapleMono-NF-CN-Italic.woff2') format('woff2');
   font-weight: 400;
   font-style: italic;
   font-display: swap;
 }
 @font-face {
   font-family: '${MAPLE_MONO_FONT_FAMILY}';
-  src: url('/static/fonts/MapleMono-NF-CN-BoldItalic.woff2') format('woff2');
+  src: url('/fonts/MapleMono-NF-CN-BoldItalic.woff2') format('woff2');
   font-weight: 700;
   font-style: italic;
   font-display: swap;

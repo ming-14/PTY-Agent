@@ -114,11 +114,11 @@ function _loadRikkaAssets() {
     if (!_rikkaCssEl) {
       _rikkaCssEl = document.createElement('link');
       _rikkaCssEl.rel = 'stylesheet';
-      _rikkaCssEl.href = '/static/vendor/rikkajs/shimeji.css';
+      _rikkaCssEl.href = '/vendor/rikkajs/shimeji.css';
       document.head.appendChild(_rikkaCssEl);
     }
     const script = document.createElement('script');
-    script.src = '/static/vendor/rikkajs/shimeji.js';
+    script.src = '/vendor/rikkajs/shimeji.js';
     script.onload = () => { _rikkaJsLoaded = true; resolve(); };
     script.onerror = () => reject(new Error('shimeji.js load failed'));
     document.head.appendChild(script);
