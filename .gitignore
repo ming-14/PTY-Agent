@@ -90,9 +90,8 @@ fastscreen_source/*.pdb
 # ===================== 二进制 / 运行时产物 =====================
 bin/ultravnc/
 bin/cursorlocator/cursorlocator_config.json
-bin\aichat\bin
+bin/aichat/bin
 bin/aichat/config/config.yaml
-bin/ultravnc/ultravnc.ini
 
 # ===================== 测试临时文件 =====================
 tests/live-environment/

@@ -3028,22 +3028,23 @@ class KeyboardViewportController {
     this.dragging = true;
     this.dragStartX = cx;
     this.dragStartY = cy;
-    const rect = this.container.getBoundingClientRect();
-    this.posX = rect.left;
-    this.posY = rect.top;
+    const cs = getComputedStyle(this.container);
+    this.posX = parseFloat(cs.left);
+    this.posY = parseFloat(cs.top);
   }
   moveDrag(cx, cy) {
     this.posX += cx - this.dragStartX;
     this.posY += cy - this.dragStartY;
     this.dragStartX = cx;
     this.dragStartY = cy;
-    const rect = this.container.getBoundingClientRect();
     const vw = window.innerWidth;
     const vh = window.innerHeight;
+    const w = this.container.offsetWidth;
+    const h = this.container.offsetHeight;
     if (this.posX < 0) this.posX = 0;
-    if (this.posX + rect.width > vw) this.posX = vw - rect.width;
+    if (this.posX + w > vw) this.posX = vw - w;
     if (this.posY < 0) this.posY = 0;
-    if (this.posY + rect.height > vh) this.posY = vh - rect.height;
+    if (this.posY + h > vh) this.posY = vh - h;
     this.container.style.left = this.posX + "px";
     this.container.style.top = this.posY + "px";
   }
@@ -4627,22 +4628,23 @@ class TKLViewportController {
     this.dragging = true;
     this.dragStartX = cx;
     this.dragStartY = cy;
-    const rect = this.container.getBoundingClientRect();
-    this.posX = rect.left;
-    this.posY = rect.top;
+    const cs = getComputedStyle(this.container);
+    this.posX = parseFloat(cs.left);
+    this.posY = parseFloat(cs.top);
   }
   moveDrag(cx, cy) {
     this.posX += cx - this.dragStartX;
     this.posY += cy - this.dragStartY;
     this.dragStartX = cx;
     this.dragStartY = cy;
-    const rect = this.container.getBoundingClientRect();
     const vw = window.innerWidth;
     const vh = window.innerHeight;
+    const w = this.container.offsetWidth;
+    const h = this.container.offsetHeight;
     if (this.posX < 0) this.posX = 0;
-    if (this.posX + rect.width > vw) this.posX = vw - rect.width;
+    if (this.posX + w > vw) this.posX = vw - w;
     if (this.posY < 0) this.posY = 0;
-    if (this.posY + rect.height > vh) this.posY = vh - rect.height;
+    if (this.posY + h > vh) this.posY = vh - h;
     this.container.style.left = this.posX + "px";
     this.container.style.top = this.posY + "px";
   }
