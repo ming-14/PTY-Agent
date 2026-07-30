@@ -86,6 +86,7 @@ fastscreen_source/Makefile
 fastscreen_source/*.obj
 fastscreen_source/*.o
 fastscreen_source/*.pdb
+fastscreen_source/*.dll
 
 # ===================== 二进制 / 运行时产物 =====================
 bin/ultravnc/

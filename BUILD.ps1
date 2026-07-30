@@ -58,7 +58,7 @@ if (-not $cmake) {
     if ($LASTEXITCODE -eq 0) {
         $fsDllSrc = Join-Path $fsBuild "bin\Release\fastscreen.dll"
         if (Test-Path $fsDllSrc) {
-            $fsDllDst = Join-Path $scriptDir "bin\fastscreencore\fastscreen.dll"
+            $fsDllDst = Join-Path $outputDir "bin\fastscreencore\fastscreen.dll"
             New-Item -ItemType Directory -Path (Split-Path $fsDllDst -Parent) -Force | Out-Null
             Copy-Item -Path $fsDllSrc -Destination $fsDllDst -Force
             Write-Host "[fastscreen] 编译完成"
