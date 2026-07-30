@@ -7,7 +7,22 @@ $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $outputDir = Join-Path $scriptDir "pty-agent"
 
+# ============================================================
+# 构建 pty-agent 发布目录
+# ============================================================
+
+# 清理旧的构建产物
+if (Test-Path $outputDir) {
+    Remove-Item -Path $outputDir -Recurse -Force
+}
+
+# 创建输出目录
+New-Item -Path $outputDir -ItemType Directory | Out-Null
+
+# ============================================================
 # 递归清理 __pycache__ 目录
+# ============================================================
+
 Get-ChildItem -Path $scriptDir -Directory -Recurse -Filter "__pycache__" | ForEach-Object {
     $cacheDir = $_
     $relativePath = $cacheDir.FullName.Substring($scriptDir.Length + 1)
@@ -23,18 +38,6 @@ Get-ChildItem -Path $scriptDir -Directory -Recurse -Filter "__pycache__" | ForEa
     Remove-Item -Path $cacheDir.FullName -Recurse -Force
     Write-Host "已删除: $($cacheDir.FullName)"
 }
-
-# ============================================================
-# 构建 pty-agent 发布目录
-# ============================================================
-
-# 清理旧的构建产物
-if (Test-Path $outputDir) {
-    Remove-Item -Path $outputDir -Recurse -Force
-}
-
-# 创建输出目录
-New-Item -Path $outputDir -ItemType Directory | Out-Null
 
 # ============================================================
 # 编译 fastscreen.dll（C++ 屏幕捕获引擎）
@@ -102,27 +105,29 @@ try {
     Write-Warning "[aichat] 下载失败: $_"
 }
 
+# ============================================================
+# 复制基本包
+# ============================================================
+
 Copy-Item -Path (Join-Path $scriptDir "src") -Destination (Join-Path $outputDir "src") -Recurse -Force
 Copy-Item -Path (Join-Path $scriptDir "bin") -Destination (Join-Path $outputDir "bin") -Recurse -Force
 Copy-Item -Path (Join-Path $scriptDir "app.py") -Destination $outputDir -Force
 Copy-Item -Path (Join-Path $scriptDir "SKILL.md") -Destination $outputDir -Force
 
 # ============================================================
-# 删除发布目录中不应包含的配置/日志文件
+# 删除发布目录中不应包含的配置/日志/缓存文件
 # ============================================================
 
 # aichat 配置文件
 $aichatConfig = Join-Path $outputDir "bin\aichat\config\config.yaml"
 if (Test-Path $aichatConfig) { Remove-Item -Path $aichatConfig -Force }
 
-# fastscreen 标记文件
-$fastscreenFlag = Join-Path $outputDir "bin\fastscreen\!fastscreen!"
-if (Test-Path $fastscreenFlag) { Remove-Item -Path $fastscreenFlag -Force }
-
-# sandboxie_plus 配置文件
-Get-ChildItem -Path (Join-Path $outputDir "bin\sandboxie_plus\bin") -Filter "*.ini" -Force | ForEach-Object { Remove-Item -Path $_.FullName -Force }
+# vnc 运行时配置文件
+$vncConfig = Join-Path $outputDir "src\vnc\src\data\config.json"
+if (Test-Path $vncConfig) { Remove-Item -Path $vncConfig -Force }
 
 # ultravnc 日志和配置文件
 Get-ChildItem -Path (Join-Path $outputDir "bin\ultravnc\*") -Include "*.log", "*.ini" -Force | ForEach-Object { Remove-Item -Path $_.FullName -Force }
+
 
 Write-Host "构建完成: $outputDir"
