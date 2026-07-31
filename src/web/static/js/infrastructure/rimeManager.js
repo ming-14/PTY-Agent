@@ -913,6 +913,13 @@ function setupShiftToggle() {
       }
     }).then(() => {
       debug('rime', 'shift toggle ascii_mode=%s ascii_punct=%s', newMode, ime.punctLocked ? '(locked)' : newMode);
+      // 切换到英文模式时，取消当前组词（清除候选词列表）
+      // 当 panel.editing=true 时有活跃组词，切换英文后候选词面板不会自动消失，
+      // 且由于 ascii_mode=true 后续按键不再走 RIME 流程，导致候选词列表悬空无法控制。
+      // 此处发送 Escape 取消组词，与 TKL 键盘 isDirectHandleKey 路径的处理一致。
+      if (newMode && panel.editing) {
+        panel.handleKey('{Escape}');
+      }
       showToast(newMode ? '英文输入' : '中文输入', 'info');
     }).catch((err) => {
       error('rime', 'shift toggle failed: %s', err && err.message || err);
@@ -1057,6 +1064,13 @@ export function applyImeSetting(key, value) {
     mgr.getIME().setOption('ascii_mode', asciiMode).catch((e) => {
       debug('rime', 'applyImeSetting ascii_mode=%s failed: %s', asciiMode, e);
     });
+    // 切换到英文模式时，取消当前组词（与 setupShiftToggle 一致）
+    if (asciiMode) {
+      const panel = mgr && mgr.getPanel();
+      if (panel && panel.editing) {
+        panel.handleKey('{Escape}');
+      }
+    }
     debug('rime', 'applyImeSetting: ascii_mode=%s (defaultState=%s)', asciiMode, value);
   } else if (key === 'ime.candidateCount') {
     // 实时调整候选词数量

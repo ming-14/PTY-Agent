@@ -150,8 +150,6 @@ async def api_stream_mjpeg(request: web.Request) -> web.StreamResponse:
         reason="OK",
         headers={
             "Content-Type": "multipart/x-mixed-replace; boundary=frame",
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
         },
     )
     await response.prepare(request)

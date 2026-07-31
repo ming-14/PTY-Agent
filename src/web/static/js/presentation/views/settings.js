@@ -441,9 +441,6 @@ function _bindServerAddrDialogEvents() {
   const input = $('server-addr-input');
   if (okBtn) okBtn.onclick = _confirmServerAddr;
   if (cancelBtn) cancelBtn.onclick = _hideServerAddrDialog;
-  if (overlay) overlay.onclick = e => {
-    if (e.target === overlay) _hideServerAddrDialog();
-  };
   if (input) input.onkeydown = e => {
     if (e.key === 'Enter') { e.preventDefault(); _confirmServerAddr(); }
     if (e.key === 'Escape') { e.preventDefault(); _hideServerAddrDialog(); }

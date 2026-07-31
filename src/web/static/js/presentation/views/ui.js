@@ -26,7 +26,7 @@ import {
 } from '../../infrastructure/terminalAdapter.js';
 import { debug, info, warn } from '../../domain/logger.js';
 import { formatRelativeTime, formatAbsoluteTime } from '../../domain/formatters.js';
-import { onTabSwitch as rimeOnTabSwitch } from '../../infrastructure/rimeManager.js?v=42';
+import { onTabSwitch as rimeOnTabSwitch } from '../../infrastructure/rimeManager.js';
 import { getSizeStatusText, toggleSizeDropdown } from './sizeSelector.js';
 // 通过 import 副作用触发 fastscreen/vnc/settings handler 注册（注册在模块底部立即执行）
 import './fastscreen.js';

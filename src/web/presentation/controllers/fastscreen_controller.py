@@ -259,10 +259,7 @@ def create_fastscreen_router(
         return StreamingResponse(
             generate(),
             media_type="multipart/x-mixed-replace; boundary=frame",
-            headers={
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-                "Pragma": "no-cache",
-            },
+            headers={},
         )
 
     # ── WS /fastscreen/ws/mse — H264 MSE 流（fmp4 segment） ──

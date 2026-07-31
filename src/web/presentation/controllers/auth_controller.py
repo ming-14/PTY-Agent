@@ -148,12 +148,17 @@ def create_auth_router(session_store: SessionStore, password_hash: str) -> APIRo
             return JSONResponse(status_code=400, content={"error": "invalid_body"})
 
         submitted = body.get("password", "")
-        submitted_hash = hash_password(submitted)
 
-        if submitted_hash != password_hash:
-            remote = request.client.host if request.client else "-"
-            _logger.warning("login: wrong password from %s", remote)
-            return JSONResponse(status_code=401, content={"error": "unauthorized"})
+        if password_hash:
+            # 有密码哈希时，校验密码（空密码也放行）
+            if submitted:
+                submitted_hash = hash_password(submitted)
+                if submitted_hash != password_hash:
+                    remote = request.client.host if request.client else "-"
+                    _logger.warning("login: wrong password from %s", remote)
+                    return JSONResponse(status_code=401, content={"error": "unauthorized"})
+            # 空密码直接放行
+        # 无密码哈希时，任何密码都放行（免密模式）
 
         token = session_store.create(max_age=_COOKIE_MAX_AGE)
         # 同时设置 Cookie（同源场景）和返回 token（跨域场景）
@@ -187,6 +192,7 @@ def create_auth_router(session_store: SessionStore, password_hash: str) -> APIRo
         """返回认证状态。
 
         前端启动时调用，判断是否需要跳转登录页。
+        enabled=false 表示免密模式，前端跳过登录页直接进入。
         同时支持 X-Auth-Token 头和 Cookie。
 
         Returns:
@@ -195,7 +201,7 @@ def create_auth_router(session_store: SessionStore, password_hash: str) -> APIRo
         token = _extract_token_from_request(request)
         authenticated = session_store.validate(token) if token else False
         return JSONResponse({
-            "enabled": True,
+            "enabled": bool(password_hash),
             "authenticated": authenticated,
         })
 

@@ -56,6 +56,7 @@ const TAG_COLORS = {
   app: '#90A4AE',
   fs: '#26C6DA',
   vnc: '#7E57C2',
+  console: '#607D8B',
   default: '#888',
 };
 
@@ -65,6 +66,15 @@ const LEVEL_COLORS = {
   1: '#08f',   // INFO
   2: '#f80',   // WARN
   3: '#f00',   // ERROR
+};
+
+// ── 保存原始 console 引用（供 patch 使用，避免循环） ──
+const _origConsole = {
+  log: console.log.bind(console),
+  debug: (console.debug && console.debug.bind(console)) || console.log.bind(console),
+  info: (console.info && console.info.bind(console)) || console.log.bind(console),
+  warn: console.warn.bind(console),
+  error: console.error.bind(console),
 };
 
 // ── 输出等级（控制 console.* 是否调用） ──
@@ -276,28 +286,30 @@ function _stringify(a) {
   return String(a);
 }
 
-// ── 核心：写一条日志 ──
-// 1) 输出等级过滤：level > _level 时仍可能进缓冲区（由 _captureLevel 决定）
-// 2) 采集等级过滤：level > _captureLevel 时既不输出也不入缓冲
-// 3) 否则：构造 entry → 推入环形缓冲区 → 通知订阅者；同时按输出等级决定是否调用 console.*
-function _log(level, tag, args, color, consoleFn) {
-  const captureOk = level >= _captureLevel;  // 采集范围（视窗可见）
-  const outputOk = level >= _level;          // 控制台输出范围
-  if (!captureOk && !outputOk) return;
+// ── 内部：时间戳格式化为 HH:MM:SS.mmm ──
+function _formatTs(ts) {
+  const d = new Date(ts);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  const ms = String(d.getMilliseconds()).padStart(3, '0');
+  return hh + ':' + mm + ':' + ss + '.' + ms;
+}
 
+// ── 内部：构造日志条目对象（不包含 I/O 逻辑） ──
+function _buildEntry(level, tag, args, captureCallStack) {
   const now = Date.now();
   const tsStr = _formatTs(now);
   const text = _stringifyArgs(args);
   const { hasStack, stack } = _extractStackFromArgs(args);
 
-  // WARN/ERROR 若没有 Error 对象，主动捕获调用栈，方便定位日志来源
   let callStack = stack;
   let hasCallStack = hasStack;
-  if (!hasStack && level >= LEVELS.WARN) {
+  if (!hasStack && captureCallStack && level >= LEVELS.WARN) {
     try {
       const err = new Error();
       const lines = (err.stack || '').split('\n');
-      // 跳过前 3 行：Error / _log / (warn|error|debug|info)
+      // 跳过前 3 行：Error / _buildEntry / (caller)
       const callerLines = lines.slice(3).filter(l => l.trim()).join('\n');
       if (callerLines) {
         callStack = 'Call stack:\n' + callerLines;
@@ -306,7 +318,7 @@ function _log(level, tag, args, color, consoleFn) {
     } catch (_) {}
   }
 
-  const entry = {
+  return {
     ts: now,
     tsStr,
     level,
@@ -318,6 +330,18 @@ function _log(level, tag, args, color, consoleFn) {
     hasStack: hasCallStack,
     stack: callStack,
   };
+}
+
+// ── 核心：写一条日志 ──
+// 1) 输出等级过滤：level > _level 时仍可能进缓冲区（由 _captureLevel 决定）
+// 2) 采集等级过滤：level > _captureLevel 时既不输出也不入缓冲
+// 3) 否则：构造 entry → 推入环形缓冲区 → 通知订阅者；同时按输出等级决定是否调用 console.*
+function _log(level, tag, args, color, consoleFn) {
+  const captureOk = level >= _captureLevel;  // 采集范围（视窗可见）
+  const outputOk = level >= _level;          // 控制台输出范围
+  if (!captureOk && !outputOk) return;
+
+  const entry = _buildEntry(level, tag, args, true);
 
   // 入环形缓冲区（仅采集范围内）
   if (captureOk) {
@@ -337,31 +361,67 @@ function _log(level, tag, args, color, consoleFn) {
   }
 }
 
-// ── 内部：时间戳格式化为 HH:MM:SS.mmm ──
-function _formatTs(ts) {
-  const d = new Date(ts);
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  const ss = String(d.getSeconds()).padStart(2, '0');
-  const ms = String(d.getMilliseconds()).padStart(3, '0');
-  return hh + ':' + mm + ':' + ss + '.' + ms;
-}
-
 export function debug(tag, ...args) {
-  _log(LEVELS.DEBUG, tag, args, '#888', console.log);
+  _log(LEVELS.DEBUG, tag, args, '#888', _origConsole.log);
 }
 
 export function info(tag, ...args) {
-  _log(LEVELS.INFO, tag, args, '#08f', console.log);
+  _log(LEVELS.INFO, tag, args, '#08f', _origConsole.log);
 }
 
 export function warn(tag, ...args) {
-  _log(LEVELS.WARN, tag, args, '#f80', console.warn);
+  _log(LEVELS.WARN, tag, args, '#f80', _origConsole.warn);
 }
 
 export function error(tag, ...args) {
-  _log(LEVELS.ERROR, tag, args, '#f00', console.error);
+  _log(LEVELS.ERROR, tag, args, '#f00', _origConsole.error);
 }
+
+// ── 捕获第三方 console 调用，推入日志缓冲区 ──
+// 由 patched console 方法调用，仅推入缓冲区，不再调 console（避免循环）。
+function _captureConsoleEntry(level, tag, args) {
+  if (level < _captureLevel) return;
+  const entry = _buildEntry(level, tag, args, false);
+  if (_buffer.length >= _bufferCapacity) _buffer.shift();
+  _buffer.push(entry);
+  _notify(entry);
+}
+
+// ── Patch 原生 console 方法，使所有 console.log/warn/error 等被日志视窗捕获 ──
+export function patchConsole() {
+  console.log = function(...args) {
+    _origConsole.log.apply(console, args);
+    _captureConsoleEntry(LEVELS.INFO, 'console', args);
+  };
+  console.debug = function(...args) {
+    _origConsole.debug.apply(console, args);
+    _captureConsoleEntry(LEVELS.DEBUG, 'console', args);
+  };
+  console.info = function(...args) {
+    _origConsole.info.apply(console, args);
+    _captureConsoleEntry(LEVELS.INFO, 'console', args);
+  };
+  console.warn = function(...args) {
+    _origConsole.warn.apply(console, args);
+    _captureConsoleEntry(LEVELS.WARN, 'console', args);
+  };
+  console.error = function(...args) {
+    _origConsole.error.apply(console, args);
+    _captureConsoleEntry(LEVELS.ERROR, 'console', args);
+  };
+}
+
+// ── 恢复原始 console 方法 ──
+export function unpatchConsole() {
+  console.log = _origConsole.log;
+  console.debug = _origConsole.debug;
+  console.info = _origConsole.info;
+  console.warn = _origConsole.warn;
+  console.error = _origConsole.error;
+}
+
+// 自动 patch
+patchConsole();
 
 // 暴露给控制台调试（保留原有习惯）
 window.__logLevel__ = _level;

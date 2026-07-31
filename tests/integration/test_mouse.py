@@ -38,9 +38,9 @@ class TestSessionPerformMouseAction:
             "count": 1,
         })
         assert result["performed"] is True
-        assert len(fake_session._pty.written) == 2
-        assert fake_session._pty.written[0] == b"\x1b[<0;5;10M"
-        assert fake_session._pty.written[1] == b"\x1b[<3;5;10m"
+        # press+release 合并为单次 write
+        assert len(fake_session._pty.written) == 1
+        assert fake_session._pty.written[0] == b"\x1b[<0;5;10M\x1b[<0;5;10m"
 
     def test_not_running_rejected(self):
         sess = Session("dead-test", ["cmd"])
@@ -51,7 +51,7 @@ class TestSessionPerformMouseAction:
             "coords": {"col": 1, "row": 1},
         })
         assert result["performed"] is False
-        assert "not running" in result["error"]
+        assert "not running" in result["message"]
 
     def test_drag_writes_motion_events(self, fake_session):
         result = fake_session.perform_mouse_action({
@@ -62,11 +62,9 @@ class TestSessionPerformMouseAction:
         })
         assert result["performed"] is True
         written = fake_session._pty.written
-        assert len(written) == 4
-        assert written[0] == b"\x1b[<0;1;1M"
-        assert written[1] == b"\x1b[<32;2;1M"
-        assert written[2] == b"\x1b[<32;3;1M"
-        assert written[3] == b"\x1b[<3;3;1m"
+        # press + 所有 motion + release 合并为单次 write
+        assert len(written) == 1
+        assert written[0] == b"\x1b[<0;1;1M\x1b[<32;2;1M\x1b[<32;3;1M\x1b[<0;3;1m"
 
     def test_scroll_writes_repeated_events(self, fake_session):
         result = fake_session.perform_mouse_action({
@@ -76,4 +74,7 @@ class TestSessionPerformMouseAction:
             "times": 2,
         })
         assert result["performed"] is True
-        assert len(fake_session._pty.written) == 4
+        # 滚轮只有 press（M），无 release（m）
+        assert len(fake_session._pty.written) == 2
+        assert fake_session._pty.written[0] == b"\x1b[<64;10;10M"
+        assert fake_session._pty.written[1] == b"\x1b[<64;10;10M"

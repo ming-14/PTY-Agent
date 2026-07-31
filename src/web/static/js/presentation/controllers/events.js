@@ -44,7 +44,7 @@ import {
 import { getHandlerBySid } from '../views/sessionHandlers.js';
 import { debug, info } from '../../domain/logger.js';
 import { applySidebarWidth } from '../../infrastructure/storage.js';
-import { cycleMode as rimeCycleMode } from '../../infrastructure/rimeManager.js?v=42';
+import { cycleMode as rimeCycleMode } from '../../infrastructure/rimeManager.js';
 import * as settingsStore from '../../application/settingsStore.js';
 
 export function bindGlobalEvents() {
@@ -142,6 +142,7 @@ export function bindGlobalEvents() {
   };
   $('restart-sid-input').addEventListener('input', checkRestartSidConflict);
   bindOverlayDismiss($('restart-overlay'), hideRestartDialog);
+  bindOverlayDismiss($('server-addr-overlay'), () => { $('server-addr-overlay').style.display = 'none'; });
 
   $('win-min').onclick = () => {
     if (!state.activeTab) return;

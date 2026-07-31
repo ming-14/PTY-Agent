@@ -38,24 +38,26 @@ class TestMouseActionEncoderClick:
     def test_left_click(self):
         enc = MouseActionEncoder(80, 24)
         ops = enc.click(Coord(10, 5), "left", 1, [])
-        assert len(ops) == 2
+        # press+release 合并为单次 write（同 button 值，M=press m=release）
+        assert len(ops) == 1
         assert ops[0]["type"] == "write"
-        assert ops[0]["data"] == b"\x1b[<0;10;5M"
-        assert ops[1]["data"] == b"\x1b[<3;10;5m"
+        assert ops[0]["data"] == b"\x1b[<0;10;5M\x1b[<0;10;5m"
 
     def test_right_click_with_modifiers(self):
         enc = MouseActionEncoder(80, 24)
         ops = enc.click(Coord(1, 1), "right", 1, ["ctrl", "shift"])
-        # right=2, ctrl=16, shift=4 => 22; release=3 + modifiers => 23
-        assert ops[0]["data"] == b"\x1b[<22;1;1M"
-        assert ops[1]["data"] == b"\x1b[<23;1;1m"
+        # right=2, ctrl=16, shift=4 => 22; press/release 同 button 值
+        assert ops[0]["data"] == b"\x1b[<22;1;1M\x1b[<22;1;1m"
 
     def test_double_click_has_delay(self):
         enc = MouseActionEncoder(80, 24)
         ops = enc.click(Coord(2, 2), "left", 2, [])
-        assert len(ops) == 5  # press, release, sleep, press, release
-        assert ops[2]["type"] == "sleep"
-        assert ops[2]["duration"] == 0.05
+        # 每次 click 的 press+release 合并为单次 write，两次 click 间有 sleep
+        assert len(ops) == 3  # write(merged), sleep, write(merged)
+        assert ops[0]["type"] == "write"
+        assert ops[1]["type"] == "sleep"
+        assert ops[1]["duration"] == 0.05
+        assert ops[2]["type"] == "write"
 
     def test_invalid_button(self):
         enc = MouseActionEncoder(80, 24)
@@ -78,25 +80,24 @@ class TestMouseActionEncoderHover:
         enc = MouseActionEncoder(80, 24)
         ops = enc.hover(Coord(5, 5), ["alt"])
         assert len(ops) == 1
-        # release=3, alt=8, motion=32 => 43
-        assert ops[0]["data"] == b"\x1b[<43;5;5m"
+        # hover=3, alt=8 => 11，press 标记 M（无 motion 标志）
+        assert ops[0]["data"] == b"\x1b[<11;5;5M"
 
 
 class TestMouseActionEncoderScroll:
     def test_scroll_up_twice(self):
         enc = MouseActionEncoder(80, 24)
         ops = enc.scroll(Coord(10, 10), "up", 2, [])
-        assert len(ops) == 4
-        assert ops[0]["data"] == b"\x1b[<4;10;10M"
-        assert ops[1]["data"] == b"\x1b[<3;10;10m"
-        assert ops[2]["data"] == b"\x1b[<4;10;10M"
-        assert ops[3]["data"] == b"\x1b[<3;10;10m"
+        # 滚轮只有 press（M），无 release（m）；scroll_up=64
+        assert len(ops) == 2
+        assert ops[0]["data"] == b"\x1b[<64;10;10M"
+        assert ops[1]["data"] == b"\x1b[<64;10;10M"
 
     def test_scroll_down_with_ctrl(self):
         enc = MouseActionEncoder(80, 24)
         ops = enc.scroll(Coord(1, 1), "down", 1, ["ctrl"])
-        # scroll_down=5, ctrl=16 => 21
-        assert ops[0]["data"] == b"\x1b[<21;1;1M"
+        # scroll_down=65, ctrl=16 => 81
+        assert ops[0]["data"] == b"\x1b[<81;1;1M"
 
     def test_invalid_direction(self):
         enc = MouseActionEncoder(80, 24)
@@ -108,18 +109,16 @@ class TestMouseActionEncoderDrag:
     def test_horizontal_drag(self):
         enc = MouseActionEncoder(80, 24)
         ops = enc.drag(Coord(1, 1), Coord(3, 1), "left", [])
-        # press at (1,1), motion at (2,1) (3,1), release at (3,1)
-        assert ops[0]["data"] == b"\x1b[<0;1;1M"
-        assert ops[1]["data"] == b"\x1b[<32;2;1M"  # motion
-        assert ops[2]["data"] == b"\x1b[<32;3;1M"  # motion
-        assert ops[3]["data"] == b"\x1b[<3;3;1m"
+        # press + 所有 motion + release 合并为单次 write
+        assert len(ops) == 1
+        assert ops[0]["data"] == b"\x1b[<0;1;1M\x1b[<32;2;1M\x1b[<32;3;1M\x1b[<0;3;1m"
 
     def test_vertical_drag(self):
         enc = MouseActionEncoder(80, 24)
         ops = enc.drag(Coord(5, 1), Coord(5, 3), "right", [])
-        assert len(ops) == 4
-        assert ops[0]["data"] == b"\x1b[<2;5;1M"
-        assert ops[-1]["data"] == b"\x1b[<3;5;3m"
+        # press + 所有 motion + release 合并为单次 write
+        assert len(ops) == 1
+        assert ops[0]["data"] == b"\x1b[<2;5;1M\x1b[<34;5;2M\x1b[<34;5;3M\x1b[<2;5;3m"
 
 
 class TestMouseActionEncoderPress:
@@ -127,10 +126,10 @@ class TestMouseActionEncoderPress:
         enc = MouseActionEncoder(80, 24)
         ops = enc.press(Coord(4, 4), "middle", 2.0, ["shift"])
         assert len(ops) == 3
-        # middle=1, shift=4 => 5
+        # middle=1, shift=4 => 5；press 和 release 同 button 值，仅标记 M/m 不同
         assert ops[0]["data"] == b"\x1b[<5;4;4M"
         assert ops[1] == {"type": "sleep", "duration": 2.0}
-        assert ops[2]["data"] == b"\x1b[<7;4;4m"
+        assert ops[2]["data"] == b"\x1b[<5;4;4m"
 
     def test_invalid_duration(self):
         enc = MouseActionEncoder(80, 24)

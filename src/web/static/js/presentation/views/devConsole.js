@@ -320,6 +320,7 @@ function _tagColor(tag) {
     cursor: '#9CCC65', touch: '#BA68C8', settings: '#FFD54F', app: '#90A4AE',
     fs: '#26C6DA', vnc: '#7E57C2', devconsole: '#FF7043',
     font: '#AB47BC', rime: '#EC407A', rimeTouch: '#EF5350',
+    console: '#607D8B',
     default: '#888',
   };
   return map[tag] || map[tag.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] || map.default;
@@ -517,6 +518,7 @@ function _bindAutoScrollSmart() {
   if (!_bodyEl) return;
   let isUserScroll = false;
   _bodyEl.addEventListener('scroll', () => {
+    if (!_bodyEl) return;
     if (!_autoScroll || _autoScrollUserEnabled) return;
     // 仅首次向上滚动时触发
     const atBottom = _bodyEl.scrollHeight - _bodyEl.scrollTop - _bodyEl.clientHeight < 5;

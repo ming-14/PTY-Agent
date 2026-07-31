@@ -130,8 +130,8 @@
     <div class="login-title">PTY-Agent</div>
     <form id="login-form" autocomplete="off">
       <div class="form-group">
-        <label class="form-label" for="password">密码</label>
-        <input id="password" class="form-input" type="password" placeholder="输入访问密码" autofocus autocomplete="off">
+        <label class="form-label" for="password">密码（可选）</label>
+        <input id="password" class="form-input" type="password" placeholder="留空则免密登录" autofocus autocomplete="off">
       </div>
       <button id="btn-login" class="btn-login" type="submit">登录</button>
       <div id="error-msg" class="error-msg"></div>
@@ -153,8 +153,10 @@
       function getBaseUrl() {
         var addr = serverInput.value.trim();
         if (!addr) return '';
-        var proto = location.protocol === 'https:' ? 'https:' : 'http:';
-        return proto + '//' + addr;
+        // 若用户显式指定了协议（http:// 或 https://），直接使用；
+        // 否则默认 HTTPS（避免 Cloudflare tunnel 等场景 HTTP→HTTPS 重定向导致 CORS 预检失败）
+        if (addr.indexOf('://') !== -1) return addr;
+        return 'https://' + addr;
       }
 
       document.getElementById('login-form').addEventListener('submit', function(e) {
@@ -162,10 +164,6 @@
         var btn = document.getElementById('btn-login');
         var errEl = document.getElementById('error-msg');
         var pwd = document.getElementById('password').value;
-        if (!pwd) {
-          errEl.textContent = '请输入密码';
-          return;
-        }
         btn.disabled = true;
         errEl.textContent = '';
         var baseUrl = getBaseUrl();

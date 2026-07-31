@@ -58,7 +58,7 @@ export function saveToLocal(settings) {
 export async function loadFromServer() {
   try {
     const customAddr = (localStorage.getItem('pty_server_address') || '').trim();
-    const baseUrl = customAddr ? (location.protocol === 'https:' ? 'https:' : 'http:') + '//' + customAddr : '';
+    const baseUrl = customAddr ? (customAddr.indexOf('://') !== -1 ? customAddr : 'https://' + customAddr) : '';
     const url = baseUrl ? baseUrl + '/api/settings' : '/api/settings';
     const resp = await fetch(url, {
       method: 'GET',
