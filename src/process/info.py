@@ -402,7 +402,7 @@ def _get_process_detail_unix(pid: int) -> Optional[dict]:
                 parts = stat.split(")")
                 if len(parts) >= 2:
                     rest = parts[1].split()
-                    if len(rest) >= 1:
+                    if len(rest) >= 2:
                         ppid = int(rest[1])
                     if len(rest) >= 13:
                         utime = int(rest[11])

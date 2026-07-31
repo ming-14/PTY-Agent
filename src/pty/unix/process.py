@@ -155,12 +155,18 @@ class UnixProcessMonitor:
                 try:
                     with open(stat_path, "r") as f:
                         content = f.read()
-                    parts = content.split(" ")
-                    if len(parts) >= 5:
-                        pid = int(parts[0])
-                        pgrp = int(parts[4])
+                    # /proc/pid/stat 格式: pid (comm) state ppid pgrp session ...
+                    # comm 可能含空格甚至括号，不能直接用 split(" ") 解析。
+                    # 正确做法：找到最后一个 ')' 确定 comm 结尾，再解析后续字段。
+                    rparen = content.rfind(")")
+                    if rparen == -1:
+                        continue
+                    rest = content[rparen + 1:].split()
+                    if len(rest) >= 3:
+                        pgrp = int(rest[2])
                         if pgrp == self._pgid:
-                            pids.append(pid)
+                            # entry 就是目录名=pid，无需从 stat 中重新解析
+                            pids.append(int(entry))
                 except (ValueError, OSError, IndexError):
                     continue
             return pids

@@ -57,15 +57,14 @@ class WebServer:
         self.host = host
         self.port = port
 
-        # 密码认证：空哈希=无认证（向后兼容），非空=启用
+        # 密码认证：空哈希=免密登录（仅填服务器地址），非空=需密码校验
         self._auth_enabled = bool(password_hash)
-        self._session_store: Optional[SessionStore] = None
+        self._session_store = SessionStore()
         self._password_hash: str = password_hash
         if self._auth_enabled:
-            self._session_store = SessionStore()
             _logger.info("Web auth enabled (password hash set)")
         else:
-            _logger.info("Web auth disabled (no password)")
+            _logger.info("Web auth disabled (no password, login page allows empty password)")
 
         # 基础设施层
         self._executor = ThreadExecutorImpl()
@@ -383,14 +382,14 @@ class WebServer:
                         )
                 return await call_next(request)
 
-        # 认证路由（/api/auth/* + /login）——密码非空时注册
-        if self._auth_enabled and self._session_store is not None:
-            try:
-                auth_router = create_auth_router(self._session_store, self._password_hash)
-                app.include_router(auth_router)
-                _logger.info("Auth router mounted at /api/auth + /login")
-            except Exception:
-                _logger.exception("Auth router mount failed")
+        # 认证路由（/api/auth/* + /login）——始终挂载
+        # 无密码哈希时，login 端点允许空密码直接创建会话（等效免密登录）
+        try:
+            auth_router = create_auth_router(self._session_store, self._password_hash)
+            app.include_router(auth_router)
+            _logger.info("Auth router mounted at /api/auth + /login")
+        except Exception:
+            _logger.exception("Auth router mount failed")
 
         # 登录页路由（密码为空时也需要能访问 login.html）
         @app.get("/login", response_class=FileResponse)
@@ -409,10 +408,6 @@ class WebServer:
             remote = request.client.host if request.client else "-"
             try:
                 response = await call_next(request)
-                # 静态文件始终重新验证，确保 ES 模块更新后浏览器获取最新版本
-                if path.startswith("/static/"):
-                    response.headers.setdefault(
-                        "Cache-Control", "no-cache, must-revalidate")
                 elapsed_ms = (time.monotonic() - start) * 1000
                 _logger.info(
                     "HTTP %s %s from %s -> %d (%.1fms)",

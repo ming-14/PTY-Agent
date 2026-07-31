@@ -13,7 +13,7 @@ import { wsSend } from '../wsClient.js';
 import { zoomActiveSession } from './scale.js';
 import { getTerminalCellSize } from './shared.js';
 import { canSendVtMouseInput, shouldSendAlternateScroll } from './mouseMode.js';
-import { shouldTrackFocus } from '../rimeManager.js?v=42';
+import { shouldTrackFocus } from '../rimeManager.js';
 import { restartCursorBlinkIfNeeded, logCursorState } from './cursorDebug.js';
 import { FRAME_RATIO_STEP } from '../../domain/constants.js';
 import { doPaste } from './input.js';
@@ -553,20 +553,19 @@ export function bindTerminalEvents(term, inst, sid) {
             const fakeEvent = { shiftKey: false };
             if (shouldSendAlternateScroll(inst, fakeEvent)) {
               // Alternate scroll：拖动转换为上下箭头（与桌面端滚轮一致）
+              // touchmove 频率高（~60fps），每次只发 1 个事件即可，
+              // 不需要按 numRows 倍数发送（否则 VT 滚轮事件像机关枪一样密集）
               const seq = numRows > 0 ? '\x1b[B' : '\x1b[A';
-              for (let i = 0; i < Math.abs(numRows); i++) {
-                sendSGRMouse(sid, seq);
-              }
+              sendSGRMouse(sid, seq);
               debug('touch', 'alt-scroll touch: numRows=%s dy=%s', numRows, dy.toFixed(1));
             } else if (canSendVtMouseInput(inst, fakeEvent)) {
               // SGR 鼠标滚轮：拖动转换为 VT 滚轮事件
               // WT 行为：滚轮只有 press（M），没有 release（m）
+              // touchmove 频率高，每次只发 1 个事件
               const cell = getTerminalCellFromEvent(term, t);
               if (cell) {
                 const button = numRows > 0 ? 65 : 64; // 65=down, 64=up
-                for (let i = 0; i < Math.abs(numRows); i++) {
-                  sendSGRMouse(sid, buildSGRMouse(button, cell.col, cell.row, false, fakeEvent));
-                }
+                sendSGRMouse(sid, buildSGRMouse(button, cell.col, cell.row, false, fakeEvent));
                 debug('touch', 'vt touch scroll: numRows=%s dy=%s cell=(%s,%s)', numRows, dy.toFixed(1), cell.col, cell.row);
               }
             } else {

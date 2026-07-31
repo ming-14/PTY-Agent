@@ -74,7 +74,7 @@ import {
 import { initSettingsView } from './presentation/views/settings.js';
 import { refreshSizeSelectorIfOpen } from './presentation/views/sizeSelector.js';
 import { initDevConsole, setVisible as setDevConsoleVisible } from './presentation/views/devConsole.js';
-import { init as rimeInit, onThemeChange as rimeOnThemeChange, applyImeSetting as rimeApplyImeSetting } from './infrastructure/rimeManager.js?v=42';
+import { init as rimeInit, onThemeChange as rimeOnThemeChange, applyImeSetting as rimeApplyImeSetting } from './infrastructure/rimeManager.js';
 import { ensureMapleMonoLoaded, applyTerminalFontAll } from './infrastructure/fontLoader.js';
 
 // ── rikkajs 桌宠管理 ──

@@ -8,7 +8,7 @@ import { showToast } from '../domUtils.js';
 import { wsSend } from '../wsClient.js';
 import { isFunctionKey } from './shared.js';
 import { isTermAtBottom, scrollTermToBottom } from './scroll.js';
-import { interceptKeyDown as rimeInterceptKeyDown, isKeyboardDisabled } from '../rimeManager.js?v=42';
+import { interceptKeyDown as rimeInterceptKeyDown, isKeyboardDisabled } from '../rimeManager.js';
 
 export function copySelection(term) {
   try {

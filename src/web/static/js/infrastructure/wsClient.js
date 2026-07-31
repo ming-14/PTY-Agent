@@ -24,10 +24,22 @@ export function connect() {
   }
   info('ws', 'connecting...');
   setStatus('connecting', '连接中...');
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const customAddr = localStorage.getItem(LS_SERVER_ADDR_KEY);
-  const host = customAddr || location.host;
-  let wsUrl = proto + '//' + host + '/ws?clientUid=' + encodeURIComponent(state.clientUid);
+  let wsUrl;
+  if (customAddr) {
+    // 用户指定了协议（http:// 或 https://）时，提取 host 并映射为 ws/wss
+    var protoIdx = customAddr.indexOf('://');
+    if (protoIdx !== -1) {
+      var httpProto = customAddr.slice(0, protoIdx);
+      var host = customAddr.slice(protoIdx + 3);
+      wsUrl = (httpProto === 'https' ? 'wss:' : 'ws:') + '//' + host;
+    } else {
+      wsUrl = 'wss://' + customAddr;
+    }
+  } else {
+    wsUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host;
+  }
+  wsUrl += '/ws?clientUid=' + encodeURIComponent(state.clientUid);
   const authToken = getAuthToken();
   if (authToken) wsUrl += '&authToken=' + encodeURIComponent(authToken);
   try {

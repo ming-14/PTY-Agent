@@ -238,7 +238,16 @@
       e.preventDefault();
       e.stopPropagation();
       this._startDrag(e.clientX, e.clientY);
-      const onMove = ev => this._onDragMove(ev.clientX, ev.clientY);
+      const onMove = ev => {
+        // 终端可能吞掉 mouseup（VT 鼠标模式），通过 buttons 检测按钮是否已松开
+        if (ev.buttons === 0) {
+          this._endDrag();
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          return;
+        }
+        this._onDragMove(ev.clientX, ev.clientY);
+      };
       const onUp = ev => {
         this._endDrag();
         document.removeEventListener('mousemove', onMove);
@@ -448,6 +457,25 @@
       }
 
       this.env.update();
+
+      // 环境变化后（如窗口大小变化），检查位置是否仍在合理表面
+      if (!this.isOnFloor() && !this.isOnWall() && !this.isOnCeiling()) {
+        // 如果精灵完全在视口外，传送到顶部上方自然掉落回来
+        const spriteLeft = this.x - this.currentCx;
+        const spriteTop = this.y - this.currentCy;
+        if (spriteLeft + SPRITE_W <= 0 || spriteLeft >= this.env.width ||
+            this.y <= 0 || spriteTop >= this.env.height) {
+          this.x = this.env.width / 2;
+          this.y = -SPRITE_W;
+          this.fallVx = 0;
+          this.fallVy = 0;
+        }
+        if (this.behaviorName !== '落下する' && this.behaviorName !== '投げられる') {
+          this.setBehavior('落下する');
+          this._render();
+          return;
+        }
+      }
 
       if (this.stepIdx >= this.steps.length) {
         this._finishBehavior();

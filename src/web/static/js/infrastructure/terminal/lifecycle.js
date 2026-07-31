@@ -10,7 +10,7 @@ import { DEFAULT_FONT_SIZE, DEFAULT_COLS, DEFAULT_ROWS } from '../../domain/cons
 import { currentTheme } from '../storage.js';
 import { applyTerminalSizeFromSession } from './shared.js';
 import { trackAppMouseMode, getInitialMouseOverride } from './mouseMode.js';
-import { shouldTrackFocus } from '../rimeManager.js?v=42';
+import { shouldTrackFocus } from '../rimeManager.js';
 import { trackCursorSequences } from './cursorDebug.js';
 import { attachCustomKeyEventHandler, setLineMode, handleLineModeInput } from './input.js';
 export { setLineMode };

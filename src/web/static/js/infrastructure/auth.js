@@ -25,8 +25,9 @@ let _redirecting = false;
 function _getAuthBaseUrl() {
   const addr = (localStorage.getItem(LS_SERVER_ADDR_KEY) || '').trim();
   if (!addr) return '';
-  const proto = location.protocol === 'https:' ? 'https:' : 'http:';
-  return proto + '//' + addr;
+  // 若用户显式指定了协议，直接使用；否则默认 HTTPS
+  if (addr.indexOf('://') !== -1) return addr;
+  return 'https://' + addr;
 }
 
 /**
