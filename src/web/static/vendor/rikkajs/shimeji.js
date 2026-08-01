@@ -460,17 +460,10 @@
 
       // 环境变化后（如窗口大小变化），检查位置是否仍在合理表面
       if (!this.isOnFloor() && !this.isOnWall() && !this.isOnCeiling()) {
-        // 如果精灵完全在视口外，传送到顶部上方自然掉落回来
-        const spriteLeft = this.x - this.currentCx;
-        const spriteTop = this.y - this.currentCy;
-        if (spriteLeft + SPRITE_W <= 0 || spriteLeft >= this.env.width ||
-            this.y <= 0 || spriteTop >= this.env.height) {
-          this.x = this.env.width / 2;
-          this.y = -SPRITE_W;
-          this.fallVx = 0;
-          this.fallVy = 0;
-        }
-        if (this.behaviorName !== '落下する' && this.behaviorName !== '投げられる') {
+        // 不在掉落中，且当前步骤不是物理 fall 步骤（投げられる 的 fall 步骤允许悬空）
+        const curStep = this.steps[this.stepIdx];
+        const isFallStep = curStep && curStep.type === 'fall';
+        if (this.behaviorName !== '落下する' && !isFallStep) {
           this.setBehavior('落下する');
           this._render();
           return;
@@ -700,7 +693,7 @@
         { type: 'action', name: '跳ねる' },
         { type: 'action', name: '立つ', duration: () => 100 + Math.random() * 100 },
       ]},
-      { type: 'sequence', condition: () => true, steps: [
+      { type: 'sequence', condition: m => m.isOnWall(), steps: [
         { type: 'action', name: '壁に掴まる', duration: 100 },
       ]},
     ]},
@@ -718,7 +711,7 @@
         { type: 'action', name: '跳ねる' },
         { type: 'action', name: '立つ', duration: () => 100 + Math.random() * 100 },
       ]},
-      { type: 'sequence', condition: () => true, steps: [
+      { type: 'sequence', condition: m => m.isOnWall(), steps: [
         { type: 'action', name: '壁に掴まる', duration: 100 },
       ]},
     ]},
