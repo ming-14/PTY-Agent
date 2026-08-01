@@ -2,10 +2,10 @@
  * 基础设施：终端字体加载器
  *
  * 负责异步加载 MapleMono 字体资源并应用到终端。
- * 字体文件位于 /fonts/，包含 Regular/Bold/Italic/BoldItalic 四个 woff2 文件。
+ * 使用 ZeoSeven CDN 加载字体：https://fontsapi.zeoseven.com/442/main/result.css
  *
  * 加载策略：
- * - 注入 @font-face CSS（font-display: swap，浏览器按需加载具体字重/样式）
+ * - 通过 <link> 标签加载 CDN CSS 文件
  * - document.fonts.load() 等待字体就绪后再应用到终端，避免回退闪烁
  * - 多次调用共享同一个 loading promise，不重复加载
  *
@@ -17,68 +17,41 @@ import { debug, info, warn, error } from '../domain/logger.js';
 import * as settingsStore from '../application/settingsStore.js';
 import { applyTerminalFrameSize } from './terminal/scale.js';
 
-// MapleMono 字体族名（对应 @font-face 中声明的 font-family）
-const MAPLE_MONO_FONT_FAMILY = 'MapleMono NF CN';
+// MapleMono 字体族名（对应 CDN CSS 中声明的 font-family）
+const MAPLE_MONO_FONT_FAMILY = 'Maple Mono NF CN';
 // 默认终端字体族（lifecycle.js 原硬编码值）
 const DEFAULT_FONT_FAMILY = "'Cascadia Mono', 'Cascadia Code', 'Consolas', 'Courier New', monospace";
 
-// @font-face 是否已注入（避免重复注入）
-let _styleInjected = false;
+// CDN CSS 是否已加载（避免重复加载）
+let _linkInjected = false;
 // 正在进行的加载 promise（共享，避免重复加载）
 let _loadingPromise = null;
 
 /**
- * 注入 MapleMono @font-face CSS（仅一次）。
- * 使用 font-display: swap，未加载完成时回退到默认字体。
+ * 加载 ZeoSeven CDN 的 MapleMono CSS 文件（仅一次）。
+ * 通过 <link> 标签加载 CDN 提供的 CSS 文件。
  */
-function _injectFontFace() {
-  if (_styleInjected) return;
-  const style = document.createElement('style');
-  style.id = 'maple-mono-fontface';
-  style.textContent = `
-@font-face {
-  font-family: '${MAPLE_MONO_FONT_FAMILY}';
-  src: url('/fonts/MapleMono-NF-CN-Regular.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: '${MAPLE_MONO_FONT_FAMILY}';
-  src: url('/fonts/MapleMono-NF-CN-Bold.woff2') format('woff2');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: '${MAPLE_MONO_FONT_FAMILY}';
-  src: url('/fonts/MapleMono-NF-CN-Italic.woff2') format('woff2');
-  font-weight: 400;
-  font-style: italic;
-  font-display: swap;
-}
-@font-face {
-  font-family: '${MAPLE_MONO_FONT_FAMILY}';
-  src: url('/fonts/MapleMono-NF-CN-BoldItalic.woff2') format('woff2');
-  font-weight: 700;
-  font-style: italic;
-  font-display: swap;
-}`;
-  document.head.appendChild(style);
-  _styleInjected = true;
-  debug('font', '@font-face injected for %s', MAPLE_MONO_FONT_FAMILY);
+function _loadCdnCss() {
+  if (_linkInjected) return;
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = 'https://fontsapi.zeoseven.com/442/main/result.css';
+  link.id = 'maple-mono-cdn-css';
+  document.head.appendChild(link);
+  _linkInjected = true;
+  debug('font', 'CDN CSS loaded for %s', MAPLE_MONO_FONT_FAMILY);
 }
 
 /**
  * 异步加载 MapleMono 字体。
- * 注入 @font-face 后通过 document.fonts.load() 等待浏览器完成加载。
+ * 加载 CDN CSS 后通过 document.fonts.load() 等待浏览器完成加载。
  * 多次调用共享同一个 loading promise，不会重复加载。
  *
  * @returns {Promise<void>} 加载完成后 resolve；失败则 reject 并允许重试
  */
 export async function ensureMapleMonoLoaded() {
   if (_loadingPromise) return _loadingPromise;
-  _injectFontFace();
+  _loadCdnCss();
   _loadingPromise = (async () => {
     try {
       // document.fonts.load 需要指定 "字号 字体族"，浏览器会异步加载对应字体
@@ -87,7 +60,7 @@ export async function ensureMapleMonoLoaded() {
         document.fonts.load(`16px "${MAPLE_MONO_FONT_FAMILY}"`),
         document.fonts.load(`bold 16px "${MAPLE_MONO_FONT_FAMILY}"`),
       ]);
-      info('font', 'MapleMono loaded successfully');
+      info('font', 'MapleMono loaded successfully from CDN');
     } catch (e) {
       error('font', 'MapleMono load failed: %s', e && e.message || e);
       _loadingPromise = null;  // 失败后允许重试

@@ -58,7 +58,7 @@ Desktop.ini
 ehthumbs.db
 
 # ===================== PTY-Agent 专属 =====================
-.pty-agent/
+pty-agent/
 
 # ===================== PyInstaller =====================
 *.spec
@@ -78,15 +78,15 @@ webrime_source/server/dist/
 **/.webpack-copy-tmp/
 
 # ===================== fastscreen C/C++ 构建产物 =====================
-fastscreen_source/build/
-fastscreen_source/cmake-build-*/
-fastscreen_source/CMakeFiles/
-fastscreen_source/CMakeCache.txt
-fastscreen_source/Makefile
-fastscreen_source/*.obj
-fastscreen_source/*.o
-fastscreen_source/*.pdb
-fastscreen_source/*.dll
+fastscreen/build/
+fastscreen/cmake-build-*/
+fastscreen/CMakeFiles/
+fastscreen/CMakeCache.txt
+fastscreen/Makefile
+fastscreen/*.obj
+fastscreen/*.o
+fastscreen/*.pdb
+fastscreen/*.dll
 
 # ===================== 二进制 / 运行时产物 =====================
 bin/ultravnc/

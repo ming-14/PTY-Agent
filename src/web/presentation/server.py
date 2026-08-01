@@ -423,7 +423,7 @@ class WebServer:
                 raise
 
         # VNC 前端静态资源（必须在 / 之前 mount，避免被通配覆盖）
-        # 路径示例：/static/novnc/vnc.html → src/vnc/src/static/novnc/vnc.html
+        # 路径示例：/static/novnc/vnc.html → src/web/static/vendor/novnc/vnc.html
         if self._vnc_service is not None:
             try:
                 novnc_web_dir = get_novnc_web_dir()

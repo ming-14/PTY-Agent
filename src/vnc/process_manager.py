@@ -143,7 +143,7 @@ class VncProcessConfig:
     Attributes:
         winvnc_exe: winvnc.exe 绝对路径。
         ultravnc_dir: UltraVNC 目录（ultravnc.ini 写入位置）。
-        novnc_web_dir: noVNC 前端静态目录（用于定位 vnc_password.py 模块）。
+        vnc_src_dir: VNC 模块 src 目录（用于定位 vnc_password.py 模块）。
         logs_dir: 日志目录。
         vnc_port: VNC 服务端口（默认自动分配）。
         password: VNC 密码，None 时自动生成 12 位随机串。
@@ -151,7 +151,7 @@ class VncProcessConfig:
     """
     winvnc_exe: Path
     ultravnc_dir: Path
-    novnc_web_dir: Path
+    vnc_src_dir: Path
     logs_dir: Path
     vnc_port: Optional[int] = None
     password: Optional[str] = None
@@ -302,11 +302,8 @@ class VncProcessManager:
     def _ensure_vnc_password_module(self):
         """懒加载 noVNC 的 vnc_password 模块。"""
         if self._vnc_password_module is None:
-            # noVNC src 目录 = novnc_web_dir 的父级（static/novnc → static → src）
-            # novnc_web_dir 是 src/vnc/src/static/novnc
-            # 所以 src 目录 = novnc_web_dir.parent.parent
-            novnc_src_dir = self.config.novnc_web_dir.parent.parent
-            self._vnc_password_module = load_vnc_password_module(novnc_src_dir)
+            # vnc_password.py 在 src/vnc/src/ 目录
+            self._vnc_password_module = load_vnc_password_module(self.config.vnc_src_dir)
         return self._vnc_password_module
 
     def _write_ultravnc_ini(self) -> None:

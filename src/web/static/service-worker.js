@@ -48,8 +48,7 @@ const PRECACHE_URLS = [
   '/vendor/rime/dict/stroke/stroke.schema.yaml',
   '/vendor/rime/dict/stroke/stroke.table.bin',
   '/vendor/rime/dict/stroke/package.json',
-  '/fonts/LICENSE.txt',
-  '/fonts/config.json',
+  'https://fontsapi.zeoseven.com/442/main/result.css',
   '/js/app.js',
   '/js/application/messageHandlers.js',
   '/js/application/ports.js',
@@ -131,14 +130,44 @@ function _isStaticAsset(url) {
   return (
     path.startsWith('/css/') ||
     path.startsWith('/js/') ||
-    path.startsWith('/vendor/') ||
-    path.startsWith('/fonts/')
+    path.startsWith('/vendor/')
   );
 }
 
 // 请求拦截：缓存优先，网络回退
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
+
+  // 处理字体 CDN 资源（跨域）
+  if (url.href === 'https://fontsapi.zeoseven.com/442/main/result.css') {
+    event.respondWith(
+      (async () => {
+        const cache = await caches.open(CACHE_NAME);
+        const cached = await cache.match(event.request);
+        if (cached) {
+          // 后台异步更新缓存
+          fetch(event.request).then((response) => {
+            if (response && response.ok) {
+              cache.put(event.request, response);
+            }
+          }).catch(() => {});
+          return cached;
+        }
+        // 缓存未命中，从网络获取并缓存
+        try {
+          const response = await fetch(event.request);
+          if (response && response.ok) {
+            cache.put(event.request, response.clone());
+          }
+          return response;
+        } catch (e) {
+          // 离线且无缓存：返回 fallback
+          return new Response('Offline', { status: 503 });
+        }
+      })()
+    );
+    return;
+  }
 
   // 只处理同源请求
   if (url.origin !== location.origin) return;
