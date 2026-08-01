@@ -1882,6 +1882,16 @@ const _RimeToolbar = class _RimeToolbar {
       if (!this.isPunctLocked) {
         this.provider.getIME().setOption("ascii_punct", this.isEnglish);
       }
+      // 切换到英文模式时，取消当前组词（清除候选词列表）
+      // 当 panel.editing=true 时有活跃组词，切换英文后候选词面板不会自动消失，
+      // 且由于 ascii_mode=true 后续按键不再走 RIME 流程，导致候选词列表悬空无法控制。
+      // 此处发送 Escape 取消组词，与 rimeManager.js setupShiftToggle 的处理一致。
+      if (this.isEnglish) {
+        const panel = this.provider.getPanel();
+        if (panel && panel.editing) {
+          panel.handleKey('{Escape}');
+        }
+      }
       this.refreshUI();
     });
     this.btnVariant.addEventListener("click", () => {
@@ -3658,7 +3668,15 @@ class RimeKeyboard {
         this.ime.setOption("ascii_punct", this.isEnglish).catch(() => {
         });
       }
-      if (this.isEnglish) this.shiftState = "off";
+      // 切换到英文模式时，取消当前组词（清除候选词列表）
+      // 与 rimeManager.js setupShiftToggle 和工具栏 btnLang 的处理一致
+      if (this.isEnglish) {
+        this.shiftState = "off";
+        if (this.editing) {
+          this.ime.processKey('{Escape}').catch(() => {
+          });
+        }
+      }
       this.refreshUI();
       return;
     }
@@ -3757,6 +3775,12 @@ class RimeKeyboard {
       });
       if (!this.ime.punctLocked) {
         this.ime.setOption("ascii_punct", this.isEnglish).catch(() => {
+        });
+      }
+      // 切换到英文模式时，取消当前组词（清除候选词列表）
+      // 与 rimeManager.js setupShiftToggle 和工具栏 btnLang 的处理一致
+      if (this.isEnglish && this.editing) {
+        this.ime.processKey('{Escape}').catch(() => {
         });
       }
       this.shiftState = "off";
@@ -5213,7 +5237,15 @@ class RimeTKLKeyboard {
       this.ime.setOption("ascii_punct", this.isEnglish).catch(() => {
       });
     }
-    if (this.isEnglish) this.shiftState = "off";
+    // 切换到英文模式时，取消当前组词（清除候选词列表）
+    // 与 rimeManager.js setupShiftToggle 和工具栏 btnLang 的处理一致
+    if (this.isEnglish) {
+      this.shiftState = "off";
+      if (this.editing) {
+        this.ime.processKey('{Escape}').catch(() => {
+        });
+      }
+    }
     this.refreshUI();
   }
   toggleModifier(mod) {

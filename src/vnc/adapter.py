@@ -32,7 +32,10 @@ def _resolve_vnc_module_dir() -> Path:
 
 def _resolve_novnc_web_dir(vnc_module_dir: Path) -> Path:
     """noVNC 前端静态目录（用于定位 vnc_password.py 模块 + web 层 mount 静态资源）。"""
-    return vnc_module_dir / "src" / "static" / "novnc"
+    # noVNC 前端资源统一放在 src/web/static/vendor/novnc
+    # vnc_module_dir 是 src/vnc，parent 是 src/
+    src_dir = vnc_module_dir.parent
+    return src_dir / "web" / "static" / "vendor" / "novnc"
 
 
 def _resolve_winvnc_exe() -> Path:
@@ -64,7 +67,8 @@ class VncAdapter(VncServicePort):
 
     def __init__(self):
         vnc_module_dir = _resolve_vnc_module_dir()
-        novnc_web_dir = _resolve_novnc_web_dir(vnc_module_dir)
+        self._novnc_web_dir = _resolve_novnc_web_dir(vnc_module_dir)
+        vnc_src_dir = vnc_module_dir / "src"
         self._winvnc_exe = _resolve_winvnc_exe()
         self._ultravnc_dir = self._winvnc_exe.parent
         self._logs_dir = Path(PROJECT_ROOT) / "logs"
@@ -72,7 +76,7 @@ class VncAdapter(VncServicePort):
         self._config = VncProcessConfig(
             winvnc_exe=self._winvnc_exe,
             ultravnc_dir=self._ultravnc_dir,
-            novnc_web_dir=novnc_web_dir,
+            vnc_src_dir=vnc_src_dir,
             logs_dir=self._logs_dir,
         )
         self._manager = VncProcessManager(self._config)
@@ -91,7 +95,7 @@ class VncAdapter(VncServicePort):
             return False
         if not self._winvnc_exe.exists():
             return False
-        if not self._config.novnc_web_dir.exists():
+        if not self._novnc_web_dir.exists():
             return False
         return True
 
