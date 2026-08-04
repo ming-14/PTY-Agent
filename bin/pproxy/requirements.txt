@@ -1,0 +1,3 @@
+pproxy>=2.7.9
+pycryptodome>=3.7.2
+uvloop>=0.22.0; sys_platform == "linux"
