@@ -465,3 +465,18 @@ app.py exec myid -c "ls -la"  # 等效 --ai-analyse none
 **AI 分析失败时**自动回退输出原始 response，不阻断主流程。
 
 **会话按 uid 续聊**：AI 分析使用 daemon 返回的 session.uid 作为 aichat --session 名，同一 PTY 会话的多次 AI 分析自动上下文延续。
+
+## 小工具
+
+### Terminal-Injector
+
+强制性劫持已经运行的控制台程序供PTY-Agent使用，程序位置在`bin/terminal_injector/terminal_injector.exe`
+
+用法
+```bash
+terminal_injector.exe --list-targets --json # 劫持可劫持的窗口
+terminal_injector.exe --mediator --target-pid $pid # 劫持
+
+# 接入PTY-Agent
+app.py exec sid -c "terminal_injector.exe --mediator --target-pid $pid" --default response-format svg --snapshot-mode --timeout 15
+```
