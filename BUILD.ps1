@@ -2,23 +2,25 @@
 # 功能：打包构建 pty-agent
 #
 # 环境变量：
-#   GITHUB_MIRROR        - GitHub 下载镜像（如：https://ghproxy.com/）
-#   GITHUB_API_MIRROR    - GitHub API 镜像（如：https://api.github.com）
-#   DOWNLOAD_AICHAT      - 是否下载 aichat（true/false，默认 true）
-#   BUILD_FASTSCREEN     - 是否构建 fastscreen.dll（true/false，默认 true）
-#   DOWNLOAD_ULTRAVNC    - 是否下载 UltraVNC（true/false，默认 true）
+#   GITHUB_MIRROR              - GitHub 下载镜像（如：https://ghproxy.com/）
+#   GITHUB_API_MIRROR          - GitHub API 镜像（如：https://api.github.com）
+#   DOWNLOAD_AICHAT            - 是否下载 aichat（true/false，默认 true）
+#   BUILD_FASTSCREEN           - 是否构建 fastscreen.dll（true/false，默认 true）
+#   DOWNLOAD_ULTRAVNC          - 是否下载 UltraVNC（true/false，默认 true）
+#   DOWNLOAD_TERMINALINJECTOR  - 是否下载 terminal_injector（true/false，默认 true）
 #
 # 命令行参数：
-#   -NoAichat           - 跳过 aichat 下载
-#   -NoFastscreen       - 跳过 fastscreen 编译
-#   -NoUltravnc         - 跳过 UltraVNC 下载
-#   -Mirror <url>       - 指定 GitHub 下载镜像（对应 GITHUB_MIRROR）
-#   -ApiMirror <url>    - 指定 GitHub API 镜像（对应 GITHUB_API_MIRROR）
+#   -NoAichat             - 跳过 aichat 下载
+#   -NoFastscreen         - 跳过 fastscreen 编译
+#   -NoUltravnc           - 跳过 UltraVNC 下载
+#   -NoTerminalInjector   - 跳过 terminal_injector 下载
+#   -Mirror <url>         - 指定 GitHub 下载镜像（对应 GITHUB_MIRROR）
+#   -ApiMirror <url>      - 指定 GitHub API 镜像（对应 GITHUB_API_MIRROR）
 #
 # 示例：
 #   $env:GITHUB_MIRROR="https://ghproxy.com/"; .\BUILD.ps1 -NoAichat
 #   .\BUILD.ps1 -NoUltravnc -Mirror "https://ghproxy.com/" -ApiMirror "https://api.github.com"
-#   .\BUILD.ps1 -NoUltravnc -Mirror "https://v4.gh-proxy.org/"
+#   .\BUILD.ps1 -NoUltravnc -NoTerminalInjector -Mirror "https://v4.gh-proxy.org/"
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = "Stop"
@@ -27,6 +29,7 @@ $ErrorActionPreference = "Stop"
 $noAichat = $args -contains "-NoAichat"
 $noFastscreen = $args -contains "-NoFastscreen"
 $noUltravnc = $args -contains "-NoUltravnc"
+$noTerminalInjector = $args -contains "-NoTerminalInjector"
 
 # 解析 -Mirror 参数
 $mirrorArg = $args | ForEach-Object { if ($_ -eq "-Mirror" -or $_ -eq "-m") { $true } }
@@ -57,6 +60,7 @@ $githubApiMirror = $env:GITHUB_API_MIRROR ?? "https://api.github.com"
 $downloadAichat = if ($noAichat) { $false } else { ($env:DOWNLOAD_AICHAT ?? "true") -eq "true" }
 $buildFastscreen = if ($noFastscreen) { $false } else { ($env:BUILD_FASTSCREEN ?? "true") -eq "true" }
 $downloadUltravnc = if ($noUltravnc) { $false } else { ($env:DOWNLOAD_ULTRAVNC ?? "true") -eq "true" }
+$downloadTerminalInjector = if ($noTerminalInjector) { $false } else { ($env:DOWNLOAD_TERMINALINJECTOR ?? "true") -eq "true" }
 
 # ============================================================
 # 构建 pty-agent 发布目录
@@ -223,6 +227,34 @@ if ($downloadUltravnc) {
     } catch { Write-Warning "[ultravnc] 下载/安装失败: $_" }
 } else {
     Write-Host "[ultravnc] 跳过下载（DOWNLOAD_ULTRAVNC=false 或 -NoUltravnc）"
+}
+
+# ============================================================
+# 下载 terminal_injector（终端注入工具）
+# ============================================================
+if ($downloadTerminalInjector) {
+    Write-Host "[terminal_injector] 下载 terminal_injector..."
+    $tiOriginalZipUrl = "https://github.com/ming-14/terminal-injector/releases/download/v1.0/terminal_injector_x64_v1.0.zip"
+    $tiZipUrl = "$githubMirror$tiOriginalZipUrl"
+    $tiZipPath = Join-Path $env:TEMP "terminal_injector_x64_v1.0.zip"
+    $tiDir = Join-Path $outputDir "bin\terminal_injector"
+    try {
+        $null = New-Item -ItemType Directory -Path $tiDir -Force
+        Write-Host "[terminal_injector] 下载 $tiZipUrl ..."
+        Invoke-WebRequest -Uri $tiZipUrl -OutFile $tiZipPath
+        Write-Host "[terminal_injector] 解压 ..."
+        $tiTempExtract = Join-Path $env:TEMP "terminal_injector-extract"
+        $null = New-Item -ItemType Directory -Path $tiTempExtract -Force
+        Expand-Archive -Path $tiZipPath -DestinationPath $tiTempExtract -Force
+        Copy-Item -Path "$tiTempExtract\*" -Destination $tiDir -Recurse -Force
+        Write-Host "[terminal_injector] 已安装到: $tiDir"
+        Remove-Item -Path $tiTempExtract -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $tiZipPath -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Warning "[terminal_injector] 下载/安装失败: $_"
+    }
+} else {
+    Write-Host "[terminal_injector] 跳过下载（DOWNLOAD_TERMINALINJECTOR=false 或 -NoTerminalInjector）"
 }
 
 # ============================================================
