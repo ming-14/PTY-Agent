@@ -69,6 +69,12 @@ Prompt.txt
 reference/
 
 # ===================== web-rime 构建产物 =====================
+# rime-plugin 构建产物由 web_rime/plugin 的 webpack 构建生成，BUILD.ps1 负责构建
+# （静态页面仅引用 rime-plugin.js，ESM 版本发布包不使用）
+src/web/static/vendor/rime/rime-plugin.js
+src/web/static/vendor/rime/rime-plugin.js.map
+src/web/static/vendor/rime/rime-plugin.esm.js
+src/web/static/vendor/rime/rime-plugin.esm.js.map
 node_modules/
 webrime_source/plugin/node_modules/
 webrime_source/server/__debug_statics/
