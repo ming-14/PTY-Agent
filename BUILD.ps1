@@ -8,12 +8,14 @@
 #   BUILD_FASTSCREEN           - 是否构建 fastscreen.dll（true/false，默认 true）
 #   DOWNLOAD_ULTRAVNC          - 是否下载 UltraVNC（true/false，默认 true）
 #   DOWNLOAD_TERMINALINJECTOR  - 是否下载 terminal_injector（true/false，默认 true）
+#   BUILD_RIME                 - 是否构建 rime-plugin（true/false，默认 true）
 #
 # 命令行参数：
 #   -NoAichat             - 跳过 aichat 下载
 #   -NoFastscreen         - 跳过 fastscreen 编译
 #   -NoUltravnc           - 跳过 UltraVNC 下载
 #   -NoTerminalInjector   - 跳过 terminal_injector 下载
+#   -NoRime               - 跳过 rime-plugin 构建
 #   -Mirror <url>         - 指定 GitHub 下载镜像（对应 GITHUB_MIRROR）
 #   -ApiMirror <url>      - 指定 GitHub API 镜像（对应 GITHUB_API_MIRROR）
 #
@@ -30,6 +32,7 @@ $noAichat = $args -contains "-NoAichat"
 $noFastscreen = $args -contains "-NoFastscreen"
 $noUltravnc = $args -contains "-NoUltravnc"
 $noTerminalInjector = $args -contains "-NoTerminalInjector"
+$noRime = $args -contains "-NoRime"
 
 # 解析 -Mirror 参数
 $mirrorArg = $args | ForEach-Object { if ($_ -eq "-Mirror" -or $_ -eq "-m") { $true } }
@@ -61,6 +64,7 @@ $downloadAichat = if ($noAichat) { $false } else { ($env:DOWNLOAD_AICHAT ?? "tru
 $buildFastscreen = if ($noFastscreen) { $false } else { ($env:BUILD_FASTSCREEN ?? "true") -eq "true" }
 $downloadUltravnc = if ($noUltravnc) { $false } else { ($env:DOWNLOAD_ULTRAVNC ?? "true") -eq "true" }
 $downloadTerminalInjector = if ($noTerminalInjector) { $false } else { ($env:DOWNLOAD_TERMINALINJECTOR ?? "true") -eq "true" }
+$buildRime = if ($noRime) { $false } else { ($env:BUILD_RIME ?? "true") -eq "true" }
 
 # ============================================================
 # 构建 pty-agent 发布目录
@@ -73,6 +77,41 @@ if (Test-Path $outputDir) {
 
 # 创建输出目录
 New-Item -Path $outputDir -ItemType Directory | Out-Null
+
+# ============================================================
+# 构建 rime-plugin（RIME 输入法前端插件）
+# webpack 产物 rime-plugin.js 由配置自动复制到
+# src/web/static/vendor/rime/（该文件已被 gitignore，仅构建生成）
+# 必须在复制基本包之前执行，产物才能进入发布目录
+# ============================================================
+if ($buildRime) {
+    Write-Host "[rime-plugin] 构建 rime-plugin..."
+    $rimePluginDir = Join-Path $scriptDir "web_rime\plugin"
+    $npm = Get-Command npm -ErrorAction SilentlyContinue
+    if (-not $npm) {
+        Write-Warning "[rime-plugin] npm 未找到，跳过构建"
+    } else {
+        Push-Location $rimePluginDir
+        try {
+            # 首次构建需安装依赖；已存在 node_modules 时跳过，加快重复构建
+            if (-not (Test-Path (Join-Path $rimePluginDir "node_modules"))) {
+                & npm install
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "[rime-plugin] npm install 失败，跳过构建"
+                    exit 1
+                }
+            }
+            & npm run build
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "[rime-plugin] 构建失败"
+                exit 1
+            }
+            Write-Host "[rime-plugin] 构建完成"
+        } finally { Pop-Location }
+    }
+} else {
+    Write-Host "[rime-plugin] 跳过构建（BUILD_RIME=false 或 -NoRime）"
+}
 
 # ============================================================
 # 复制基本包
@@ -260,6 +299,13 @@ if ($downloadTerminalInjector) {
 # ============================================================
 # 删除发布目录中不应包含的配置/日志/缓存文件
 # ============================================================
+
+# rime-plugin 构建产物的 source map 与 ESM 版本（发布包不携带调试映射，页面仅用 IIFE 版 rime-plugin.js）
+Get-ChildItem -Path (Join-Path $outputDir "src\web\static\vendor\rime") -Filter "rime-plugin.esm.js*" -ErrorAction SilentlyContinue | ForEach-Object {
+    Remove-Item -Path $_.FullName -Force
+}
+$rimePluginJsMap = Join-Path $outputDir "src\web\static\vendor\rime\rime-plugin.js.map"
+if (Test-Path $rimePluginJsMap) { Remove-Item -Path $rimePluginJsMap -Force }
 
 # aichat 配置文件
 $aichatConfig = Join-Path $outputDir "bin\aichat\config\config.yaml"
