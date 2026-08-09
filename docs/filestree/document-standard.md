@@ -5,16 +5,15 @@
 ## 文档组成
 
 本目录下的按区域拆分文件：
-- `根目录.md` —— 根目录 + `docs/` 设计文档（兼作本目录的索引/入口）
 - `src.md` —— `src/` 主包
-- `web.md` —— `src/web/static/` 前端静态资源
-- `tests.md` —— `tests/` 测试套件
-- `bin.md` —— `bin/` 辅助工具
-- `fastscreen.md` —— `fastscreen/` C++ 屏幕捕获
-- `web-rime.md` —— `web_rime/` Rime 输入法
-- ...
+- `web-static.md` —— `src/web/static/` 前端静态资源
 
-> 后续若有新的子包，可以创建新的md文件
+子包自身的文件树文档位于各子包的 `docs/FILESTREE.md`：
+- `tests/docs/FILESTREE.md` —— `tests/` 测试套件
+- `fastscreen/docs/FILESTREE.md` —— `fastscreen/` C++ 屏幕捕获
+- `web_rime/docs/FILESTREE.md` —— `web_rime/` Rime 输入法
+
+> 后续若有新的子包，可以创建新的 md 文件（本目录或子包 `docs/` 下）
 
 ## 总体格式
 
@@ -46,7 +45,7 @@ src/
    - 词典 `.bin`/`.yaml` 等批量生成产物用父目录注释概括（如 `dict/  # 词典（double-pinyin / luna-pinyin / ...）`），不为每个文件单列一行；
    - `build`，`__pycache__/`等由`.gitignore`忽略的文件不列入文件树
 
-3. 行尾注释中出现跨文件引用时，用相对链接指向同目录其他文件，例如：`完整结构见 [web.md](web.md)`。
+3. 行尾注释中出现跨文件引用时，用相对链接指向同目录其他文件，例如：`完整结构见 [web-static.md](web-static.md)`。
 
 ### 节点注释
 

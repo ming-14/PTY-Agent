@@ -11,7 +11,7 @@ uvicorn[standard]>=0.30
 starlette>=0.37
 websockets>=12.0
 
-# 屏幕捕获网关 (src/fastscreen/server.py)：基于 aiohttp 的 HTTP/WS 服务
+# 屏幕捕获测试服务器 (src/fastscreen/server.py)：aiohttp 流端点（tests/web/ e2e 测试与手动调试用）
 aiohttp>=3.9
 
 # H.264 视频流编码 (src/fastscreen/streamers/encoding/h264.py)

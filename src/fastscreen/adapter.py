@@ -69,6 +69,8 @@ def _load_fastsreen_modules():
         )
     except Exception as e:
         _logger.exception("FastScreen modules load failed: %s", e)
+        # 加载失败后标记 loaded 且不重试：避免每次请求都重复尝试导入
+        # （失败原因通常是 DLL 缺失/损坏，运行时不会自动恢复）
         _fastscreen_loaded = True
         _capture_engine = None
         _stream_manager = None
@@ -148,14 +150,7 @@ class FastScreenAdapter(FastScreenServicePort):
         if _stream_manager is None:
             return
         try:
-            with _stream_manager._lock:
-                sessions = list(_stream_manager._sessions.values())
-            for session in sessions:
-                try:
-                    session.stop()
-                except Exception as e:
-                    _logger.warning("FastScreen session stop failed: %s", e)
-            _stream_manager._sessions.clear()
-            _logger.info("FastScreen cleanup done (stopped %d sessions)", len(sessions))
+            stopped = _stream_manager.stop_all()
+            _logger.info("FastScreen cleanup done (stopped %d sessions)", stopped)
         except Exception as e:
             _logger.warning("FastScreen cleanup failed: %s", e)

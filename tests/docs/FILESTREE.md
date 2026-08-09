@@ -115,5 +115,3 @@ tests/
     ├── test_mse_ws.py
     └── test_h264_ws.py
 ```
-
-> 说明：原文档中的 `tests/live-environment/` 目录不存在，已删除。

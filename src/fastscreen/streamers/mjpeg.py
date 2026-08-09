@@ -5,8 +5,7 @@ from typing import Optional
 
 from fastscreencore import CaptureMethod
 from .encoding.mjpeg import encode_bgra_to_jpeg
-from .h264 import _drain_queue
-from .manager import StreamManager, StreamKey, FrameData
+from .manager import StreamManager, StreamKey, FrameData, _drain_queue
 
 
 class MjpegStreamer:
@@ -75,15 +74,16 @@ class MjpegStreamer:
         self._encode_thread.start()
 
         self._session = self._manager.subscribe(self._key, self._on_frame)
-        if not self._session.is_running:
+        if self._session is None:
             self._running = False
             _drain_queue(self._raw_queue)
             try:
                 self._raw_queue.put_nowait(None)
             except queue.Full:
                 pass
-            self._manager.unsubscribe(self._key, self._on_frame)
-            self._session = None
+            if self._encode_thread:
+                self._encode_thread.join(timeout=3.0)
+                self._encode_thread = None
             return False
 
         return True
