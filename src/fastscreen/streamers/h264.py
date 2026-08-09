@@ -1,22 +1,15 @@
+from __future__ import annotations
+
 import logging
 import queue
 import threading
 from typing import Optional
 
 from fastscreencore import CaptureMethod
-from .manager import StreamManager, StreamKey, FrameData
+from .manager import StreamManager, StreamKey, FrameData, _drain_queue
 from .encoding.h264 import H264Encoder
 
 logger = logging.getLogger("fastscreen.h264_webcodecs")
-
-
-def _drain_queue(q: queue.Queue) -> None:
-    """非阻塞清空队列所有元素。用于 stop() 中 put 前清空，避免队列满时 put 阻塞。"""
-    while True:
-        try:
-            q.get_nowait()
-        except queue.Empty:
-            break
 
 
 class H264Streamer:
@@ -126,15 +119,16 @@ class H264Streamer:
         self._encode_thread.start()
 
         self._session = self._manager.subscribe(self._key, self._on_frame)
-        if not self._session.is_running:
+        if self._session is None:
             self._running = False
             _drain_queue(self._raw_queue)
             try:
                 self._raw_queue.put_nowait(None)
             except queue.Full:
                 pass
-            self._manager.unsubscribe(self._key, self._on_frame)
-            self._session = None
+            if self._encode_thread:
+                self._encode_thread.join(timeout=3.0)
+                self._encode_thread = None
             return False
 
         return True

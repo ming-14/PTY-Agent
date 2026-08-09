@@ -1,45 +1,16 @@
-# PTY-Agent 文件树
+# src/ 主包
 
-> 基于源码实际结构的完整文件清单，覆盖所有源码、测试、构建、辅助工具和文档。
-
----
-
-## 根目录
-
-```
-PTY-Agent/
-├── app.py                 # CLI 快捷入口（等同于 python -m src）
-├── BUILD.ps1              # 构建打包脚本
-├── restart.ps1            # 重启守护进程脚本
-├── requirements.txt       # Python 依赖声明
-├── pytest.ini             # pytest 配置
-├── README.md              # 项目说明
-├── AGENTS.md              # AI Agent 工作规范
-├── SKILL.md               # AI 技能描述
-├── LICENSE                # MIT 许可证
-├── .gitignore             # Git 忽略规则
-├── docs/                  # 设计文档
-├── src/                   # 主包
-├── tests/                 # 测试套件
-├── bin/                   # 辅助工具与二进制资源
-├── fastscreen_source/     # C++ 屏幕捕获 DLL 源码
-├── web-rime_source/       # Rime WASM 输入法插件源码
-└── reference/             # 参考资料
-```
-
----
-
-## src/ 主包
+> 主 Python 包。前端静态资源（`src/web/static/`）单独列在 [web-static.md](web-static.md)。
 
 ```
 src/
 ├── __main__.py              # CLI 入口（argparse 参数解析 + 命令派发）
-│
+
 ├── assets/                  # ═══════ 静态资源 ═══════
 │   └── fonts/
 │       ├── config.json      # 字体配置
 │       └── LICENSE.txt      # 字体许可证
-│
+
 ├── config/                  # ═══════ 配置中心（TOML 文件 + 加载器） ═══════
 │   ├── __init__.py          # 包导出
 │   ├── _loader.py           # TOML 加载/展平/合并工具（load_toml / flatten / merge）
@@ -51,14 +22,15 @@ src/
 │   ├── client.toml          # 客户端配置（连接超时 / TLS 客户端 / TOFU）
 │   ├── logging.toml         # 日志配置（级别 / 格式 / 轮转 / logger 分组）
 │   ├── web.toml             # Web 服务器配置（监听 / VNC / fastscreen / 网页端默认值）
-│   └── config.toml          # 额外配置
-│
+│   ├── vnc.toml             # VNC 配置
+│   └── vnc.example.toml     # VNC 配置示例
+
 ├── protocol/                # ═══════ 通信协议层 ═══════
 │   ├── __init__.py
 │   ├── message.py           # Message 类（JSON 换行分隔协议：编码 / 解码 / 发送 / 接收 + HMAC/Ed25519 签名验证）
 │   ├── ansi.py              # ANSI 转义序列过滤（strip_ansi）
 │   └── response.py          # Response 类（统一响应构建器，CLI/TCP/WS 共用）
-│
+
 ├── auth/                    # ═══════ 认证层（可插拔认证与消息签名） ═══════
 │   ├── __init__.py          # 导出共享基础设施
 │   ├── base.py              # 抽象接口（Authenticator / CredentialProvider / MessageSigner）
@@ -78,7 +50,7 @@ src/
 │       ├── __init__.py
 │       ├── cert_manager.py  # CertificateManager（自签证书生成/加载/指纹计算）
 │       └── known_hosts.py   # KnownHosts（TOFU 信任存储，类似 SSH known_hosts）
-│
+
 ├── client/                  # ═══════ 前端客户端层 ═══════
 │   ├── __init__.py
 │   ├── transport.py         # TCP/TLS 连接管理 + Client 类（自动启动守护进程，自动路由明文/TLS）
@@ -86,8 +58,9 @@ src/
 │   ├── formatter.py         # 响应格式化输出（JSON 模式 / 自然语言模式）
 │   ├── renderer.py          # 终端快照渲染器（GDI+BuiltinGlyphs / SVG / Pillow 回退 / 纯文本）
 │   ├── config_manager.py    # 纯内存客户端配置管理（--default 临时覆盖）
+│   ├── ai_analyser.py       # AI 分析器（--ai-analyse 调用 aichat 做二次分析，按 uid 续聊）
 │   └── input.py             # 输入文本处理（process_input / unescape_json_string / safe_print）
-│
+
 ├── daemon/                  # ═══════ 守护进程层 ═══════
 │   ├── __init__.py
 │   ├── __main__.py          # 入口（python -m src.daemon），转调 lifecycle.main()
@@ -112,7 +85,7 @@ src/
 │       ├── status_handler.py # status 命令处理
 │       ├── wait_handler.py  # wait 命令处理
 │       └── utils.py         # 处理器工具函数
-│
+
 ├── pty/                     # ═══════ 伪终端后端层 ═══════
 │   ├── __init__.py
 │   ├── pty_factory.py       # 工厂函数 create_pty + 平台检测
@@ -131,50 +104,52 @@ src/
 │       ├── gui_monitor.py   # GuiWindowMonitor + GuiWindowInfo（EnumWindows GUI 窗口轮询）
 │       ├── shells.py        # Shell 检测函数（detect_available_shells / format_shell_info）
 │       └── win32_error_msg.py # Windows NTSTATUS/Win32 错误码格式化
-│
+
 ├── ipc/                     # ═══════ 进程间通信层 ═══════
 │   ├── __init__.py
 │   └── shm.py               # 共享内存工具（端口/PID + 认证令牌 + HMAC 密钥读写）
-│
+
 ├── terminal/                # ═══════ 终端屏幕层 ═══════
 │   ├── __init__.py
 │   ├── grid.py              # 字符网格数据结构
 │   ├── grid_screen.py       # 网格屏幕（pyte Screen 适配层）
 │   └── screen.py            # TerminalScreen（pyte VT 序列解析 → 字符网格 → 屏幕快照）
-│
+
 ├── session/                 # ═══════ 会话管理层 ═══════
 │   ├── __init__.py
 │   ├── manager.py           # SessionManager（会话 CRUD + stop_all）
 │   ├── session.py           # Session 协调器（组合各子组件，委托线程管理）
 │   ├── session_threads.py   # SessionThreads + SessionComponents（后台读者/监控线程管理）
 │   └── publisher.py         # 会话状态发布器
-│
+
 ├── encoding/                # ═══════ 编码探测层 ═══════
 │   ├── __init__.py
 │   ├── codec.py             # 编码探测与解码纯函数（detect_decode / decode_strip_tail / auto_detect / 智能裁剪）
 │   └── detector.py          # EncodingDetector（编码探测状态管理）
-│
+
 ├── output/                  # ═══════ 输出处理层 ═══════
 │   ├── __init__.py
 │   ├── buffer.py            # OutputBuffer（线程安全输出缓冲区）
 │   ├── trigger.py           # TriggerMatcher + safe_regex_search（触发条件匹配 + ReDoS 防护）
 │   └── events.py            # EventHistoryManager + PendingEvent（事件队列 + 历史 + 存在性检测）
-│
+
 ├── process/                 # ═══════ 进程处理层 ═══════
 │   ├── __init__.py
 │   ├── monitor.py           # ProcessMonitor（进程树 diff + IOCP 排空 + 崩溃检测）
 │   ├── info.py              # 进程查询与错误格式化
 │   └── gui.py               # GuiDetector（GUI 窗口轮询检测，2s 节流）
-│
+
 ├── input/                   # ═══════ 输入处理层 ═══════
 │   ├── __init__.py
 │   ├── interceptor.py       # 输入拦截器（SGR 鼠标拦截 + 键盘 VT 拦截）
 │   └── mouse.py             # 鼠标输入处理
-│
+
 ├── web/                     # ═══════ Web 服务器层（洋葱架构） ═══════
 │   ├── __init__.py
-│   ├── server.py            # WebServer 兼容导出（实现迁移至 presentation/server.py）
+│   ├── server.py            # WebServer 兼容导出（实现见 presentation/server.py）
 │   ├── history.py           # 会话历史管理
+│   ├── httpserver.ps1       # Web 服务器启动脚本（PowerShell）
+│   ├── httpserver.sh        # Web 服务器启动脚本（Unix）
 │   ├── application/         # ═══ 用例层 ═══
 │   │   ├── __init__.py
 │   │   ├── adaptive_lock.py # 自适应排他锁服务
@@ -189,6 +164,10 @@ src/
 │   ├── infrastructure/      # ═══ 基础设施层 ═══
 │   │   ├── __init__.py
 │   │   ├── thread_executor.py # 线程执行器
+│   │   ├── cursor_locator_adapter.py # 光标定位器适配器
+│   │   ├── auth/            # ═══ Web 认证子包 ═══
+│   │   │   ├── __init__.py
+│   │   │   └── session_store.py  # 会话存储（登录态）
 │   │   ├── repositories/    # ═══ 仓储适配器 ═══
 │   │   │   ├── __init__.py
 │   │   │   ├── history_repository_adapter.py
@@ -210,19 +189,10 @@ src/
 │   │       ├── __init__.py
 │   │       ├── websocket_controller.py  # WebSocket 控制器
 │   │       ├── fastscreen_controller.py # FastScreen 控制器
-│   │       └── settings_controller.py   # 设置控制器
-│   └── static/              # ═══ 前端静态资源 ═══
-│       ├── index.html       # 主页面
-│       ├── css/             # 样式（terminal/tabbar/sidebar/responsive/dialogs/components/fastscreen/vnc/settings/devconsole）
-│       ├── js/              # JavaScript（按干净架构分层）
-│       │   ├── app.js       # 应用入口
-│       │   ├── domain/      # 领域（state/logger/constants/settingsSchema）
-│       │   ├── infrastructure/ # 基础设施（terminalAdapter/terminal/rimeManager/storage/fontLoader/settingsStorage）
-│       │   ├── application/ # 应用（messageHandlers/ports/settingsStore）
-│       │   └── presentation/ # 展示（views/ui/sizeSelector/detail/settings/fastscreen/vnc/sessionHandlers/devConsole/autohide + controllers/events）
-│       ├── fonts/           # 字体资源
-│       └── vendor/          # 第三方库（xterm.js + 插件、Rime WASM 输入法）
-│
+│   │       ├── settings_controller.py   # 设置控制器
+│   │       └── auth_controller.py       # 登录/认证控制器
+│   └── static/              # ═══ 前端静态资源（完整结构见 [web-static.md](web-static.md)） ═══
+
 ├── fastscreen/              # ═══════ 快速屏幕流层 ═══════
 │   ├── __init__.py
 │   ├── adapter.py           # 适配器
@@ -239,177 +209,14 @@ src/
 │           ├── fmp4.py      # fMP4 编码
 │           ├── h264.py      # H.264 编码工具
 │           └── mjpeg.py     # MJPEG 编码工具
-│
+
 └── vnc/                     # ═══════ VNC 远程桌面层 ═══════
     ├── __init__.py
     ├── adapter.py           # VNC 适配器（管理 winvnc.exe 进程）
     ├── ports.py             # 端口定义
     ├── process_manager.py   # VNC 进程管理（winvnc 启停）
     ├── password_loader.py   # VNC 密码加载
-    └── src/                 # noVNC 前端 + VNC 密码工具
-        ├── vnc_password.py  # VNC 密码生成/验证
-        └── static/novnc/    # noVNC 前端静态资源
-```
-
----
-
-## tests/ 测试套件
-
-```
-tests/
-├── conftest.py              # pytest 全局配置
-├── repro_reflow_bug.py      # reflow bug 复现脚本
-├── test_mouse_inject.py     # 鼠标注入测试
-│
-├── unit/                    # ═══ 单元测试（隔离测试单一模块） ═══
-│   ├── auth/                # 认证层测试
-│   │   ├── test_context.py
-│   │   ├── test_ed25519_signer.py
-│   │   ├── test_or_verifier.py
-│   │   ├── test_pubkey.py
-│   │   ├── test_keys.py
-│   │   └── tls/             # TLS 认证测试
-│   ├── client/              # 客户端层测试
-│   │   ├── test_transport.py
-│   │   ├── test_tls_transport.py
-│   │   ├── test_keygen.py
-│   │   ├── test_input.py
-│   │   └── test_config_manager.py
-│   ├── daemon/              # 守护进程层测试
-│   │   ├── test_handler.py
-│   │   ├── test_server.py
-│   │   ├── test_server_tls.py
-│   │   └── test_listener.py
-│   ├── pty/                 # PTY 层测试
-│   │   ├── test_factory.py
-│   │   ├── test_base.py
-│   │   └── windows/
-│   │       └── test_error_msg.py
-│   ├── protocol/            # 协议层测试
-│   │   └── test_message.py
-│   ├── session/             # 会话层测试
-│   │   ├── test_screen.py
-│   │   ├── test_mouse.py
-│   │   ├── process/
-│   │   ├── output/
-│   │   └── encoding/
-│   ├── terminal/            # 终端层测试
-│   │   ├── test_grid_screen.py
-│   │   └── test_grid.py
-│   ├── web/                 # Web 层测试
-│   │   ├── test_ws_handler.py
-│   │   ├── test_settings_controller.py
-│   │   └── test_settings_schema.py
-│   ├── test_transport.py
-│   ├── test_server.py
-│   ├── test_pty_drain.py
-│   ├── test_main.py
-│   ├── test_handler.py
-│   ├── test_factory.py
-│   ├── test_config_refactor.py
-│   ├── test_config.py
-│   ├── test_pty_subprocess.py
-│   ├── test_pty_shell.py
-│   ├── test_trigger.py
-│   ├── test_session_events.py
-│   ├── test_process_monitor.py
-│   ├── test_process_info.py
-│   ├── test_output_buffer.py
-│   ├── test_event_history.py
-│   ├── test_encoding_detector.py
-│   ├── test_terminal_size.py
-│   ├── test_lifecycle.py
-│   ├── test_shm_utils.py
-│   ├── test_windows_error.py
-│   ├── test_manager.py
-│   ├── test_cli_optimization.py
-│   └── test_gui_monitor.py
-│
-├── integration/             # ═══ 集成测试（多模块协作） ═══
-│   ├── test_terminal_size_integration.py
-│   ├── test_mouse.py
-│   └── auth/                # 认证集成测试
-│       └── test_assembly.py
-│
-├── e2e/                     # ═══ 端到端测试 ═══
-│   ├── test_vnc_job_kill.py
-│   ├── test_vnc_job.py
-│   ├── test_vnc_proxy.py
-│   ├── test_tls_auth_e2e.py
-│   ├── test_pubkey_auth_e2e.py
-│   ├── test_keygen_e2e.py
-│   ├── test_resize_cursor_sync.py
-│   └── test_resize_cursor_e2e.py
-│
-├── web/                     # ═══ Web 界面测试 ═══
-│   ├── test_web.py
-│   ├── test_mse_detailed.py
-│   ├── test_mse_ws.py
-│   └── test_h264_ws.py
-│
-└── live-environment/        # ═══ 实环境测试 ═══
-    └── test_tcell_mouse/
-```
-
----
-
-## bin/ 辅助工具
-
-```
-bin/
-├── aichat/                  # AI 聊天工具
-│   ├── common.py
-│   ├── _finderror.py
-│   ├── talk.py
-│   ├── config_manager.py
-│   └── config/
-│       ├── config.yaml
-│       └── config.yaml.example
-│
-├── cursorlocator/           # 光标定位器（Win32 API + 渲染）
-│   ├── __init__.py
-│   ├── ring_worker.py
-│   ├── win32_api.py
-│   ├── pixel_color.py
-│   ├── rendering.py
-│   └── config.py
-│
-├── fastscreencore/          # 快速屏幕捕获核心
-│   ├── __init__.py
-│   ├── capture.py           # Python 封装
-│   ├── _core.py             # 核心接口
-│   └── fastscreen.dll       # C++ 屏幕捕获 DLL（DXGI/WGC/BitBlt）
-│
-└── ultravnc/                # UltraVNC 远程桌面
-    ├── winvnc.exe           # VNC 服务端
-    ├── vncviewer.exe        # VNC 查看器
-    ├── repeater.exe         # VNC 中继
-    ├── ultravnc.ini         # 配置
-    ├── *.dll                # 依赖 DLL
-    ├── languages/           # 语言包
-    └── UVncVirtualDisplay64/ # 虚拟显示驱动
-```
-
----
-
-## 其他目录
-
-```
-fastscreen_source/           # C++ 屏幕捕获 DLL 源码
-├── CMakeLists.txt           # CMake 构建
-├── src/                     # C++ 源码（DXGI/WGC/BitBlt 捕获）
-└── python/                  # Python GUI 测试工具
-
-web-rime_source/             # Rime WASM 输入法插件源码
-├── src/                     # TypeScript 源码
-├── webpack.config.js        # Webpack 配置
-└── package.json             # npm 配置
-
-reference/                   # 参考资料
-├── xtermjs-docs/            # xterm.js 文档
-├── tmux-master/             # tmux 源码
-├── terminal-main/           # 终端参考
-├── MiMo-Code-main/          # MiMo 参考
-├── my_rime-master/          # Rime 参考
-└── tcell-v2.13.10/          # tcell 参考
+    └── src/                 # VNC 密码工具
+        └── vnc_password.py  # VNC 密码生成/验证
+                            # 注：noVNC 前端位于 src/web/static/vendor/novnc/
 ```

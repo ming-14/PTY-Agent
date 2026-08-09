@@ -1,9 +1,15 @@
+"""FastScreen 流媒体测试服务器（aiohttp）。
+
+独立于 daemon 的流端点服务器，供 tests/web/ 下的 e2e 测试
+（test_mse_ws / test_mse_detailed / test_h264_ws）与手动调试使用。
+生产入口为 web 层（web/presentation/controllers/fastscreen_controller.py）。
+"""
+
 import argparse
 import asyncio
 import json
 import logging
 import sys
-import os
 from pathlib import Path
 
 # 将 bin/ 加入 sys.path 以导入 fastscreencore 包
@@ -39,13 +45,6 @@ _TARGET_MAP = {
 }
 
 _engine = CaptureEngine()
-
-_static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-_index_html = ""
-_index_path = os.path.join(_static_dir, "index.html")
-if os.path.exists(_index_path):
-    with open(_index_path, "r", encoding="utf-8") as _f:
-        _index_html = _f.read()
 
 
 async def api_monitors(request: web.Request) -> web.Response:
@@ -95,11 +94,10 @@ async def api_capture(request: web.Request) -> web.Response:
     scale_w = int(width_str)
     scale_h = int(height_str)
 
-    engine = CaptureEngine()
     if target_type == TargetType.MONITOR:
-        frame = engine.capture_monitor(target_id, method)
+        frame = _engine.capture_monitor(target_id, method)
     else:
-        frame = engine.capture_window(target_id, method)
+        frame = _engine.capture_window(target_id, method)
 
     if frame is None:
         return web.json_response(
@@ -288,16 +286,9 @@ async def ws_stream_h264_mse(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
-async def index(request: web.Request) -> web.Response:
-    return web.Response(text=_index_html, content_type="text/html")
-
-
 def create_app() -> web.Application:
     app = web.Application()
 
-    app.router.add_static("/static", _static_dir)
-
-    app.router.add_get("/", index)
     app.router.add_get("/api/monitors", api_monitors)
     app.router.add_get("/api/windows", api_windows)
     app.router.add_get("/api/capture", api_capture)

@@ -1,14 +1,16 @@
+from __future__ import annotations
+
 import logging
 import queue
 import threading
 import time
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from fastscreencore import CaptureMethod
 from .encoding.h264 import H264Encoder
 from .encoding.fmp4 import FMP4Muxer, is_keyframe_annexb, annex_b_to_avcc
-from .h264 import H264Streamer, _drain_queue
-from .manager import StreamManager, StreamKey, FrameData
+from .h264 import H264Streamer
+from .manager import StreamManager, StreamKey, FrameData, _drain_queue
 
 logger = logging.getLogger("fastscreen.h264_mse")
 
@@ -43,7 +45,7 @@ class H264MSEStreamer:
         self._encoder: Optional[H264Encoder] = None
         self._muxer: Optional[FMP4Muxer] = None
         self._init_segment: Optional[bytes] = None
-        self._pending_nals: list[tuple[bytes, int]] = []
+        self._pending_nals: List[Tuple[bytes, int]] = []
         self._frame_count = 0
         self._frames_per_segment = max(1, self.fps // 10)
         self._key = StreamKey(target_type, target_id, method, fps)
@@ -77,15 +79,17 @@ class H264MSEStreamer:
 
                 # 检测尺寸变化（首帧或窗口 resize），重新配置编码器
                 if first_frame or self._encoder is None or enc_w != w or enc_h != h:
+                    # 日志标签区分：首帧建编码器为 INIT，窗口尺寸变化重建为 RESIZE
+                    tag = "[MSE-INIT]" if first_frame else "[MSE-RESIZE]"
                     t_resize = time.monotonic()
-                    logger.info("[MSE-RESIZE] detected %dx%d -> %dx%d, rebuilding encoder",
-                                enc_w, enc_h, w, h)
+                    logger.info("%s detected %dx%d -> %dx%d, rebuilding encoder",
+                                tag, enc_w, enc_h, w, h)
                     if self._encoder:
                         self._encoder.close()
                     t_enc_start = time.monotonic()
                     self._encoder = H264Encoder(w, h, self.fps, self.bitrate, self.gop_size, H264Streamer.quality_to_crf(self.quality))
                     t_enc_end = time.monotonic()
-                    logger.info("[MSE-RESIZE] H264Encoder created in %.0fms", (t_enc_end - t_enc_start) * 1000)
+                    logger.info("%s H264Encoder created in %.0fms", tag, (t_enc_end - t_enc_start) * 1000)
                     # 保留 PTS 时间线：resize 时只更新 muxer 尺寸，不重建 muxer
                     # 这样 _base_media_decode_time 和 _sequence_number 保持连续，
                     # 新 media segment 的 PTS 从旧位置继续，前端无需重置 video.currentTime
@@ -111,8 +115,8 @@ class H264MSEStreamer:
                             break
                     enc_w, enc_h = w, h
                     first_frame = False
-                    logger.info("[MSE-RESIZE] encoder rebuilt, waiting for keyframe frame_data=%dx%d",
-                                frame_data.width, frame_data.height)
+                    logger.info("%s encoder rebuilt, waiting for keyframe frame_data=%dx%d",
+                                tag, frame_data.width, frame_data.height)
 
                 t_encode_start = time.monotonic()
                 nals = self._encoder.encode_bgra(frame_data.data, frame_data.stride, frame_data.width, frame_data.height, w, h)
@@ -127,10 +131,11 @@ class H264MSEStreamer:
                         self._init_segment = self._muxer.create_init_segment(nal)
                         t_init_end = time.monotonic()
                         if self._init_segment:
-                            logger.info("[MSE-RESIZE] init segment created: %d bytes, encode=%.0fms, init=%.0fms, total_since_resize=%.0fms, nal_types=%s",
-                                        len(self._init_segment),
+                            logger.info("%s init segment created: %d bytes, encode=%.0fms, init=%.0fms, total_since_%s=%.0fms, nal_types=%s",
+                                        tag, len(self._init_segment),
                                         (t_encode_end - t_encode_start) * 1000,
                                         (t_init_end - t_init_start) * 1000,
+                                        "resize" if tag == "[MSE-RESIZE]" else "init",
                                         (t_init_end - t_resize) * 1000,
                                         nal_types)
                             while self._segment_queue.full():
@@ -176,15 +181,16 @@ class H264MSEStreamer:
         self._encode_thread.start()
 
         self._session = self._manager.subscribe(self._key, self._on_frame)
-        if not self._session.is_running:
+        if self._session is None:
             self._running = False
             _drain_queue(self._raw_queue)
             try:
                 self._raw_queue.put_nowait(None)
             except queue.Full:
                 pass
-            self._manager.unsubscribe(self._key, self._on_frame)
-            self._session = None
+            if self._encode_thread:
+                self._encode_thread.join(timeout=3.0)
+                self._encode_thread = None
             return False
 
         return True

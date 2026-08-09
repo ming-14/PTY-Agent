@@ -1,7 +1,5 @@
-# 文本文件使用 CRLF（后匹配的规则优先，所以放前面）
 * text eol=crlf
 
-# 二进制文件——必须在通配规则之后覆盖
 *.bin     binary
 *.wasm    binary
 *.data    binary

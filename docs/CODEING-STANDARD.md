@@ -434,5 +434,5 @@ _CreateFileW = _api("CreateFileW", W.HANDLE, [...])
 - `config/` 包不导入任何其他项目业务模块
 - 常量名全大写 `SCREAMING_SNAKE_CASE`
 - 所有模块从 `config/` 包导入所需常量，不要重复定义
-- 配置文件：`common.toml` / `daemon.toml` / `client.toml` / `logging.toml` / `web.toml` / `config.toml`
+- 配置文件：`common.toml` / `daemon.toml` / `client.toml` / `logging.toml` / `web.toml` / `vnc.toml` / `vnc.example.toml`
 - 加载机制：`_loader.py` 提供 `load_toml()` / `flatten()` / `merge()` 工具函数
