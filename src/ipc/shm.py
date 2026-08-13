@@ -328,22 +328,3 @@ def cleanup_all_shm():
     cleanup_port_shm()
     cleanup_auth_shm()
     cleanup_hmac_shm()
-
-
-def load_hmac_key_to_state():
-    """从共享内存读取 HMAC 密钥并设置到 Message 签名器
-
-    便捷方法：读取密钥后自动创建 HmacMessageSigner 并设置到 Message 出/入站。
-    HMAC 对称，既可签请求（出站）也可验响应（入站）。
-    用于 ping/stop 等不走 transport 装配的场景；transport 装配后出站已设则跳过。
-    """
-    from ..protocol.message import Message
-    from ..auth.token import HmacMessageSigner
-    if Message.get_outbound_signer() is not None:
-        return
-    key = read_hmac_key()
-    if key is not None:
-        signer = HmacMessageSigner(key)
-        Message.set_outbound_signer(signer)
-        Message.set_inbound_verifier(signer)
-        _logger.debug("load_hmac_key_to_state: loaded, outbound+inbound set")

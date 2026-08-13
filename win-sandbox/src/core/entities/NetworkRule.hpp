@@ -2,7 +2,7 @@
 // NetworkRule - 网络白名单规则实体（core 层）
 //
 // 定义 IP/port 级网络访问控制规则，供 WFP callout 回调匹配。
-// Phase 5 WFP allowlist 模式消费此实体。
+// WFP allowlist 模式消费此实体。
 //
 // 设计要点：
 //   - 不依赖 windows.h（core 层保持框架独立）

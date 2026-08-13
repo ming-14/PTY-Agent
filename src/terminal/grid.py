@@ -443,7 +443,7 @@ def _reflow_lines(old_lines: List[GridLine], new_cols: int) -> List[GridLine]:
         merged = _resize_line(old_line, new_cols)
         old_y += 1
         # merged 是否已入列（split 分支内 append 后置位，防止末尾重复 append
-        # —— 曾是重复 append 导致内容翻倍、wrap 链被劫持的 bug 根因）
+        # 导致内容翻倍、wrap 链被劫持）
         chain_appended = False
         while old_y < len(old_lines) and merged.wrapped:
             next_line = old_lines[old_y]

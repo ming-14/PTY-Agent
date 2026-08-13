@@ -49,6 +49,9 @@ public:
 
     // 查询已采集事件总数
     virtual uint64_t GetTotalEventCount() const = 0;
+
+    // 查询序列跳跃事件数（RingBuffer 满丢弃之外的可检测丢包）
+    virtual uint64_t GetGapCount() const = 0;
 };
 
 } // namespace winsandbox

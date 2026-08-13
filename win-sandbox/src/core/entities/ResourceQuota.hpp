@@ -47,7 +47,7 @@ struct ResourceQuota {
     // true：允许子进程通过 CREATE_BREAKAWAY_FROM_JOB 逃逸（仅在受控场景开启）
     bool breakaway_ok = false;
 
-    // ----- Phase 8 崩溃静默 -----
+    // ----- 崩溃静默 -----
     // false（默认）：进程未处理异常时可能弹 Windows 错误对话框（WER）
     // true：设置 JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION，崩溃直接终止、
     //       无对话框（自动化/无头场景）

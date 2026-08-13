@@ -1,13 +1,12 @@
 // =============================================================================
 // ITokenIsolator - 隔离 token 派生端口（core 层）
 //
-// Phase 16：从当前进程 token 派生隔离 primary token，链路：
+// 从当前进程 token 派生隔离 primary token，链路：
 //   OpenProcessToken → DuplicateTokenEx(primary)
 //   → SetTokenInformation(TokenIntegrityLevel, Low)  // IL=4096，全盘禁写
 //
-// 决策（plain 单路径，用户拍板）：特权集=宿主镜像，不 CreateRestrictedToken
-// （restricted token 非管理员 CreateProcessAsUserW 启动必 err=1314，
-//  见 docs/Phase/Phase-16 4.2 实测定案）
+// 设计决策（项目使用 plain 单路径）：特权集=宿主镜像，不 CreateRestrictedToken
+// （restricted token 非管理员 CreateProcessAsUserW 启动必 err=1314）
 //
 // 句柄约定（干净架构折中）：
 //   - GetToken() 返回 void* = HANDLE（实现层拥有，调用方不可 CloseHandle）

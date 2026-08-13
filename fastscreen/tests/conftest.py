@@ -2,6 +2,6 @@ import pytest
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "bin"))
 
-from fastscreen import CaptureEngine, TargetType, CaptureMethod
+from fastscreencore import CaptureEngine, TargetType, CaptureMethod

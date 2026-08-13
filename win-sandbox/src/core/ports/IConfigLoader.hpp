@@ -10,12 +10,12 @@
 //       ConfigFileNotFound       文件不存在
 //       ConfigParseFailed        JSON 语法错误
 //       ConfigSchemaValidationFailed  字段缺失/类型错/范围越界
-//   - LoadFromJsonString(json) 供测试与 IPC 内联配置使用（不读文件）
+//   - LoadFromJsonString(json) 供测试与内联配置使用（不读文件）
 //   - Default() 返回内置默认配置（无文件时使用）
 //
 // 生命周期：
-//   - 单例：sandbox.exe 启动期加载一次，全局共享
-//   - 不支持热重载（Phase 1 不需要）
+//   - 单例：进程内启动期加载一次，全局共享
+//   - 不支持热重载
 // =============================================================================
 #pragma once
 
@@ -36,7 +36,7 @@ public:
     virtual Result<SandboxConfig> Load(const std::string& path) = 0;
 
     // 从 JSON 字符串加载配置（不读文件）
-    // 供测试与 IPC 内联配置使用
+    // 供测试与内联配置使用
     virtual Result<SandboxConfig> LoadFromJsonString(const std::string& json_text) = 0;
 
     // 内置默认配置（无文件时使用）

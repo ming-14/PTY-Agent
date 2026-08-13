@@ -6,8 +6,7 @@
 关键决策点：
   - CreatePseudoConsole 第一参数必须是 COORD 结构体按值传参（win32_api 已
     声明 argtypes=[_COORD, ...]，x64 ABI 下 COORD 打包进寄存器）。若传
-    byref(size)，conhost 会把指针地址解析为尺寸，子进程启动静默失败
-    （win-sandbox 侧曾以 ab_compare 实证：byref 3/3 bytes=0 vs 值传递 3/3 正常）。
+    byref(size)，conhost 会把指针地址解析为尺寸，子进程启动静默失败。
   - 父进程持有的可继承副本 inR/outW 由 CreateProcess 消费后必须关闭
     （discard_inherited_ends），否则句柄泄漏；两个使用者都在 spawn 成功后调用。
   - close() 顺序：CancelIoEx(outR) → ClosePseudoConsole → 关闭管道句柄，
@@ -64,8 +63,11 @@ class ConPtyHandle:
         self._hpc = _HPCON()
         # COORD 按值传参（argtypes 已声明），x64 下 byref 会导致尺寸解析为
         # 指针地址，ConPTY 子进程启动静默失败
+        # 0x4 = PSEUDOCONSOLE_WIN32_INPUT_MODE（未文档化，Windows Terminal spec #4999）：
+        # 输入解析器进入 win32-input-mode，客户端可发送 \x1b[..._ KEY_EVENT_RECORD
+        # 序列还原为真实键事件（Ctrl+C 等控制语义在 ConPTY 下正常生效）
         hr = _CreatePseudoConsole(
-            _COORD(cols, rows), self._inR, self._outW, 0,
+            _COORD(cols, rows), self._inR, self._outW, 0x4,
             ctypes.byref(self._hpc),
         )
         if hr < 0:

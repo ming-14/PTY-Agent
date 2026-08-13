@@ -4,10 +4,10 @@
 // 抽象 Windows Server Silo（进程隔离容器）的可选更强隔离能力。
 // 由 infra/silo/SiloImpl 提供具体实现。
 //
-// 背景（docs/design/Phase2-Candidates-Evaluation-20260806.md）：
+// 背景：
 //   - Server Silo = 带 SILO 标志的 Job Object，提供视图级隔离：
 //     独立对象命名空间 / 注册表 hivestack / 文件系统挂载重定向 / 网络 compartment
-//   - 与现有 Job（资源限制）+ Low IL token（完整性强制，Phase 16）正交，可叠加
+//   - 与现有 Job（资源限制）+ Low IL token（完整性强制）正交，可叠加
 //   - 用户态 API 未文档化；Win10 客户端实测不可用（JobObjectCreateSilo 返回
 //     STATUS_INVALID_PARAMETER），仅 Win Server / Win11 预览支持
 //
@@ -41,6 +41,9 @@ public:
 
     // 把已有 Job 句柄就地升级为 Server Silo Job
     // job_handle: 来自 IJobObject::GetHandle() 的 void* Job 句柄
+    // 契约：Job 必须为空（尚未 AssignProcess 任何进程）——Silo 转换只允许
+    //   空 Job；调用方须在 AssignProcess 之前调用（StartProcess 流程中
+    //   Silo Elevate 先于 Launch）
     // 成功：Job 升级为 Silo，进程分配逻辑不变，资源限制仍生效
     // 失败：SiloUnavailable（探测失败）/ SiloCreateFailed（升级失败）
     virtual Result<void> ElevateJob(void* job_handle) = 0;

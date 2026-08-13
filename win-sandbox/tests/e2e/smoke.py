@@ -1,4 +1,4 @@
-"""Phase 14 e2e smoke test - pybind11 直调形态基础冒烟。
+"""e2e smoke test - pybind11 直调形态基础冒烟。
 
 测试场景：
   1. 加载 win_sandbox_native 模块

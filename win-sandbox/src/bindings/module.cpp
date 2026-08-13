@@ -1,11 +1,10 @@
 // =============================================================================
 // win_sandbox_native - pybind11 扩展入口
 //
-// Phase 10：空模块骨架
-// Phase 11：注册 SandboxInstance / Process / 配置 / 回调绑定
+// 注册 SandboxInstance / Process / 配置 / 回调绑定
 //
 // 形态：pybind11 扩展（.pyd），加载进 Python 解释器进程
-//   - C++ 核心代码与 sandbox.exe 共享（同一源文件树）
+//   - C++ 核心代码（同一源文件树）
 //   - in-process：HANDLE 值直接共享，无需 DuplicateHandle 跨进程
 //   - Python 端用 ctypes 直接 ReadFile/WriteFile 句柄
 //

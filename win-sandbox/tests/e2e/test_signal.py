@@ -1,6 +1,6 @@
-"""T3.4 e2e 测试：SignalProcess（CtrlC/CtrlBreak/Kill）（Phase 14 pybind11 直调形态）。
+"""e2e 测试：SignalProcess（CtrlC/CtrlBreak/Kill）（pybind11 直调形态）。
 
-验证 Phase 3 T3.4 信号控制功能在 pybind11 直调链路上的行为，覆盖 5 个子用例：
+验证信号控制功能在 pybind11 直调链路上的行为，覆盖 5 个子用例：
   1. Kill 强杀死循环进程（TerminateProcess，exit_reason=killed_by_user）
   2. CtrlBreak 中断长跑进程（GenerateConsoleCtrlEvent，依赖 console 共享）
   3. 已退出进程发 signal → RuntimeError（process_already_exited）
@@ -73,7 +73,7 @@ def test_1_kill_terminates_long_running_process() -> None:
       3. wait
       4. 断言 exit_reason = killed_by_user
     """
-    print("\n[T3.4-1] Kill 强杀长跑进程", flush=True)
+    print("\nKill 强杀长跑进程", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -118,7 +118,7 @@ def test_2_ctrlbreak_interrupts_loop() -> None:
     环境要求：需有 console（从终端运行测试脚本即可）。
     若无 console，CtrlBreak 会抛异常，本用例标记为 SKIP。
     """
-    print("\n[T3.4-2] CtrlBreak 中断长跑进程", flush=True)
+    print("\nCtrlBreak 中断长跑进程", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -180,7 +180,7 @@ def test_3_signal_already_exited() -> None:
       2. wait
       3. signal("kill") → 应抛 RuntimeError（process_already_exited）
     """
-    print("\n[T3.4-3] 已退出进程发 signal → Error", flush=True)
+    print("\n已退出进程发 signal → Error", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -224,7 +224,7 @@ def test_4_invalid_signal_value() -> None:
       2. signal("bogus_value") → 应抛 ValueError（invalid signal）
       3. Kill 清理
     """
-    print("\n[T3.4-4] 无效 signal 值 → Error", flush=True)
+    print("\n无效 signal 值 → Error", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -274,7 +274,7 @@ def test_5_signal_no_process_running() -> None:
       2. wait + close
       3. signal("kill") → 应抛 RuntimeError
     """
-    print("\n[T3.4-5] 已关闭进程发 signal → Error", flush=True)
+    print("\n已关闭进程发 signal → Error", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:

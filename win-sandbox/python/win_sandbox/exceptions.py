@@ -1,11 +1,9 @@
-"""win_sandbox 异常类型。
-
-Phase 12：删除 IPC 形态后，移除 ProtocolError7（IPC 协议错误）。
-保留 SandboxError / SandboxTimeoutError / SandboxProcessError（pybind11 形态仍需）。
+"""win_sandbox 异常类型：SandboxError / SandboxTimeoutError / SandboxProcessError / ProtocolError。
 
 层级：
     SandboxError             所有异常基类
     ├── SandboxTimeoutError  超时
+    ├── ProtocolError        配置错误（未知字段、非法枚举、路径展开失败）
     └── SandboxProcessError  进程异常退出或启动失败
 """
 
@@ -18,6 +16,10 @@ class SandboxError(Exception):
 
 class SandboxTimeoutError(SandboxError):
     """等待进程退出 / IO 完成超时。"""
+
+
+class ProtocolError(SandboxError):
+    """配置错误：未知字段、非法枚举、路径展开失败（严格模式拒绝加载）。"""
 
 
 class SandboxProcessError(SandboxError):

@@ -1,8 +1,8 @@
 // =============================================================================
 // NativeSandboxInstance 实现（pybind11/native 形态）
 //
-// 复用 SandboxInstance 的 per-process Job 模式 + 资源管理逻辑，
-// 用 NativeSandboxedProcess 替代 StartProcessUseCase，无 IEventEmitter / StatsCollector。
+// per-process Job 模式 + 资源管理，
+// 用 NativeSandboxedProcess 启动隔离进程，无 IEventEmitter / StatsCollector。
 // =============================================================================
 #include "adapters/NativeSandboxInstance.hpp"
 
@@ -21,7 +21,7 @@ namespace winsandbox {
 
 namespace {
 
-// 命令行脱敏（与 SandboxInstance.cpp / StartProcessUseCase.cpp 同模式）
+// 命令行脱敏
 std::string RedactCommandLine(std::string_view cmdline) {
     if (cmdline.empty()) {
         return "(empty)";
@@ -47,7 +47,7 @@ std::string RedactCommandLine(std::string_view cmdline) {
     return std::string(cmdline.substr(start, end - start));
 }
 
-// Phase 13：BehaviorEventType → 字符串（ETW 回调 payload 映射用）
+// BehaviorEventType → 字符串（ETW 回调 payload 映射用）
 std::string BehaviorTypeToString(BehaviorEventType type) {
     switch (type) {
         case BehaviorEventType::ProcessStart:    return "process_start";
@@ -97,7 +97,7 @@ NativeSandboxInstance::NativeSandboxInstance(std::shared_ptr<ILogger> logger,
     , silo_(silo)
     , global_quota_(global_quota)
     , monitoring_config_(monitoring) {
-    // Phase 13：ETW 行为监控（可选）
+    // ETW 行为监控（可选）
     if (monitoring_config_.etw_enabled) {
         etw_monitor_ = std::make_unique<EtwMonitorImpl>(logger_);
         logger_->Log(LogLevel::Info, "ETW monitor created (enabled in config)");
@@ -112,18 +112,10 @@ uint32_t NativeSandboxInstance::AllocateProcessId() {
     return next_process_id_.fetch_add(1);
 }
 
-NativeSandboxedProcess* NativeSandboxInstance::FindByProcessId(uint32_t process_id) const {
-    auto it = processes_.find(process_id);
-    if (it == processes_.end() || !it->second.usecase) {
-        return nullptr;
-    }
-    return it->second.usecase.get();
-}
-
 // =============================================================================
 // StartProcess - 启动新隔离进程
 //
-// 流程（复用 SandboxInstance::StartProcess 逻辑）：
+// 流程：
 //   1. 分配 process_id
 //   2. 创建 per-process Job/Launcher/TokenIsolator/WriteArea/NativeSandboxedProcess
 //   3. Job->Create + SetResourceLimits + RegisterNotificationSink
@@ -132,6 +124,9 @@ NativeSandboxedProcess* NativeSandboxInstance::FindByProcessId(uint32_t process_
 //   6. 插入 processes_ map，返回 NativeProcessHandle
 // =============================================================================
 Result<NativeProcessHandle> NativeSandboxInstance::StartProcess(StartProcessRequest req) {
+    // 入口自动清理已退出进程（防 processes_ 无限增长 / 配额永久占用）
+    CleanupFinished();
+
     uint32_t process_id = AllocateProcessId();
     req.process_id = process_id;
 
@@ -142,19 +137,18 @@ Result<NativeProcessHandle> NativeSandboxInstance::StartProcess(StartProcessRequ
                  std::format("NativeSandboxInstance::StartProcess (full): process_id={} cmd={}",
                              process_id, req.command_line));
 
-    // 1. 创建 per-process 资源（Phase 16：TokenIsolator + WriteArea 替代 AppContainer 链）
+    // 1. 创建 per-process 资源（TokenIsolator + WriteArea）
     NativeProcessEntry entry;
-    entry.job = std::make_unique<JobObjectImpl>(logger_);
-    entry.launcher = std::make_unique<ProcessLauncherImpl>(logger_);
-    entry.token_isolator = std::make_unique<TokenIsolatorImpl>(logger_);
-    entry.write_area = std::make_unique<WriteAreaImpl>(logger_);
+    entry.job = std::make_shared<JobObjectImpl>(logger_);
+    entry.launcher = std::make_shared<ProcessLauncherImpl>(logger_);
+    entry.token_isolator = std::make_shared<TokenIsolatorImpl>(logger_);
+    entry.write_area = std::make_shared<WriteAreaImpl>(logger_);
     if (req.isolation_policy.net_policy == NetworkPolicy::Allowlist) {
-        entry.wfp_engine = std::make_unique<WfpEngineImpl>(logger_);
+        entry.wfp_engine = std::make_shared<WfpEngineImpl>(logger_);
     }
     entry.usecase = std::make_shared<NativeSandboxedProcess>(
-        logger_, entry.job.get(), entry.launcher.get(),
-        entry.token_isolator.get(), entry.write_area.get(),
-        entry.wfp_engine.get());
+        logger_, entry.job, entry.launcher,
+        entry.token_isolator, entry.write_area, entry.wfp_engine);
 
     // 2. 创建 Job Object
     auto create_r = entry.job->Create();
@@ -188,6 +182,13 @@ Result<NativeProcessHandle> NativeSandboxInstance::StartProcess(StartProcessRequ
                                  process_id, mem, cpu, proc));
     }
 
+    // 失败清理：Acquire 成功后任何失败路径必须释放配额（防额度永久占用）
+    auto release_quota_on_failure = [&]() {
+        if (entry.quota_acquired) {
+            ReleaseQuota(entry);
+        }
+    };
+
     // 4. Server Silo（可选）
     if (silo_ && silo_->IsAvailable()) {
         auto silo_r = silo_->ElevateJob(entry.job->GetHandle());
@@ -207,10 +208,11 @@ Result<NativeProcessHandle> NativeSandboxInstance::StartProcess(StartProcessRequ
                      std::format("Job SetResourceLimits failed: process_id={} [{}] {}",
                                  process_id, static_cast<int>(quota_r.Code()),
                                  quota_r.Message()));
+        release_quota_on_failure();
         return Result<NativeProcessHandle>::Err(quota_r.Code(), quota_r.Message());
     }
 
-    // 5a. Phase 16：剪贴板隔离（clipboard_isolate=true → Job UI 限制）
+    // 5a. 剪贴板隔离（clipboard_isolate=true → Job UI 限制）
     if (req.isolation_policy.clipboard_isolate) {
         auto ui_r = entry.job->SetUiLimits(true);
         if (!ui_r) {
@@ -218,6 +220,7 @@ Result<NativeProcessHandle> NativeSandboxInstance::StartProcess(StartProcessRequ
                          std::format("Job SetUiLimits failed: process_id={} [{}] {}",
                                      process_id, static_cast<int>(ui_r.Code()),
                                      ui_r.Message()));
+            release_quota_on_failure();
             return Result<NativeProcessHandle>::Err(ui_r.Code(), ui_r.Message());
         }
         logger_->Log(LogLevel::Info,
@@ -232,6 +235,7 @@ Result<NativeProcessHandle> NativeSandboxInstance::StartProcess(StartProcessRequ
                      std::format("Job RegisterNotificationSink failed: process_id={} [{}] {}",
                                  process_id, static_cast<int>(reg_r.Code()),
                                  reg_r.Message()));
+        release_quota_on_failure();
         return Result<NativeProcessHandle>::Err(reg_r.Code(), reg_r.Message());
     }
 
@@ -242,15 +246,17 @@ Result<NativeProcessHandle> NativeSandboxInstance::StartProcess(StartProcessRequ
                      std::format("Execute failed: process_id={} [{}] {}",
                                  process_id, static_cast<int>(exec_r.Code()),
                                  exec_r.Message()));
-        // 竞态修复（BUG-1）：Execute 失败后先停止通知线程再析构
+        // Execute 失败后先停止通知线程再析构
         if (entry.job) {
             entry.job->Shutdown();
         }
+        release_quota_on_failure();
         return Result<NativeProcessHandle>::Err(exec_r.Code(), exec_r.Message());
     }
 
-    // 8. 成功 → 插入 map
+    // 8. 成功 → 插入 map（锁内二次校验 shutdown 状态，防 TOCTOU）
     {
+        std::unique_lock lock(mutex_);
         if (shutting_down_.load(std::memory_order_acquire)) {
             logger_->Log(LogLevel::Warn,
                          std::format("StartProcess rejected during shutdown: process_id={}",
@@ -261,12 +267,12 @@ Result<NativeProcessHandle> NativeSandboxInstance::StartProcess(StartProcessRequ
             if (entry.job) {
                 entry.job->Shutdown();
             }
+            entry.usecase->Close();
+            release_quota_on_failure();
             return Result<NativeProcessHandle>::Err(
                 ErrorCode::InvalidArgument,
                 "start_process rejected: sandbox is shutting down");
         }
-
-        std::unique_lock lock(mutex_);
         processes_.emplace(process_id, std::move(entry));
     }
 
@@ -274,7 +280,7 @@ Result<NativeProcessHandle> NativeSandboxInstance::StartProcess(StartProcessRequ
                  std::format("NativeSandboxInstance::StartProcess success: process_id={} pid={}",
                              process_id, exec_r.Value().process.pid));
 
-    // Phase 13：ETW 路由注册 + 首次启动
+    // ETW 路由注册 + 首次启动
     uint32_t os_pid = exec_r.Value().process.pid;
     if (etw_monitor_) {
         // 注册 pid → usecase 路由
@@ -308,17 +314,15 @@ Result<NativeProcessHandle> NativeSandboxInstance::StartProcess(StartProcessRequ
                                      ev.type == BehaviorEventType::ProcessStop);
                     auto info = ToBehaviorEventInfo(ev, degraded);
 
-                    if (usecase->on_behavior_event) {
-                        usecase->on_behavior_event(info);
-                    }
-                    if (ev.type == BehaviorEventType::AccessDenied && usecase->on_access_denied) {
+                    usecase->InvokeBehaviorEvent(info);
+                    if (ev.type == BehaviorEventType::AccessDenied) {
                         AccessDeniedInfo ad;
                         ad.pid = ev.pid;
                         ad.path = info.path;
                         ad.operation = info.event_type;
                         ad.source = info.source;
                         ad.timestamp_ms = ev.timestamp_ms;
-                        usecase->on_access_denied(ad);
+                        usecase->InvokeAccessDenied(ad);
                     }
                 }
             };
@@ -350,13 +354,23 @@ Result<NativeProcessHandle> NativeSandboxInstance::StartProcess(StartProcessRequ
 
 // =============================================================================
 // 路由方法（按 process_id 找 usecase）
+// 锁内拷贝 shared_ptr（防 CleanupFinished/ShutdownAll 并发擦除后 UAF），锁外调用
 // =============================================================================
+std::shared_ptr<NativeSandboxedProcess> NativeSandboxInstance::FindByProcessId(
+    uint32_t process_id) const {
+    std::shared_lock lock(mutex_);
+    auto it = processes_.find(process_id);
+    if (it == processes_.end()) {
+        return nullptr;
+    }
+    return it->second.usecase;
+}
+
 Result<void> NativeSandboxInstance::WriteStdin(uint32_t process_id,
                                                const void* data,
                                                size_t size) {
-    std::shared_lock lock(mutex_);
-    auto* usecase = FindByProcessId(process_id);
-    if (usecase == nullptr) {
+    auto usecase = FindByProcessId(process_id);
+    if (!usecase) {
         return Result<void>::Err(
             ErrorCode::ProcessNotFound,
             std::format("WriteStdin: process_id={} not found", process_id));
@@ -365,9 +379,8 @@ Result<void> NativeSandboxInstance::WriteStdin(uint32_t process_id,
 }
 
 Result<void> NativeSandboxInstance::SignalProcess(uint32_t process_id, ProcessSignal sig) {
-    std::shared_lock lock(mutex_);
-    auto* usecase = FindByProcessId(process_id);
-    if (usecase == nullptr) {
+    auto usecase = FindByProcessId(process_id);
+    if (!usecase) {
         return Result<void>::Err(
             ErrorCode::ProcessNotFound,
             std::format("SignalProcess: process_id={} not found", process_id));
@@ -376,9 +389,8 @@ Result<void> NativeSandboxInstance::SignalProcess(uint32_t process_id, ProcessSi
 }
 
 Result<void> NativeSandboxInstance::TerminateProcess(uint32_t process_id, uint32_t exit_code) {
-    std::shared_lock lock(mutex_);
-    auto* usecase = FindByProcessId(process_id);
-    if (usecase == nullptr) {
+    auto usecase = FindByProcessId(process_id);
+    if (!usecase) {
         return Result<void>::Err(
             ErrorCode::ProcessNotFound,
             std::format("TerminateProcess: process_id={} not found", process_id));
@@ -434,7 +446,7 @@ void NativeSandboxInstance::CleanupFinished() {
                 logger_->Log(LogLevel::Debug,
                              std::format("CleanupFinished: removing process_id={}",
                                          it->first));
-                // Phase 13：记录 OS pid，清理 ETW 路由
+                // 记录 OS pid，清理 ETW 路由
                 if (it->second.usecase) {
                     finished_pids.push_back(it->second.usecase->Process().pid);
                 }
@@ -446,7 +458,7 @@ void NativeSandboxInstance::CleanupFinished() {
             }
         }
     }
-    // Phase 13：清理已退出进程的 ETW 路由
+    // 清理已退出进程的 ETW 路由
     if (!finished_pids.empty()) {
         std::lock_guard route_lock(etw_route_mutex_);
         for (uint32_t pid : finished_pids) {
@@ -465,7 +477,7 @@ void NativeSandboxInstance::CleanupFinished() {
 // =============================================================================
 // StopEtwMonitor - 仅停止 ETW monitor（不析构 usecase）
 //
-// Phase 14 修复：shutdown() 三阶段 GIL 管理的 Phase 1。
+// shutdown() 三阶段 GIL 管理的第一步。
 // 调用方释放 GIL 后调用本方法 → Stop() join ETW 线程 → 线程可获 GIL 完成末次回调。
 // 幂等：已停止时 etw_started_ 为 false，直接返回。
 // =============================================================================
@@ -491,7 +503,7 @@ void NativeSandboxInstance::StopEtwMonitor() {
 // =============================================================================
 // ClearAllCallbacks - 清空所有 usecase 的回调
 //
-// Phase 14 修复：shutdown() 三阶段 GIL 管理的 Phase 2。
+// shutdown() 三阶段 GIL 管理的第二步。
 // 调用方必须持有 GIL（std::function 析构销毁 py::function 捕获需要 GIL）。
 // 在 StopEtwMonitor 之后调用：ETW 线程已 join，无并发回调。
 // 清空的回调：on_behavior_event / on_access_denied / on_resource_limit /
@@ -501,11 +513,7 @@ void NativeSandboxInstance::ClearAllCallbacks() {
     std::shared_lock lock(mutex_);
     for (auto& [pid, entry] : processes_) {
         if (entry.usecase) {
-            entry.usecase->on_behavior_event = nullptr;
-            entry.usecase->on_access_denied = nullptr;
-            entry.usecase->on_resource_limit = nullptr;
-            entry.usecase->on_job_process_started = nullptr;
-            entry.usecase->on_job_process_exited = nullptr;
+            entry.usecase->ClearAllCallbacks();
         }
     }
 }
@@ -517,8 +525,7 @@ void NativeSandboxInstance::ShutdownAll() {
     std::lock_guard lock(shutdown_mutex_);
     shutting_down_.store(true, std::memory_order_release);
 
-    // Phase 13：停止 ETW monitor（先停，防回调访问已析构的 usecase）
-    // Phase 14：StopEtwMonitor 幂等，若已停止则跳过
+    // 停止 ETW monitor（先停，防回调访问已析构的 usecase；StopEtwMonitor 幂等）
     StopEtwMonitor();
 
     std::vector<NativeProcessEntry> to_destroy;
@@ -531,7 +538,10 @@ void NativeSandboxInstance::ShutdownAll() {
         processes_.clear();
     }
 
-    // 锁外逐个 Terminate + 析构（显式按依赖顺序释放）
+    // 锁外逐个 Terminate + 析构
+    // 资源为 shared_ptr 且被 usecase 持有：即使这里 reset，Python 端 Process
+    // 引用存活期间 usecase 及其依赖不会析构（shutdown 后 proc 仍可 wait/close）。
+    // 显式 Shutdown/Close 保证进程终止与 IOCP 线程停止及时发生。
     for (auto& entry : to_destroy) {
         if (entry.usecase && !entry.usecase->IsFinished()) {
             logger_->Log(LogLevel::Info,

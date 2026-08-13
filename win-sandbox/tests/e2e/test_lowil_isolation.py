@@ -1,4 +1,4 @@
-"""T5 e2e 测试：Low IL 隔离语义（Phase 16）。
+"""e2e 测试：Low IL 隔离语义。
 
 验证纯用户态 Low IL Token 隔离模型的核心语义（mutation 测试）：
   1. 进程完整性级别 = Low（S-1-16-4096）
@@ -8,8 +8,8 @@
   5. 读 System32 允许（只读侧不受影响）
   6. 会话目录随 Teardown 清理
 
-与旧 AppContainer 语义的差异（本测试固定的新行为）：
-  - 无 fs_mode/path_rules/capabilities 配置（解析层已删除）
+本测试固定的新行为：
+  - 无附加隔离配置
   - 隔离恒生效（无"未配置即不隔离"分支）
 
 运行方式（在仓库根目录）：
@@ -167,7 +167,7 @@ def test_5_read_system32_ok() -> None:
     try:
         exit_code, stdout, stderr, reason = _run(
             sb,
-            'cmd.exe /c dir /b C:\\Windows\\System32',
+            f'cmd.exe /c dir /b "{os.environ["SYSTEMROOT"]}\\System32"',
             quota={"wall_clock_timeout_ms": 15000, "memory_mb": 128},
         )
         _assert(exit_code == 0,

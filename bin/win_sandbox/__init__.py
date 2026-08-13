@@ -1,7 +1,7 @@
 """win_sandbox - Windows 进程沙箱隔离（pybind11 in-process 库形态）。
 
-Phase 12：删除 IPC 形态后，本包直接加载 win_sandbox_native.pyd 扩展，
-不再通过命名管道与 sandbox.exe 通信。
+本包直接加载 win_sandbox_native.pyd 扩展，
+以 pybind11 in-process 形态交互，无命名管道通信。
 
 用法：
     import win_sandbox
@@ -17,6 +17,14 @@ from __future__ import annotations
 import os as _os
 import sys as _sys
 
+# 先导入异常类型（SandboxInstance 构造失败抛 ProtocolError 时需已存在）
+from .exceptions import (  # noqa: E402
+    SandboxError,
+    SandboxProcessError,
+    SandboxTimeoutError,
+    ProtocolError,
+)
+
 # 加载 pybind11 扩展：优先包内 _native/（wheel 安装），回退 build/bin/（开发态）
 _native_dir = _os.path.join(_os.path.dirname(__file__), "_native")
 if _os.path.isdir(_native_dir):
@@ -29,12 +37,6 @@ else:
 
 from win_sandbox_native import SandboxInstance, Process  # noqa: E402
 from win_sandbox_native import contains_access_denied_keyword  # noqa: E402
-
-from .exceptions import (  # noqa: E402
-    SandboxError,
-    SandboxProcessError,
-    SandboxTimeoutError,
-)
 from .helpers import (  # noqa: E402
     read_pipe,
     write_pipe,
@@ -55,6 +57,7 @@ __all__ = [
     "SandboxError",
     "SandboxTimeoutError",
     "SandboxProcessError",
+    "ProtocolError",
     "read_pipe",
     "write_pipe",
     "wait_process",

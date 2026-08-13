@@ -3,11 +3,9 @@
 后台守护进程的 TCP 主循环，负责编排多个 Listener 并管理生命周期。
 绑定端口后通过共享内存发布 PID+端口号。
 
-Phase 3 重构：从单端口内联 accept 循环改为多 Listener 架构，
-认证配置封装为 AuthContext 供每个 Listener 独立持有。
-
-Phase 4 扩展：双端口架构 — 明文 Listener（token 认证，SHM 同机发现）
-+ TLS Listener（pubkey 认证，跨机访问，自签证书自动生成）。
+多 Listener 架构：认证配置封装为 AuthContext，每个 Listener 独立持有。
+双端口：明文 Listener（token 认证，SHM 同机发现）+ TLS Listener
+（pubkey 认证，跨机访问，自签证书自动生成）。
 """
 
 import os
@@ -36,6 +34,7 @@ from ..config.daemon import (
     WEB_HOST,
     WEB_PORT,
     WEB_PASSWORD_HASH,
+    PING_TIMEOUT,
 )
 from ..ipc.shm import (
     write_daemon_info_to_shm,
@@ -52,6 +51,8 @@ from ..auth.keys import load_authorized_keys
 from ..auth.context import AuthContext
 from ..auth.tls.cert_manager import CertificateManager
 from ..session.manager import SessionManager
+from ..protocol.message import Message
+from ..process.info import pid_exists
 from .handler import RequestHandler
 from .listener import Listener
 from ..web.server import WebServer
@@ -63,7 +64,7 @@ class DaemonServer:
     """后台守护进程 TCP 服务器
 
     负责：
-    - 编排多个 Listener（Phase 4: 明文 + TLS 双端口）
+    - 编排多个 Listener（明文 + TLS 双端口）
     - 绑定成功后通过共享内存发布 PID+端口号（仅明文端口）
     - 信号注册与处理
     - 资源清理（会话停止、共享内存释放、Listener 停止）
@@ -187,7 +188,7 @@ class DaemonServer:
     def run(self):
         """启动服务器主循环
 
-        Phase 4 双端口架构：
+        双端口架构：
         - 明文 Listener（token 认证 / 无认证，SHM 同机发现）
         - TLS Listener（pubkey 认证，跨机访问，不发布 SHM）
 
@@ -258,8 +259,7 @@ class DaemonServer:
         existing = read_daemon_info_from_shm()
         if existing is not None:
             existing_pid, existing_port = existing
-            from .lifecycle import _pid_exists, _ping_daemon
-            if _pid_exists(existing_pid) and _ping_daemon(existing_port):
+            if pid_exists(existing_pid) and Message.ping(DAEMON_HOST, existing_port, PING_TIMEOUT):
                 _logger.error(
                     "守护进程已在运行 (PID:%d 端口:%d)，拒绝覆盖共享内存",
                     existing_pid, existing_port,

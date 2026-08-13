@@ -2,8 +2,8 @@
 # 功能：打包构建 pty-agent
 #
 # 环境变量：
-#   GITHUB_MIRROR              - GitHub 下载镜像（如：https://ghproxy.com/）
-#   GITHUB_API_MIRROR          - GitHub API 镜像（如：https://api.github.com）
+#   GITHUB_MIRROR              - GitHub 下载镜像
+#   GITHUB_API_MIRROR          - GitHub API 镜像
 #   DOWNLOAD_AICHAT            - 是否下载 aichat（true/false，默认 true）
 #   BUILD_FASTSCREEN           - 是否构建 fastscreen.dll（true/false，默认 true）
 #   BUILD_WINSANDBOX           - 是否构建 win_sandbox_native.pyd（true/false，默认 true）
@@ -27,6 +27,7 @@
 #   $env:GITHUB_MIRROR="https://ghproxy.com/"; .\BUILD.ps1 -NoAichat
 #   .\BUILD.ps1 -NoUltravnc -Mirror "https://ghproxy.com/" -ApiMirror "https://api.github.com"
 #   .\BUILD.ps1 -NoUltravnc -NoTerminalInjector -Mirror "https://v4.gh-proxy.org/"
+#   推荐使用就像：https://v4.gh-proxy.org/
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = "Stop"
@@ -126,6 +127,7 @@ if ($buildRime) {
 # ============================================================
 
 Copy-Item -Path (Join-Path $scriptDir "src") -Destination (Join-Path $outputDir "src") -Recurse -Force
+Copy-Item -Path (Join-Path $scriptDir "config") -Destination (Join-Path $outputDir "config") -Recurse -Force
 Copy-Item -Path (Join-Path $scriptDir "bin") -Destination (Join-Path $outputDir "bin") -Recurse -Force
 Copy-Item -Path (Join-Path $scriptDir "app.py") -Destination $outputDir -Force
 Copy-Item -Path (Join-Path $scriptDir "SKILL.md") -Destination $outputDir -Force
@@ -304,7 +306,7 @@ if ($downloadAichat) {
 }
 
 # ============================================================
-# 下载 ripgrep（rg.exe，代码搜索工具）
+# 下载 ripgrep（代码搜索工具）
 # ============================================================
 if ($downloadRg) {
     Write-Host "[rg] 下载最新版 ripgrep..."
@@ -434,10 +436,10 @@ if (Test-Path $rimePluginJsMap) { Remove-Item -Path $rimePluginJsMap -Force }
 $aichatConfig = Join-Path $outputDir "bin\aichat\config\config.yaml"
 if (Test-Path $aichatConfig) { Remove-Item -Path $aichatConfig -Force }
 
-# vnc 运行时配置文件
-$vncConfig = Join-Path $outputDir "src\config\vnc.toml"
+# vnc 运行时配置文件（含加密密码，不随发布包分发）
+$vncConfig = Join-Path $outputDir "config\vnc.toml"
 if (Test-Path $vncConfig) { Remove-Item -Path $vncConfig -Force }
-$vncExampleConfig = Join-Path $outputDir "src\config\vnc.example.toml"
+$vncExampleConfig = Join-Path $outputDir "config\vnc.example.toml"
 if (Test-Path $vncExampleConfig) { Remove-Item -Path $vncExampleConfig -Force }
 
 # ultravnc 日志和配置文件

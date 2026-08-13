@@ -35,18 +35,19 @@ def fix_wheel_platform(wheel_path: str) -> str:
         with zipfile.ZipFile(wheel_path, "r") as zin:
             zin.extractall(tmp_dir)
 
-        # 修改 WHEEL 文件中的 Tag
-        wheel_meta_path = os.path.join(tmp_dir, "win_sandbox-0.1.0.dist-info", "WHEEL")
-        if os.path.exists(wheel_meta_path):
-            with open(wheel_meta_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            content = content.replace(
-                "Tag: py3-none-any",
-                f"Tag: py3-none-{TARGET_PLATFORM}",
-            )
-            with open(wheel_meta_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            print(f"已更新 WHEEL 元数据: Tag → py3-none-{TARGET_PLATFORM}")
+        # 动态定位 dist-info 目录（目录名含版本号，不可硬编码），获取所有匹配项
+        wheel_meta_paths = glob.glob(os.path.join(tmp_dir, "*.dist-info", "WHEEL"))
+        for wheel_meta_path in wheel_meta_paths:
+            if os.path.exists(wheel_meta_path):
+                with open(wheel_meta_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                content = content.replace(
+                    "Tag: py3-none-any",
+                    f"Tag: py3-none-{TARGET_PLATFORM}",
+                )
+                with open(wheel_meta_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print(f"已更新 WHEEL 元数据: Tag → py3-none-{TARGET_PLATFORM}")
 
         # 重新打包
         with zipfile.ZipFile(new_path, "w", zipfile.ZIP_DEFLATED) as zout:

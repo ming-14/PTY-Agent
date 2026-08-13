@@ -1,7 +1,6 @@
-"""守护进程子包 — 生命周期管理、TCP 服务器与请求处理"""
+"""守护进程子包 — 后台服务进程（TCP 服务器 + 命令处理器）"""
 
-from .lifecycle import is_running, start_daemon, stop_daemon
 from .server import DaemonServer
 from .handler import RequestHandler
 
-__all__ = ["is_running", "start_daemon", "stop_daemon", "DaemonServer", "RequestHandler"]
+__all__ = ["DaemonServer", "RequestHandler"]

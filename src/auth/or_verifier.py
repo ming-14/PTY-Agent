@@ -13,7 +13,7 @@ OrVerifier 根据消息携带的签名字段，选择对应的子验证器验签
 import logging
 from typing import List, Optional
 
-from .base import MessageSigner
+from ..protocol.signing import MessageSigner
 
 _logger = logging.getLogger("pty-auth")
 

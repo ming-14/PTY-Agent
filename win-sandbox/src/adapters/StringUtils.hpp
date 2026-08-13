@@ -1,8 +1,7 @@
 // =============================================================================
 // StringUtils - 纯字符串工具函数（adapters 层）
 //
-// Phase 13 T13.4：从已删除的 StartProcessUseCase::ContainsAccessDeniedKeyword
-// 提取为独立工具函数，供 pybind11 绑定层和未来其他模块复用。
+// 独立工具函数，供 pybind11 绑定层和其他模块复用。
 //
 // 职责：
 //   - 检测 stderr chunk 是否含 AccessDenied 关键字（中英文，多编码）

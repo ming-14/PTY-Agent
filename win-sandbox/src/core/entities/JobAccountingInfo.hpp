@@ -18,7 +18,7 @@ namespace winsandbox {
 
 struct JobAccountingInfo {
     // ----- 采样时间戳（Unix 毫秒）-----
-    // T6.9: 采样时刻，用于与 BehaviorLog 事件时间对齐
+    // 采样时刻，用于与 BehaviorLog 事件时间对齐
     uint64_t sample_time_ms = 0;
 
     // ----- CPU 时间（100ns 单位）-----

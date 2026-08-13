@@ -1,6 +1,6 @@
 """win_sandbox.helpers - Python 端辅助工具（ctypes 封装，零依赖）。
 
-Phase 13：补充 C++ 库不做的事：
+补充 C++ 库不做的事：
   - 句柄读写（read_pipe / write_pipe / wait_process / close_handle）
   - wall_clock 定时器（WallClockTimer）
   - stats 轮询（StatsPoller）
@@ -30,12 +30,22 @@ _kernel32.ReadFile.argtypes = [
 ]
 _kernel32.ReadFile.restype = wintypes.BOOL
 
-# WriteFile(handle, buf, size, &written, None) -> BOOL
+# WriteFile(handle, buf, size, &written, &ov) -> BOOL
 _kernel32.WriteFile.argtypes = [
     wintypes.HANDLE, wintypes.LPCVOID, wintypes.DWORD,
-    ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID
+    ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p
 ]
 _kernel32.WriteFile.restype = wintypes.BOOL
+
+# 自定义 OVERLAPPED（ctypes.wintypes 无此结构，仅 hEvent 字段必需）
+class _OVERLAPPED(ctypes.Structure):
+    _fields_ = [
+        ("Internal", ctypes.c_void_p),
+        ("InternalHigh", ctypes.c_void_p),
+        ("Offset", wintypes.DWORD),
+        ("OffsetHigh", wintypes.DWORD),
+        ("hEvent", wintypes.HANDLE),
+    ]
 
 # WaitForSingleObject(handle, timeout_ms) -> DWORD (WAIT_OBJECT_0 / WAIT_TIMEOUT / WAIT_FAILED)
 _kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
@@ -45,6 +55,14 @@ _kernel32.WaitForSingleObject.restype = wintypes.DWORD
 _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 _kernel32.CloseHandle.restype = wintypes.BOOL
 
+# CreateEventW(None, manual_reset, initial, None) -> HANDLE
+_kernel32.CreateEventW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR]
+_kernel32.CreateEventW.restype = wintypes.HANDLE
+
+# CancelIoEx(handle, &ov) -> BOOL
+_kernel32.CancelIoEx.argtypes = [wintypes.HANDLE, ctypes.POINTER(_OVERLAPPED)]
+_kernel32.CancelIoEx.restype = wintypes.BOOL
+
 # GetExitCodeProcess(handle, &code) -> BOOL
 _kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
 _kernel32.GetExitCodeProcess.restype = wintypes.BOOL
@@ -52,10 +70,12 @@ _kernel32.GetExitCodeProcess.restype = wintypes.BOOL
 # 常量
 _ERROR_BROKEN_PIPE = 109
 _ERROR_NO_DATA = 232
+_ERROR_IO_PENDING = 997
 _WAIT_OBJECT_0 = 0
 _WAIT_TIMEOUT = 0x102
 _WAIT_FAILED = 0xFFFFFFFF
 _INFINITE = 0xFFFFFFFF
+_WRITE_TIMEOUT_MS = 30000  # write_pipe 单块写入超时（与文档"30s 上限"一致）
 
 
 # =============================================================================
@@ -85,24 +105,60 @@ def read_pipe(handle: int, size: int = 65536) -> bytes:
     return buf.raw[:read.value]
 
 
-def write_pipe(handle: int, data: bytes) -> int:
-    """WriteFile 匿名管道。返回写入字节数。
+def write_pipe(handle: int, data: bytes, timeout_ms: int = _WRITE_TIMEOUT_MS) -> int:
+    """OVERLAPPED WriteFile 匿名管道，带超时（30s 默认）。
+
+    子进程不读 stdin（管道满）时最多阻塞 timeout_ms，超时 CancelIoEx 取消后
+    抛 OSError，不会无限挂起调用线程；进程退出/管道关闭时抛 OSError(109)。
 
     Args:
-        handle: 管道写端句柄
+        handle: 管道写端句柄（stdin 写端为 OVERLAPPED 打开）
         data: 要写入的字节
+        timeout_ms: 单块写入超时（默认 30000）
+
+    Returns:
+        写入字节数
 
     Raises:
-        OSError: WriteFile 失败
+        OSError: WriteFile 失败（超时 / 管道关闭 / 句柄无效）
     """
-    written = wintypes.DWORD()
-    success = _kernel32.WriteFile(
-        ctypes.c_void_p(handle), data, len(data), ctypes.byref(written), None
-    )
-    if not success:
+    if not isinstance(data, (bytes, bytearray, memoryview)):
+        raise TypeError(f"write_pipe data must be bytes-like, got {type(data).__name__}")
+    if not data:
+        return 0
+
+    event = _kernel32.CreateEventW(None, True, False, None)
+    if not event:
+        raise OSError(ctypes.get_last_error(), "CreateEventW failed")
+    try:
+        written = wintypes.DWORD()
+        ov = _OVERLAPPED()
+        ov.hEvent = event
+        success = _kernel32.WriteFile(
+            ctypes.c_void_p(handle), data, len(data), ctypes.byref(written),
+            ctypes.byref(ov)
+        )
+        if success:
+            return written.value
+
         err = ctypes.get_last_error()
-        raise OSError(f"WriteFile failed: err={err}")
-    return written.value
+        if err != _ERROR_IO_PENDING:
+            raise OSError(f"WriteFile failed: err={err}")
+
+        # 写入挂起：等待完成 / 超时取消
+        wait = _kernel32.WaitForSingleObject(event, timeout_ms)
+        if wait == _WAIT_TIMEOUT:
+            _kernel32.CancelIoEx(ctypes.c_void_p(handle), ctypes.byref(ov))
+            _kernel32.WaitForSingleObject(event, _INFINITE)  # 等取消完成
+            raise OSError(
+                f"WriteFile timed out after {timeout_ms}ms (child not reading); "
+                "write cancelled"
+            )
+        if wait != _WAIT_OBJECT_0:
+            raise OSError(ctypes.get_last_error(), "WaitForSingleObject failed")
+        return written.value
+    finally:
+        _kernel32.CloseHandle(event)
 
 
 def wait_process(handle: int, timeout_ms: int = -1) -> int:
@@ -137,6 +193,11 @@ def wait_process(handle: int, timeout_ms: int = -1) -> int:
 def close_handle(handle: int) -> None:
     """CloseHandle 封装。
 
+    仅用于关闭无主的句柄（如独立创建的管道/事件句柄）。
+    注意：Process 暴露的 process_handle / stdin_handle / stdout_handle /
+    stderr_handle 由库内部管理，禁止用本函数关闭（双重关闭可误关
+    句柄值被系统复用后的无关对象）；用 proc.close() / close_stdin() 代替。
+
     Args:
         handle: 要关闭的句柄
 
@@ -153,23 +214,25 @@ def close_handle(handle: int) -> None:
 # =============================================================================
 
 class WallClockTimer:
-    """超时调 proc.terminate。threading.Timer 实现。
+    """墙钟定时器：超时触发 on_timeout 回调（文档签名 (timeout_ms, on_timeout)）。
 
-    用于 wall_clock_timeout_ms 配额超时后终止进程。
+    通常配合沙箱墙钟配额使用：超时回调内调 proc.terminate(1)；
+    也支持 `with` 上下文管理器（进入即 start，退出 cancel）。
 
     Attributes:
         fired: 定时器是否已触发
     """
 
-    def __init__(self, proc, timeout_ms: int, exit_code: int = 1):
+    def __init__(self, timeout_ms: int, on_timeout: Callable[[], None]):
         """
         Args:
-            proc: Process 对象（需有 terminate 方法）
             timeout_ms: 超时毫秒
-            exit_code: 超时终止时使用的退出码
+            on_timeout: 超时回调（无参）
         """
-        self._proc = proc
-        self._exit_code = exit_code
+        if timeout_ms <= 0:
+            raise ValueError("timeout_ms must be > 0")
+        self._timeout_ms = timeout_ms
+        self._on_timeout = on_timeout
         self._fired = False
         self._timer = threading.Timer(timeout_ms / 1000.0, self._fire)
         self._timer.daemon = True
@@ -177,7 +240,7 @@ class WallClockTimer:
     def _fire(self) -> None:
         self._fired = True
         try:
-            self._proc.terminate(self._exit_code)
+            self._on_timeout()
         except Exception:
             pass
 
@@ -193,6 +256,14 @@ class WallClockTimer:
     def fired(self) -> bool:
         return self._fired
 
+    # 上下文管理器：with WallClockTimer(ms, cb) as t:
+    def __enter__(self) -> "WallClockTimer":
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.cancel()
+
 
 # =============================================================================
 # Stats 轮询
@@ -200,8 +271,6 @@ class WallClockTimer:
 
 class StatsPoller:
     """周期调 proc.query_accounting + 回调。threading.Thread 实现。
-
-    用于替代已删除的 C++ StatsCollectorImpl（周期统计采样）。
 
     回调签名：callback(stats: dict) -> None
     """
@@ -236,6 +305,14 @@ class StatsPoller:
         """停止轮询线程。"""
         self._stop.set()
         self._thread.join(timeout=5)
+
+    # 上下文管理器：with StatsPoller(proc, ms, cb) as poller:
+    def __enter__(self) -> "StatsPoller":
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.stop()
 
 
 # =============================================================================

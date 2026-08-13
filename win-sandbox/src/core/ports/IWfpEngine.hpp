@@ -1,21 +1,23 @@
 // =============================================================================
-// IWfpEngine - WFP 引擎端口接口（core 层）
+// IWfpEngine - 网络白名单引擎端口接口（core 层）
 //
-// WFP（Windows Filtering Platform）用户态 ALE callout 接口。
-// 注册 ALE_AUTH_CONNECT_V4/V6 filter，按白名单规则放行/拒绝网络连接。
+// 实现（infra/wfp/WfpEngineImpl）：本地 SOCKS5 代理方案。
+// WFP 用户态 ALE callout 回调需要内核驱动（用户态 API 仅提供管理功能），
+// 因此白名单用"本地 SOCKS5 代理 + 子进程代理环境变量"实现：
 //
 // 生命周期：
-//   1. Open() — 打开 WFP 引擎会话
-//   2. RegisterConnectFilter() — 注册 callout + filter（绑定白名单规则）
-//   3. 运行期：callout 回调按白名单匹配，命中→PERMIT，未命中→BLOCK + NetworkBlocked 事件
-//   4. UnregisterAll() — 注销 callout + 删除 filter
-//   5. Close() — 关闭引擎会话
+//   1. Open() — 启动本地 SOCKS5 代理监听（127.0.0.1:随机端口，bind 失败即报错）
+//   2. RegisterConnectFilter() — 绑定白名单规则并启动代理线程
+//   3. 运行期：代理按白名单匹配，命中→转发，未命中→拒绝 + NetworkBlocked 事件
+//   4. UnregisterAll() — 停止代理
+//   5. Close() — 关闭引擎
 //
-// 前提：管理员权限（WFP 注册需要）
-// 降级：非管理员时 Open() 返回 Err，调用方记 Warn 降级（allowlist 不生效，
-// 进程网络不受限，语义等同 net_policy=unrestricted）
+// 限制：
+//   - 仅代理走环境变量（HTTP_PROXY/HTTPS_PROXY/ALL_PROXY）的流量
+//   - 非 HTTP 流量（原始 TCP/UDP）不受代理控制
+//   - 无需管理员权限
 //
-// Phase 5 WFP allowlist：net_policy=Allowlist 时由 StartProcessUseCase 调用
+// 供 NativeSandboxedProcess 在 net_policy=Allowlist 时调用并注入代理环境变量
 // =============================================================================
 
 #pragma once
@@ -30,7 +32,7 @@
 
 namespace winsandbox {
 
-// 网络拦截事件回调（WFP callout 回调中调用，通知上层有连接被拦截）
+// 网络拦截事件回调（代理工作线程中调用，通知上层有连接被拦截）
 // 参数：ip, port, protocol, reason
 using NetworkBlockedCallback = std::function<void(
     const std::string& ip, uint16_t port, uint8_t protocol, const std::string& reason)>;
@@ -39,31 +41,32 @@ class IWfpEngine {
 public:
     virtual ~IWfpEngine() = default;
 
-    // 打开 WFP 引擎会话
-    // 需管理员权限，失败返回 Err（调用方降级处理）
+    // 启动 SOCKS5 代理监听（127.0.0.1:随机端口）
+    // 绑定/监听失败立即返回 Err（不静默失效）
     virtual Result<void> Open() = 0;
 
-    // 注册 ALE_AUTH_CONNECT callout + filter
-    // allowlist: 白名单规则（空=全部拒绝）
-    // on_blocked: 拦截回调（在 callout 回调线程中调用，必须快速返回）
-    // instance_id: 沙箱实例 ID（用于 WFP 会话名/filter 名，避免多实例冲突）
+    // 注册白名单并启动代理线程
+    // allowlist: 白名单规则（空=全部拒绝；ip 空=任意 IP，port 0=任意端口，
+    //            protocol 0 或 kTcp=TCP）
+    // on_blocked: 拦截回调（在代理工作线程中调用，必须快速返回）
+    // instance_id: 实例标识（仅日志用途）
     virtual Result<void> RegisterConnectFilter(
         const std::vector<NetworkRule>& allowlist,
         NetworkBlockedCallback on_blocked,
         uint64_t instance_id) = 0;
 
-    // 注销所有 callout + 删除所有 filter
-    // 必须在 Close 前调用，否则 filter 残留导致网络持续被拦截
+    // 停止代理并 join 所有工作线程（重复调用安全）
+    // 必须在 Close 前调用，否则代理端口残留
     virtual Result<void> UnregisterAll() = 0;
 
-    // 关闭 WFP 引擎会话
+    // 关闭引擎（与 Open 的 WSAStartup 配对）
     virtual Result<void> Close() = 0;
 
     // 引擎是否已打开
     virtual bool IsOpen() const = 0;
 
-    // HIGH-3 修复（r5）：返回 SOCKS5 代理监听端口（0 = 无代理，如 WFP callout
-    //   实现）。allowlist 模式由 StartProcessUseCase 注入子进程代理环境变量。
+    // SOCKS5 代理监听端口（0 = 无代理）
+    // allowlist 模式由 NativeSandboxedProcess 注入子进程代理环境变量
     virtual uint16_t ProxyPort() const = 0;
 };
 

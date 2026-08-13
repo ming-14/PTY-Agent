@@ -1,3 +1,5 @@
+// 基于 WIC 的图像编码：将 BGRA 帧编码为 PNG/JPEG/BMP 写入文件或内存缓冲，
+// 内存编码路径支持按目标尺寸缩放（WICBitmapScaler，Fant 插值）。
 #include "image_encoder.h"
 #include <shlwapi.h>
 

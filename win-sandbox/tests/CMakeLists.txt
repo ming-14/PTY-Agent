@@ -1,11 +1,10 @@
 # =============================================================================
 # tests/ - 测试目标
-# Phase 0：占位
-# Phase 1：T1.4 ProcessLauncherImpl 运行时验证（不依赖 GoogleTest）
+# ProcessLauncherImpl 运行时验证
 # =============================================================================
 
-# T1.4 ProcessLauncherImpl 验证程序
-# 不依赖 GoogleTest，使用简单 assert + 控制台输出
+# ProcessLauncherImpl 验证程序
+# 简单 assert + 控制台输出
 add_executable(verify_t14
     unit/verify_t14.cpp
 )
@@ -31,7 +30,7 @@ target_link_libraries(verify_t14 PRIVATE
     advapi32
 )
 
-# T1.7 ConfigLoader 验证程序
+# ConfigLoader 验证程序
 # 覆盖：合法配置解析 / 缺失字段默认值 / schema 校验失败 / 范围越界 / 环境变量展开 / 文件加载
 add_executable(verify_t17
     unit/verify_t17.cpp
@@ -58,7 +57,7 @@ target_link_libraries(verify_t17 PRIVATE
     advapi32
 )
 
-# T2.7 IPC isolation_policy 解析验证程序（Phase 16：appcontainer/filesystem 段删除后重构）
+# isolation_policy 解析验证程序
 add_executable(verify_t27
     unit/verify_t27.cpp
 )
@@ -85,7 +84,7 @@ target_link_libraries(verify_t27 PRIVATE
     advapi32
 )
 
-# T1.1 core 层纯头文件编译验证程序
+# core 层纯头文件编译验证程序
 # 覆盖：core 实体与端口头文件必须无 Win32 依赖（故意不包含 windows.h）
 # 仅依赖 core 层头文件，编译通过即通过，无需链接库
 add_executable(verify_t11
@@ -97,7 +96,7 @@ target_include_directories(verify_t11 PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/nlohmann_json/include
 )
 
-# Phase 16 T3 验收：TokenIsolatorImpl + WriteAreaImpl 行为验证（probe，T7 替换为正式测试）
+# TokenIsolatorImpl + WriteAreaImpl 行为验证（probe）
 add_executable(probe_t16
     unit/probe_t16.cpp
 )
@@ -128,12 +127,11 @@ set_tests_properties(probe_t16 PROPERTIES TIMEOUT 60)
 
 # =============================================================================
 # CTest 注册：verify_t*.exe 以退出码 0/非0 判定通过/失败
-# （这些程序自带 assert + 控制台输出，不依赖 GoogleTest）
-# 修复：此前所有 verify_t 目标无 add_test，ctest 空转导致 CI 单测从未执行
+# （这些程序自带 assert + 控制台输出）
 # 注：顶层 CMakeLists 已 enable_testing()，此处直接注册
 # =============================================================================
 
-# 各验证程序预期运行时长（秒）。CPU/IO 类测试（t16/t18）较慢。
+# 各验证程序预期运行时长（秒）。CPU/IO 类测试较慢。
 add_test(NAME verify_t11 COMMAND verify_t11)
 set_tests_properties(verify_t11 PROPERTIES TIMEOUT 30)
 
@@ -146,7 +144,7 @@ set_tests_properties(verify_t17 PROPERTIES TIMEOUT 30)
 add_test(NAME verify_t27 COMMAND verify_t27)
 set_tests_properties(verify_t27 PROPERTIES TIMEOUT 30)
 
-# Phase 8 Job 功能增强验证程序（T-8.9）
+# Job 功能增强验证程序
 # 覆盖：QueryProcessList / QueryProcessExitCode / QueryProcessPath / SetCrashSilent /
 #       crash_silent 崩溃静默 / 正常与指定退出码
 # 依赖 crash_dummy.exe 同目录（tests 输出目录都相同，ctest 以 build/tests 为工作目录）

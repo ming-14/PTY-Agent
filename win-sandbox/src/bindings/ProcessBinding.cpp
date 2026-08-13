@@ -9,9 +9,9 @@
 // 回调桥接（GIL 管理）：
 //   - Python callable (py::function) 存为 PyProcess 成员（引用计数保持）
 //   - setter 同时设置 usecase 的 std::function（IOCP 线程回调时持 GIL 调 Python callable）
-//   - 回调契约：回调内禁止调 C++ 方法（防死锁，见 Phase 11 文档 3.2.5）
+//   - 回调契约：回调内禁止调 C++ 方法（防死锁）
 //
-// GIL 管理策略（Phase 11 文档 3.3）：
+// GIL 管理策略：
 //   - wait/terminate/signal/query_*：释放 GIL（让其他 Python 线程跑）
 //   - 构造/属性访问/回调 setter：持有 GIL（快速操作）
 //   - IOCP 回调 Python：获取 GIL（py::gil_scoped_acquire）
@@ -49,10 +49,17 @@ public:
 
     ~PyProcess() {
         // 兜底清理（Python __del__ 或 GC 触发）
+        if (!usecase_) {
+            return;
+        }
+        // 1) 先清回调：std::function 捕获的 py::function 析构需要 GIL（当前持有）
+        //    （清空后 IOCP/ETW 线程即使在执行回调也不触及 Python 对象）
+        usecase_->ClearAllCallbacks();
+        // 2) 释放 GIL 后 Close()：Close 会 join IOCP 通知线程，
+        //    若持 GIL join，而 IOCP 线程正等在 gil_scoped_acquire → 死锁
         try {
-            if (usecase_) {
-                usecase_->Close();
-            }
+            py::gil_scoped_release gil;
+            usecase_->Close();
         } catch (...) {
             // 析构不抛异常
         }
@@ -61,6 +68,19 @@ public:
     // ----- 句柄属性 -----
     uint32_t process_id() const { return process_id_; }
     uint32_t pid() const { return exec_result_.process.pid; }
+
+    // request_id：int | None（"" → None，数字字符串 → int）
+    py::object request_id() const {
+        const std::string& s = exec_result_.process.request_id;
+        if (s.empty()) {
+            return py::none();
+        }
+        try {
+            return py::int_(std::stoull(s));
+        } catch (const std::exception&) {
+            return py::none();
+        }
+    }
 
     // HANDLE 值转 int（Python 端用 ctypes 操作）
     int64_t process_handle() const {
@@ -100,12 +120,12 @@ public:
         on_resource_limit_ = std::move(f);
         if (on_resource_limit_) {
             auto cb = on_resource_limit_;
-            usecase_->on_resource_limit = [cb](const ResourceLimitInfo& info) {
+            usecase_->SetOnResourceLimit([cb](const ResourceLimitInfo& info) {
                 py::gil_scoped_acquire gil;
                 cb(resource_limit_info_to_dict(info));
-            };
+            });
         } else {
-            usecase_->on_resource_limit = nullptr;
+            usecase_->SetOnResourceLimit(nullptr);
         }
     }
 
@@ -113,12 +133,12 @@ public:
         on_job_process_started_ = std::move(f);
         if (on_job_process_started_) {
             auto cb = on_job_process_started_;
-            usecase_->on_job_process_started = [cb](const JobProcessStartedInfo& info) {
+            usecase_->SetOnJobProcessStarted([cb](const JobProcessStartedInfo& info) {
                 py::gil_scoped_acquire gil;
                 cb(job_process_started_info_to_dict(info));
-            };
+            });
         } else {
-            usecase_->on_job_process_started = nullptr;
+            usecase_->SetOnJobProcessStarted(nullptr);
         }
     }
 
@@ -126,40 +146,40 @@ public:
         on_job_process_exited_ = std::move(f);
         if (on_job_process_exited_) {
             auto cb = on_job_process_exited_;
-            usecase_->on_job_process_exited = [cb](const JobProcessExitedInfo& info) {
+            usecase_->SetOnJobProcessExited([cb](const JobProcessExitedInfo& info) {
                 py::gil_scoped_acquire gil;
                 cb(job_process_exited_info_to_dict(info));
-            };
+            });
         } else {
-            usecase_->on_job_process_exited = nullptr;
+            usecase_->SetOnJobProcessExited(nullptr);
         }
     }
 
-    // Phase 13：ETW 行为事件回调
+    // ETW 行为事件回调
     void set_on_behavior_event(py::function f) {
         on_behavior_event_ = std::move(f);
         if (on_behavior_event_) {
             auto cb = on_behavior_event_;
-            usecase_->on_behavior_event = [cb](const BehaviorEventInfo& info) {
+            usecase_->SetOnBehaviorEvent([cb](const BehaviorEventInfo& info) {
                 py::gil_scoped_acquire gil;
                 cb(behavior_event_info_to_dict(info));
-            };
+            });
         } else {
-            usecase_->on_behavior_event = nullptr;
+            usecase_->SetOnBehaviorEvent(nullptr);
         }
     }
 
-    // Phase 13：AccessDenied 专项回调
+    // AccessDenied 专项回调
     void set_on_access_denied(py::function f) {
         on_access_denied_ = std::move(f);
         if (on_access_denied_) {
             auto cb = on_access_denied_;
-            usecase_->on_access_denied = [cb](const AccessDeniedInfo& info) {
+            usecase_->SetOnAccessDenied([cb](const AccessDeniedInfo& info) {
                 py::gil_scoped_acquire gil;
                 cb(access_denied_info_to_dict(info));
-            };
+            });
         } else {
-            usecase_->on_access_denied = nullptr;
+            usecase_->SetOnAccessDenied(nullptr);
         }
     }
 
@@ -275,16 +295,23 @@ public:
         return r.Value();
     }
 
-    // query_process_exit_code(pid) → int
-    uint32_t query_process_exit_code(uint32_t pid) {
-        py::gil_scoped_release gil;
-        auto r = usecase_->QueryProcessExitCode(pid);
-        if (!r) {
-            throw std::runtime_error(std::string("[") +
-                                    std::to_string(static_cast<int>(r.Code())) +
-                                    "] " + r.Message());
+    // query_process_exit_code(pid) → (exit_code, is_active)
+    // 文档 §4.3/§6.10：运行中 → (259, True)；已退出 → (真实退出码, False)
+    // is_active = (code == STILL_ACTIVE)：Win32 GetExitCodeProcess 的固有约定
+    py::tuple query_process_exit_code(uint32_t pid) {
+        uint32_t code = 0;
+        {
+            // 释放 GIL 调用 C++ 查询，返回后恢复 GIL 再构造 Python 元组
+            py::gil_scoped_release gil;
+            auto r = usecase_->QueryProcessExitCode(pid);
+            if (!r) {
+                throw std::runtime_error(std::string("[") +
+                                        std::to_string(static_cast<int>(r.Code())) +
+                                        "] " + r.Message());
+            }
+            code = r.Value();
         }
-        return r.Value();
+        return py::make_tuple(code, code == 259u /* STILL_ACTIVE */);
     }
 
     // close()
@@ -309,8 +336,8 @@ private:
     py::function on_resource_limit_;
     py::function on_job_process_started_;
     py::function on_job_process_exited_;
-    py::function on_behavior_event_;    // Phase 13：ETW 行为事件
-    py::function on_access_denied_;     // Phase 13：AccessDenied 专项
+    py::function on_behavior_event_;    // ETW 行为事件
+    py::function on_access_denied_;     // AccessDenied 专项
 };
 
 // =============================================================================
@@ -333,9 +360,10 @@ void RegisterProcess(py::module_& m) {
         R"doc(隔离进程句柄，由 SandboxInstance.start_process 返回。
 
 属性:
-    process_id: int  - 沙箱内部进程 ID
-    pid: int          - OS 进程 PID
-    process_handle: int  - 进程句柄（HANDLE 值，ctypes WaitForSingleObject 用）
+            process_id: int  - 沙箱内部进程 ID
+            pid: int          - OS 进程 PID
+            request_id: str   - start_process 传入的请求关联 ID（可能为空）
+            process_handle: int  - 进程句柄（HANDLE 值，ctypes WaitForSingleObject 用；禁止自行关闭）
     is_pty: bool      - ConPTY 模式标记（hpcon 启动，stdio 走外部 ConPTY）
     stdin_handle: int | None  - stdin 写端句柄（interactive=True 且非 ConPTY 时非空）
     stdout_handle: int | None  - stdout 读端句柄（ctypes ReadFile 用；ConPTY 模式为 None）
@@ -354,7 +382,7 @@ void RegisterProcess(py::module_& m) {
     query_accounting() -> dict
     query_peak_memory() -> int
     query_process_list() -> list[int]
-    query_process_exit_code(pid) -> int
+    query_process_exit_code(pid) -> (exit_code, is_active)
     close()
 
 回调契约:
@@ -363,6 +391,7 @@ void RegisterProcess(py::module_& m) {
 )doc")
         .def_property_readonly("process_id", &PyProcess::process_id)
         .def_property_readonly("pid", &PyProcess::pid)
+        .def_property_readonly("request_id", &PyProcess::request_id)
         .def_property_readonly("process_handle", &PyProcess::process_handle)
         .def_property_readonly("is_pty", &PyProcess::is_pty)
         .def_property_readonly("stdin_handle", &PyProcess::stdin_handle)
@@ -411,7 +440,7 @@ void RegisterProcess(py::module_& m) {
              "查询 Job 内所有进程 PID 列表")
         .def("query_process_exit_code", &PyProcess::query_process_exit_code,
              py::arg("pid"),
-             "查询指定 PID 的退出码")
+             "查询指定 PID 的退出码，返回 (exit_code, is_active) 元组")
         .def("close", &PyProcess::close,
              "显式清理 C++ 端资源（Job/隔离 token/句柄）")
 

@@ -1,12 +1,12 @@
-"""test_silo.py - Server Silo 隔离验证（Phase 14 pybind11 直调形态）。
+"""test_silo.py - Server Silo 隔离验证（pybind11 直调形态）。
 
 Server Silo 在 Win10 客户端（含 22H2）实测不可用（JobObjectCreateSilo 返回
 STATUS_INVALID_PARAMETER），本测试验证"条件启用 + 失败优雅降级"：
 
-  T1: 未启用 silo 配置 → 正常启动 + 子进程输出正常（对照）
-  T2: 启用 silo 配置 → SandboxInstance 可构造（平台不支持时自动降级到普通 Job）
-  T3: 启用 silo 配置 → 子进程正常运行、输出正常（功能不受影响）
-  T4: 启用 silo 配置 → Shutdown 正常
+  未启用 silo 配置 → 正常启动 + 子进程输出正常（对照）
+  启用 silo 配置 → SandboxInstance 可构造（平台不支持时自动降级到普通 Job）
+  启用 silo 配置 → 子进程正常运行、输出正常（功能不受影响）
+  启用 silo 配置 → Shutdown 正常
 
 在支持的平台（Win Server / Win11 预览）上，silo 会真实生效（Job 升级为 Silo）。
 本机 Win10 客户端验证的是降级路径不破坏功能。
@@ -70,8 +70,8 @@ def _has_silo_capability(sb) -> bool:
 # =============================================================================
 
 def test_silo_disabled_normal() -> None:
-    """T1: 未启用 silo → 正常启动 + 子进程输出正常（对照）。"""
-    print("\n[T1] silo disabled normal (baseline)", flush=True)
+    """未启用 silo → 正常启动 + 子进程输出正常（对照）。"""
+    print("\nsilo disabled normal (baseline)", flush=True)
     config = {
         "logging": {"level": "info"},
         "silo": {"enabled": False},
@@ -93,8 +93,8 @@ def test_silo_disabled_normal() -> None:
 
 
 def test_silo_enabled_startup() -> None:
-    """T2: 启用 silo → SandboxInstance 可构造（Win10 客户端自动降级，不崩溃）。"""
-    print("\n[T2] silo enabled startup (auto-degrade on unsupported)", flush=True)
+    """启用 silo → SandboxInstance 可构造（Win10 客户端自动降级，不崩溃）。"""
+    print("\nsilo enabled startup (auto-degrade on unsupported)", flush=True)
     config = {
         "logging": {"level": "info"},
         "silo": {"enabled": True},
@@ -116,8 +116,8 @@ def test_silo_enabled_startup() -> None:
 
 
 def test_silo_enabled_process_runs() -> None:
-    """T3: 启用 silo → 子进程正常运行、输出正常。"""
-    print("\n[T3] silo enabled process runs normally", flush=True)
+    """启用 silo → 子进程正常运行、输出正常。"""
+    print("\nsilo enabled process runs normally", flush=True)
     config = {
         "logging": {"level": "info"},
         "silo": {"enabled": True},
@@ -137,11 +137,11 @@ def test_silo_enabled_process_runs() -> None:
 
 
 def test_silo_enabled_shutdown() -> None:
-    """T4: 启用 silo → Shutdown 正常（无崩溃/死锁）。
+    """启用 silo → Shutdown 正常（无崩溃/死锁）。
 
     启动一个长跑进程，然后 shutdown。验证 sb.shutdown() 不抛异常且能在合理时间内返回。
     """
-    print("\n[T4] silo enabled shutdown (no crash/deadlock)", flush=True)
+    print("\nsilo enabled shutdown (no crash/deadlock)", flush=True)
     config = {
         "logging": {"level": "info"},
         "silo": {"enabled": True},
@@ -189,7 +189,7 @@ _TESTS = [
 
 def main() -> int:
     print("=" * 60)
-    print("Server Silo Tests (Phase 14 pybind11)")
+    print("Server Silo Tests （pybind11）")
     print("=" * 60)
 
     passed = 0

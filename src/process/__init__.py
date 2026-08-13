@@ -5,7 +5,12 @@
 - info / monitor / gui：上层编排（进程信息、进程监控、GUI 检测）
 - windows/、unix/：平台实现（Job Object / process group 进程树追踪）
 - win32_error：Windows 错误码格式化
+
+进程树追踪器工厂（create_process_tree_tracker）是本包对外统一入口：
+Session 等消费方只依赖此工厂与 ProcessTreeTracker 抽象，不接触平台实现。
 """
+
+import uuid
 
 from .info import (
     _get_process_name,
@@ -17,3 +22,31 @@ from .info import (
 from .base import ProcessNotification, ProcessTreeTracker
 from .monitor import ProcessMonitor
 from .gui import GuiDetector
+
+from ..config.common import IS_WINDOWS
+
+
+def create_process_tree_tracker() -> ProcessTreeTracker:
+    """创建平台对应的进程树追踪器（Session 生命周期 owner）
+
+    Windows：sandbox.enabled=true → SandboxProcessTreeTracker（winsandbox 委派，
+             函数内延迟导入，避免 process ↔ sandbox 静态环：sandbox 依赖 process.base）；
+             否则 JobProcessTreeTracker（Job Object）
+    Unix：process group（PgidProcessTreeTracker）
+
+    沙箱与原生后端共用同一端口，Session/PTY 对实现无感知。
+    """
+    if IS_WINDOWS:
+        from ..config import sandbox as _sbx_cfg
+        if _sbx_cfg.ENABLED:
+            from ..sandbox import SandboxProcessTreeTracker, SandboxSessionManager
+            manager = SandboxSessionManager(
+                quota=_sbx_cfg.QUOTA,
+                isolation=_sbx_cfg.ISOLATION,
+                log_level=_sbx_cfg.LOG_LEVEL,
+            )
+            return SandboxProcessTreeTracker(manager)
+        from .windows import JobProcessTreeTracker
+        return JobProcessTreeTracker(name=f"session-{uuid.uuid4().hex[:8]}")
+    from .unix import PgidProcessTreeTracker
+    return PgidProcessTreeTracker()

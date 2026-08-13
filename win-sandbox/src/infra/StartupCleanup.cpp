@@ -1,10 +1,12 @@
 // =============================================================================
-// StartupCleanup - 启动时残留资源清理实现（T7.6）
+// StartupCleanup - 启动时残留资源清理实现
 //
-// 会话目录清理（Phase 16，替代原 AppContainer Profile 清理）：
+// 会话目录清理：
 //   枚举 %LOCALAPPDATA%\win-sandbox\sessions\ 下 <os-pid>-<process_id> 目录，
-//   删除 os-pid 不等于当前进程的残留（WriteArea Teardown 失败时启动期兜底）。
-//   命名含 os-pid 前缀，天然避免误删其他实例的活跃会话。
+//   删除宿主进程已不存在的残留（WriteArea Teardown 失败时启动期兜底）。
+//   删除前检查宿主进程是否存活（OpenProcess + GetExitCodeProcess）：
+//   多进程并发运行时，进程 A 的启动清理不得删除进程 B 仍在使用的会话目录
+//   （目录命名含 os-pid 前缀，但仅凭名称不能判定进程死活）。
 //
 // ETW Session 清理：
 //   使用 QueryAllTracesW 枚举所有 ETW session，
@@ -15,8 +17,9 @@
 #include "infra/StartupCleanup.hpp"
 
 #include <windows.h>
-#include <shlobj.h>    // SHGetFolderPathW / CSIDL_LOCAL_APPDATA
-#include <evntrace.h>  // QueryAllTracesW / ControlTraceW / EVENT_TRACE_PROPERTIES
+#include <knownfolders.h>  // FOLDERID_LocalAppData
+#include <shlobj.h>        // SHGetKnownFolderPath
+#include <evntrace.h>      // QueryAllTracesW / ControlTraceW / EVENT_TRACE_PROPERTIES
 
 #include <algorithm>  // std::all_of
 #include <filesystem>
@@ -30,18 +33,34 @@ namespace winsandbox {
 
 namespace {
 
-// 获取 %LOCALAPPDATA% 路径
+// 获取 %LOCALAPPDATA% 路径（SHGetKnownFolderPath，替代已废弃的 CSIDL API）
 std::wstring GetLocalAppData() {
-    wchar_t buf[MAX_PATH + 1] = {};
-    if (SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, buf) == S_OK) {
-        return std::wstring(buf);
+    PWSTR path = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &path))) {
+        std::wstring result(path ? path : L"");
+        ::CoTaskMemFree(path);
+        return result;
     }
     // 回退：用环境变量
+    wchar_t buf[MAX_PATH + 1] = {};
     DWORD len = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
     if (len > 0 && len <= MAX_PATH) {
         return std::wstring(buf);
     }
     return L"";
+}
+
+// WideString → UTF-8（日志用；非 ASCII 目录名不乱码）
+std::string WideToUtf8(const std::wstring& ws) {
+    if (ws.empty()) return {};
+    int len = WideCharToMultiByte(CP_UTF8, 0, ws.c_str(),
+                                  static_cast<int>(ws.size()),
+                                  nullptr, 0, nullptr, nullptr);
+    if (len <= 0) return {};
+    std::string s(static_cast<size_t>(len), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), static_cast<int>(ws.size()),
+                        &s[0], len, nullptr, nullptr);
+    return s;
 }
 
 } // namespace
@@ -62,7 +81,7 @@ std::string StartupCleanup::RunAll(std::shared_ptr<ILogger> logger) {
 }
 
 // =============================================================================
-// 会话目录清理（Phase 16）
+// 会话目录清理
 // =============================================================================
 
 int StartupCleanup::CleanupSessionDirs(std::shared_ptr<ILogger> logger) {
@@ -76,7 +95,7 @@ int StartupCleanup::CleanupSessionDirs(std::shared_ptr<ILogger> logger) {
     std::wstring sessions_root = local_appdata + L"\\win-sandbox\\sessions";
     logger->Log(LogLevel::Debug,
         std::format("StartupCleanup: Scanning for orphaned session dirs: {}",
-                    std::string(sessions_root.begin(), sessions_root.end())));
+                    WideToUtf8(sessions_root)));
 
     WIN32_FIND_DATAW ffd = {};
     HANDLE hFind = FindFirstFileW((sessions_root + L"\\*").c_str(), &ffd);
@@ -106,21 +125,39 @@ int StartupCleanup::CleanupSessionDirs(std::shared_ptr<ILogger> logger) {
             continue;
         }
 
+        // 宿主进程存活检查：其他进程可能仍在运行（多进程并发使用本库），
+        // 删除其活跃会话目录 = 数据丢失。仅删除进程已不存在/已退出的残留。
+        bool owner_alive = false;
+        HANDLE h_proc = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, os_pid);
+        if (h_proc) {
+            DWORD exit_code = 0;
+            owner_alive = ::GetExitCodeProcess(h_proc, &exit_code) &&
+                          exit_code == STILL_ACTIVE;
+            ::CloseHandle(h_proc);
+        }
+        if (owner_alive) {
+            logger->Log(LogLevel::Debug,
+                std::format("StartupCleanup: skip session dir (owner pid={} still alive): {}",
+                            os_pid, WideToUtf8(dir_name_w)));
+            continue;
+        }
+        // OpenProcess 失败（进程不存在/已退出/权限不足）→ 视为残留删除
+
         std::wstring full = sessions_root + L"\\" + dir_name_w;
         logger->Log(LogLevel::Info,
             std::format("StartupCleanup: Deleting orphaned session dir: {}",
-                        std::string(dir_name_w.begin(), dir_name_w.end())));
+                        WideToUtf8(dir_name_w)));
         // 递归删除（含 writable 及其内容）
         std::error_code ec;
         std::filesystem::remove_all(full, ec);
         if (ec) {
             logger->Log(LogLevel::Warn,
                 std::format("StartupCleanup: remove_all failed for session dir {}: {}",
-                            std::string(dir_name_w.begin(), dir_name_w.end()), ec.message()));
+                            WideToUtf8(dir_name_w), ec.message()));
         } else {
             logger->Log(LogLevel::Info,
                 std::format("StartupCleanup: Deleted session dir: {}",
-                            std::string(dir_name_w.begin(), dir_name_w.end())));
+                            WideToUtf8(dir_name_w)));
             ++cleaned;
         }
     } while (FindNextFileW(hFind, &ffd) != 0);
@@ -152,10 +189,12 @@ int StartupCleanup::CleanupEtwSessions(std::shared_ptr<ILogger> logger) {
 
     PEVENT_TRACE_PROPERTIES props_array[1] = { props };
     ULONG status = QueryAllTracesW(props_array, 1, &session_count);
-    if (status == ERROR_INSUFFICIENT_BUFFER) {
-        // buffer 不够，重新分配
+    if (status == ERROR_INSUFFICIENT_BUFFER || status == ERROR_MORE_DATA) {
+        // buffer 不够（MORE_DATA 也可能返回部分计数），逐条扩容重试
         ULONG needed_buf_size = buf_size;
-        while (status == ERROR_INSUFFICIENT_BUFFER) {
+        int grow_attempts = 0;
+        while ((status == ERROR_INSUFFICIENT_BUFFER || status == ERROR_MORE_DATA) &&
+               grow_attempts < 64) {
             needed_buf_size += sizeof(EVENT_TRACE_PROPERTIES) + 1024 * sizeof(wchar_t);
             buf.resize(needed_buf_size);
             props = reinterpret_cast<EVENT_TRACE_PROPERTIES*>(buf.data());
@@ -165,6 +204,7 @@ int StartupCleanup::CleanupEtwSessions(std::shared_ptr<ILogger> logger) {
             props_array[0] = props;
             ULONG temp_count = 0;
             status = QueryAllTracesW(props_array, 1, &temp_count);
+            ++grow_attempts;
             if (temp_count > 0) {
                 session_count = temp_count;
                 break;
@@ -222,7 +262,7 @@ int StartupCleanup::CleanupEtwSessions(std::shared_ptr<ILogger> logger) {
         wchar_t* name_ptr = reinterpret_cast<wchar_t*>(
             reinterpret_cast<BYTE*>(cur_props) + cur_props->LoggerNameOffset);
         std::wstring session_name_w(name_ptr);
-        std::string session_name(session_name_w.begin(), session_name_w.end());
+        std::string session_name = WideToUtf8(session_name_w);
 
         // 只清理以 win-sandbox-etw- 开头的 session
         if (session_name.find("win-sandbox-etw-") != 0) {

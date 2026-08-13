@@ -25,7 +25,7 @@ def _resolve_bin_dir() -> Path:
     路径：src/fastscreen/adapter.py → src/fastscreen/ → src/ → 项目根 → bin/
     """
     here = Path(__file__).resolve()
-    project_root = here.parents[2]  # PTY-Agent 根
+    project_root = here.parents[2]  # 项目根
     return project_root / "bin"
 
 

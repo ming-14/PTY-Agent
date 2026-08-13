@@ -26,6 +26,7 @@ enum class ProcessState {
 // 进程退出原因（用于事件上报与日志分类）
 enum class ExitReason {
     NormalExit,            // 进程自行 return/exit
+    Crashed,               // 进程未处理异常崩溃（NTSTATUS 异常码，如 0xC0000005）
     KilledByCpuLimit,      // CPU 时间超限被杀（Job END_OF_JOB_TIME / END_OF_PROCESS_TIME）
     KilledByMemoryLimit,   // 内存超限被杀（Job PROCESS_MEMORY_LIMIT / JOB_MEMORY_LIMIT）
     KilledByProcessLimit,  // 进程数超限被杀（Job ACTIVE_PROCESS_LIMIT）
@@ -36,7 +37,8 @@ enum class ExitReason {
 };
 
 // 退出原因 → 文档约定字符串（API_REFERENCE 6.4 process_exited.reason）
-// 语义（黑盒报告修复，2026-08-06）：
+// 语义：
+//   - 崩溃（未处理异常 NTSTATUS）→ "crash"
 //   - CPU 超限  → "cpu_limit"（原笼统 "resource_limit" 无法区分）
 //   - 内存超限  → "memory_limit"
 //   - 进程数超限→ "process_count_limit"
@@ -44,6 +46,7 @@ enum class ExitReason {
 inline std::string ExitReasonToString(ExitReason reason) {
     switch (reason) {
         case ExitReason::NormalExit:            return "normal";
+        case ExitReason::Crashed:               return "crash";
         case ExitReason::KilledByCpuLimit:      return "cpu_limit";
         case ExitReason::KilledByMemoryLimit:   return "memory_limit";
         case ExitReason::KilledByProcessLimit:  return "process_count_limit";
@@ -69,7 +72,7 @@ struct SandboxedProcess {
     ProcessState state = ProcessState::Pending;
     ExitReason exit_reason = ExitReason::Unknown;
 
-    // Phase 5: 退出时从 Job Object 采集的资源使用统计（可选）
+    // 退出时从 Job Object 采集的资源使用统计（可选）
     std::optional<JobAccountingInfo> resource_usage;
 };
 

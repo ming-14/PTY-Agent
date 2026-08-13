@@ -1,4 +1,4 @@
-"""unified diff 生成 —— 仿 opencode diff/diff.go
+"""unified diff 生成
 
 标准库 difflib.unified_diff，header 仿 udiff 格式 `--- a/<path>` / `+++ b/<path>`。
 generate_diff 返回 (diff 文本, 新增行数, 删除行数)：

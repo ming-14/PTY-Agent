@@ -2,7 +2,7 @@
 
 Windows 进程沙箱隔离系统 — 通过 Job Object + Low IL token 组合实现进程级隔离，Python 通过 pybind11 in-process 库（`win_sandbox_native.pyd`）直接调用 C++ 核心，无子进程、无 IPC。
 
-> **状态**：Phase 0-16 已实现（Phase 16：Low IL 完整性隔离替换 AppContainer 链）。版本 0.2.0，pybind11 in-process 形态。21 套件 e2e 测试全量通过（run_all_regression 21/21）+ ctest 6 项单测通过。
+> **状态**：版本 0.2.0，pybind11 in-process 形态。21 套件 e2e 测试全量通过（run_all_regression 21/21）+ ctest 6 项单测通过。
 
 ---
 
@@ -31,13 +31,13 @@ Windows 进程沙箱隔离系统 — 通过 Job Object + Low IL token 组合实�
 | 能力 | 实现方式 | 说明 |
 |------|----------|------|
 | **资源限制** | Job Object | CPU 速率限制、内存上限、进程数上限、墙钟超时、CPU 超时 |
-| **进程隔离** | Low IL token | 子进程以 Low 完整性级别运行（Phase 16，纯用户态，非管理员可用）：对宿主磁盘**全盘只读**（可写区除外）、%TEMP% 重定向到会话可写区 |
+| **进程隔离** | Low IL token | 子进程以 Low 完整性级别运行（纯用户态，非管理员可用）：对宿主磁盘**全盘只读**（可写区除外）、%TEMP% 重定向到会话可写区 |
 | **文件系统隔离** | Low IL + 可写区 | 全盘只读 + `%LOCALAPPDATA%\win-sandbox\sessions\<pid>-<process_id>\writable` 可写区（TEMP/TMP 重定向） |
 | **网络隔离** | net_policy | `unrestricted`（不限制）/ `allowlist`（WFP 连接过滤 + SOCKS5 代理注入，需管理员，非管理员自动降级） |
 | **剪贴板隔离** | Job UI 限制 | `clipboard_isolate=true` 时隔离剪贴板/全局原子表/系统参数 |
 | **行为监控** | ETW（条件编译） | 管理员模式：真 ETW 内核 session；非管理员：降级轮询模式 |
-| **Job 功能增强** | Job Object（Phase 8） | 进程列表查询（`query_process_list`）、退出码精确读取（正常/异常/崩溃分类）、崩溃静默（`crash_silent`，崩溃不弹窗不触发 WER） |
-| **进程树扩展** | Job Object（Phase 9） | Job 内子/孙进程生命周期实时事件（`on_job_process_started` / `on_job_process_exited` 回调）、任意 PID 退出码查询（`query_process_exit_code`） |
+| **Job 功能增强** | Job Object | 进程列表查询（`query_process_list`）、退出码精确读取（正常/异常/崩溃分类）、崩溃静默（`crash_silent`，崩溃不弹窗不触发 WER） |
+| **进程树扩展** | Job Object | Job 内子/孙进程生命周期实时事件（`on_job_process_started` / `on_job_process_exited` 回调）、任意 PID 退出码查询（`query_process_exit_code`） |
 
 > **⚠️ 默认姿态警告**：Low IL 隔离是**默认生效**的（子进程全盘只读 + 可写区，
 > 无需任何配置）；`isolation_policy` 仅控制**网络策略与剪贴板隔离**——省略时
@@ -53,16 +53,17 @@ Windows 进程沙箱隔离系统 — 通过 Job Object + Low IL token 组合实�
 - `SandboxInstance` / `SandboxProcess` 为 C++ 对象的 pybind11 绑定，方法直调
 - stdin/stdout/stderr 管道句柄以 `int` 暴露给 Python，Python 用 `win_sandbox.read_pipe` / `write_pipe` / `close_handle` 自行 `ReadFile`/`WriteFile`
 - Job IOCP / ETW 事件通过 pybind11 回调推 Python（`proc.on_resource_limit` / `on_job_process_started` / `on_behavior_event` 等 setter）
-- 墙钟定时器（`WallClockTimer`）与统计轮询（`StatsPoller`）在 Python 端实现
+- 墙钟定时器（`WallClockTimer`）与统计轮询（`StatsPoller`）在 Python 端实现；`wall_clock_timeout_ms` 配额由沙箱内建定时器兑现
 - 零子进程开销、零序列化开销、零第三方依赖
 
 ### 交互能力
 
-- `start_process` — 启动沙箱进程（支持资源配额、隔离策略、交互模式）
+- `start_process` — 启动沙箱进程（支持资源配额、隔离策略、交互模式、`request_id` 关联、外部传入 ConPTY `hpcon`）
 - `write_pipe(proc.stdin_handle, data)` — 持续写入子进程 stdin（交互模式）
 - `proc.signal(sig)` — `ctrl_break` / `kill` 信号
 - `proc.terminate(exit_code)` — 主动终止指定进程
 - `proc.query_accounting()` — 查询即时资源使用
+- `sb.cleanup_finished()` — 清理已退出进程条目（`start_process` 入口自动执行）
 - `sb.shutdown()` — 优雅关闭沙箱
 - 事件回调：`on_resource_limit` / `on_job_process_started` / `on_job_process_exited` / `on_behavior_event` / `on_access_denied`
 
@@ -139,12 +140,8 @@ cd win-sandbox
 git submodule init
 git submodule update
 
-# 加载 MSVC 环境
-& "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
-
-# 构建 C++ + 打包 wheel
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+# 构建 C++ + 打包 wheel（构建脚本自动定位 MSVC 环境并执行 CMake 构建）
+.\BUILD.ps1
 pip install .
 ```
 
@@ -206,12 +203,17 @@ sb.shutdown()
 
 ## 构建指南
 
-### CMake 配置选项
+### 构建
 
-| 选项 | 默认值 | 说明 |
-|------|--------|------|
-| `CMAKE_BUILD_TYPE` | `Debug` | `Debug` / `Release` / `RelWithDebInfo` |
-| `CMAKE_GENERATOR` | Ninja（推荐） | 也可用 `Visual Studio 17 2022` |
+构建统一走仓库根目录的 `BUILD.ps1`（自动定位 MSVC 环境并执行 CMake+Ninja；需 PowerShell 7+，Windows PowerShell 5.1 无法解析 UTF-8 无 BOM 脚本）：
+
+```powershell
+.\BUILD.ps1              # Release（默认）
+.\BUILD.ps1 -Config Debug
+.\BUILD.ps1 -Rebuild     # 清理 build 目录后全新构建
+```
+
+产物：`build/bin/win_sandbox_native.cp311-win_amd64.pyd`（pybind11 扩展模块，文件名含 Python ABI tag）。
 
 ### 第三方依赖
 
@@ -227,9 +229,9 @@ sb.shutdown()
 ### 构建验证
 
 ```powershell
-# 编译 + 运行全量 e2e 测试
-cmake --build build
-python -m pytest tests/e2e/ -v
+# 编译 + 运行全量 e2e 回归（排除需管理员的 test_etw_admin.py）
+.\BUILD.ps1
+python tests/e2e/run_all_regression.py    # 需 PYTHONPATH=python（win_sandbox 包目录）
 ```
 
 ---
@@ -261,7 +263,7 @@ sb.shutdown()
 要点：
 - `SandboxInstance` 为 C++ 对象的 pybind11 绑定，方法直调，无 IPC
 - `quota` 支持：`cpu_ms` / `cpu_rate_percent` / `memory_mb` / `job_memory_mb` / `max_processes` / `wall_clock_timeout_ms` / `cpu_timeout_ms` / `no_ui` / `breakaway_ok` / `crash_silent`
-- `isolation_policy` 支持：`net_policy`（`unrestricted` / `allowlist`）/ `net_allowlist`（白名单规则 `{ip, port, protocol}`）/ `clipboard_isolate`（Phase 16 schema；旧字段 `fs_mode` / `capabilities` / `path_rules` / `filesystem` 已删除，传了会显式报错）
+- `isolation_policy` 支持：`net_policy`（`unrestricted` / `allowlist`）/ `net_allowlist`（白名单规则 `{ip, port, protocol}`）/ `clipboard_isolate`（严格模式：未知键传了会显式报错）
 - 管道 helper：`win_sandbox.read_pipe(handle, size=4096)` / `win_sandbox.write_pipe(handle, data)` / `win_sandbox.close_handle(handle)`
 - 工具函数：`win_sandbox.contains_access_denied_keyword(text)` / `win_sandbox.drain_stdout(proc, cb)` / `win_sandbox.drain_stderr(proc, cb)`
 - 上下文管理器：`win_sandbox.WallClockTimer(timeout_ms, on_timeout)` / `win_sandbox.StatsPoller(proc, interval_ms, on_stats)`
@@ -287,7 +289,7 @@ sb = win_sandbox.SandboxInstance(config=r"config.json", log_level="debug")
 要点：
 - 配置段：`logging` / `default_quota` / `isolation` / `monitoring` / `silo` / `global_quota`
 - 路径字段支持环境变量展开（`%TEMP%`、`%LOCALAPPDATA%`、`%SystemRoot%` 等）
-- Phase 16 起旧段（`appcontainer` / `filesystem` / `network`）与旧字段（`fs_mode` / `capabilities` / `path_rules`）**已删除**，配置含这些键会显式报错拒绝（不静默忽略）
+- 配置严格模式：未知段/未知字段会显式报错拒绝（不静默忽略）
 - `net_policy=allowlist` 依赖 WFP connect filter（需管理员）：非管理员下 Open 失败记 Warn 降级（语义等同 `unrestricted`，见 `capabilities` 报告）
 
 ---
@@ -330,15 +332,15 @@ python tests/e2e/test_network_allowlist.py
 | `test_resource_quota.py` | 6 | 资源配额（内存/CPU/进程数限制）|
 | `test_network_allowlist.py` | 4 | 网络 allowlist（WFP + SOCKS5 代理）|
 | `test_behavior_log.py` | 5 | 行为事件日志（管理员 4 PASS；普通用户降级）|
-| `test_degraded_monitor.py` | 6 | 降级监控模式（进程/文件/网络轮询，T7.9）|
+| `test_degraded_monitor.py` | 6 | 降级监控模式（进程/文件/网络轮询）|
 | `test_cleanup.py` | 2 | 会话目录清理验证（Low IL 可写区 Teardown）|
 | `test_permission_matrix.py` | 2 | 权限矩阵（Admin / StandardUser）|
 | `test_scenario_c_sample.py` | 1 | 样本分析场景 |
 | `test_scenario_d_ci.py` | 1 | CI 多实例并行 |
-| `test_global_quota.py` | 5 | 全局配额跨实例共享（T7.12）|
+| `test_global_quota.py` | 5 | 全局配额跨实例共享 |
 | `test_silo.py` | 4 | Server Silo 更强隔离（可选）|
-| `test_job_enhancement.py` | 6 | Job 功能增强（Phase 8）|
-| `test_process_tree.py` | 11 | 进程树扩展（Phase 9：job_process_* 回调 + 退出码查询 + 类型校验 + 跨实例隔离）|
+| `test_job_enhancement.py` | 6 | Job 功能增强 |
+| `test_process_tree.py` | 11 | 进程树扩展（job_process_* 回调 + 退出码查询 + 类型校验 + 跨实例隔离）|
 | `test_native_smoke.py` | — | pybind11 直调冒烟（SandboxInstance/Process/capabilities）|
 | `test_native_etw.py` | — | pybind11 形态 ETW 直调 |
 | `test_etw_admin.py` | 8 | 管理员模式真 ETW（需管理员，默认排除）|
@@ -357,20 +359,20 @@ python tests/unit/test_helpers.py
 
 ctest 注册 6 项程序（probe_t16 / verify_t11 / verify_t14 / verify_t17 / verify_t27 / verify_t28），覆盖
 NativeSandboxedProcess、ConfigLoader（isolation schema 拒绝）、TokenIsolator、WriteArea、
-isolation_policy 解析、Job 功能增强（Phase 8）。
+isolation_policy 解析、Job 功能增强。
 
 ---
 
 ## 项目结构
 
-完整目录树见 [docs/FILESTREE.txt](docs/FILESTREE.txt)。
+完整目录树见 [docs/FILESTREE.md](docs/FILESTREE.md)。
 
 ```
 win-sandbox/
 ├── src/          # C++ 源码（clean architecture：core → usecases → adapters → infra）
 ├── python/       # Python 包（win_sandbox/：helpers + pybind11 绑定）
 ├── tests/        # e2e Python 套件 + C++ 单元验证（verify_t*.cpp / ctest）
-├── docs/         # 架构文档、User/API 参考、Phase 阶段、design 分析、memory 记忆、archive 归档
+├── docs/         # 架构文档、User/API 参考、经验教训
 ├── third_party/  # Git 子模块（WIL / nlohmann_json / spdlog / pybind11）
 └── build/        # 构建产物（git 忽略）
 ```
@@ -382,15 +384,10 @@ win-sandbox/
 | 文档 | 说明 |
 |------|------|
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | 架构与技术原理（现行权威设计文档）|
-| [archive](docs/archive/) | 归档的历史设计文档（PRD/HLD/TDD/LLD-01/LLD-04）|
-| [Lessons-Learned](docs/memory/Lessons-Learned.md) | 踩坑记录（20 条）|
-| [Job 功能增强分析](docs/design/JobEnhancement-Analysis-20260808.md) | Phase 8 功能分析 |
-| [Phase 2 候选评估](docs/design/Phase2-Candidates-Evaluation-20260806.md) | 技术选型候选对比 |
-| [USER_GUIDE](docs/USER_GUIDE.md) | 用户手册（T7.11）|
-| [API_REFERENCE](docs/API_REFERENCE.md) | Python API 参考（T7.11）|
-| [DEPLOYMENT](docs/DEPLOYMENT.md) | 部署指南（T7.11）|
-| [TROUBLESHOOTING](docs/memory/TROUBLESHOOTING.md) | 故障排查（T7.11）|
-| [Phase 0-9](docs/Phase/) | 各阶段实现计划 + 实现记录 |
+| [Lessons-Learned](docs/Lessons-Learned.md) | 踩坑记录 |
+| [USER_GUIDE](docs/USER_GUIDE.md) | 用户手册 |
+| [API_REFERENCE](docs/API_REFERENCE.md) | Python API 参考 |
+| [DEPLOYMENT](docs/DEPLOYMENT.md) | 部署指南 |
 
 ---
 
@@ -400,7 +397,8 @@ win-sandbox/
 
 | 限制 | 影响 | 规避方式 |
 |------|------|----------|
-| **Low IL 全盘只读** | 沙箱进程无法向宿主磁盘任何位置写（含 `%TEMP%` 宿主路径） | 会话可写区 `%LOCALAPPDATA%\win-sandbox\sessions\<pid>-<process_id>\writable` 可写，TEMP/TMP 重定向；以宿主 `%TEMP%` 下目录为 cwd 会被拒（"当前目录无效"） |
+| **Low IL 全盘只读** | 沙箱进程无法向宿主磁盘任何位置写（含 `%TEMP%` 宿主路径） | 会话可写区 `%LOCALAPPDATA%\win-sandbox\sessions\<pid>-<process_id>\writable` 可写，TEMP/TMP 重定向 |
+| **Low IL 读受限目录** | 宿主目录带显式受限 ACL（受控文件夹/安全工具注入的 AppContainer ACE、特殊 DACL）时，沙箱内对该目录的读/执行也被拒绝（`CreateProcess` 报 87）——完整性强制之外的第二道闸 | 沙箱内要访问的可执行/数据放普通 ACL 目录（如 `%LOCALAPPDATA%` 下）；不要依赖 Desktop/项目目录的读可达性 |
 | **allowlist 需管理员** | `net_policy=allowlist` 依赖 WFP connect filter，非管理员 Open 失败 | 记 Warn 降级（语义等同 `unrestricted`），`capabilities` 报告的 `network` 模块给出 degraded_reason |
 | **ETW 内核 session 需管理员** | 非管理员无法启动真 ETW trace | 条件编译：管理员走真 ETW，非管理员走降级轮询模式 |
 | **TerminateProcess 返回歧义** | 对已退出进程返回 `ERROR_ACCESS_DENIED`，与权限不足无法区分 | 调用前用 `WaitForSingleObject(h, 0)` 预检测进程状态 |
@@ -410,11 +408,9 @@ win-sandbox/
 
 ## 已知问题
 
-全部已修复 bug 的根因/修复详情见 [memory/Lessons-Learned.md](docs/memory/Lessons-Learned.md)；故障排查见 [TROUBLESHOOTING.md](docs/memory/TROUBLESHOOTING.md)；平台限制与降级行为见 [USER_GUIDE.md](docs/USER_GUIDE.md) §11。
-
-- **已修复**：`std::optional` 空值解引用（#009）、分片 use-after-free（#010）、Shutdown race（#011）、Shutdown 路径use-after-free/并发 join/消息丢失（#012/#013/#014）、JobObject IOCP 回调 use-after-free（#015）、配置枚举默认值（#016）、空命令行数组（#017）—— 均见 Lessons-Learned
 - **ETW 降级模式局限**（非管理员）：无注册表事件、文件事件仅覆盖配置目录；进程/文件/网络降级能力见 USER_GUIDE §6.4
-- **未完成任务（Phase 7）**：~~T7.11 文档~~ ✅、~~CI~~ 已移除、~~管理员 ETW 真路径~~ ✅（已全部完成）
+- **`cmd /c "绝对路径\程序.exe"`（CreateProcess 直传形态）**：cmd 的引号剥除规则会把"路径+参数"整串当作文件名（报"系统找不到文件"）；需用 `cmd /c ""C:\path\a.exe" arg"` 双层引号或省略路径引号（路径无空格时）
+- **stdin 写入阻塞上限 30s**：子进程不读 stdin 时 `write_pipe` 超时抛异常（OVERLAPPED 写 + CancelIoEx），不会无限挂起
 
 ---
 

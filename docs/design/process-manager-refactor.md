@@ -177,9 +177,9 @@ Session（owner）
 - `pty.py`：`SandboxPty` —— `PseudoTerminal` 端口实现（ConPtyHandle + 外部传入 hpcon，回显/方向键/resize/Ctrl+C 与原生 ConPTY 一致）
 
 **集成方式**（用户决策：完整沙箱后端，非降级）：
-- `session.create_process_tracker()`：`[sandbox] enabled=true` → `SandboxSessionManager` + `SandboxProcessTreeTracker`；否则原生 Job（Windows）/ 进程组（Unix）
+- `process.create_process_tree_tracker()`：`[sandbox] enabled=true` → `SandboxSessionManager` + `SandboxProcessTreeTracker`；否则原生 Job（Windows）/ 进程组（Unix）
 - `pty_factory._try_create_sandbox_pty()`：enabled=true 时要求 tracker 为沙箱实现，创建失败直接抛 `RuntimeError`，**不回退原生后端**（沙箱是安全边界，不允许静默失去隔离）
-- 配置：`src/config/sandbox.toml`（`config/sandbox.py` 载入）：enabled / log_level / quota / isolation
+- 配置：`config/sandbox.toml`（`config/sandbox.py` 载入）：enabled / log_level / quota / isolation
 
 **实现要点（修复记录）**：
 1. win-sandbox 拒绝 quota 零值数值字段（`cpu_ms must be > 0`）→ `_build_quota()` 过滤 0 值字段
@@ -249,7 +249,7 @@ Session（owner）
 - 验收：pytest 全量通过
 
 ### Phase 6：Session 编排 + 引用点收口
-- `session/session.py`：创建 tracker（新增 `create_process_tracker()` 工厂，平台分支）、注入 create_pty；`stop()` 顺序改为 `tracker.kill_tree() → pty.close() → tracker.close()`；start/wait/close_gui_window/process_list 改走 tracker
+- `session/session.py`：从 `process` 包导入 `create_process_tree_tracker()` 工厂创建 tracker（平台分支 + 沙箱委派）、注入 create_pty；`stop()` 顺序改为 `tracker.kill_tree() → pty.close() → tracker.close()`；start/wait/close_gui_window/process_list 改走 tracker
 - `session/session_threads.py`：SessionComponents 增加 tracker；monitor loop 的 `get_process_list` 走 tracker
 - `output/events.py`：`check_existence` 的 `pty_provider` → tracker
 - 测试：更新 `tests/unit/session/test_*.py`、`tests/integration/test_session.py`

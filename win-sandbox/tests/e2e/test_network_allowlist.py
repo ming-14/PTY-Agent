@@ -1,4 +1,4 @@
-"""Phase 16 e2e: Network allowlist via SOCKS5 proxy（Phase 14 pybind11 直调形态）。
+"""e2e: Network allowlist via SOCKS5 proxy（pybind11 直调形态）。
 
 Tests:
   1. allowlist_config   — isolation.net_policy=allowlist + net_allowlist in config

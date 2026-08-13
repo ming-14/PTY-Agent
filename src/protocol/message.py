@@ -24,7 +24,7 @@ import weakref
 from typing import Optional
 
 from ..config.daemon import SOCKET_RECV_BUFSIZE, MAX_MESSAGE_LENGTH
-from ..auth.base import MessageSigner
+from .signing import MessageSigner
 
 _logger = logging.getLogger("pty-protocol")
 
@@ -186,3 +186,29 @@ class Message:
             data = Message.encode(obj)
         _logger.debug("send: fd=%d type=%s len=%d", sock.fileno(), obj.get("type", "?"), len(data))
         sock.sendall(data)
+
+    @staticmethod
+    def ping(host: str, port: int, timeout: float) -> bool:
+        """探测指定端口的守护进程是否响应 ping（单实例检查 / 健康探测共用）
+
+        ping 消息走 dispatcher 的 ping 豁免（不校验认证），send 时 skip_sign=True。
+        客户端控制方与 daemon 自身启动检查共用此方法，避免重复实现。
+
+        Args:
+            host: 目标地址。
+            port: 目标端口。
+            timeout: 连接与等待超时（秒）。
+
+        Returns:
+            True 表示对端响应了 pong。
+        """
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            sock.connect((host, port))
+            Message.send(sock, {"type": "ping"}, skip_sign=True)
+            resp = Message.recv(sock, skip_sign=True)
+            sock.close()
+            return resp is not None and resp.get("type") == "pong"
+        except (socket.error, ConnectionRefusedError, OSError):
+            return False

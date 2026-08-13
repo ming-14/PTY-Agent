@@ -58,32 +58,37 @@ LogLevel SpdlogToLogLevel(spdlog::level::level_enum l) {
 }
 
 // ----- 日志目录： %LOCALAPPDATA%\win-sandbox\logs\ -----
-// E4 修复（黑盒报告 r4，2026-08-07）：默认目录从 %TEMP%\win-sandbox-<pid>
-//   改为文档承诺的 %LOCALAPPDATA%\win-sandbox\logs。
-//   原实现每实例在 %TEMP% 建独立目录且从不清理，长期运行无限累积
-//   （报告实测全机 454 个目录/4.0MB，与实例数 1:1 线性增长，无回收路径），
-//   且与 docs/memory/TROUBLESHOOTING.md、USER_GUIDE 声称的默认值不一致。
-//   固定目录 + retention_days 清理可避免累积。
+// 默认目录固定为文档承诺的 %LOCALAPPDATA%\win-sandbox\logs；
+// 统一目录 + retention_days 清理可避免 %TEMP% 独立目录长期无回收累积。
 // 使用窄字符 API（spdlog 默认 filename_t = std::string）
 std::string GetLogDir() {
-    // %LOCALAPPDATA% 通常为 C:\Users\<user>\AppData\Local
+    // %LOCALAPPDATA% 为当前用户的应用数据目录（含用户名）
     char buf[MAX_PATH];
     DWORD len = GetEnvironmentVariableA("LOCALAPPDATA", buf, MAX_PATH);
-    if (len == 0 || len >= MAX_PATH) {
-        // 环境变量缺失（服务场景）：回退到当前目录
-        return ".\\win-sandbox-logs\\";
+    if (len > 0 && len < MAX_PATH) {
+        std::string base(buf, len);
+        if (!base.empty() && base.back() != '\\' && base.back() != '/') {
+            base += '\\';
+        }
+        return base + "win-sandbox\\logs\\";
     }
-    std::string base(buf, len);
-    if (!base.empty() && base.back() != '\\' && base.back() != '/') {
-        base += '\\';
+    // %LOCALAPPDATA% 缺失（服务场景）：回退到系统临时目录
+    //（相对当前目录的 CWD 不可控，不能用）
+    char temp_buf[MAX_PATH];
+    DWORD tlen = GetTempPathA(MAX_PATH, temp_buf);
+    if (tlen > 0 && tlen < MAX_PATH) {
+        std::string base(temp_buf, tlen);
+        if (!base.empty() && base.back() != '\\' && base.back() != '/') {
+            base += '\\';
+        }
+        return base + "win-sandbox-logs\\";
     }
-    return base + "win-sandbox\\logs\\";
+    return ".\\win-sandbox-logs\\";
 }
 
-// 清理过期日志文件（BUG-06 修复 + E4 修复）：
+// 清理过期日志文件：
 //   1. 当前日志目录下过期（> retention_days）的 sandbox*.log* 文件
-//   2. %TEMP%\win-sandbox-<pid>（旧版默认日志目录，E4 修复后不再新建；
-//      仍清理历史累积的过期目录，避免升级残留）
+//   2. %TEMP%\win-sandbox-<pid>（历史日志目录，仍清理累积的过期目录）
 //   不动 temp workspace 目录（win-sandbox-<pid>-<ms>，由 exit_strategy 管理）。
 void CleanupStaleLogs(const std::string& log_dir, uint32_t retention_days) {
     if (retention_days == 0) return;  // 0 = 永久保留
@@ -165,16 +170,25 @@ private:
 // ----- Logger 静态成员定义 -----
 
 std::shared_ptr<ILogger> Logger::instance_;
+std::mutex Logger::init_mutex_;
 
 std::shared_ptr<ILogger> Logger::Init(const std::string& level,
                                       const std::string& log_dir,
                                       uint32_t retention_days) {
+    // 锁内检查+创建：并发 Init 不双开同名日志文件
+    std::lock_guard<std::mutex> lk(init_mutex_);
     if (instance_) return instance_;
+    return InitInternal(level, log_dir, retention_days);
+}
 
+// 无锁初始化本体（调用方必须已持有 init_mutex_）
+std::shared_ptr<ILogger> Logger::InitInternal(const std::string& level,
+                                              const std::string& log_dir,
+                                              uint32_t retention_days) {
     auto spd_level = StringToLevel(level);
 
-    // 创建日志目录（BUG-06 修复：尊重配置的 logging.dir，而非硬编码 %TEMP%）
-    // 路径拼接修复（黑盒报告 Medium）：dir 可能没有尾部分隔符（文档示例
+    // 创建日志目录（尊重配置的 logging.dir，而非硬编码 %TEMP%）
+    // 路径拼接：dir 可能没有尾部分隔符（文档示例
     //   %LOCALAPPDATA%\win-sandbox\logs 就无尾反斜杠），直接 + "sandbox.log"
     //   会拼成 logssandbox.log。统一规范化：无尾分隔符则补一个。
     const std::string effective_dir = log_dir.empty() ? GetLogDir() : log_dir;
@@ -208,7 +222,7 @@ std::shared_ptr<ILogger> Logger::Init(const std::string& level,
     // 注册为 spdlog 默认 logger（spdlog::info 等全局接口可用）
     spdlog::set_default_logger(spd_logger);
 
-    // 启动时按 retention_days 清理过期日志（BUG-06 修复）
+    // 启动时按 retention_days 清理过期日志
     CleanupStaleLogs(dir_norm, retention_days);
 
     instance_ = std::make_shared<SpdlogLogger>(std::move(spd_logger));
@@ -219,19 +233,25 @@ std::shared_ptr<ILogger> Logger::Configure(const std::string& level,
                                            const std::string& log_dir,
                                            uint32_t retention_days) {
     // 配置加载完成后按配置重初始化（清理旧实例，让 dir/level/retention 生效）
+    // 锁内 shutdown+Init：与 Init/Shutdown 并发安全
+    std::lock_guard<std::mutex> lk(init_mutex_);
     if (instance_) {
         spdlog::shutdown();
         instance_.reset();
     }
-    return Init(level, log_dir, retention_days);
+    // 复用 Init 的内部逻辑（避免双重加锁：Init 内部会再锁，std::mutex 非递归）
+    // → 直接在此复制初始化过程，或用无锁内部函数
+    return InitInternal(level, log_dir, retention_days);
 }
 
 void Logger::Shutdown() {
+    std::lock_guard<std::mutex> lk(init_mutex_);
     spdlog::shutdown();
     instance_.reset();
 }
 
 std::shared_ptr<ILogger> Logger::Get() {
+    std::lock_guard<std::mutex> lk(init_mutex_);
     return instance_;
 }
 

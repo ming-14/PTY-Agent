@@ -1,13 +1,11 @@
 // =============================================================================
 // NativeSandboxInstance - 沙箱实例（pybind11/native 形态多进程管理器）
 //
-// Phase 11：SandboxInstance 的去 IPC 版本。per-process Job 模式不变，
-// 用 NativeSandboxedProcess 替代 StartProcessUseCase，无 IEventEmitter 依赖，
-// 无 StatsCollector（Phase 13 Python 端轮询替代）。
+// pybind11/native 形态的沙箱实例，per-process Job 模式：
+// 用 NativeSandboxedProcess 启动隔离进程，无 IEventEmitter 依赖，
+// 无 StatsCollector（Python 端轮询替代）。
 //
-// 与 SandboxInstance 的关系（方案 B）：
-//   - 本类是新增的 pybind11 专用实现，不动 SandboxInstance（IPC 形态保留）
-//   - 过渡期两套多进程管理器并存，Phase 12 删除 SandboxInstance 后本类成为唯一
+// 本类是唯一的沙箱实例实现。
 //
 // StartProcess 返回 NativeProcessHandle（含 usecase shared_ptr + 句柄 + process_id），
 // pybind11 ProcessBinding 包装为 Python Process 对象。
@@ -41,15 +39,19 @@ class ProcessLauncherImpl;
 class TokenIsolatorImpl;
 class WriteAreaImpl;
 class WfpEngineImpl;
-class EtwMonitorImpl;  // Phase 13：ETW 行为监控
+class EtwMonitorImpl;  // ETW 行为监控
 
 // per-process 资源集合（NativeSandboxedProcess 专用）
+//
+// 资源用 shared_ptr 并由 usecase 持有副本：Python 端 Process 对象在
+// sb.shutdown() 之后仍可 wait/close，usecase 存活期间依赖必存活（防 UAF）；
+// 资源实际释放发生在 usecase（及其 Python 引用）全部销毁时。
 struct NativeProcessEntry {
-    std::unique_ptr<JobObjectImpl> job;
-    std::unique_ptr<ProcessLauncherImpl> launcher;
-    std::unique_ptr<TokenIsolatorImpl> token_isolator;
-    std::unique_ptr<WriteAreaImpl> write_area;
-    std::unique_ptr<WfpEngineImpl> wfp_engine;
+    std::shared_ptr<JobObjectImpl> job;
+    std::shared_ptr<ProcessLauncherImpl> launcher;
+    std::shared_ptr<TokenIsolatorImpl> token_isolator;
+    std::shared_ptr<WriteAreaImpl> write_area;
+    std::shared_ptr<WfpEngineImpl> wfp_engine;
     std::shared_ptr<NativeSandboxedProcess> usecase;  // shared_ptr：pybind11 Process 持有
     // 全局配额占用记录（Acquire 后记录，退出时 Release）
     uint64_t quota_memory_mb = 0;
@@ -67,9 +69,9 @@ struct NativeProcessHandle {
 
 class NativeSandboxInstance {
 public:
-    // 构造：注入共享依赖（无 IEventEmitter）
+    // 构造：注入共享依赖
     // silo / global_quota 可选注入，nullptr = 不启用
-    // Phase 13：monitoring 配置控制 ETW 行为监控启用
+    // monitoring 配置控制 ETW 行为监控启用
     NativeSandboxInstance(std::shared_ptr<ILogger> logger,
                           ISilo* silo = nullptr,
                           IGlobalQuotaManager* global_quota = nullptr,
@@ -96,17 +98,18 @@ public:
     Result<uint32_t> QueryProcessExitCode(uint32_t process_id, uint32_t pid) const;
 
     // 清理已退出的 usecase（释放 per-process 资源）
+    // 由 StartProcess 入口自动调用 + 绑定为 Python 方法（start_process/cleanup_finished）
     void CleanupFinished();
 
     // 终止所有进程并清理
     void ShutdownAll();
 
-    // Phase 14 修复：停止 ETW monitor（仅停止，不析构 usecase）
+    // 停止 ETW monitor（仅停止，不析构 usecase）
     // 调用方应在释放 GIL 后调用（Stop 内部 join ETW 线程，线程需获 GIL 完成回调）
     // 幂等：已停止时安全调用
     void StopEtwMonitor();
 
-    // Phase 14 修复：清空所有 usecase 的回调（on_behavior_event 等）
+    // 清空所有 usecase 的回调（on_behavior_event 等）
     // 调用方必须在持有 GIL 时调用（销毁 py::function 捕获需要 GIL）
     // 在 StopEtwMonitor 之后调用：ETW 线程已 join，不会有并发回调访问
     void ClearAllCallbacks();
@@ -116,7 +119,8 @@ public:
 
 private:
     uint32_t AllocateProcessId();
-    NativeSandboxedProcess* FindByProcessId(uint32_t process_id) const;
+    // 返回 usecase 的 shared_ptr（锁内拷贝，防调用方持锁外使用裸指针的 UAF）
+    std::shared_ptr<NativeSandboxedProcess> FindByProcessId(uint32_t process_id) const;
     void ReleaseQuota(NativeProcessEntry& entry);
 
     std::shared_ptr<ILogger> logger_;
@@ -124,7 +128,7 @@ private:
     ISilo* silo_ = nullptr;
     IGlobalQuotaManager* global_quota_ = nullptr;
 
-    // Phase 13：ETW 行为监控（可选，monitoring.etw_enabled=true 时创建）
+    // ETW 行为监控（可选，monitoring.etw_enabled=true 时创建）
     std::unique_ptr<EtwMonitorImpl> etw_monitor_;
     MonitoringConfig monitoring_config_;
     std::atomic<bool> etw_started_{false};

@@ -1,6 +1,6 @@
 # =============================================================================
 # win-sandbox 顶层 CMake 配置
-# Phase 0：项目骨架 + 第三方库集成 + 编译链路验证
+# 项目骨架 + 第三方库集成 + 编译链路验证
 # =============================================================================
 cmake_minimum_required(VERSION 3.20)
 
@@ -76,7 +76,7 @@ set(SPDLOG_BUILD_TESTS_HO OFF CACHE BOOL "" FORCE)
 set(SPDLOG_ENABLE_PCH OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/spdlog)
 
-# --- pybind11 (Python 绑定，Phase 10) ---
+# --- pybind11 (Python 绑定) ---
 # in-process 库形态：win_sandbox_native.pyd 加载进 Python 解释器进程
 # pybind11 3.0+ 走 CMake FindPython 路径（PYBIND11_FINDPYTHON=ON）
 find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)

@@ -8,8 +8,8 @@
 - 自动生成随机 VNC 密码并写入 ultravnc.ini
 - 通过 Windows Job Object 绑定子进程，确保随父进程退出
 
-注：websockify 已移除，WebSocket→VNC TCP 代理由守护进程的
-    /vnc/websockify 端点直接实现（见 server.py），统一到单一端口。
+WebSocket→VNC TCP 代理由守护进程的 /vnc/websockify 端点直接实现
+（见 server.py），统一到单一端口。
 """
 
 import ctypes

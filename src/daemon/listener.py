@@ -118,7 +118,7 @@ class Listener:
 
             _logger.debug("Listener [%s] 接受连接: %s", self._transport, addr)
 
-            # TLS 包装（Phase 4 添加 ssl_context 时生效）
+            # TLS 包装（tls 传输且提供 ssl_context 时生效）
             if self._transport == "tls" and self._ssl_context is not None:
                 try:
                     conn = self._ssl_context.wrap_socket(conn, server_side=True)

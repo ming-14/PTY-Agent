@@ -1,3 +1,5 @@
+// 公共类型与定义：C ABI 导出宏、捕获方法/目标/格式枚举、错误码、
+// 帧数据结构（FrameData 负责数据所有权），以及帧内存池的分配接口。
 #pragma once
 
 #include <cstdint>
@@ -74,6 +76,7 @@ struct WindowInfo {
     bool visible;
 };
 
+// 单帧像素数据；owns_data 为真时析构/移动会释放 data。
 struct FrameData {
     uint8_t* data;
     int32_t width;

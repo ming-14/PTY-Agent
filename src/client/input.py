@@ -168,7 +168,7 @@ def process_input(text: str, json_escaping: bool = False, send_eol: str = "\r") 
     """处理输入文本：可选 JSON/控制字符转义解码 + 自动追加行尾符
 
     默认 raw 模式（json_escaping=False）：原样发送，不做任何转义处理。
-    Windows 路径中的反斜杠（如 C:\\Users\\rikka\\new_folder）不会被误转换。
+    Windows 路径中的反斜杠不会被误转换。
 
     启用 json_escaping 时：先使用完整 JSON 反转移处理所有标准转义序列
    （\\n、\\t、\\r、\\uXXXX、\\"、\\\\ 等），再展开控制字符转义

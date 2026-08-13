@@ -1,3 +1,5 @@
+// GDI BitBlt 捕获：兼容性最好、无特殊依赖的基础方案，
+// 作为 DXGI/WGC 初始化或采集失败时的最终回退。
 #include "bitblt_capture.h"
 #include <chrono>
 #include <dwmapi.h>

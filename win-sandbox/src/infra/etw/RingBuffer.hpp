@@ -1,20 +1,20 @@
 // =============================================================================
-// RingBuffer - 无锁 SPSC 环形缓冲（infra 层）
+// RingBuffer - 环形事件缓冲（infra 层）
 //
-// 单生产者（ETW 回调线程）单消费者（Dispatch 线程）无锁环形缓冲。
-// 固定大小，满时丢弃最旧事件 + 丢包计数。
+// 多生产者（ETW 各 session 消费线程 + 降级监控线程）单消费者（Dispatch 线程）
+// 环形缓冲，Push/PopBatch 全加锁串行化：
+//   - 缓冲槽位存放 BehaviorEvent（含 string 成员），并发环境下槽位 move 与
+//     覆盖必须互斥，否则消费者读到半成品（torn read）
+//   - 满时丢新事件（不覆盖最旧，避免与消费者 move 竞争），dropped_count 递增
 //
 // 设计要点：
 //   1. power-of-2 大小：用 mask 代替 modulo，提高性能
-//   2. head/tail 用 atomic + memory_order：head 由生产者写，消费者读；
-//      tail 由消费者写，生产者读
-//   3. 缓存行对齐：避免 false sharing（head/tail 分在不同 cache line）
-//   4. 满时策略：覆盖最旧事件（tail 前进），dropped_count 递增
-//   5. 序号：每个事件携带递增 seq，消费者检测 seq 跳跃 → 丢包
+//   2. 满时策略：丢弃新事件（head 不前移），消费者独占未消费槽位
+//   3. 序号：每个事件携带递增 seq，消费者检测 seq 跳跃 → 丢包
 //
 // 线程模型：
-//   - Push：仅在生产者线程调用
-//   - Pop/PopBatch：仅在消费者线程调用
+//   - Push：任意生产者线程（内部 push_mutex_ 串行化）
+//   - Pop/PopBatch：仅消费者线程（Dispatch 线程独享，无需加锁）
 //   - GetDroppedCount：任意线程（atomic 读取）
 // =============================================================================
 #pragma once
@@ -23,6 +23,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <mutex>
 #include <vector>
 #include <algorithm>
 
@@ -46,20 +47,22 @@ public:
 
     // ---- 生产者接口 ----
 
-    // 推入单个事件（覆盖式：满时丢弃最旧）
+    // 推入单个事件（满时丢弃新事件；多生产者经 push_mutex_ 串行化）
     void Push(BehaviorEvent&& event) {
+        std::lock_guard<std::mutex> lk(push_mutex_);
+
         // 分配 seq
         event.seq = next_seq_.fetch_add(1, std::memory_order_relaxed);
 
         size_t h = head_.load(std::memory_order_relaxed);
         size_t t = tail_.load(std::memory_order_acquire);
 
-        // 检查是否满
+        // 检查是否满：满时丢弃新事件（不覆盖最旧——消费者可能正在 move
+        // tail 位置的槽位，覆盖会产生 torn read）
         size_t size = h - t;
         if (size >= buffer_.size()) {
-            // 满：丢弃最旧事件（tail 前进）
             dropped_count_.fetch_add(1, std::memory_order_relaxed);
-            tail_.store(t + 1, std::memory_order_release);
+            return;
         }
 
         buffer_[h & mask_] = std::move(event);
@@ -123,6 +126,9 @@ private:
 
     size_t mask_;
     std::vector<BehaviorEvent> buffer_;
+
+    // 生产者串行化（多 session 消费线程 + 降级监控线程并发 Push）
+    std::mutex push_mutex_;
 
     // alignas 避免 false sharing
     alignas(CACHELINE_SIZE) std::atomic<size_t> head_{0};  // 生产者写

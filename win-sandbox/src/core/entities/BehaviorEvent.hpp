@@ -3,8 +3,6 @@
 //
 // ETW 采集的进程/文件/注册表/网络四类行为事件统一表示。
 // 每个事件携带序号（seq），用于丢包检测。
-//
-// Phase 6：行为监控
 // =============================================================================
 #pragma once
 
@@ -29,7 +27,7 @@ enum class BehaviorEventType : int {
     RegistryDeleteKey = 10,// 注册表删键
     TcpConnect      = 11,  // TCP 连接
     UdpSend         = 12,  // UDP 发送
-    AccessDenied    = 13,  // 访问拒绝（升级自 Phase 2 临时方案）
+    AccessDenied    = 13,  // 访问拒绝
     GapDetected     = 14,  // 丢包检测（序号不连续）
     Unknown         = 99,  // 未知事件类型
 };

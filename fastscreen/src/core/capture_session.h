@@ -12,6 +12,8 @@
 
 namespace fs {
 
+// 捕获会话：start() 启动独立捕获线程 capture_loop，按固定帧率调用 do_capture()
+// 采集帧并通过回调（FrameCallback）投递；Auto 模式会在运行时回退到 BitBlt。
 class CaptureSession {
 public:
     CaptureSession();

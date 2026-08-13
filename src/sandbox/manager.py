@@ -14,8 +14,8 @@
     只能经 Process.wait(timeout_ms=0) 非阻塞探测（仍在运行抛
     SandboxTimeoutError，已退出返回 (exit_code, ...)），结果缓存
 
-与旧 IPC 版的差异（无兼容接口，引用点已全部更新）：
-  - 无 exe_path/pipe_name/connect_timeout/sbx_config：进程内直调，无管道
+接口形态（进程内直调，无管道）：
+  - 无 exe_path/pipe_name/connect_timeout/sbx_config：进程内直调
   - 无 read_output/drain_output/read/write_stdin：ConPTY 模式下 stdio 由
     SandboxPty 持有的 ConPtyHandle 直驱（hpcon 外部传入）
   - signal/write_stdin 命令走 Process 对象直调
@@ -29,7 +29,6 @@ import threading
 from typing import List, Optional
 
 from ..process.base import ProcessNotification, NOTIF_SPAWN, NOTIF_EXIT, NOTIF_CRASH
-from ..process.win32_error import STILL_ACTIVE
 
 _logger = logging.getLogger("sandbox-manager")
 
@@ -172,12 +171,13 @@ class SandboxSessionManager:
     def get_process_exit_code(self, pid: int) -> Optional[int]:
         """查询 Job 内任意 PID 退出码（None = 仍在运行）
 
-        win-sandbox 的 query_process_exit_code 对活跃进程返回
-        STILL_ACTIVE(259)（对齐 GetExitCodeProcess 语义），此处映射为 None。
+        win-sandbox 的 query_process_exit_code 返回 (exit_code, is_active)
+        元组（is_active 对应 GetExitCodeProcess 的 STILL_ACTIVE 语义），
+        此处映射为进程树追踪器端口的标量约定：is_active → None。
         """
         self._require_process()
-        code = self._process.query_process_exit_code(pid)
-        return None if code == STILL_ACTIVE else int(code)
+        code, is_active = self._process.query_process_exit_code(pid)
+        return None if is_active else int(code)
 
     def _require_process(self):
         if self._instance is None or self._process is None:

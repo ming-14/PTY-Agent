@@ -1,4 +1,4 @@
-"""T1.9 e2e 测试：OJ 场景（Phase 14 pybind11 直调形态）。
+"""e2e 测试：OJ 场景（pybind11 直调形态）。
 
 模拟 Online Judge 评测场景，验证沙箱 4 个核心能力：
   1. 正常退出 + stdout 回收（echo hello）
@@ -37,19 +37,12 @@ def _assert(cond: bool, msg: str) -> None:
 def _run_oj(sb, command_line, quota, timeout_ms=30000, **kwargs):
     """启动进程 + 注册 on_resource_limit 回调 + drain stdout/stderr + wait。
 
-    wall_clock_timeout_ms 由 Python 端 WallClockTimer 实现（C++ 端不处理）。
+    wall_clock_timeout_ms 由沙箱内建实现（start_process 自动挂墙钟定时器）。
     返回 (exit_code, stdout, stderr, reason, usage, limit_hits)。
     """
     limit_hits = []
     proc = sb.start_process(command_line=command_line, quota=quota, **kwargs)
     proc.on_resource_limit = limit_hits.append
-
-    # wall_clock_timeout_ms：Python 端 WallClockTimer 超时调 proc.terminate
-    timer = None
-    wall_ms = (quota or {}).get("wall_clock_timeout_ms")
-    if wall_ms and wall_ms > 0:
-        timer = helpers.WallClockTimer(proc, wall_ms, exit_code=1)
-        timer.start()
 
     stdout_data = []
     stderr_data = []
@@ -59,8 +52,6 @@ def _run_oj(sb, command_line, quota, timeout_ms=30000, **kwargs):
     exit_code, reason, usage = proc.wait(timeout_ms=timeout_ms)
     stdout_thread.join(timeout=5)
     stderr_thread.join(timeout=5)
-    if timer is not None:
-        timer.cancel()
     proc.close()
 
     return (exit_code, b"".join(stdout_data), b"".join(stderr_data),

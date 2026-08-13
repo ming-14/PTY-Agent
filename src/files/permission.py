@@ -1,10 +1,8 @@
-"""权限检查 —— D3 已定：当前仅保留判断接口，直接放行
+"""权限检查 —— 当前一律放行
 
-后续呈现层（前端弹窗/会话级记住）只需替换 check 实现，
-writer 的调用点不变（design §4.6）。
-
-路径边界判定（path == root or startswith(root + os.sep)）同样保留在
-writer 内，与状态机检查一起；本期不实现边界限制，待呈现层落地时挂接。
+提供 check 判定接口供 write/edit 流程调用，替换实现不影响调用点
+（design §4.6）。路径边界判定（path == root or startswith(root + os.sep)）
+与状态机检查位于 writer 内。
 """
 
 

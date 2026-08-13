@@ -1,4 +1,4 @@
-"""T5.x e2e 测试：Phase 5 资源配额与使用统计（Phase 14 pybind11 直调形态）。
+"""e2e 测试：资源配额与使用统计（pybind11 直调形态）。
 
 验证：
   1. wall_clock_timeout：超时后进程被杀，exit_reason=wall_clock_timeout/killed_by_user
@@ -40,19 +40,12 @@ def _assert(cond: bool, msg: str) -> None:
 def _run_with_limit_callback(sb, command_line, quota, timeout_ms=30000, **kwargs):
     """启动进程 + 注册 on_resource_limit 回调 + drain + wait。
 
-    wall_clock_timeout_ms 由 Python 端 WallClockTimer 实现（C++ 端不处理）。
+    wall_clock_timeout_ms 由沙箱内建实现（start_process 自动挂墙钟定时器）。
     返回 (exit_code, stdout, stderr, reason, usage, limit_hits)。
     """
     limit_hits = []
     proc = sb.start_process(command_line=command_line, quota=quota, **kwargs)
     proc.on_resource_limit = limit_hits.append
-
-    # wall_clock_timeout_ms：Python 端 WallClockTimer 超时调 proc.terminate
-    timer = None
-    wall_ms = (quota or {}).get("wall_clock_timeout_ms")
-    if wall_ms and wall_ms > 0:
-        timer = helpers.WallClockTimer(proc, wall_ms, exit_code=1)
-        timer.start()
 
     stdout_data = []
     stderr_data = []
@@ -62,8 +55,6 @@ def _run_with_limit_callback(sb, command_line, quota, timeout_ms=30000, **kwargs
     exit_code, reason, usage = proc.wait(timeout_ms=timeout_ms)
     stdout_thread.join(timeout=5)
     stderr_thread.join(timeout=5)
-    if timer is not None:
-        timer.cancel()
     proc.close()
 
     return (exit_code, b"".join(stdout_data), b"".join(stderr_data),
@@ -75,7 +66,7 @@ def _run_with_limit_callback(sb, command_line, quota, timeout_ms=30000, **kwargs
 # =============================================================================
 
 def test_1_wall_clock_timeout() -> None:
-    """T5.1: wall_clock_timeout 超时后进程被杀。"""
+    """wall_clock_timeout 超时后进程被杀。"""
     print("\n[Test 1] wall_clock_timeout", flush=True)
     sb = make_sandbox(log_level="info")
     try:
@@ -97,7 +88,7 @@ def test_1_wall_clock_timeout() -> None:
 
 
 def test_2_memory_limit() -> None:
-    """T5.2: memory_mb 超限触发 on_resource_limit 回调。"""
+    """memory_mb 超限触发 on_resource_limit 回调。"""
     print("\n[Test 2] memory_mb limit", flush=True)
     sb = make_sandbox(log_level="info")
     try:
@@ -124,7 +115,7 @@ def test_2_memory_limit() -> None:
 
 
 def test_3_cpu_timeout() -> None:
-    """T5.3: cpu_timeout_ms 超限触发 on_resource_limit 回调。"""
+    """cpu_timeout_ms 超限触发 on_resource_limit 回调。"""
     print("\n[Test 3] cpu_timeout_ms limit", flush=True)
     sb = make_sandbox(log_level="info")
     try:
@@ -154,7 +145,7 @@ def test_3_cpu_timeout() -> None:
 
 
 def test_4_resource_usage_reported() -> None:
-    """T5.4: proc.wait 返回值包含 resource_usage 字段。"""
+    """proc.wait 返回值包含 resource_usage 字段。"""
     print("\n[Test 4] resource_usage in proc.wait return", flush=True)
     sb = make_sandbox(log_level="info")
     try:
@@ -201,7 +192,7 @@ def test_4_resource_usage_reported() -> None:
 
 
 def test_5_resource_usage_values() -> None:
-    """T5.5: resource_usage 数值合理性 — 运行 IO 密集命令后 IO 统计非零。"""
+    """resource_usage 数值合理性 — 运行 IO 密集命令后 IO 统计非零。"""
     print("\n[Test 5] resource_usage IO stats", flush=True)
     sb = make_sandbox(log_level="info")
     try:
@@ -235,12 +226,12 @@ def test_5_resource_usage_values() -> None:
 
 
 def test_6_max_processes() -> None:
-    """T5.6: max_processes 单 Job 内强制进程数上限。
+    """max_processes 单 Job 内强制进程数上限。
 
     语义说明：架构为 per-process Job 模式——每个 StartProcess 创建独立
     JobObjectImpl，max_processes 限制的是该 Job 内（含其子进程）的活动进程数。
 
-    注：Phase 16 Low IL 语义下沙箱进程无法读取父进程 %TEMP% 的脚本文件
+    注：Low IL 语义下沙箱进程无法读取父进程 %TEMP% 的脚本文件
     （Errno 13 Permission denied），fork 逻辑改为 python -c 内联（base64 编码）。
     """
     print("\n[Test 6] max_processes per-Job enforcement", flush=True)

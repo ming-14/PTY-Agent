@@ -1,4 +1,4 @@
-"""T7.10 e2e 测试：权限矩阵（Permission Matrix）（Phase 14 pybind11 直调形态）。
+"""e2e 测试：权限矩阵（Permission Matrix）（pybind11 直调形态）。
 
 验证 Admin 和 StandardUser 模式下 CapabilityReport 的正确性。
 

@@ -25,9 +25,6 @@ dist/
 .vscode/
 *.swp
 *~
-
-test_output/
 *.bmp
 *.jpg
 *.png
-!web/static/**/*.png

@@ -19,11 +19,13 @@
 
 #include <windows.h>
 #include <processthreadsapi.h>  // InitializeProcThreadAttributeList / UpdateProcThreadAttribute
+#include <namedpipeapi.h>       // CreateNamedPipeW
 
 #include <chrono>
 #include <format>
 #include <map>
 #include <string_view>
+#include <atomic>
 
 namespace winsandbox {
 
@@ -36,7 +38,7 @@ inline uint64_t NowUnixMs() {
         duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
 }
 
-// D4 修复（黑盒报告 r4）：命令行脱敏，仅保留可执行路径、去掉参数。
+// 命令行脱敏，仅保留可执行路径、去掉参数。
 // 完整命令行可能含口令/令牌，不应以 info 级落盘。
 std::string RedactCommandLine(std::string_view cmdline) {
     if (cmdline.empty()) {
@@ -53,7 +55,8 @@ std::string RedactCommandLine(std::string_view cmdline) {
     if (cmdline[start] == '"') {
         size_t end = cmdline.find('"', start + 1);
         if (end == std::string_view::npos) {
-            return std::string(cmdline);
+            // 引号未闭合：截断到首 token 区域（防参数泄漏到 info 日志）
+            return std::string(cmdline.substr(start, (std::min)(size_t{64}, cmdline.size() - start)));
         }
         return std::string(cmdline.substr(start, end - start + 1));
     }
@@ -65,9 +68,10 @@ std::string RedactCommandLine(std::string_view cmdline) {
 }
 
 // ms → DWORD（WaitForSingleObject 超时）
-// UINT64_MAX → INFINITE；其他 → 截断为 DWORD
+// UINT64_MAX → INFINITE；> MAXDWORD（≈49.7 天）也视为 INFINITE
+// （静默截断会使超时提前数天返回，语义错误）
 inline DWORD MsToWaitTimeout(uint64_t ms) {
-    if (ms == UINT64_MAX) return INFINITE;
+    if (ms == UINT64_MAX || ms > MAXDWORD) return INFINITE;
     return static_cast<DWORD>(ms);
 }
 
@@ -145,14 +149,87 @@ ProcessLauncherImpl::CreateInheritablePipe(bool read_inherit, bool write_inherit
 }
 
 // =============================================================================
+// CreateStdinPipe - 创建 stdin 专用管道（写端 OVERLAPPED）
+//
+// stdin 写端（沙箱）以 FILE_FLAG_OVERLAPPED 打开，WriteStdin 才能：
+//   - 超时等待（子进程不读时不会无限期阻塞调用线程）
+//   - CancelIoEx 取消挂起写入（进程被杀时解除阻塞）
+// 读端（子进程）可继承。返回 {read_handle, write_handle}。
+// 用命名管道实现（CreatePipe 无法生成 OVERLAPPED 句柄），名称含
+// pid+序号保证进程内唯一，单实例、字节流模式，语义等同匿名管道。
+// 序号用进程级静态原子：多个 ProcessLauncherImpl 实例（每个沙箱进程
+// 一个 usecase 一个 launcher）并发启动时 seq 仍全局唯一，不会同名冲突。
+// =============================================================================
+namespace {
+// stdin 管道名序号（进程内全局唯一；多 launcher 实例并发安全）
+std::atomic<uint32_t> g_stdin_pipe_seq{0};
+} // namespace
+
+Result<std::pair<wil::unique_handle, wil::unique_handle>>
+ProcessLauncherImpl::CreateStdinPipe() {
+    std::wstring name = L"\\\\.\\pipe\\winsandbox-stdin-" +
+                        std::to_wstring(::GetCurrentProcessId()) + L"-" +
+                        std::to_wstring(g_stdin_pipe_seq.fetch_add(1));
+
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+
+    // server 端 = 读端（子进程 hStdInput），可继承
+    HANDLE read_raw = ::CreateNamedPipeW(
+        name.c_str(),
+        PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+        1,                          // 单实例
+        64 * 1024, 64 * 1024,       // 64KB 双向缓冲
+        0, &sa);
+    if (read_raw == INVALID_HANDLE_VALUE) {
+        DWORD err = ::GetLastError();
+        return Result<std::pair<wil::unique_handle, wil::unique_handle>>::Err(
+            ErrorCode::ProcessPipeCreateFailed,
+            std::format("CreateNamedPipeW(stdin) failed: err={}", err));
+    }
+    wil::unique_handle read_h(read_raw);
+
+    // client 端 = 写端（沙箱 WriteStdin），OVERLAPPED，不可继承
+    // CreateNamedPipeW 创建的实例默认处于监听态，CreateFileW 可直接连接
+    HANDLE write_raw = ::CreateFileW(
+        name.c_str(), GENERIC_WRITE, 0, &sa, OPEN_EXISTING,
+        FILE_FLAG_OVERLAPPED, nullptr);
+    if (write_raw == INVALID_HANDLE_VALUE) {
+        DWORD err = ::GetLastError();
+        return Result<std::pair<wil::unique_handle, wil::unique_handle>>::Err(
+            ErrorCode::ProcessPipeCreateFailed,
+            std::format("CreateFileW(stdin) failed: err={}", err));
+    }
+    wil::unique_handle write_h(write_raw);
+
+    // 完成 server 端连接（客户端已打开，立即成功或 ERROR_PIPE_CONNECTED）
+    ::ConnectNamedPipe(read_h.get(), nullptr);
+
+    // 写端明确不可继承（双保险：sa.bInheritHandle=TRUE 已由属性列表白名单控制，
+    // 但清掉标志防止未来代码回归 bInheritHandles=TRUE 时泄漏）
+    ::SetHandleInformation(write_h.get(), HANDLE_FLAG_INHERIT, 0);
+
+    return Result<std::pair<wil::unique_handle, wil::unique_handle>>::Ok(
+        std::make_pair(std::move(read_h), std::move(write_h)));
+}
+
+// =============================================================================
 // BuildEnvironmentBlock - 构建子进程环境块（UTF-16，双 null 结尾）
 // =============================================================================
 Result<std::vector<wchar_t>> ProcessLauncherImpl::BuildEnvironmentBlock(
     bool inherit_env,
     const std::vector<std::pair<std::string, std::string>>& env_vars) {
 
-    // 用 map 合并环境变量（同名覆盖）：NAME=value 形式（UTF-16）
-    std::map<std::wstring, std::wstring, std::less<>> merged;
+    // Windows 环境变量大小写不敏感：用不区分大小写的 key 合并，
+    // 否则继承的 TEMP 与注入的 temp 并存两条，子进程取首条 → 覆盖静默失效
+    struct CaseInsensitiveLess {
+        bool operator()(const std::wstring& a, const std::wstring& b) const {
+            return _wcsicmp(a.c_str(), b.c_str()) < 0;
+        }
+    };
+    std::map<std::wstring, std::wstring, CaseInsensitiveLess> merged;
 
     // 1. 复制父进程环境变量（如要求继承）
     if (inherit_env) {
@@ -238,9 +315,9 @@ Result<LaunchResult> ProcessLauncherImpl::Launch(const LaunchRequest& req) {
     // 子进程 stdio 由 ConPTY 内核驱动自动分配，不创建匿名管道。
     // bInheritHandles=FALSE，hStdInput/Output/Error=NULL（STARTF_USESTDHANDLES 置位但句柄留空）。
     // PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE (0x00020016) 携带 HPCON。
-    // Phase 16：隔离 token 走 CreateProcessAsUserW（非 SECURITY_CAPABILITIES），
+    // 隔离 token 走 CreateProcessAsUserW（非 SECURITY_CAPABILITIES），
     // 属性列表仅 PSEUDOCONSOLE 一项。
-    // conhost.exe 由外部（PTY-Agent）启动，不在沙箱内；子进程在沙箱内，隔离语义完整。
+    // conhost.exe 由外部宿主启动（不在沙箱内）；子进程在沙箱内，隔离语义完整。
     if (req.hpcon != nullptr) {
         auto env_result = BuildEnvironmentBlock(req.inherit_env, req.env_vars);
         if (!env_result) {
@@ -255,7 +332,7 @@ Result<LaunchResult> ProcessLauncherImpl::Launch(const LaunchRequest& req) {
         LPCWSTR workdir_ptr = req.working_dir.empty() ? nullptr : workdir_w.c_str();
 
         const bool use_iso = (req.isolated_token != nullptr);
-        const DWORD attr_count = 1;  // 仅 PSEUDOCONSOLE 属性（Phase 16：AC 属性已移除）
+        const DWORD attr_count = 1;  // 仅 PSEUDOCONSOLE 属性
 
         // 属性列表初始化（attr_count 个属性）
         SIZE_T attr_size = 0;
@@ -290,16 +367,20 @@ Result<LaunchResult> ProcessLauncherImpl::Launch(const LaunchRequest& req) {
                 std::format("UpdateProcThreadAttribute(PSEUDOCONSOLE) failed: err={}", err));
         }
 
-        // STARTUPINFOEXW：hStdInput/Output/Error = NULL（ConPTY 驱动自动分配 console 句柄）
+        // STARTUPINFOEXW：hStdInput/Output/Error 留空，但必须置 STARTF_USESTDHANDLES。
+        // CreateProcessAsUserW 下不置位时 stdio 复制路径不激活，PSEUDOCONSOLE
+        // 属性被忽略（子进程连父控制台，ConPTY 无输出——实测确认）；置位后由
+        // conhost 接管 stdio 分配。CreateProcessW 下置不置均可。
         STARTUPINFOEXW siex{};
         siex.StartupInfo.cb = sizeof(siex);
         siex.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
         siex.lpAttributeList = attr_list;
 
         // 不设 CREATE_NO_WINDOW：ConPTY 内部以 --headless 启动 conhost，不弹窗口。
-        // 不使用 CREATE_NEW_PROCESS_GROUP：实测该标志会使 ConPTY 的 Ctrl+C（\x03 →
-        // CTRL_C_EVENT）失效——子进程成为新进程组后 conhost 无法向其转发中断信号
-        // （对照实验：无 CNPG 时 ping 被 \x03 中断并输出 Control-C，带 CNPG 时无响应）。
+        // 不使用 CREATE_NEW_PROCESS_GROUP：该标志会使子进程成为独立进程组，
+        // conhost 无法向其转发中断信号（Ctrl+C \x03 失效）。
+        // 影响：ConPTY 模式下 Signal(CtrlBreak)（GenerateConsoleCtrlEvent 按组定向）
+        // 不可用，应通过写 \x03 到 ConPTY 或关闭伪控制台实现中断。
         DWORD creation_flags = CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
 
         PROCESS_INFORMATION pi{};
@@ -357,10 +438,9 @@ Result<LaunchResult> ProcessLauncherImpl::Launch(const LaunchRequest& req) {
     //   stdout 子进程写 → 沙箱读：read_end（沙箱）不继承，write_end（子进程）继承
     //   stderr 同 stdout
     //
-    // 关键修复（Phase 3 T3.3）：旧代码 stdin 误用 (parent_inherit=false, child_inherit=true)
-    //   导致 read_end 不继承、write_end 继承，但子进程需要的是 read_end → 子进程拿到的
-    //   hStdInput 实际是写端，ReadFile 立即失败，REPL 进程视为 EOF 立即退出。
-    auto stdin_pipe = CreateInheritablePipe(/*read_inherit=*/true,  /*write_inherit=*/false);
+    // stdin 需子进程继承管道读端（read_end）：若子进程 hStdInput 拿到的是写端，
+    // ReadFile 立即失败，REPL 进程视为 EOF 立即退出。
+    auto stdin_pipe = CreateStdinPipe();
     if (!stdin_pipe) {
         return Result<LaunchResult>::Err(stdin_pipe.Code(), stdin_pipe.Message());
     }
@@ -374,7 +454,7 @@ Result<LaunchResult> ProcessLauncherImpl::Launch(const LaunchRequest& req) {
     }
 
     // 拆出读端/写端：pair.first = read_end，pair.second = write_end
-    // stdin:  read_end → 子进程 hStdInput；write_end → 沙箱持有（WriteStdin 用）
+    // stdin:  read_end → 子进程 hStdInput；write_end → 沙箱持有（WriteStdin 用，OVERLAPPED）
     // stdout: read_end → 沙箱持有（StreamReader 用）；write_end → 子进程 hStdOutput
     // stderr: 同 stdout
     wil::unique_handle stdin_read   = std::move(stdin_pipe.Value().first);
@@ -384,13 +464,15 @@ Result<LaunchResult> ProcessLauncherImpl::Launch(const LaunchRequest& req) {
     wil::unique_handle stderr_read  = std::move(stderr_pipe.Value().first);
     wil::unique_handle stderr_write = std::move(stderr_pipe.Value().second);
 
-    // 2. 构建 STARTUPINFO（设置 stdio 句柄）
-    STARTUPINFOW si{};
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdInput  = stdin_read.get();
-    si.hStdOutput = stdout_write.get();
-    si.hStdError  = stderr_write.get();
+    // 2. 构建 STARTUPINFOEXW（设置 stdio 句柄）
+    // EXTENDED_STARTUPINFO_PRESENT 要求 cb == sizeof(STARTUPINFOEXW)，
+    // 否则 CreateProcessAsUserW 返回 ERROR_INVALID_PARAMETER(87)
+    STARTUPINFOEXW siex{};
+    siex.StartupInfo.cb = sizeof(siex);
+    siex.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    siex.StartupInfo.hStdInput  = stdin_read.get();
+    siex.StartupInfo.hStdOutput = stdout_write.get();
+    siex.StartupInfo.hStdError  = stderr_write.get();
 
     // interactive 模式（create_no_window=false）下子进程可能继承不到任何 console
     // （沙箱由后台进程启动时无 console），CreateProcessW 会为 console 程序新建
@@ -398,8 +480,8 @@ Result<LaunchResult> ProcessLauncherImpl::Launch(const LaunchRequest& req) {
     // - 继承已有 console 时：窗口已存在，本标志不影响（原终端使用场景行为不变）
     // - 新建 console 时：窗口隐藏，CtrlBreak 定向依赖进程组机制，不受影响
     if (!req.create_no_window) {
-        si.dwFlags |= STARTF_USESHOWWINDOW;
-        si.wShowWindow = SW_HIDE;
+        siex.StartupInfo.dwFlags |= STARTF_USESHOWWINDOW;
+        siex.StartupInfo.wShowWindow = SW_HIDE;
     }
 
     // 3. 构建环境块
@@ -420,11 +502,19 @@ Result<LaunchResult> ProcessLauncherImpl::Launch(const LaunchRequest& req) {
 
     // 5. dwCreationFlags
     // CREATE_UNICODE_ENVIRONMENT:  lpEnvironment 是 UTF-16
-    // CREATE_NEW_PROCESS_GROUP:    Phase 3 T3.4：新进程组，使 CtrlBreak 可按 pid 定向投递
+    // CREATE_NEW_PROCESS_GROUP:    新进程组，使 CtrlBreak 可按 pid 定向投递
     //                               （进程组 ID = 新进程 PID；不隔离 console，仅隔离信号广播域）
     // CREATE_NO_WINDOW:            不弹控制台（非 interactive 模式；interactive 模式由上层清除此标志以共享 console）
+    // EXTENDED_STARTUPINFO_PRESENT + PROC_THREAD_ATTRIBUTE_HANDLE_LIST：
+    //                               句柄白名单继承（bInheritHandles=TRUE +
+    //                               HANDLE_LIST 实测为严格白名单：列表外句柄不继承），
+    //                               替代"全量继承"——宿主进程任何被标为可继承的句柄
+    //                               （日志文件/网络句柄等）都不会泄漏进沙箱进程。
+    //                               注意：bInheritHandles=FALSE + HANDLE_LIST 在
+    //                               CreateProcessAsUserW/CreateProcessW 上返回 87，
+    //                               该组合不可用（已实测确认）。
     //
-    // 设计说明（T3.4 最终方案）：
+    // 设计说明：
     //   Windows 上 CTRL_C_EVENT 无法定向投递到非调用进程所在组（API 返回 TRUE 但不投递），
     //   CtrlC 只能广播（会命中调用方自身，不适合沙箱定向控制场景）。
     //   故沙箱只支持 CtrlBreak（定向）+ Kill（TerminateProcess），不提供 CtrlC。
@@ -438,24 +528,61 @@ Result<LaunchResult> ProcessLauncherImpl::Launch(const LaunchRequest& req) {
         creation_flags |= CREATE_NO_WINDOW;
     }
 
+    // 5a. 句柄白名单继承（HANDLE_LIST）：仅 3 个 stdio 子进程端句柄可继承
+    SIZE_T attr_size = 0;
+    if (!::InitializeProcThreadAttributeList(nullptr, 1, 0, &attr_size) &&
+        ::GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+        DWORD err = ::GetLastError();
+        return Result<LaunchResult>::Err(
+            ErrorCode::ProcessLaunchFailed,
+            std::format("InitializeProcThreadAttributeList(size probe) failed: err={}", err));
+    }
+    std::vector<BYTE> attr_buf(attr_size);
+    LPPROC_THREAD_ATTRIBUTE_LIST attr_list =
+        reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attr_buf.data());
+    if (!::InitializeProcThreadAttributeList(attr_list, 1, 0, &attr_size)) {
+        DWORD err = ::GetLastError();
+        return Result<LaunchResult>::Err(
+            ErrorCode::ProcessLaunchFailed,
+            std::format("InitializeProcThreadAttributeList failed: err={}", err));
+    }
+    auto attr_guard = wil::scope_exit([&] { ::DeleteProcThreadAttributeList(attr_list); });
+
+    HANDLE inherit_handles[] = {
+        stdin_read.get(), stdout_write.get(), stderr_write.get()};
+    if (!::UpdateProcThreadAttribute(
+            attr_list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            inherit_handles, sizeof(inherit_handles), nullptr, nullptr)) {
+        DWORD err = ::GetLastError();
+        return Result<LaunchResult>::Err(
+            ErrorCode::ProcessLaunchFailed,
+            std::format("UpdateProcThreadAttribute(HANDLE_LIST) failed: err={}", err));
+    }
+
+    siex.lpAttributeList = attr_list;
+    creation_flags |= EXTENDED_STARTUPINFO_PRESENT;
+
     // 6. 创建进程（双模式分支）
     //   - req.isolated_token 非空 → 隔离 token 模式
-    //     （CreateProcessAsUserW(token) + 普通 STARTUPINFOW；token 由 TokenIsolator 派生）
-    //   - 否则 → 普通模式（CreateProcessW + STARTUPINFOW）
+    //     （CreateProcessAsUserW(token) + EXTENDED_STARTUPINFO；token 由 TokenIsolator 派生）
+    //   - 否则 → 普通模式（CreateProcessW + EXTENDED_STARTUPINFO）
+    //   bInheritHandles=FALSE：子进程句柄继承由 HANDLE_LIST 属性列表白名单控制
     PROCESS_INFORMATION pi{};
     if (req.isolated_token != nullptr) {
-        // ----- 隔离 token 模式（Phase 16 Low IL）-----
+        // ----- 隔离 token 模式（Low IL）-----
         BOOL ok_iso = ::CreateProcessAsUserW(
             static_cast<HANDLE>(req.isolated_token),
             nullptr,                       // lpApplicationName（nullptr 表示从命令行解析）
             cmd_buf.data(),                // lpCommandLine（可修改 buffer）
             nullptr,                       // lpProcessAttributes（默认安全描述符）
             nullptr,                       // lpThreadAttributes
-            TRUE,                          // bInheritHandles：stdio 管道子进程端要继承
+            // bInheritHandles=TRUE + HANDLE_LIST：实测为严格白名单（列表外可继承
+            // 句柄不进入子进程；FALSE+LIST 组合在 CreateProcessAsUserW 上返回 87）
+            TRUE,
             creation_flags,
             env_block.data(),              // lpEnvironment
             workdir_ptr,                   // lpCurrentDirectory
-            &si,
+            &siex.StartupInfo,
             &pi);
         if (!ok_iso) {
             DWORD err = ::GetLastError();
@@ -467,17 +594,17 @@ Result<LaunchResult> ProcessLauncherImpl::Launch(const LaunchRequest& req) {
         logger_->Log(LogLevel::Info,
                      std::format("isolated process launched: pid={}", pi.dwProcessId));
     } else {
-        // ----- Phase 1 普通模式（CreateProcessW + STARTUPINFOW）-----
+        // ----- 普通模式（CreateProcessW + EXTENDED_STARTUPINFO）-----
         BOOL ok = CreateProcessW(
             nullptr,                // lpApplicationName（nullptr 表示从命令行解析）
             cmd_buf.data(),         // lpCommandLine（可修改 buffer）
             nullptr,                // lpProcessAttributes（默认安全描述符）
             nullptr,                // lpThreadAttributes
-            TRUE,                   // bInheritHandles：必须 TRUE，stdio 管道子进程端要继承
+            true,                       // bInheritHandles：TRUE + HANDLE_LIST 白名单（同 iso 分支）
             creation_flags,
             env_block.data(),       // lpEnvironment（nullptr 表示继承父进程环境）
             workdir_ptr,            // lpCurrentDirectory
-            &si,
+            &siex.StartupInfo,
             &pi);
         if (!ok) {
             DWORD err = GetLastError();
@@ -508,7 +635,7 @@ Result<LaunchResult> ProcessLauncherImpl::Launch(const LaunchRequest& req) {
     result.process.state = ProcessState::Running;
     result.process.start_time_ms = NowUnixMs();
 
-    // D4 修复（黑盒报告 r4）：info 级不记录完整命令行（参数可能含口令/令牌），
+    // info 级不记录完整命令行（参数可能含口令/令牌），
     // 仅记录可执行路径摘要；完整命令行保留 debug 级。
     logger_->Log(LogLevel::Info,
                  std::format("process launched: pid={} cmd={}",
@@ -520,17 +647,18 @@ Result<LaunchResult> ProcessLauncherImpl::Launch(const LaunchRequest& req) {
 }
 
 // =============================================================================
-// WriteStdin - Phase 3：写入子进程 stdin
+// WriteStdin - 写入子进程 stdin（OVERLAPPED + 超时）
 //
-// 同步 WriteFile 到 stdin 管道写端。匿名管道缓冲区满会阻塞（实际场景 stdin
-// 写入量小，可接受；REPL 输入命令通常 < 1KB）。
+// stdin 写端以 FILE_FLAG_OVERLAPPED 创建（CreateStdinPipe），本函数用
+// OVERLAPPED + WaitForSingleObject(30s) 等待写入完成：
+//   - 子进程不读（管道满）时最多阻塞 30s，超时 CancelIoEx 后返回错误，
+//     不会无限期卡住调用线程（历史上同步 WriteFile 可永久阻塞）
+//   - 大块数据分块写入（每块 ≤ 64KB）
 //
 // 失败场景：
 //   - stdin_write 为空 → InvalidArgument
-//   - WriteFile 失败（管道已关闭/对端断开）→ ProcessStdinWriteFailed
-//   - 写入字节数不全（极少见，管道异常）→ ProcessStdinWriteFailed
-//
-// 注意：调用方需保证 stdin_write 生命周期有效（StartProcessUseCase 持有）
+//   - 写入超时 → ProcessStdinWriteFailed（已取消挂起 I/O）
+//   - 管道已关闭/对端断开（ERROR_BROKEN_PIPE/ERROR_NO_DATA）→ ProcessStdinWriteFailed
 // =============================================================================
 Result<void> ProcessLauncherImpl::WriteStdin(void* stdin_write, const void* data, size_t size) {
     if (!stdin_write) {
@@ -544,36 +672,94 @@ Result<void> ProcessLauncherImpl::WriteStdin(void* stdin_write, const void* data
     }
 
     HANDLE h = static_cast<HANDLE>(stdin_write);
-    // 匿名管道写端不需要 overlapped，同步 WriteFile 即可
-    // 匿名管道默认缓冲区 64KB+，写小数据不会阻塞
+    constexpr DWORD kWriteTimeoutMs = 30000;  // 单块写入超时
+    constexpr DWORD kChunk = 64 * 1024;       // 单块大小（对齐管道缓冲）
 
-    // 大块写入计时日志（用于诊断 20MB stdin_data 超时问题）
+    // 完成事件（写入超时/取消用）
+    HANDLE h_event = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!h_event) {
+        DWORD err = ::GetLastError();
+        return Result<void>::Err(
+            ErrorCode::ProcessStdinWriteFailed,
+            std::format("CreateEventW(stdin write) failed: err={}", err));
+    }
+    auto event_guard = wil::scope_exit([&] { ::CloseHandle(h_event); });
+
     auto t0 = std::chrono::steady_clock::now();
     const uint64_t total_size = static_cast<uint64_t>(size);
     logger_->Log(LogLevel::Debug,
                  std::format("WriteStdin: starting write of {} bytes", total_size));
 
-    DWORD written = 0;
-    if (!::WriteFile(h, data, static_cast<DWORD>(size), &written, nullptr)) {
-        DWORD err = ::GetLastError();
-        auto t1 = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
-        logger_->Log(LogLevel::Error,
-                     std::format("WriteStdin: WriteFile failed after {}ms: err={} (pipe may be closed)",
-                                 elapsed, err));
-        // ERROR_BROKEN_PIPE (109) / ERROR_NO_DATA (232)：管道已关闭（子进程退出）
-        return Result<void>::Err(
-            ErrorCode::ProcessStdinWriteFailed,
-            std::format("WriteFile(stdin) failed: err={} (pipe may be closed)", err));
-    }
-    if (written != static_cast<DWORD>(size)) {
-        auto t1 = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
-        logger_->Log(LogLevel::Error,
-                     std::format("WriteStdin: short write after {}ms: {}/{}", elapsed, written, size));
-        return Result<void>::Err(
-            ErrorCode::ProcessStdinWriteFailed,
-            std::format("WriteFile(stdin) short write: {}/{}", written, size));
+    size_t offset = 0;
+    while (offset < size) {
+        DWORD chunk = static_cast<DWORD>((std::min)(static_cast<size_t>(kChunk),
+                                                    size - offset));
+        OVERLAPPED ov{};
+        ov.hEvent = h_event;
+        ::ResetEvent(h_event);
+
+        DWORD written = 0;
+        if (!::WriteFile(h, static_cast<const BYTE*>(data) + offset, chunk,
+                         &written, &ov)) {
+            DWORD err = ::GetLastError();
+            if (err == ERROR_IO_PENDING) {
+                // 写入挂起：等待完成/超时
+                DWORD wait = ::WaitForSingleObject(h_event, kWriteTimeoutMs);
+                if (wait == WAIT_TIMEOUT) {
+                    ::CancelIoEx(h, &ov);
+                    auto t1 = std::chrono::steady_clock::now();
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      t1 - t0).count();
+                    logger_->Log(LogLevel::Error,
+                                 std::format("WriteStdin: timed out after {}ms "
+                                             "({}/{} bytes written)", elapsed,
+                                             offset, size));
+                    return Result<void>::Err(
+                        ErrorCode::ProcessStdinWriteFailed,
+                        "WriteFile(stdin) timed out (child not reading); write cancelled");
+                }
+                if (wait != WAIT_OBJECT_0) {
+                    DWORD werr = ::GetLastError();
+                    ::CancelIoEx(h, &ov);
+                    return Result<void>::Err(
+                        ErrorCode::ProcessStdinWriteFailed,
+                        std::format("WaitForSingleObject(stdin write) failed: err={}", werr));
+                }
+                if (!::GetOverlappedResult(h, &ov, &written, FALSE)) {
+                    err = ::GetLastError();
+                    auto t1 = std::chrono::steady_clock::now();
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      t1 - t0).count();
+                    logger_->Log(LogLevel::Error,
+                                 std::format("WriteStdin: GetOverlappedResult failed "
+                                             "after {}ms: err={}", elapsed, err));
+                    return Result<void>::Err(
+                        ErrorCode::ProcessStdinWriteFailed,
+                        std::format("WriteFile(stdin) failed: err={} (pipe may be closed)", err));
+                }
+            } else {
+                // 非挂起错误（管道关闭/对端断开等）
+                auto t1 = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  t1 - t0).count();
+                logger_->Log(LogLevel::Error,
+                             std::format("WriteStdin: WriteFile failed after {}ms: err={} "
+                                         "(pipe may be closed)", elapsed, err));
+                return Result<void>::Err(
+                    ErrorCode::ProcessStdinWriteFailed,
+                    std::format("WriteFile(stdin) failed: err={} (pipe may be closed)", err));
+            }
+        } else {
+            // 同步完成（管道有足够空间），written 由 WriteFile 填充
+        }
+
+        if (written == 0) {
+            // 写 0 字节（异常）：防死循环
+            return Result<void>::Err(
+                ErrorCode::ProcessStdinWriteFailed,
+                "WriteFile(stdin) wrote 0 bytes");
+        }
+        offset += written;
     }
 
     auto t1 = std::chrono::steady_clock::now();
@@ -586,7 +772,7 @@ Result<void> ProcessLauncherImpl::WriteStdin(void* stdin_write, const void* data
 }
 
 // =============================================================================
-// CloseStdin - Phase 3：关闭 stdin 写端
+// CloseStdin - 关闭 stdin 写端
 //
 // 让子进程 ReadFile(stdin) 返回 EOF，REPL 进程感知到输入结束。
 // 幂等：nullptr 直接返回。
@@ -647,9 +833,9 @@ Result<void> ProcessLauncherImpl::Terminate(void* process_handle, uint32_t exit_
 }
 
 // =============================================================================
-// Signal - Phase 3 T3.4：发送信号到子进程
+// Signal - 发送信号到子进程
 //
-// 两种信号语义（T3.4 最终方案，移除 CtrlC）：
+// 两种信号语义（不提供 CtrlC）：
 //   CtrlBreak → GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid)
 //               定向投递到子进程所在进程组（CREATE_NEW_PROCESS_GROUP 创建，组 ID = pid）
 //               软中断，子进程可捕获；Python 默认收到后以 SIGBREAK 退出
@@ -760,6 +946,22 @@ Result<int32_t> ProcessLauncherImpl::WaitForExit(void* process_handle, uint64_t 
     }
 
     return Result<int32_t>::Ok(static_cast<int32_t>(exit_code));
+}
+
+// =============================================================================
+// CurrentProcessId - 当前进程 ID（WFP 规则注册键等实例标识）
+// =============================================================================
+uint64_t ProcessLauncherImpl::CurrentProcessId() {
+    return static_cast<uint64_t>(::GetCurrentProcessId());
+}
+
+// =============================================================================
+// CloseHandle - 关闭句柄（usecase 层句柄清理）
+// =============================================================================
+void ProcessLauncherImpl::CloseHandle(void* handle) {
+    if (handle != nullptr) {
+        ::CloseHandle(static_cast<HANDLE>(handle));
+    }
 }
 
 } // namespace winsandbox

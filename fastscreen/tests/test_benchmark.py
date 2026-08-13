@@ -3,7 +3,7 @@ import time
 import os
 import tempfile
 import statistics
-from fastscreen import CaptureEngine, CapturedFrame, TargetType, CaptureMethod, ErrorCode
+from fastscreencore import CaptureEngine, CapturedFrame, TargetType, CaptureMethod, ErrorCode
 
 
 def bench(label, fn, iterations=20, warmup=3):

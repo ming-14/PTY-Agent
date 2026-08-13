@@ -22,7 +22,7 @@ namespace winsandbox::bindings {
 // -----------------------------------------------------------------------------
 // BuildStartProcessRequest - 从 Python 参数构造 StartProcessRequest
 //
-// 复用 ParseStartProcessPayload：把 Python 参数组装为 IpcMessage.payload（json），
+// 复用 ParseStartProcessPayload：把 Python 参数组装为 JSON payload，
 // 再调 ParseStartProcessPayload（复用 schema 校验 + 默认值兜底）。
 // -----------------------------------------------------------------------------
 inline StartProcessRequest BuildStartProcessRequest(
@@ -37,7 +37,8 @@ inline StartProcessRequest BuildStartProcessRequest(
     const py::object& stdin_data,
     const py::object& hpcon,
     const ResourceQuota& default_quota,
-    const IsolationPolicy& default_isolation_policy) {
+    const IsolationPolicy& default_isolation_policy,
+    const std::string& request_id = "") {
 
     nlohmann::json payload;
     payload["command_line"] = command_line;
@@ -65,12 +66,13 @@ inline StartProcessRequest BuildStartProcessRequest(
     }
 
     if (!stdin_data.is_none()) {
-        // 占位（实际 stdin_data 在 parser 后直接覆盖，绕过 base64 decode）
+        // 占位（实际 stdin_data 在 parser 后直接覆盖）
         payload["stdin_data"] = "";
     }
 
-    // Phase 12：直接传 json payload（去 IpcMessage 依赖）
-    auto r = ParseStartProcessPayload(payload, default_quota, default_isolation_policy);
+    // 直接传 json payload
+    auto r = ParseStartProcessPayload(payload, default_quota, default_isolation_policy,
+                                      request_id);
     if (!r) {
         throw py::value_error(std::string("invalid start_process arguments: [") +
                               std::to_string(static_cast<int>(r.Code())) + "] " + r.Message());
@@ -78,14 +80,14 @@ inline StartProcessRequest BuildStartProcessRequest(
 
     auto req = r.Value();
 
-    // 直接覆盖 stdin_data（绕过 base64 decode）
+    // 直接覆盖 stdin_data（保留原始字节）
     if (!stdin_data.is_none()) {
         std::string_view data = stdin_data.cast<std::string_view>();
         req.stdin_data.assign(data.data(), data.size());
     }
 
     // ConPTY 模式（hpcon 非空）：外部创建的伪控制台句柄（HPCON 值）
-    //   - 传 None → 匿名管道路径（Phase 1/2 行为不变）
+    //   - 传 None → 匿名管道路径
     //   - 传 int（HPCON 句柄值）→ ConPTY 启动路径：子进程 stdio 由 ConPTY 提供
     if (!hpcon.is_none()) {
         int64_t h = hpcon.cast<int64_t>();
@@ -100,7 +102,7 @@ inline StartProcessRequest BuildStartProcessRequest(
 
 // -----------------------------------------------------------------------------
 // RegisterConfig - 注册配置相关枚举/常量到模块
-// Phase 11：枚举在 Python 侧用字符串表示，暂无需注册 C++ enum
+// 枚举在 Python 侧用字符串表示，暂无需注册 C++ enum
 // -----------------------------------------------------------------------------
 inline void RegisterConfig(py::module_& /*m*/) {
     // 后续 Phase 如需暴露枚举可在此扩展

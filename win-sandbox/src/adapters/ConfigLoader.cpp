@@ -47,7 +47,7 @@ using json = nlohmann::json;
 // 如果未来出现必填字段，再加 Require* helper。
 
 // 取可选 uint32 字段
-// max：可选上界（D5a 修复：quota 巨值钳制），超界返回 false
+// max：可选上界（quota 巨值钳制），超界返回 false
 bool GetOptionalUInt32(const json& obj, const std::string& key, const std::string& path,
                        std::optional<uint32_t>& out, std::string& err,
                        uint64_t max = UINT64_MAX) {
@@ -85,7 +85,7 @@ bool GetOptionalUInt32(const json& obj, const std::string& key, const std::strin
 }
 
 // 取可选 uint64 字段
-// max：可选上界（D5a 修复：quota 巨值钳制），超界返回 false
+// max：可选上界（quota 巨值钳制），超界返回 false
 bool GetOptionalUInt64(const json& obj, const std::string& key, const std::string& path,
                        std::optional<uint64_t>& out, std::string& err,
                        uint64_t max = UINT64_MAX) {
@@ -214,14 +214,12 @@ Result<SandboxConfig> ConfigLoader::Load(const std::string& path) {
     // 读文件
     std::ifstream ifs(path, std::ios::binary);
     if (!ifs.is_open()) {
-        // 文件不存在 / 无权限
-        DWORD err = ::GetLastError();
+        // std::ifstream 不设置 GetLastError（值是陈旧的），只记录路径
         logger_->Log(LogLevel::Error,
-                     std::format("config file open failed: path={} err={}",
-                                 path, err));
+                     std::format("config file open failed: path={}", path));
         return Result<SandboxConfig>::Err(
             ErrorCode::ConfigFileNotFound,
-            std::format("cannot open config file: {} (err={})", path, err));
+            std::format("cannot open config file: {}", path));
     }
 
     std::ostringstream oss;
@@ -286,11 +284,10 @@ std::string ConfigLoader::ExpandEnv(const std::string& s) {
 //   残留，Windows 行为），视为非法返回 false；合法展开（如 %TEMP% → 真实路径）
 //   返回 true。
 //
-// 背景（黑盒报告 r4 D3，2026-08-07）：原实现直接返回 ExpandEnv 结果，未展开
-//   的畸形变量（%UNCLOSED、%%、%A%B%、${UNCLOSED 等）被按字面传给 create_directories
-//   → 在磁盘上创建含 % 字面量的目录并写入日志（%TEMP%\%UNCLOSED、C:\Windows\Temp\...、
-//   盘符根 C:\、被测项目目录）。变量无法展开时应拒绝配置，而非把攻击者可控
-//   的字符串落盘。
+// 原因：未展开的畸形变量（%UNCLOSED、%%、%A%B%、${UNCLOSED 等）被按字面传给
+//   create_directories → 在磁盘上创建含 % 字面量的目录并写入日志
+//   （%TEMP%\%UNCLOSED、Windows 目录 Temp、盘符根目录等）。
+//   变量无法展开时应拒绝配置，而非把攻击者可控的字符串落盘。
 bool ConfigLoader::ExpandEnvStrict(const std::string& s, std::string& out,
                                    std::string& err) {
     out = ExpandEnv(s);
@@ -335,7 +332,6 @@ Result<SandboxConfig> ConfigLoader::ParseAndValidate(const std::string& json_tex
 
     // 3. 严格模式：检查顶层未知字段
     //    顶层所有子节点都是可选（用 BuildDefault 兜底），但必须是已知 key
-    //    Phase 12：ipc/stats 段删除；Phase 16：appcontainer/filesystem/network 段删除
     std::string err;
     if (!CheckNoUnknownFields(root, "root",
                                {"logging", "default_quota", "isolation",
@@ -387,7 +383,7 @@ Result<SandboxConfig> ConfigLoader::ParseAndValidate(const std::string& json_tex
                 ErrorCode::ConfigSchemaValidationFailed, err);
         }
         if (dir_opt) {
-            // 展开环境变量（D3 修复：畸形变量拒绝，不按字面创建目录）
+            // 展开环境变量（畸形变量拒绝，不按字面创建目录）
             std::string expanded_dir;
             if (!ExpandEnvStrict(*dir_opt, expanded_dir, err)) {
                 return Result<SandboxConfig>::Err(
@@ -398,7 +394,7 @@ Result<SandboxConfig> ConfigLoader::ParseAndValidate(const std::string& json_tex
         }
 
         std::optional<uint32_t> retention_opt;
-        // D2 修复：retention_days 加上界（999999999 是畸形值，此前静默接受）。
+        // retention_days 加上界（999999999 是畸形值，此前静默接受）。
         // 上限 36500（100 年），足够覆盖真实需求。
         if (!GetOptionalUInt32(lg, "retention_days", "logging", retention_opt, err,
                                36500)) {
@@ -411,9 +407,7 @@ Result<SandboxConfig> ConfigLoader::ParseAndValidate(const std::string& json_tex
         }
     }
 
-    // 5. stats（Phase 12 删 StatsCollector 后该段已移除）
-
-    // 6. default_quota
+    // 5. default_quota
     if (root.contains("default_quota")) {
         const auto& q = root["default_quota"];
         if (!q.is_object()) {
@@ -432,8 +426,8 @@ if (!CheckNoUnknownFields(q, "default_quota",
                 ErrorCode::ConfigSchemaValidationFailed, err);
         }
 
-        // D5a 修复（黑盒报告 r4）：quota size 字段加合理上界（2^40 ≈ 1TB/34 年），
-        // 拒绝 2^63 等荒谬巨值（此前静默接受，校验只有下界无上界不对称）
+        // quota size 字段加合理上界（2^40 ≈ 1TB/34 年），
+        // 拒绝 2^63 等荒谬巨值（校验只有下界无上界不对称）
         constexpr uint64_t kMaxQuotaValue = 1ULL << 40;
 
         // CPU 时间（ms）
@@ -493,7 +487,7 @@ if (!CheckNoUnknownFields(q, "default_quota",
             cfg.default_quota.job_memory_mb = *job_mem_opt;
         }
 
-        // IO 速率（D5a：加 kMaxQuotaValue 上界）
+        // IO 速率（加 kMaxQuotaValue 上界）
         std::optional<uint64_t> io_bps_opt;
         if (!GetOptionalUInt64(q, "io_rate_bytes_per_sec", "default_quota", io_bps_opt, err,
                                kMaxQuotaValue)) {
@@ -514,7 +508,7 @@ if (!CheckNoUnknownFields(q, "default_quota",
             cfg.default_quota.io_rate_iops = *io_iops_opt;
         }
 
-        // 进程数（D5a：上界 65536，防 1e12 荒谬值）
+        // 进程数（上界 65536，防 1e12 荒谬值）
         std::optional<uint32_t> max_proc_opt;
         if (!GetOptionalUInt32(q, "max_processes", "default_quota", max_proc_opt, err,
                                65536)) {
@@ -530,7 +524,7 @@ if (!CheckNoUnknownFields(q, "default_quota",
             cfg.default_quota.max_processes = *max_proc_opt;
         }
 
-        // 超时（D5a：加 kMaxQuotaValue 上界）
+        // 超时（加 kMaxQuotaValue 上界）
         std::optional<uint64_t> wall_opt;
         if (!GetOptionalUInt64(q, "wall_clock_timeout_ms", "default_quota", wall_opt, err,
                                kMaxQuotaValue)) {
@@ -571,7 +565,7 @@ if (!CheckNoUnknownFields(q, "default_quota",
             cfg.default_quota.breakaway_ok = *breakaway_opt;
         }
 
-        // Phase 8：崩溃静默
+        // 崩溃静默
         std::optional<bool> crash_silent_opt;
         if (!GetOptionalBool(q, "crash_silent", "default_quota", crash_silent_opt, err)) {
             return Result<SandboxConfig>::Err(
@@ -582,11 +576,10 @@ if (!CheckNoUnknownFields(q, "default_quota",
         }
     }
 
-    // 7. isolation（Phase 16：Low IL 模型的默认隔离策略）
-    //    schema（与 PTY-Agent sandbox.toml [isolation] 段对齐）：
+    // 6. isolation（Low IL 模型的默认隔离策略）
+    //    schema：
     //      "net_policy": "unrestricted" | "allowlist"
-    //        （旧值 none/loopback_only/outbound 已删除：无 AppContainer 时纯用户态
-    //         无法系统级执行网络限制，显式拒绝而非静默忽略）
+    //        （非法值显式拒绝：纯用户态无法系统级执行网络限制，杜绝静默失效）
     //      "net_allowlist": [{ "ip", "port", "protocol" }, ...]（仅 allowlist 生效）
     //      "clipboard_isolate": bool（Job UI 限制：剪贴板/全局原子表/系统参数）
     if (root.contains("isolation")) {
@@ -602,7 +595,7 @@ if (!CheckNoUnknownFields(q, "default_quota",
                 ErrorCode::ConfigSchemaValidationFailed, err);
         }
 
-        // net_policy（Phase 16 收敛为 unrestricted | allowlist）
+        // net_policy（收敛为 unrestricted | allowlist）
         if (iso.contains("net_policy")) {
             const auto& p = iso["net_policy"];
             if (!p.is_string()) {
@@ -619,9 +612,7 @@ if (!CheckNoUnknownFields(q, "default_quota",
                 return Result<SandboxConfig>::Err(
                     ErrorCode::ConfigSchemaValidationFailed,
                     std::format("isolation.net_policy invalid: {} "
-                                "(allowed: unrestricted|allowlist; none/loopback_only/"
-                                "outbound were removed in Phase 16 - not enforceable "
-                                "without AppContainer)", s));
+                                "(allowed: unrestricted|allowlist)", s));
             }
         }
 
@@ -644,17 +635,47 @@ if (!CheckNoUnknownFields(q, "default_quota",
                 if (rule.contains("ip") && rule["ip"].is_string()) {
                     nr.ip = rule["ip"].get<std::string>();
                 }
-                if (rule.contains("port") && rule["port"].is_number_unsigned()) {
-                    nr.port = static_cast<uint16_t>(rule["port"].get<unsigned>());
+                // port/protocol 必须为整数且在可表示范围内：
+                // 超界截断回绕会静默篡改白名单语义（65536→0=匹配任意端口）
+                if (rule.contains("port")) {
+                    const auto& pv = rule["port"];
+                    if (!pv.is_number_unsigned()) {
+                        return Result<SandboxConfig>::Err(
+                            ErrorCode::ConfigSchemaValidationFailed,
+                            std::format("isolation.net_allowlist[{}].port must be integer",
+                                        i));
+                    }
+                    uint64_t port = pv.get<uint64_t>();
+                    if (port > UINT16_MAX) {
+                        return Result<SandboxConfig>::Err(
+                            ErrorCode::ConfigSchemaValidationFailed,
+                            std::format("isolation.net_allowlist[{}].port out of range "
+                                        "[0, 65535], got {}", i, port));
+                    }
+                    nr.port = static_cast<uint16_t>(port);
                 }
-                if (rule.contains("protocol") && rule["protocol"].is_number_unsigned()) {
-                    nr.protocol = static_cast<uint8_t>(rule["protocol"].get<unsigned>());
+                if (rule.contains("protocol")) {
+                    const auto& protov = rule["protocol"];
+                    if (!protov.is_number_unsigned()) {
+                        return Result<SandboxConfig>::Err(
+                            ErrorCode::ConfigSchemaValidationFailed,
+                            std::format("isolation.net_allowlist[{}].protocol must be integer",
+                                        i));
+                    }
+                    uint64_t proto = protov.get<uint64_t>();
+                    if (proto > UINT8_MAX) {
+                        return Result<SandboxConfig>::Err(
+                            ErrorCode::ConfigSchemaValidationFailed,
+                            std::format("isolation.net_allowlist[{}].protocol out of range "
+                                        "[0, 255], got {}", i, proto));
+                    }
+                    nr.protocol = static_cast<uint8_t>(proto);
                 }
                 cfg.default_isolation_policy.net_allowlist.push_back(std::move(nr));
             }
         }
 
-        // clipboard_isolate（Phase 16：Job UI 限制开关）
+        // clipboard_isolate（Job UI 限制开关）
         if (iso.contains("clipboard_isolate")) {
             if (!iso["clipboard_isolate"].is_boolean()) {
                 return Result<SandboxConfig>::Err(
@@ -666,7 +687,7 @@ if (!CheckNoUnknownFields(q, "default_quota",
         }
     }
 
-    // 8. monitoring（Phase 6）
+    // 7. monitoring
     if (root.contains("monitoring")) {
         const auto& mon = root["monitoring"];
         if (!mon.is_object()) {
@@ -676,31 +697,77 @@ if (!CheckNoUnknownFields(q, "default_quota",
         }
         if (!CheckNoUnknownFields(mon, "monitoring",
                 {"etw_enabled", "ring_buffer_size", "dispatch_batch_size",
-                 "dispatch_timeout_ms", "stats_interval_ms",
+                 "dispatch_timeout_ms", "stats_interval_ms", "filter_pids",
                  "degraded_monitor_dirs", "force_degraded", "degraded_net_polling"}, err)) {
             return Result<SandboxConfig>::Err(
                 ErrorCode::ConfigSchemaValidationFailed, err);
         }
-        if (mon.contains("etw_enabled") && mon["etw_enabled"].is_boolean()) {
+        if (mon.contains("etw_enabled")) {
+            if (!mon["etw_enabled"].is_boolean()) {
+                return Result<SandboxConfig>::Err(
+                    ErrorCode::ConfigSchemaValidationFailed,
+                    std::format("monitoring.etw_enabled must be boolean, got {}",
+                                mon["etw_enabled"].type_name()));
+            }
             cfg.monitoring.etw_enabled = mon["etw_enabled"].get<bool>();
         }
         if (cfg.monitoring.etw_enabled) {
             cfg.monitoring.etw.enabled = true;
-            if (mon.contains("ring_buffer_size") && mon["ring_buffer_size"].is_number()) {
-                cfg.monitoring.etw.ring_buffer_size = mon["ring_buffer_size"].get<uint32_t>();
+            // 数值字段：统一走严格整数 helper（浮点/负数/超大值拒绝而非抛异常/静默忽略）
+            std::optional<uint32_t> ring_opt, batch_opt, timeout_opt, stats_opt;
+            if (!GetOptionalUInt32(mon, "ring_buffer_size", "monitoring", ring_opt, err)) {
+                return Result<SandboxConfig>::Err(
+                    ErrorCode::ConfigSchemaValidationFailed, err);
             }
-            if (mon.contains("dispatch_batch_size") && mon["dispatch_batch_size"].is_number()) {
-                cfg.monitoring.etw.dispatch_batch_size = mon["dispatch_batch_size"].get<uint32_t>();
+            if (ring_opt) {
+                cfg.monitoring.etw.ring_buffer_size = *ring_opt;
             }
-            if (mon.contains("dispatch_timeout_ms") && mon["dispatch_timeout_ms"].is_number()) {
-                cfg.monitoring.etw.dispatch_timeout_ms = mon["dispatch_timeout_ms"].get<uint32_t>();
+            if (!GetOptionalUInt32(mon, "dispatch_batch_size", "monitoring", batch_opt, err)) {
+                return Result<SandboxConfig>::Err(
+                    ErrorCode::ConfigSchemaValidationFailed, err);
             }
-            if (mon.contains("stats_interval_ms") && mon["stats_interval_ms"].is_number()) {
-                cfg.monitoring.etw.stats_interval_ms = mon["stats_interval_ms"].get<uint32_t>();
+            if (batch_opt) {
+                cfg.monitoring.etw.dispatch_batch_size = *batch_opt;
+            }
+            if (!GetOptionalUInt32(mon, "dispatch_timeout_ms", "monitoring", timeout_opt, err)) {
+                return Result<SandboxConfig>::Err(
+                    ErrorCode::ConfigSchemaValidationFailed, err);
+            }
+            if (timeout_opt) {
+                cfg.monitoring.etw.dispatch_timeout_ms = *timeout_opt;
+            }
+            if (!GetOptionalUInt32(mon, "stats_interval_ms", "monitoring", stats_opt, err)) {
+                return Result<SandboxConfig>::Err(
+                    ErrorCode::ConfigSchemaValidationFailed, err);
+            }
+            if (stats_opt) {
+                cfg.monitoring.etw.stats_interval_ms = *stats_opt;
             }
             cfg.monitoring.etw.sessions = EtwConfig::Default().sessions;
 
-            // 降级模式扩展配置（2026-08-06）
+            // filter_pids：PID 白名单（仅处理这些进程的 ETW 事件，源头减噪）
+            if (mon.contains("filter_pids")) {
+                if (!mon["filter_pids"].is_array()) {
+                    return Result<SandboxConfig>::Err(
+                        ErrorCode::ConfigSchemaValidationFailed,
+                        "monitoring.filter_pids must be array of non-negative integers");
+                }
+                std::vector<uint32_t> pids;
+                for (size_t i = 0; i < mon["filter_pids"].size(); ++i) {
+                    std::optional<uint32_t> pid_opt;
+                    nlohmann::json wrapped;
+                    wrapped["v"] = mon["filter_pids"][i];
+                    if (!GetOptionalUInt32(wrapped, "v",
+                            std::format("monitoring.filter_pids[{}]", i), pid_opt, err)) {
+                        return Result<SandboxConfig>::Err(
+                            ErrorCode::ConfigSchemaValidationFailed, err);
+                    }
+                    pids.push_back(*pid_opt);
+                }
+                cfg.monitoring.etw.filter_pids = std::move(pids);
+            }
+
+            // 降级模式扩展配置
             // degraded_monitor_dirs: 文件监控目录（ReadDirectoryChangesW 递归监控，非管理员可用）
             if (mon.contains("degraded_monitor_dirs")) {
                 if (!mon["degraded_monitor_dirs"].is_array()) {
@@ -715,22 +782,42 @@ if (!CheckNoUnknownFields(q, "default_quota",
                             ErrorCode::ConfigSchemaValidationFailed,
                             "monitoring.degraded_monitor_dirs must be array of strings");
                     }
-                    dirs.push_back(ExpandEnv(item.get<std::string>()));
+                    // 严格展开：畸形环境变量（%UNCLOSED 等按字面残留）拒绝，
+                    // 防止把攻击者可控字符串按字面传给 ReadDirectoryChangesW
+                    std::string expanded_dir;
+                    if (!ExpandEnvStrict(item.get<std::string>(), expanded_dir, err)) {
+                        return Result<SandboxConfig>::Err(
+                            ErrorCode::ConfigSchemaValidationFailed,
+                            std::format("monitoring.degraded_monitor_dirs[{}]: {}", dirs.size(), err));
+                    }
+                    dirs.push_back(std::move(expanded_dir));
                 }
                 cfg.monitoring.etw.degraded_monitor_dirs = std::move(dirs);
             }
             // force_degraded: 强制降级模式（即使管理员也走降级路径，用于验证）
-            if (mon.contains("force_degraded") && mon["force_degraded"].is_boolean()) {
+            if (mon.contains("force_degraded")) {
+                if (!mon["force_degraded"].is_boolean()) {
+                    return Result<SandboxConfig>::Err(
+                        ErrorCode::ConfigSchemaValidationFailed,
+                        std::format("monitoring.force_degraded must be boolean, got {}",
+                                    mon["force_degraded"].type_name()));
+                }
                 cfg.monitoring.etw.force_degraded = mon["force_degraded"].get<bool>();
             }
             // degraded_net_polling: 降级模式网络轮询开关（默认开）
-            if (mon.contains("degraded_net_polling") && mon["degraded_net_polling"].is_boolean()) {
+            if (mon.contains("degraded_net_polling")) {
+                if (!mon["degraded_net_polling"].is_boolean()) {
+                    return Result<SandboxConfig>::Err(
+                        ErrorCode::ConfigSchemaValidationFailed,
+                        std::format("monitoring.degraded_net_polling must be boolean, got {}",
+                                    mon["degraded_net_polling"].type_name()));
+                }
                 cfg.monitoring.etw.degraded_net_polling = mon["degraded_net_polling"].get<bool>();
             }
         }
     }
 
-    // 9. silo（Phase 2 候选：Server Silo 更强隔离）
+    // 8. silo（候选：Server Silo 更强隔离）
     if (root.contains("silo")) {
         const auto& silo = root["silo"];
         if (!silo.is_object()) {
@@ -742,12 +829,18 @@ if (!CheckNoUnknownFields(q, "default_quota",
             return Result<SandboxConfig>::Err(
                 ErrorCode::ConfigSchemaValidationFailed, err);
         }
-        if (silo.contains("enabled") && silo["enabled"].is_boolean()) {
+        if (silo.contains("enabled")) {
+            if (!silo["enabled"].is_boolean()) {
+                return Result<SandboxConfig>::Err(
+                    ErrorCode::ConfigSchemaValidationFailed,
+                    std::format("silo.enabled must be boolean, got {}",
+                                silo["enabled"].type_name()));
+            }
             cfg.silo.enabled = silo["enabled"].get<bool>();
         }
     }
 
-    // 10. global_quota（Phase 2 候选：多沙箱全局资源配额）
+    // 9. global_quota（候选：多沙箱全局资源配额）
     if (root.contains("global_quota")) {
         const auto& gq = root["global_quota"];
         if (!gq.is_object()) {
@@ -762,41 +855,53 @@ if (!CheckNoUnknownFields(q, "default_quota",
             return Result<SandboxConfig>::Err(
                 ErrorCode::ConfigSchemaValidationFailed, err);
         }
-        if (gq.contains("enabled") && gq["enabled"].is_boolean()) {
-            cfg.global_quota.enabled = gq["enabled"].get<bool>();
-        }
-        if (gq.contains("pool_name") && gq["pool_name"].is_string()) {
-            cfg.global_quota.pool_name = gq["pool_name"].get<std::string>();
-        }
-        if (gq.contains("max_cpu_rate_percent")) {
-            if (!gq["max_cpu_rate_percent"].is_number()) {
+        if (gq.contains("enabled")) {
+            if (!gq["enabled"].is_boolean()) {
                 return Result<SandboxConfig>::Err(
                     ErrorCode::ConfigSchemaValidationFailed,
-                    "global_quota.max_cpu_rate_percent must be number");
+                    std::format("global_quota.enabled must be boolean, got {}",
+                                gq["enabled"].type_name()));
             }
-            int v = gq["max_cpu_rate_percent"].get<int>();
-            if (v < 1 || v > 100) {
+            cfg.global_quota.enabled = gq["enabled"].get<bool>();
+        }
+        if (gq.contains("pool_name")) {
+            if (!gq["pool_name"].is_string()) {
+                return Result<SandboxConfig>::Err(
+                    ErrorCode::ConfigSchemaValidationFailed,
+                    std::format("global_quota.pool_name must be string, got {}",
+                                gq["pool_name"].type_name()));
+            }
+            cfg.global_quota.pool_name = gq["pool_name"].get<std::string>();
+        }
+        // 数值字段：严格整数 helper（浮点等非法类型拒绝，而非 get<int> 抛异常逃逸）
+        std::optional<uint32_t> gq_cpu_opt, gq_proc_opt;
+        std::optional<uint64_t> gq_mem_opt;
+        if (!GetOptionalUInt32(gq, "max_cpu_rate_percent", "global_quota",
+                               gq_cpu_opt, err)) {
+            return Result<SandboxConfig>::Err(
+                ErrorCode::ConfigSchemaValidationFailed, err);
+        }
+        if (gq_cpu_opt) {
+            if (*gq_cpu_opt < 1 || *gq_cpu_opt > 100) {
                 return Result<SandboxConfig>::Err(
                     ErrorCode::ConfigSchemaValidationFailed,
                     "global_quota.max_cpu_rate_percent must be 1-100");
             }
-            cfg.global_quota.max_cpu_rate_percent = static_cast<uint32_t>(v);
+            cfg.global_quota.max_cpu_rate_percent = *gq_cpu_opt;
         }
-        if (gq.contains("max_memory_mb")) {
-            if (!gq["max_memory_mb"].is_number()) {
-                return Result<SandboxConfig>::Err(
-                    ErrorCode::ConfigSchemaValidationFailed,
-                    "global_quota.max_memory_mb must be number");
-            }
-            cfg.global_quota.max_memory_mb = gq["max_memory_mb"].get<uint64_t>();
+        if (!GetOptionalUInt64(gq, "max_memory_mb", "global_quota", gq_mem_opt, err)) {
+            return Result<SandboxConfig>::Err(
+                ErrorCode::ConfigSchemaValidationFailed, err);
         }
-        if (gq.contains("max_processes")) {
-            if (!gq["max_processes"].is_number()) {
-                return Result<SandboxConfig>::Err(
-                    ErrorCode::ConfigSchemaValidationFailed,
-                    "global_quota.max_processes must be number");
-            }
-            cfg.global_quota.max_processes = gq["max_processes"].get<uint32_t>();
+        if (gq_mem_opt) {
+            cfg.global_quota.max_memory_mb = *gq_mem_opt;
+        }
+        if (!GetOptionalUInt32(gq, "max_processes", "global_quota", gq_proc_opt, err)) {
+            return Result<SandboxConfig>::Err(
+                ErrorCode::ConfigSchemaValidationFailed, err);
+        }
+        if (gq_proc_opt) {
+            cfg.global_quota.max_processes = *gq_proc_opt;
         }
     }
 

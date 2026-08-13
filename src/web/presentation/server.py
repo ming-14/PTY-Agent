@@ -46,9 +46,9 @@ _STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 
 
 class WebServer:
-    """PTY-Agent Web 服务器。
+    """Web 服务器。
 
-    负责启动后台 HTTP/WebSocket 服务，并保持与旧版一致的公共接口。
+    负责启动后台 HTTP/WebSocket 服务。
     """
 
     def __init__(self, manager, host: str = "127.0.0.1", port: int = 18766,

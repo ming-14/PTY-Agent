@@ -1,4 +1,4 @@
-"""T7.10 e2e 测试：样本分析（Sample Analysis）场景（Phase 16 Low IL 语义）。
+"""e2e 测试：样本分析（Sample Analysis）场景（Low IL 语义）。
 
 模拟"样本分析"场景，一次性验证沙箱核心隔离能力：
   1. 文件系统隔离 — 写入 %TEMP%（沙箱内重定向到可写区）允许，读取系统保护文件被拒绝
@@ -46,7 +46,7 @@ def _assert(cond: bool, msg: str) -> None:
 # =============================================================================
 
 def test_sample_analysis() -> None:
-    """样本分析综合场景（pybind11 直调形态，Phase 16 Low IL 语义）。
+    """样本分析综合场景（pybind11 直调形态，Low IL 语义）。
 
     单条命令覆盖两种行为：
       1. 写入 %TEMP%\\sample_analysis.txt（沙箱内 %TEMP% 重定向到 Low 可写区，应允许）
@@ -59,8 +59,8 @@ def test_sample_analysis() -> None:
     """
     print("\n[Test Sample Analysis] comprehensive isolation scenario", flush=True)
 
-    temp_dir = os.environ.get("TEMP", "C:\\Temp")
-    system_root = os.environ.get("SYSTEMROOT", "C:\\Windows")
+    temp_dir = os.environ["TEMP"]
+    system_root = os.environ["SYSTEMROOT"]
 
     # 命令序列（用 & 串联，确保所有命令都执行，即使中间失败）：
     #   1. echo analysis-start              → stdout 标记
@@ -99,10 +99,6 @@ def test_sample_analysis() -> None:
         proc.on_behavior_event = on_behavior_event
         proc.on_access_denied = on_access_denied
 
-        # wall_clock_timeout：Python 端 WallClockTimer（C++ 端不处理）
-        timer = helpers.WallClockTimer(proc, 15000, exit_code=1)
-        timer.start()
-
         stdout_data: list[bytes] = []
         stderr_data: list[bytes] = []
         stdout_thread = helpers.drain_stdout(proc, stdout_data.append)
@@ -111,7 +107,6 @@ def test_sample_analysis() -> None:
         exit_code, reason, usage = proc.wait(timeout_ms=30000)
         stdout_thread.join(timeout=5)
         stderr_thread.join(timeout=5)
-        timer.cancel()
         # 等 ETW 降级轮询采集完事件（500ms 周期，2.5s 足 5 轮）
         time.sleep(2.5)
         proc.close()

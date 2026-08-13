@@ -325,7 +325,7 @@ def auth_env(tmp_path):
         ak_path.write_text(authorized_keys_content, encoding="utf-8")
 
         # 启动 daemon（subprocess.Popen 子进程，会读新 common.toml）
-        from src.daemon.lifecycle import start_daemon, _find_daemon_port, is_running
+        from src.client.lifecycle import start_daemon, _find_daemon_port, is_running
         start_daemon()
 
         # 轮询等待 daemon 就绪
@@ -370,7 +370,7 @@ def auth_env(tmp_path):
 
     def _stop_daemon():
         if started[0] and not daemon_stopped[0]:
-            from src.daemon.lifecycle import stop_daemon, is_running
+            from src.client.lifecycle import stop_daemon, is_running
             stop_daemon(force=True)
             # 轮询等待 daemon 完全停止
             for _ in range(30):

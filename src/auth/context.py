@@ -9,7 +9,8 @@
 
 from typing import Optional
 
-from .base import Authenticator, MessageSigner
+from ..protocol.signing import MessageSigner
+from .base import Authenticator
 
 
 class AuthContext:

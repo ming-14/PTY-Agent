@@ -11,31 +11,29 @@ src/
 │       ├── config.json      # 字体配置
 │       └── LICENSE.txt      # 字体许可证
 
-├── config/                  # ═══════ 配置中心（TOML 文件 + 加载器） ═══════
-│   ├── __init__.py          # 包导出
+├── config/                  # ═══════ 配置中心（TOML 加载器，数据文件在 <项目根>/config/） ═══════
+│   ├── __init__.py          # 包导出 + 配置域归档说明
 │   ├── _loader.py           # TOML 加载/展平/合并工具（load_toml / flatten / merge）
 │   ├── common.py            # 共有配置加载（common.toml + IS_WINDOWS / DATA_DIR / PROJECT_ROOT）
 │   ├── daemon.py            # 守护进程配置加载（common + daemon + logging + web.toml）
 │   ├── client.py            # 客户端配置加载（common + client.toml）
 │   ├── files.py             # 文件工具配置加载（files.toml + RG_EXE 自动探测）
-│   ├── common.toml          # 共有配置（终端默认值 / DAEMON_HOST / 压缩 / 输入限制 / 认证开关）
-│   ├── daemon.toml          # 守护进程配置（端口 / 缓冲 / 超时 / SHM / TLS 服务端）
-│   ├── client.toml          # 客户端配置（连接超时 / TLS 客户端 / TOFU）
-│   ├── files.toml           # 文件工具配置（读/写/搜索上限、忽略目录、RG_EXE）
-│   ├── logging.toml         # 日志配置（级别 / 格式 / 轮转 / logger 分组）
-│   ├── web.toml             # Web 服务器配置（监听 / VNC / fastscreen / 网页端默认值）
-│   ├── vnc.toml             # VNC 配置
-│   └── vnc.example.toml     # VNC 配置示例
+│   └── sandbox.py           # 沙箱配置加载（sandbox.toml）
+│
+│   # TOML 数据文件（common/daemon/client/files/sandbox/logging/web/vnc/vnc.example）
+│   # 位于项目根 config/（vnc*.toml 为 winvnc.exe 外部配置，Python 不加载），
+│   # 清单见 <项目根>/config/README.md
 
 ├── protocol/                # ═══════ 通信协议层 ═══════
 │   ├── __init__.py
-│   ├── message.py           # Message 类（JSON 换行分隔协议：编码 / 解码 / 发送 / 接收 + HMAC/Ed25519 签名验证）
+│   ├── message.py           # Message 类（JSON 换行分隔协议：编码/解码/收发 + ping 探测）
+│   ├── signing.py           # MessageSigner 签名抽象（协议域，auth 包实现）
 │   ├── ansi.py              # ANSI 转义序列过滤（strip_ansi）
 │   └── response.py          # Response 类（统一响应构建器，CLI/TCP/WS 共用）
 
 ├── auth/                    # ═══════ 认证层（可插拔认证与消息签名） ═══════
 │   ├── __init__.py          # 导出共享基础设施
-│   ├── base.py              # 抽象接口（Authenticator / CredentialProvider / MessageSigner）
+│   ├── base.py              # 抽象接口（Authenticator / CredentialProvider）
 │   ├── keys.py              # Ed25519 密钥实体（PublicKey / PrivateKey / 生成/加载/指纹）
 │   ├── context.py           # AuthContext（连接级认证上下文，绑定出站签名器/入站验证器/认证器）
 │   ├── composite.py         # CompositeAuthenticator（OR/AND 组合认证器）
@@ -55,9 +53,10 @@ src/
 
 ├── client/                  # ═══════ 前端客户端层 ═══════
 │   ├── __init__.py
+│   ├── lifecycle.py         # 守护进程生命周期控制（start/stop/探测/端口发现/客户端日志）
 │   ├── transport.py         # TCP/TLS 连接管理 + Client 类（自动启动守护进程，自动路由明文/TLS）
 │   ├── tls_transport.py     # TLSClient（TLS 连接 + TOFU 证书验证，pubkey 跨机模式）
-│   ├── formatter.py         # 响应格式化输出（JSON 模式 / 自然语言模式）
+│   ├── formatter.py         # 响应格式化输出（JSON 模式）
 │   ├── renderer.py          # 终端快照渲染器（GDI+BuiltinGlyphs / SVG / Pillow 回退 / 纯文本）
 │   ├── config_manager.py    # 纯内存客户端配置管理（--default 临时覆盖）
 │   ├── ai_analyser.py       # AI 分析器（--ai-analyse 调用 aichat 做二次分析，按 uid 续聊）
@@ -66,11 +65,10 @@ src/
 ├── daemon/                  # ═══════ 守护进程层 ═══════
 │   ├── __init__.py
 │   ├── __main__.py          # 入口（python -m src.daemon），转调 lifecycle.main()
-│   ├── lifecycle.py         # 生命周期管理：start_daemon / stop_daemon / is_running / main
+│   ├── lifecycle.py         # 守护进程入口（main + 日志/控制台处理 + 单实例获取）
 │   ├── server.py            # DaemonServer（多 Listener 编排 + 认证上下文构建 + 生命周期）
 │   ├── listener.py          # Listener（单端口 accept 循环，封装明文/TLS 传输 + AuthContext）
-│   ├── single_instance.py   # 单实例互斥锁（防止多守护进程同时运行）
-│   ├── handler.py           # RequestHandler 兼容导出（委托 handlers/ 子包）
+│   ├── handler.py           # RequestHandler（委托 handlers/ 子包）
 │   └── handlers/            # ═══ 命令处理器子包（每命令一文件 + 派发器） ═══
 │       ├── __init__.py
 │       ├── base.py          # DaemonHandler 基类 + HandlerContext
@@ -96,12 +94,12 @@ src/
 │       └── utils.py         # 处理器工具函数
 
 ├── files/                   # ═══════ 文件工具用例层（按工具域分组） ═══════
-│   ├── __init__.py          # 聚合导出（errors / state / paths / 四个用例函数）
+│   ├── __init__.py          # 聚合导出（errors / state / paths / 用例函数）
 │   ├── paths.py             # 路径工具：会话 cwd 解析（resolve_session_path）/边界判定/git-bash 检测
 │   ├── state.py             # 读写状态机：FileRecordStore（readTime/writeTime）
 │   ├── diff.py              # unified diff 生成 + additions/removals 统计
 │   ├── history.py           # FileHistoryStore（SQLite 版本链）
-│   ├── permission.py        # 权限检查器（D3：仅保留接口，直接放行）
+│   ├── permission.py        # 权限检查器（当前一律放行）
 │   ├── errors.py            # 工具异常类型（FileToolError / FileReadRequiredError 等）
 │   ├── read/                # ═══ file read 用例 ═══
 │   │   ├── __init__.py      # 导出 read_file / ReadResult
@@ -137,14 +135,17 @@ src/
 │   └── windows/             # ═══ Windows 子包（仅 Win32 加载） ═══
 │       ├── __init__.py
 │       ├── win32_api.py     # Windows ctypes 类型定义 + 全部 API 函数绑定
-│       ├── conpty.py        # WindowsConPTY（CreatePseudoConsole 路径）
+│   ├── conpty.py            # WindowsPseudoTerminal（CreatePseudoConsole 路径）
 │       ├── condrv.py        # ConDrvPseudoTerminal（NT NtOpenFile 直连路径，已禁用）
 │       ├── conpty_handle.py # ConPtyHandle（HPCON + inW/outR 句柄三件套，I/O 与 resize）
 │       └── shells.py        # Shell 检测函数（detect_available_shells / format_shell_info）
 
 ├── ipc/                     # ═══════ 进程间通信层 ═══════
 │   ├── __init__.py
-│   └── shm.py               # 共享内存工具（端口/PID + 认证令牌 + HMAC 密钥读写）
+│   ├── shm.py               # 共享内存工具（端口/PID + 认证令牌 + HMAC 密钥读写）
+│   └── single_instance.py   # 单实例互斥锁（Windows 命名互斥 / Unix flock，守护进程与客户端共用）
+
+├── logging_setup.py         # 日志系统共享工具（按模块分组写独立日志文件 + 前一日日志 gzip 归档）
 
 ├── terminal/                # ═══════ 终端屏幕层 ═══════
 │   ├── __init__.py
@@ -193,8 +194,8 @@ src/
 
 ├── web/                     # ═══════ Web 服务器层（洋葱架构） ═══════
 │   ├── __init__.py
-│   ├── server.py            # WebServer 兼容导出（实现见 presentation/server.py）
-│   ├── history.py           # 会话历史管理
+│   ├── server.py            # WebServer（实现见 presentation/server.py）
+│   ├── history.py           # HistoryStore 导出（实现见 infrastructure/repositories/history_store.py）
 │   ├── httpserver.ps1       # Web 服务器启动脚本（PowerShell）
 │   ├── httpserver.sh        # Web 服务器启动脚本（Unix）
 │   ├── application/         # ═══ 用例层 ═══

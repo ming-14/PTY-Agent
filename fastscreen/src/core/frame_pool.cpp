@@ -4,6 +4,8 @@
 
 namespace fs {
 
+// 帧内存池：缓存最近释放的缓冲供后续帧复用，减少反复 new/delete。
+// frame_alloc 复用"容量>=size 且 <2*size"的缓存项；超大缓冲直接释放不入池。
 static std::mutex g_pool_mutex;
 static std::vector<std::pair<uint8_t*, size_t>> g_pool_free_list;
 static constexpr size_t POOL_MAX_BUFFERS = 8;

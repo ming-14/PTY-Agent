@@ -1,4 +1,4 @@
-"""file write / file edit 用例 —— 覆盖写/新建/唯一匹配替换（仿 opencode write.go / edit.go）
+"""file write / file edit 用例 —— 覆盖写/新建/唯一匹配替换
 
 内部顺序（design §4.3）：
 1. 状态机检查（已存在文件）：未读过或 modTime > lastRead → FileReadRequiredError
@@ -8,12 +8,11 @@
 5. os.makedirs(父目录) + 原样落盘（newline="" 防换行翻译）
 6. 历史版本链：
    - GetLatest 失败（无历史）→ Create(旧内容) 落 initial，跳过中间版本判定
-     （修正 opencode write.go:200 首次写入冗余存两份相同旧内容的 bug）
    - 历史最新内容 ≠ 磁盘内容 → CreateVersion(旧内容)（用户手改的中间版本）
    - 再 CreateVersion(新内容)
 7. 状态机双刷：record_write + record_read（工具自身已知最新内容）
 
-file edit 三分支（design §4.3，与 opencode edit.go 相同）：
+file edit 三分支（design §4.3）：
 - `--old` 空 = create：文件必须不存在，直接写 `new`
 - `--new` 空 = delete：old 在磁盘内容中唯一匹配后删除
 - 均非空 = replace：old 唯一匹配（str.find == str.rfind）后替换为 new
@@ -123,7 +122,7 @@ def _commit_write(
         action, path, existed, additions, removals, len(diff_text),
     )
 
-    # 历史版本链（修正 opencode 首次写入冗余版本的 bug）
+    # 历史版本链（与 initial/最新版本内容去重）
     latest = history.get_latest(path)
     if latest is None:
         history.create(path, old_content)
@@ -181,7 +180,7 @@ def edit_file(
 ) -> WriteResult:
     """唯一匹配替换（old/new 均非空）、删除（new 为空）、新建（old 为空）
 
-    三分支与 opencode edit.go 相同（design §4.3）：
+    三分支（design §4.3）：
     - create：文件必须不存在
     - replace/delete：文件必须存在且已被读取、未被外部修改；old 必须唯一
 

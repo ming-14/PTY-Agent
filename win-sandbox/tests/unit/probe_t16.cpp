@@ -1,7 +1,7 @@
 // =============================================================================
-// probe_t16 - Phase 16 T3 验收：TokenIsolatorImpl + WriteAreaImpl 行为验证
+// probe_t16 - TokenIsolatorImpl + WriteAreaImpl 行为验证
 //
-// 覆盖（对照 %TEMP%\opencode 实验结论）：
+// 覆盖：
 //   1. Prepare() 成功后 token：IL=S-1-16-4096、特权 0、非 AppContainer
 //   2. 用隔离 token 启动 cmd：写桌面被拒 / 写可写区成功 / 读系统文件成功
 //   3. WriteArea::Create：目录存在、Low 标签已打（GetFileInformationByHandleEx 读回）
@@ -87,7 +87,7 @@ TokenInfo InspectToken(HANDLE h) {
         }
     }
 
-    // AppContainer / 特权数
+    // AppContainer 标记 / 特权数
     need = 0;
     ::GetTokenInformation(h, TokenIsAppContainer, nullptr, 0, &need);
     if (need > 0) {
@@ -145,7 +145,7 @@ int main() {
     winsandbox::TokenIsolatorImpl isolator(logger);
     winsandbox::WriteAreaImpl area(logger);
 
-    printf("===== T3.1 TokenIsolatorImpl =====\n");
+    printf("===== TokenIsolatorImpl =====\n");
     auto prep = isolator.Prepare();
     Check(prep.IsOk(), "Prepare() Ok（" + prep.Message() + ")");
     Check(isolator.GetToken() != nullptr, "GetToken() 非空");
@@ -153,7 +153,7 @@ int main() {
     auto t = InspectToken(static_cast<HANDLE>(isolator.GetToken()));
     Check(t.il == 4096, "token IL == 4096（实际 " + std::to_string(t.il) + "）");
     Check(t.is_appcontainer == false, "非 AppContainer");
-    // plain+LOW 单路径（用户决策）：特权集 = 宿主镜像（非管理员 5 个无害特权）
+    // plain+LOW 单路径（设计决策）：特权集 = 宿主镜像（非管理员 5 个无害特权）
     HANDLE host_tok = nullptr;
     ::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &host_tok);
     auto host = InspectToken(host_tok);
@@ -166,7 +166,7 @@ int main() {
     auto prep2 = isolator.Prepare();
     Check(prep2.IsOk(), "Prepare() 幂等 Ok");
 
-    printf("===== T3.2 WriteAreaImpl =====\n");
+    printf("===== WriteAreaImpl =====\n");
     DWORD mock_process_id = 4242;
     auto created = area.Create(mock_process_id);
     Check(created.IsOk(), "Create() Ok（" + created.Message() + ")");
@@ -197,7 +197,7 @@ int main() {
     }
 
     // 用隔离 token 启动 cmd 实测：写桌面拒 / 写可写区成 / 读 hosts 成
-    printf("===== T3.3 隔离 token 行为实测 =====\n");
+    printf("===== 隔离 token 行为实测 =====\n");
     std::wstring area_w = Utf8ToWide(area_path);
 
     // 写桌面（应拒：文件不得被创建）+ 清理残留
@@ -221,11 +221,16 @@ int main() {
     Check(out.find("AREA-WRITE-OK") != std::string::npos, "写可写区成功（输出: " + out + "）");
 
     // 读系统文件（应成）
-    cmd = L"type C:\\Windows\\System32\\drivers\\etc\\hosts >NUL 2>&1 && echo READ-SYS32-OK";
+    wchar_t sys_root[MAX_PATH]{};
+    if (::GetWindowsDirectoryW(sys_root, MAX_PATH) == 0) {
+        Check(false, "GetWindowsDirectoryW 失败");
+        return 1;
+    }
+    cmd = L"type " + std::wstring(sys_root) + L"\\System32\\drivers\\etc\\hosts >NUL 2>&1 && echo READ-SYS32-OK";
     out = RunCmd(static_cast<HANDLE>(isolator.GetToken()), cmd);
     Check(out.find("READ-SYS32-OK") != std::string::npos, "读 System32 文件成功（输出: " + out + "）");
 
-    printf("===== T3.4 Teardown =====\n");
+    printf("===== Teardown =====\n");
     auto torn = area.Teardown();
     Check(torn.IsOk(), "Teardown() Ok（" + torn.Message() + ")");
     Check(GetFileAttributesA(area_path.c_str()) == INVALID_FILE_ATTRIBUTES, "目录已删除");

@@ -1,15 +1,15 @@
 // =============================================================================
 // IWriteArea - 沙箱可写区端口（core 层）
 //
-// Phase 16：Low IL 进程唯一可写目录。
+// Low IL 进程唯一可写目录。
 //   - 路径：%LOCALAPPDATA%\win-sandbox\sessions\<os-pid>-<process_id>\writable
 //   - Create()：创建目录 + 打 Low(4096) 完整性标签 + 追加当前用户 (OI)(CI)F
 //   - 沙箱进程 %TEMP%/%TMP% 重定向到此目录（唯一可写区域）
 //   - Teardown()：递归删除（失败仅记日志，由 StartupCleanup 启动期兜底）
 //
-// 打标签能力：非管理员可用（实验实证 SetNamedSecurityInfo(SI_LABEL) 零特权 rc=0），
-// 实现层首选且唯一路线 = SetNamedSecurityInfo（SetFileInformationByHandle
-// FileIntegrityInfo 非管理员固定 gle=5，已实测定案弃用，见 Phase-16 文档）。
+// 打标签能力：非管理员可用（SetNamedSecurityInfo(SI_LABEL) 零特权可用），
+// 唯一路线 = SetNamedSecurityInfo（SetFileInformationByHandle
+// FileIntegrityInfo 非管理员固定 gle=5，不可用）。
 // =============================================================================
 #pragma once
 

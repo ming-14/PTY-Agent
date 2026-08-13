@@ -10,7 +10,7 @@ import hashlib
 import logging
 from typing import Optional
 
-from ..base import MessageSigner
+from ...protocol.signing import MessageSigner
 
 _logger = logging.getLogger("pty-auth")
 

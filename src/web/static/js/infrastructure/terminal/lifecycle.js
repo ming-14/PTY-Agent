@@ -256,7 +256,7 @@ export function applyReadonlyState(sid, readonly) {
 /**
  * 恢复 scrollback 并写入 snapshot（用于首次订阅/resize_complete 场景）
  *
- * Phase 3: 守护进程返回 scrollback + snapshot，前端需要：
+ * 守护进程返回 scrollback + snapshot，前端需要：
  *   1. \x1b[3J 清空 scrollback
  *   2. \x1b[2J\x1b[1;1H 清空可见屏幕 + 光标定位到 (0, 0)
  *   3. 写入 scrollback 行 + 额外 \r\n 推入 scrollback 区
@@ -282,56 +282,7 @@ export function restoreScrollbackAndSnapshot(term, scrollbackLines, snapshot, is
       if (isHistory) scrollTermToTop(term);
       else scrollTermToBottom(term);
     } catch (_) {}
-    // 诊断：write 完成后读取 xterm.js 实际光标位置（resize 光标排查）
-    try {
-      const buf = term.buffer.active;
-      const bx = buf.cursorX;
-      const by = buf.cursorY;
-      const blen = buf.length;
-      const ydisp = buf.baseY;  // viewport 顶部在 buffer 中的行号
-      // 读取光标所在行内容（getLine 使用绝对 buffer 索引 = baseY + 视口相对 y）
-      const cursorLine = buf.getLine(ydisp + by);
-      const lineText = cursorLine ? cursorLine.translateToString(true) : '';
-      // 搜索视口内 prompt 行（含 PTY-Agent>），promptY 为视口内行号
-      let promptY = -1;
-      const R = term.rows;
-      for (let r = 0; r < R; r++) {
-        const line = buf.getLine(ydisp + r);
-        const text = line ? line.translateToString(true) : '';
-        if (text.includes('PTY-Agent>')) {
-          promptY = r;
-          break;
-        }
-      }
-      // 诊断：打印视口内最后 6 行内容
-      const tailRows = [];
-      for (let r = Math.max(0, R - 6); r < R; r++) {
-        const line = buf.getLine(ydisp + r);
-        const text = line ? line.translateToString(true).trim() : '';
-        tailRows.push(`[${r}]=${text.slice(0, 60)}`);
-      }
-      debug('terminal',
-            'restoreScrollbackAndSnapshot AFTER WRITE: cursor=(x=%d y=%d) buffer.length=%d ydisp=%d | cursorLine=%j | promptY=%d | tailRows=%s',
-            bx, by, blen, ydisp, lineText.trim().slice(0, 80), promptY, tailRows.join(' | '));
-    } catch (e) {
-      debug('terminal', 'restoreScrollbackAndSnapshot AFTER WRITE: read cursor failed: %s', e);
-    }
   };
-
-  // 诊断：记录入参摘要
-  debug('terminal',
-        'restoreScrollbackAndSnapshot: hasScrollback=%s sb_lines=%d snapshot_len=%d isHistory=%s term=%dx%d',
-        hasScrollback, scrollbackLines ? scrollbackLines.length : 0,
-        snapshot ? snapshot.length : 0, isHistory, term.cols, term.rows);
-  if (hasScrollback) {
-    // 诊断：scrollback 首/末行内容
-    try {
-      const stripAnsi = (s) => s.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
-      debug('terminal', 'restoreScrollback sb_first=%j sb_last=%j',
-            stripAnsi(scrollbackLines[0]).trim(),
-            stripAnsi(scrollbackLines[scrollbackLines.length - 1]).trim());
-    } catch (_) {}
-  }
 
   if (hasScrollback) {
     // 模式 A：有 scrollback，清空 + 恢复 + 写 snapshot
@@ -378,7 +329,7 @@ export function replayPending(sid) {
   if (!s || !inst) return;
   const isHistory = s.history || false;
 
-  // Phase 3: 首次订阅时守护进程返回 scrollback（GridScreen 历史区）+ replay（visible snapshot）
+  // 首次订阅时守护进程返回 scrollback（GridScreen 历史区）+ replay（visible snapshot）
   // 写入流程：
   //   1. \x1b[3J\x1b[2J\x1b[1;1H 清空 scrollback + 可见屏幕 + 光标定位到 (0, 0)
   //   2. 写入 scrollback 行 + (R-1) 个 \r\n 推入 scrollback 区
@@ -388,7 +339,7 @@ export function replayPending(sid) {
   // - pendingScrollback + pendingReplay 均为空（handlers.py 已订阅时返回 ""）
   // - 不 clear()，保留 xterm.js 实例的 scrollback
   if (s.pendingScrollback && s.pendingReplay) {
-    // Phase 3: 首次订阅，有 scrollback + replay
+    // 首次订阅，有 scrollback + replay
     const scrollbackLines = s.pendingScrollback.split('\r\n');
     // 去除末尾空字符串（capture_scrollback 末尾 \r\n 导致 split 产生空元素）
     if (scrollbackLines.length > 0 && scrollbackLines[scrollbackLines.length - 1] === '') {

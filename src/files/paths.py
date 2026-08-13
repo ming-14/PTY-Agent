@@ -33,21 +33,20 @@ def resolve_session_path(path: str, session_cwd: str) -> str:
 def is_within(path: str, root: str) -> bool:
     """路径边界判定：path 在 root 内（或等于 root）
 
-    使用 os.sep 边界而非字符串前缀，避免 opencode HasPrefix 的
-    "proj2 误判进 proj" 问题。
+    使用 os.sep 边界而非字符串前缀，避免 "proj2" 被前缀误判为 "proj" 的问题。
     """
     norm_path = os.path.normpath(path)
     norm_root = os.path.normpath(root)
     return norm_path == norm_root or norm_path.startswith(norm_root + os.sep)
 
 
-GIT_BASH_PATH_HINT = "非Git-Bash请不要使用Git-Bash风格路径(如 /c/Users/...)，请使用 Windows 风格路径(如 C:/Users/...)"
+GIT_BASH_PATH_HINT = "非Git-Bash请不要使用Git-Bash风格路径(如 /c/foo)，请使用 Windows 风格路径(如 C:/foo)"
 
 _GIT_BASH_PATH_RE = re.compile(r"(?:^|\s|[=\"'])/[a-zA-Z]/")
 
 
 def has_git_bash_style_path(command) -> bool:
-    """检测文本中的 Git-Bash 风格路径（/c/Users/...），供写路径参数时提示"""
+    """检测文本中的 Git-Bash 风格路径（/c/...），供写路径参数时提示"""
     if isinstance(command, list):
         command = " ".join(command)
     if not isinstance(command, str):

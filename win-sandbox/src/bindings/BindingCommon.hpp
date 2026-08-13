@@ -161,7 +161,7 @@ inline py::dict job_process_exited_info_to_dict(const JobProcessExitedInfo& info
     return d;
 }
 
-// Phase 13：ETW 行为事件 → py::dict
+// ETW 行为事件 → py::dict
 inline py::dict behavior_event_info_to_dict(const BehaviorEventInfo& info) {
     py::dict d;
     d["event_type"] = info.event_type;
@@ -174,7 +174,7 @@ inline py::dict behavior_event_info_to_dict(const BehaviorEventInfo& info) {
     return d;
 }
 
-// Phase 13：AccessDenied 专项事件 → py::dict
+// AccessDenied 专项事件 → py::dict
 inline py::dict access_denied_info_to_dict(const AccessDeniedInfo& info) {
     py::dict d;
     d["pid"] = info.pid;
@@ -227,7 +227,16 @@ inline py::dict process_to_dict(const SandboxedProcess& p) {
     d["pid"] = p.pid;
     d["command_line"] = p.command_line;
     d["working_dir"] = p.working_dir;
-    d["request_id"] = p.request_id;
+    // request_id：int | None（"" → None，数字字符串 → int）
+    if (p.request_id.empty()) {
+        d["request_id"] = py::none();
+    } else {
+        try {
+            d["request_id"] = py::int_(std::stoull(p.request_id));
+        } catch (const std::exception&) {
+            d["request_id"] = py::none();
+        }
+    }
     d["start_time_ms"] = p.start_time_ms;
     d["exit_time_ms"] = p.exit_time_ms;
     d["exit_code"] = p.exit_code;

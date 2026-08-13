@@ -5,7 +5,6 @@ Windows 特有代码存放在 windows/ 子包下，Unix 平台零加载。
 
 后端优先级（Windows）:
   沙箱（winsandbox，sandbox.toml enabled=true 时）> ConDrv 直连 > kernel32.CreatePseudoConsole
-注意：subprocess 管道模式已移除，仅保留真正的伪终端后端。
 工厂入口统一归一化命令：str 按 shell 语义拆分（shlex.split），后端统一消费 List[str]。
 """
 

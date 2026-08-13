@@ -18,7 +18,7 @@ LOG_LEVEL = _cfg["sandbox"]["log_level"]
 # ── 资源配额（对齐 win-sandbox quota payload）──
 QUOTA = dict(_cfg["quota"])
 
-# ── 隔离策略（对齐 win-sandbox isolation_policy payload，Phase 16 schema）──
+# ── 隔离策略（对齐 win-sandbox isolation_policy payload）──
 # 仅含标量/结构化数据（net_policy/net_allowlist/clipboard_isolate），无环境
 # 变量路径字段；浅拷贝一层防止外部引用改动，manager 不会原地修改
 ISOLATION = dict(_cfg["isolation"])

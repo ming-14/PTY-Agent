@@ -1,0 +1,26 @@
+- Job Object CPU Rate Control：`WEIGHT_BASED` 标志与 `CpuRate` 字段互斥，同时设置 `SetInformationJobObject` 必失败——按字段选对应标志，降级路径禁止静默返回 Ok（至少记 Warn）。
+- `Result::Value()` 在 Err 状态直接 `value_.value()` 触发 MSVC hardening 空 optional 断言崩溃——改为抛可捕获异常（`std::logic_error`），且修复具体调用点不等于修复根因。
+- 成员含裸指针指向兄弟成员时，整值移动赋值按声明序释放必现 use-after-free——Shutdown 清理必须显式按依赖顺序 `reset()`；e2e 的 `except: pass` 吞异常会掩盖崩溃。
+- JobObject IOCP 通知线程持非拥有 sink 指针，usecase 先于 job 析构时残留通知回调悬垂 sink，Shutdown 偶发 0xC0000005——必须先清 `sink_` 再 join 线程；e2e 必须断言沙箱进程自身退出码。
+- `NLOHMANN_JSON_SERIALIZE_ENUM` 的 `from_json` 遇未知字符串静默回退到映射表首项而非抛异常——首项必须是 Unknown 哨兵，协议层显式拒绝未知类型。
+- 环境块是双 null 结尾：空块只写一个 `L'\0'` 时 `CreateProcessW` 越界读堆垃圾，~80% 概率 `ERROR_INVALID_PARAMETER(87)`——空块补第二个 `\0`。
+- "配置被忽略"对隔离产品必须是显式错误——删除旧配置/字段要加载期显式拒绝（`unknown field`），禁止静默降级。
+- API 契约文档化后必须逐字段核对——事件载荷（`reason`/`behavior_log.type` 等）用既有字符串映射序列化枚举，禁止 `static_cast<int>` 导致 int/字符串漂移。
+- 持有 `py::function` 的对象析构必须在 GIL 下，join 回调线程前必须释放 GIL——shutdown 三阶段：释放 GIL 停线程 → 持 GIL 清回调 → 释放 GIL 析构。
+- `CreateProcessAsUserW`/`CreateProcessW` 使用 `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` 时，`bInheritHandles` 必须为 TRUE（返回 87）：实测 TRUE+HANDLE_LIST 是严格白名单（列表外可继承句柄不进子进程）。同时在 TRUE 下还需 `STARTUPINFOEXW.cb == sizeof(STARTUPINFOEXW)`（误用 sizeof(STARTUPINFOW) 同样 87）。
+- `CreateProcessAsUserW` + `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` 必须置 `STARTF_USESTDHANDLES`（句柄留空）：不置位时属性被静默忽略，子进程连父控制台、ConPTY 输出全丢——且**只体现在输出为空**，无任何错误码；git 历史对比（旧代码置位）才定位。回归测试务必覆盖 ConPTY 输出断言。
+- SDK 头文件会删宏：10.0.26100.0 的 WinBase.h 已移除 `FILE_PIPE_ACCESS_*`（仅剩 `PIPE_ACCESS_*`），旧 SDK 代码直接编译报未声明——SDK 迁移编译错误先 `rg` 目标头确认符号。
+- `CreateNamedPipeW` 单实例管道名必须进程内全局唯一：序号放 per-instance 成员时多 launcher 并发启动同名冲突（PIPE_BUSY 231）；用进程级静态原子。
+- 低 IL 的 DACL 检查优先于完整性检查：宿主目录带显式受限 DACL（受控文件夹/安全工具注入的 AppContainer ACE）时，低 IL 进程读/执行被拒（`CreateProcess` 87，`cmd /c` 报"参数格式不正确"）——测试素材 exe 要放普通 ACL 目录（`%LOCALAPPDATA%` 下），不要假设项目/Desktop 目录低 IL 可达。
+- `cmd /c "C:\path\a.exe args"`（CreateProcess 直传、引号包裹）会被 cmd 引号剥除规则把"路径+参数"整串当文件名（"系统找不到文件"，退出码 1）；PowerShell 终端验证正常是因为 shell 已剥引号——用 `cmd /c ""路径" args"` 双层引号。调试时先看子进程 stderr（中文系统 GBK 编码）。
+- 增量构建的 `.ddi` 依赖扫描在无 vcvars 环境（INCLUDE 缺失）下失败且 ninja **不重编 obj**——陈旧 obj 参与链接产生"改代码但行为不变/神秘崩溃"（0xC0000005 实为混合产物）；改代码后先确认对应 obj 重新编译（mtime/全量 -Rebuild），再谈行为差异。
+- Release 构建默认不带调试信息，需要调试请使用 Debug 构建
+- pybind11 绑定层：`py::gil_scoped_release` 作用域内禁止构造任何 Python 对象（`py::make_tuple`/`py::dict` 等）——无 GIL 调 Python C API 直接 0xC0000005；先在释放区取纯 C++ 值，恢复 GIL 后再包装返回。
+- Python int 经 `py::int_`→`int64_t` 落型为 nlohmann `number_integer`（有符号），schema 校验若只认 `is_number_unsigned()` 会误拒合法值（`port must be integer` 即便传了 443）——校验层必须同时接受 signed/unsigned 非负整数。
+- `ctypes.wintypes` 没有 `OVERLAPPED` 结构：需自定义（`Internal`/`InternalHigh`/`Offset`/`OffsetHigh`/`hEvent`，hEvent 必须指向 `CreateEventW` 句柄）。
+- helper 的"空值短路"（`if not data: return 0`）会静默吞掉 `None` 等非法类型——类型契约要求抛异常时先 `isinstance` 显式校验再判空。
+- 黑盒报告结论必须自己复现再采信：报告的"可写区进程退出即删"实为 shutdown 时删、"降级事件 0 条"实为约 1s 延迟派发、编程 259 断言应为元组——观测时机/调用方式不同会得出相反结论。
+- 已实现但绑定层注入 `nullptr` 的功能等价未实现（测试文件 SKIP 注释是明确证据）——重构形态后检查依赖注入点是否被绕过，SKIP 全绿不代表功能空洞被填上。
+- `__init__.py` 中异常类型必须先于 native 扩展导入：绑定层构造失败抛自定义异常（`ProtocolError`）时若该模块尚未导入会二次 ImportError。
+- 崩溃分类按 NTSTATUS 段判断（`0xC0000000-0xCFFFFFFF`）并排除 `STATUS_CONTROL_C_EXIT`（`0xC000013A`，Ctrl+C/Break 信号终止语义）——纯"退出码<0"会把信号退出误判为崩溃。
+- top-level 依赖注入类（墙钟定时器/全局配额）用 detached 线程 + `shared_ptr` 捕获实现，回调前先查 `IsFinished()` 再动作——避免进程已退出/shutdown 竞态下的 use-after-free。- core 层（usecase）不得直接调用 Win32 API：NativeSandboxedProcess 曾 include windows.h（CloseHandle/WaitForSingleObject/GetExitCodeProcess/GetCurrentProcessId/InterlockedExchangePointer），尽管端口 IProcessLauncher::WaitForExit 已存在也未使用。修复为句柄/等待/进程 ID 全部下沉到端口（新增 CurrentProcessId/CloseHandle），stdin_write_ 用 std::atomic 替换 InterlockedExchangePointer。写 core 层前先查已有端口；发现平台 API 调用应下移到 infra 端口。

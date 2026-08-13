@@ -348,7 +348,7 @@ function renderFastScreenTab() {
  * 根据 FastScreen 可用性更新标签栏入口按钮的显示。
  */
 export function updateFastScreenButtonVisibility() {
-  // 小眼睛按钮已移除，FastScreen 入口集成到电脑图标下拉菜单中。
+  // FastScreen 入口集成到电脑图标下拉菜单中。
   // 委托给 vnc.js 的共享函数更新按钮和下拉选项可见性。
   try { updateScreenShareButtonVisibility(); } catch (e) { warn('fastscreen', 'updateScreenShareButtonVisibility: %s', e); }
 }
@@ -1241,7 +1241,7 @@ function _bringWindowToFront() {
  * 绑定 FastScreen 相关 DOM 事件（由 events.js 调用）。
  */
 export function bindFastScreenEvents() {
-  // 小眼睛按钮已移除，FastScreen 入口由 vnc.js 下拉菜单处理
+  // FastScreen 入口由 vnc.js 下拉菜单处理
 
   // 目标类型切换（桌面/窗口）
   const targetTypeBtns = document.querySelectorAll('.fs-target-type-btn');
