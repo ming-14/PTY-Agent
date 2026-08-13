@@ -133,27 +133,27 @@ class TestEventHistoryManagerCheckExistence:
     def test_process_exit_always_false(self):
         mgr = EventHistoryManager()
         assert mgr.check_existence({"type": "process_exit", "pid": 100},
-                                   pty_provider=lambda: None) is False
+                                   tracker_provider=lambda: None) is False
 
     def test_process_crash_always_false(self):
         mgr = EventHistoryManager()
         assert mgr.check_existence({"type": "process_crash", "pid": 100},
-                                   pty_provider=lambda: None) is False
+                                   tracker_provider=lambda: None) is False
 
-    def test_process_spawn_no_pty(self):
+    def test_process_spawn_no_tracker(self):
         mgr = EventHistoryManager()
         assert mgr.check_existence({"type": "process_spawn", "pid": 100},
-                                   pty_provider=lambda: None) is False
+                                   tracker_provider=lambda: None) is False
 
     def test_process_spawn_zero_pid(self):
         mgr = EventHistoryManager()
         assert mgr.check_existence({"type": "process_spawn", "pid": 0},
-                                   pty_provider=lambda: None) is False
+                                   tracker_provider=lambda: None) is False
 
     def test_unknown_type_false(self):
         mgr = EventHistoryManager()
         assert mgr.check_existence({"type": "unknown", "pid": 0},
-                                   pty_provider=lambda: None) is False
+                                   tracker_provider=lambda: None) is False
 
 
 class TestEventHistoryManagerClear:

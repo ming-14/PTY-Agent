@@ -284,7 +284,7 @@ class TestRequestHandlerHandle:
         resp = self._handle_msg(handler, {"type": "unknown_cmd"})
         assert resp is not None
         assert resp["type"] == "error"
-        assert "未知指令" in resp["error"]
+        assert "未知指令" in resp["message"]
 
     def test_auth_failure(self):
         handler, _ = _setup_handler("secret")
@@ -315,7 +315,7 @@ class TestRequestHandlerHandle:
         t.join(timeout=5)
         assert resp is not None
         assert resp["type"] == "error"
-        assert "Authentication" in resp["error"] or "认证" in resp["error"]
+        assert "Authentication" in resp["message"] or "认证" in resp["message"]
 
 
 class TestRequestHandlerBuildResult:
@@ -323,7 +323,7 @@ class TestRequestHandlerBuildResult:
         session = _MockSession("test-sess")
         mgr = _MockManager({"test-sess": session})
         handler = RequestHandler(mgr, AuthContext())
-        result = build_result(mgr, "test-sess", "output", "", True, "matched")
+        result = build_result(mgr, "test-sess", "output", True, "matched")
         assert result["commandType"] == "exec"
         assert result["sessionId"] == "test-sess"
         assert result["triggerReturnReason"] == "trigger_matched"
@@ -333,7 +333,7 @@ class TestRequestHandlerBuildResult:
     def test_build_result_no_session(self):
         mgr = _MockManager()
         handler = RequestHandler(mgr, AuthContext())
-        result = build_result(mgr, "no-such", "output", "", False, "timeout")
+        result = build_result(mgr, "no-such", "output", False, "timeout")
         assert result["commandType"] == "exec"
         assert result["program"]["running"] is False
         assert result["program"]["ptyType"] == "none"
@@ -344,7 +344,7 @@ class TestRequestHandlerBuildResult:
         session.error_message = "crashed"
         mgr = _MockManager({"test-sess": session})
         handler = RequestHandler(mgr, AuthContext())
-        result = build_result(mgr, "test-sess", "output", "", False, "crashed")
+        result = build_result(mgr, "test-sess", "output", False, "crashed")
         assert result["program"]["exitCode"] == 1
         assert result["program"]["errorMessage"] == "crashed"
 
@@ -352,7 +352,7 @@ class TestRequestHandlerBuildResult:
         session = _MockSession("test-sess")
         mgr = _MockManager({"test-sess": session})
         handler = RequestHandler(mgr, AuthContext())
-        result = build_result(mgr, "test-sess", "output", "", True, "matched",
+        result = build_result(mgr, "test-sess", "output", True, "matched",
                                        warning="extra info")
         assert "extra info" in result["hint"]
 
@@ -683,7 +683,7 @@ class TestSnapshotReadLines:
             "snapshot": True, "lines": 3,
         })
         assert resp is not None
-        assert resp["stdout"] == "line3"
+        assert resp["outputStream"] == "line3"
 
     def test_snapshot_read_lines_range(self):
         session = self._make_multi_line_snapshot_session()
@@ -694,7 +694,7 @@ class TestSnapshotReadLines:
             "snapshot": True, "lines": "2:4",
         })
         assert resp is not None
-        assert resp["stdout"] == "line2\nline3\nline4"
+        assert resp["outputStream"] == "line2\nline3\nline4"
 
     def test_snapshot_read_lines_out_of_range(self):
         session = self._make_multi_line_snapshot_session()
@@ -705,7 +705,7 @@ class TestSnapshotReadLines:
             "snapshot": True, "lines": 99,
         })
         assert resp is not None
-        assert resp["stdout"] == ""
+        assert resp["outputStream"] == ""
 
     def test_snapshot_read_no_lines(self):
         session = self._make_multi_line_snapshot_session()
@@ -716,4 +716,4 @@ class TestSnapshotReadLines:
             "snapshot": True,
         })
         assert resp is not None
-        assert resp["stdout"] == "line1\nline2\nline3\nline4\nline5"
+        assert resp["outputStream"] == "line1\nline2\nline3\nline4\nline5"

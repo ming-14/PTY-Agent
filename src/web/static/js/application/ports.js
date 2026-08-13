@@ -11,7 +11,6 @@ export const ports = {
   },
   terminal: {
     handleOutput: null,
-    setLineMode: null,
     replayPending: null,
     setAppMouseMode: null,
     // 终端框尺寸应用（原 infrastructure/terminalAdapter.applyTerminalFrameSize）

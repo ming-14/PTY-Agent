@@ -38,7 +38,13 @@ from ..process import (
     _format_pty_error,
     ProcessMonitor,
     GuiDetector,
+    ProcessTreeTracker,
 )
+
+if IS_WINDOWS:
+    from ..process.windows import JobProcessTreeTracker
+else:
+    from ..process.unix import PgidProcessTreeTracker
 from ..output import (
     OutputBuffer,
     TriggerMatcher,
@@ -57,12 +63,35 @@ from .session_threads import (
 )
 
 if IS_WINDOWS:
-    from ..pty.windows.win32_error_msg import (
+    from ..process.win32_error import (
         STILL_ACTIVE, translate_windows_error,
         format_process_exit_code,
     )
 
 _logger = logging.getLogger("pty-session")
+
+
+def create_process_tracker() -> ProcessTreeTracker:
+    """创建平台对应的进程树追踪器（Session 生命周期 owner）
+
+    Windows：sandbox.enabled=true → SandboxProcessTreeTracker（winsandbox 委派）；
+            否则 JobProcessTreeTracker（Job Object）
+    Unix：process group（PgidProcessTreeTracker）
+
+    沙箱与原生后端共用同一端口，Session/PTY 对实现无感知。
+    """
+    if IS_WINDOWS:
+        from ..config import sandbox as _sbx_cfg
+        if _sbx_cfg.ENABLED:
+            from ..sandbox import SandboxProcessTreeTracker, SandboxSessionManager
+            manager = SandboxSessionManager(
+                quota=_sbx_cfg.QUOTA,
+                isolation=_sbx_cfg.ISOLATION,
+                log_level=_sbx_cfg.LOG_LEVEL,
+            )
+            return SandboxProcessTreeTracker(manager)
+        return JobProcessTreeTracker(name=f"session-{uuid.uuid4().hex[:8]}")
+    return PgidProcessTreeTracker()
 
 # Windows 下发送 Ctrl+C 需要 AttachConsole，而一个线程同时只能附加到一个控制台，
 # 多会话并发发送信号时必须串行化，否则会互相抢占控制台归属
@@ -137,8 +166,9 @@ class Session:
         self._out_buf = OutputBuffer(max_size=MAX_OUTPUT_BUFFER)
         self._trig_mat = TriggerMatcher(decode_func=self._decode_only)
         self._evt_hist = EventHistoryManager()
+        self._tracker = create_process_tracker()
         self._proc_mon = ProcessMonitor(
-            pty_provider=lambda: self._pty,
+            tracker=self._tracker,
             event_sink=self._evt_hist.add_event,
         )
         self._gui = GuiDetector(event_sink=self._evt_hist.add_event)
@@ -148,6 +178,7 @@ class Session:
             out_buf=self._out_buf,
             trig_mat=self._trig_mat,
             proc_mon=self._proc_mon,
+            tracker=self._tracker,
             gui_detector=self._gui,
             screen=self._screen,
             session_id=session_id,
@@ -185,7 +216,8 @@ class Session:
         try:
             self._pty = create_pty(
                 self.command, self._cols, self._rows, cwd=self._cwd,
-                env=self._env, encoding=self._child_encoding)
+                env=self._env, encoding=self._child_encoding,
+                tracker=self._tracker)
         except Exception as e:
             self.running = False
             self.error_message = _format_pty_error(e)
@@ -195,13 +227,12 @@ class Session:
         self._evt_hist.clear()
         self._trig_mat.clear()
         self._proc_mon.reset()
-        if self._pty:
-            try:
-                pids = self._pty.get_process_list()
-                self._proc_mon.reset(
-                    initial_pids=set(pids) if pids else set())
-            except Exception:
-                self._proc_mon.reset()
+        try:
+            pids = self._tracker.get_process_list()
+            self._proc_mon.reset(
+                initial_pids=set(pids) if pids else set())
+        except Exception:
+            self._proc_mon.reset()
 
         self.running = True
         self.start_time = time.time()
@@ -224,14 +255,15 @@ class Session:
             _logger.debug("stop: sid=%r _update_exit_info took %.3fs exit=%s",
                           self.id, _time.monotonic() - _t0, self.exit_code)
 
+        _t1 = _time.monotonic()
+        try:
+            # 显式终止顺序：tracker.kill_tree → pty.close → tracker.close
+            self._tracker.kill_tree()
+        except Exception as e:
+            _logger.warning("强杀进程树时异常: %s", e)
+        _logger.debug("stop: sid=%r kill_tree took %.3fs",
+                      self.id, _time.monotonic() - _t1)
         if self._pty:
-            _t1 = _time.monotonic()
-            try:
-                self._pty.kill_tree()
-            except Exception as e:
-                _logger.warning("强杀进程树时异常: %s", e)
-            _logger.debug("stop: sid=%r kill_tree took %.3fs",
-                          self.id, _time.monotonic() - _t1)
             _t2 = _time.monotonic()
             try:
                 self._pty.close()
@@ -242,6 +274,10 @@ class Session:
                           self.id, _time.monotonic() - _t2)
         _t3 = _time.monotonic()
         self._threads.stop(timeout)
+        try:
+            self._tracker.close()
+        except Exception as e:
+            _logger.warning("关闭进程树追踪器时异常: %s", e)
         _logger.info("stop: sid=%r threads.stop took %.3fs total %.3fs",
                      self.id, _time.monotonic() - _t3, _time.monotonic() - _t0)
 
@@ -781,9 +817,7 @@ class Session:
             self.exit_code = None
 
     def close_window(self, hwnd: int) -> bool:
-        if not self._pty:
-            return False
-        return self._pty.close_gui_window(hwnd)
+        return self._tracker.close_gui_window(hwnd)
 
     # ════════════════════════════════════════════════════════════
     # 事件管理（委托给 EventHistoryManager）
@@ -806,7 +840,7 @@ class Session:
 
     def check_event_existence(self, ev: dict) -> bool:
         return self._evt_hist.check_existence(
-            ev, pty_provider=lambda: self._pty)
+            ev, tracker_provider=lambda: self._tracker)
 
     @property
     def pending_event_count(self) -> int:
@@ -833,6 +867,10 @@ class Session:
         return self._proc_mon
 
     @property
+    def tracker(self) -> ProcessTreeTracker:
+        return self._tracker
+
+    @property
     def publisher(self) -> "SessionPublisher":
         return self._publisher
 
@@ -841,9 +879,10 @@ class Session:
         return self._input_interceptor
 
     def get_pty_process_list(self) -> list:
-        if self._pty:
-            return self._pty.get_process_list()
-        return []
+        try:
+            return self._tracker.get_process_list()
+        except Exception:
+            return []
 
     def get_pty_child_pid(self):
         if self._pty:

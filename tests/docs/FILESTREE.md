@@ -4,7 +4,7 @@
 tests/
 ├── conftest.py              # pytest 全局配置
 ├── repro_reflow_bug.py      # reflow bug 复现脚本
-├── test_mouse_inject.py     # 鼠标注入测试
+├── mouse_inject_tool.py     # 鼠标注入调试工具（手动运行）
 ├── test_ai_analyser.py      # AI 分析器测试
 ├── test_config_manager_ai.py # AI 配置管理器测试
 ├── test_e2e_ai_analyse.py   # AI 分析端到端测试

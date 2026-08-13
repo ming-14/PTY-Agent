@@ -19,7 +19,7 @@
    - 4.1 [start](#41-start---启动后台守护进程) · 4.2 [stop](#42-stop---停止后台守护进程) · 4.3 [status](#43-status---查看守护进程运行状态) · 4.4 [list](#44-list---列出所有活跃会话)
    - 4.5 [exec](#45-exec---启动或附加到会话) · 4.6 [send](#46-send---向运行中的会话发送输入) · 4.7 [read](#47-read---读取会话终端输出) · 4.8 [kill](#48-kill---终止指定会话)
    - 4.9 [events](#49-events---查看会话事件) · 4.10 [closewin](#410-closewin---关闭指定-gui-窗口) · 4.11 [mouse](#411-mouse---发送鼠标动作到-pty-会话) · 4.12 [wait](#412-wait---恒等待指定秒数)
-   - 4.13 [keygen](#413-keygen---生成-ed25519-公私钥对) · 4.14 [set-default](#414-set-default---覆盖默认配置-会话级)
+   - 4.13 [keygen](#413-keygen---生成-ed25519-公私钥对) · 4.14 [set-default](#414-set-default---覆盖默认配置-会话级) · 4.15 [file](#415-file---文件工具)
 5. [公共选项参考](#5-公共选项参考)
 6. [配置系统](#6-配置系统)
 7. [认证模式](#7-认证模式)
@@ -94,13 +94,14 @@ python app.py --host 10.0.0.5 --port 18767 exec s1 -c "bash"
 | `status`               | 查看守护进程运行状态              |
 | `list`                 | 列出所有活跃会话                  |
 | `exec <id>`            | 启动或附加到会话                  |
-| `send <id> <input>`    | 向运行中的会话发送输入            |
+| `send <id> -i <input>` | 向运行中的会话发送输入（`-i` 必填） |
 | `read <id>`            | 读取会话终端输出                  |
 | `kill <id>`            | 终止指定会话                      |
 | `events <id>`          | 查看会话事件                      |
 | `closewin <id> <hwnd>` | 关闭指定 GUI 窗口                 |
 | `mouse <id> <action>`  | 发送鼠标动作到 PTY 会话           |
 | `wait`                 | 恒等待指定秒数（守护进程侧等待）  |
+| `file <read\|write\|edit\|grep\|glob>` | 文件工具（读/写/唯一匹配替换/内容搜索/文件名匹配） |
 | `keygen`               | 生成 Ed25519 公私钥对             |
 | `set-default <key> <val>` | 覆盖默认配置（会话级）         |
 
@@ -271,15 +272,15 @@ python app.py exec build -c "make all" --idle-timeout 10 \
 **用法：**
 
 ```bash
-python app.py send <id> <input> [选项] [公共选项]
+python app.py send <id> -i <input> [选项] [公共选项]
 ```
 
-**位置参数：**
+**参数：**
 
 | 参数    | 说明                                                    |
 | ------- | ------------------------------------------------------- |
-| `id`    | 会话标识                                                |
-| `input` | 要发送的输入文本（最长 65536 字符）。直接位置参数，没有 `-i/--input` 选项 |
+| `id`    | 会话标识（位置参数）                                    |
+| `-i/--input` | 要发送的输入文本（最长 65536 字符），**必填选项** |
 
 **输入控制选项：**
 
@@ -320,19 +321,19 @@ python app.py send <id> <input> [选项] [公共选项]
 
 ```bash
 # 发送 Python 代码
-python app.py send py "print(100*100)" -t ">>>"
+python app.py send py -i "print(100*100)" -t ">>>"
 
 # 多行代码 (JSON 转义)
-python app.py send py "for i in range(3):\n    print(i)" -t ">>>" -j
+python app.py send py -i "for i in range(3):\n    print(i)" -t ">>>" -j
 
 # 发送方向键 (TUI)
-python app.py send ui "{down}" -j -e none
+python app.py send ui -i "{down}" -j -e none
 
 # 发送 Ctrl+C
-python app.py send job1 "{ctrl+c}" -e none
+python app.py send job1 -i "{ctrl+c}" -e none
 
 # 发送并取屏幕快照
-python app.py send ui "j" --snapshot --timeout 5
+python app.py send ui -i "j" --snapshot --timeout 5
 ```
 
 ---
@@ -667,6 +668,58 @@ python app.py set-default timeout 60
 python app.py set-default terminal-size 120x40
 python app.py set-default response-format svg
 ```
+
+---
+
+### 4.15  file - 文件工具
+
+文件读写/搜索/传输工具集（read-before-write 状态机、rg 双引擎，机制详见 [docs/design/files-tools.md](design/files-tools.md) 与 [docs/design/files-transfer.md](design/files-transfer.md)）。
+
+**用法：**
+
+```bash
+python app.py file read     <path> [-s SESSION_ID] [--offset N] [--limit N] [公共选项]
+python app.py file write    <path> [-s SESSION_ID] --content TEXT | --content-file FILE [公共选项]
+python app.py file edit     <path> [-s SESSION_ID] [--old TEXT | --old-file FILE] [--new TEXT | --new-file FILE] [公共选项]
+python app.py file grep     <pattern> [path] [-s SESSION_ID] [--include GLOB] [--literal-text] [公共选项]
+python app.py file glob     <pattern> [path] [-s SESSION_ID] [公共选项]
+python app.py file upload   <local-path> <remote-path> [-s SESSION_ID] [--force] [--timeout N] [公共选项]
+python app.py file download <remote-path> <local-path> [-s SESSION_ID] [--force] [--timeout N] [公共选项]
+```
+
+| 子命令 | 用途 | 关键点 |
+| ------ | ---- | ------ |
+| `file read`  | 读取文件内容（带行号输出，默认 2000 行） | 超过 250KB / 图片文件拒绝；文件不存在时提示相似文件名；`--offset` 0-based |
+| `file write` | 覆盖写/新建文件（自动建父目录） | `--content` 与 `--content-file` 二选一（大文件用后者）；已存在文件必须先 `file read`，被外部修改后写入被拒；内容相同拒绝 |
+| `file edit`  | 唯一匹配替换 | `--old`/`--old-file`、`--new`/`--new-file` 各自二选一；`--old` 为空=新建（文件必须不存在）；`--new` 为空=删除；`--old` 必须唯一匹配（未找到/重复均拒绝） |
+| `file grep`  | 内容搜索（rg 引擎优先，缺失自动降级纯 Python） | `path` 缺省=会话 cwd；`--include` 文件名过滤；`--literal-text` 按字面量匹配 |
+| `file glob`  | 文件名匹配（rg --files 引擎优先，缺失自动降级） | `path` 缺省=会话 cwd；pattern 支持 `**` 任意层级 |
+| `file upload`  | 上传本地文件/目录到会话侧（scp -r 语义） | `local-path` 为 CLI 本机路径（文件或目录），`remote-path` 由 daemon 按会话 cwd 解析（支持 `~`）；目标已存在且相同→跳过，不同→拒绝并提示 `--force`；`--timeout` 为整个传输总时限（默认 120s），超时中止并清理临时文件 |
+| `file download`  | 下载会话侧文件/目录到本地（scp -r 语义） | 与 upload 反向；`remote-path` 由 daemon 按会话 cwd 解析，可为文件或目录；覆盖策略与 `--timeout` 同 upload |
+
+**`-s/--cwd-session`（必填）：** 指定某个会话，取它的 cwd 作为路径解析基准（不操作该会话）。相对路径基于该 cwd 拼接、`~` 按 daemon 用户展开、绝对路径原样使用；grep/glob 的 `path` 缺省即为该 cwd。跨机场景（CLI 与 daemon 不同机器）下语义依然正确——路径在 daemon 所在机器上解析。注意 cwd 是会话创建时的值，shell 内 `cd` 后不更新。会话不存在或已结束时报错。
+
+**示例：**
+
+```bash
+python app.py file read src/main.py -s myapp --limit 50
+python app.py file write cfg.ini -s myapp --content "[app]`nname=pty"
+python app.py file write out.txt -s myapp --content-file big.txt      # 大文件内容从文件读取
+python app.py file edit src/main.py -s myapp --old "TODO" --new "DONE"
+python app.py file edit src/main.py -s myapp --old-file old.txt --new-file new.txt
+python app.py file grep "def " src -s myapp --include *.py
+python app.py file glob "src/**/*.py" -s myapp
+python app.py file upload ./local.txt remote_dir/ -s myapp          # 上传本地文件到会话侧
+python app.py file download remote_dir/local.txt ./local.txt -s myapp --force
+```
+
+**注意：**
+
+- `file write` / `file edit`（replace/delete）受 read-before-write 状态机保护：必须先 `file read` 且期间未被外部修改，否则拒绝并提示
+- `--content-file` / `--old-file` / `--new-file` 在 CLI 侧按 UTF-8 读取（非法编码报错），CRLF 规范化为 LF（与 `file read` 视图一致），内容再走同一传输链路，不受命令行长度限制
+- 每次写操作在 ~/.pty-agent/history.db 的 `files_history` 表落版本链（initial → v1 → v2），便于后续回溯；当前不提供查询命令
+- `file grep` / `file glob` 结果按文件修改时间最新优先，上限 100 条（超出截断并标记）
+- `file upload` / `file download` 走二进制帧传输，不受 JSON 消息长度（MAX_MESSAGE_LENGTH）限制；upload 落盘后写 history 版本链 + 状态机双刷（与 write 一致），download 不落 history；传输中断/超时会清理临时文件
 
 ---
 
@@ -1079,7 +1132,8 @@ app.py exec sid -c "terminal_injector.exe --mediator --target-pid $pid" \
 ### 10.6  win_sandbox - Windows 沙盒
 
 - **路径：** `bin/win_sandbox/`
-- **内容：** `sandbox.exe` + MSVCP140/VCRUNTIME140 DLL
+- **内容：** vendored python 包（`win_sandbox`）+ pybind11 原生扩展（`_native/win_sandbox_native.cp311-win_amd64.pyd`）
+- **用途：** 沙箱会话后端（Job Object + Low IL 隔离，进程内直调，无 IPC 管道）
 
 ### 10.7  ultravnc - UltraVNC 远程桌面
 
@@ -1131,9 +1185,9 @@ LANG/LC_ALL
 
 ```bash
 python app.py exec py -c "python -u -i" -t ">>>"
-python app.py send py "print(100*100)" -t ">>>"
+python app.py send py -i "print(100*100)" -t ">>>"
 # 预期: >>> 10000\n>>>
-python app.py send py "for i in range(3):\n    print(i)" -t ">>>" -j
+python app.py send py -i "for i in range(3):\n    print(i)" -t ">>>" -j
 # 预期: >>> 0\n1\n2\n>>>
 python app.py read py --lines 10
 python app.py events py --last 5
@@ -1176,9 +1230,9 @@ python app.py events job1 -l 10      # 查看崩溃事件详情
 ```bash
 python app.py exec ui -c "mimo.exe" \
     --default response-format svg --snapshot-mode --timeout 5
-python app.py send ui "j" --send-eol cr --timeout 5 -s
+python app.py send ui -i "j" --send-eol cr --timeout 5 -s
 python app.py read ui -s
-python app.py send ui "帮我写一个贪吃蛇游戏" -s
+python app.py send ui -i "帮我写一个贪吃蛇游戏" -s
 python app.py kill ui
 ```
 
@@ -1196,10 +1250,10 @@ python app.py --show-config terminal-size
 python app.py exec dbg -c \
     '"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe" myapp.exe' \
     -t ">"
-python app.py send dbg "g" -t "0:000"      # 继续执行
-python app.py send dbg "k" -t "0:000"      # 查看调用栈
-python app.py send dbg "db esp L100" -t "0:000"  # 查看内存
-python app.py send dbg "q" -t ">"          # 退出
+python app.py send dbg -i "g" -t "0:000"      # 继续执行
+python app.py send dbg -i "k" -t "0:000"      # 查看调用栈
+python app.py send dbg -i "db esp L100" -t "0:000"  # 查看内存
+python app.py send dbg -i "q" -t ">"          # 退出
 python app.py kill dbg
 ```
 
@@ -1222,10 +1276,10 @@ python app.py mouse ui click 10,5 -t ">>>" --timeout 10
 ### 12.9  控制字符发送（-j JSON 转义模式）
 
 ```bash
-python app.py send myid "import os\nprint(os.name)" -t ">>>" -j
-python app.py send myid "{down}" -j -e none          # TUI 方向键
-python app.py send myid "{ctrl+c}" -e none           # 发送 Ctrl+C
-python app.py send myid "{enter}" -j                 # 回车
+python app.py send myid -i "import os\nprint(os.name)" -t ">>>" -j
+python app.py send myid -i "{down}" -j -e none          # TUI 方向键
+python app.py send myid -i "{ctrl+c}" -e none           # 发送 Ctrl+C
+python app.py send myid -i "{enter}" -j                 # 回车
 ```
 
 ### 12.10  跨机 TLS 部署
@@ -1259,9 +1313,9 @@ python app.py start
 ```bash
 python app.py start
 python app.py exec test -c "python -u -i" -t ">>>" --timeout 5
-python app.py send test "print(100*100)" -t ">>>"
+python app.py send test -i "print(100*100)" -t ">>>"
 # 预期: >>> 10000\n>>>
-python app.py send test "for i in range(3):\n    print(i)" -t ">>>"
+python app.py send test -i "for i in range(3):\n    print(i)" -t ">>>"
 # 预期: >>> 0\n1\n2\n>>>
 python app.py kill test
 python app.py stop

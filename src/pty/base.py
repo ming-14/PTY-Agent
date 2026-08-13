@@ -1,10 +1,14 @@
 """PseudoTerminal 抽象基类
 
 定义了最小接口契约，所有具体 PTY 后端必须实现全部方法。
+
+进程管理职责（kill_tree / 进程列表 / GUI / 通知）已迁出到
+`process/` 包（ProcessTreeTracker 抽象），PTY 只负责伪终端 I/O，
+进程树追踪通过 `register_root` 委托给 Session 注入的 tracker。
 """
 
 import logging
-from typing import Optional, List
+from typing import Optional
 
 _logger = logging.getLogger("pty-factory")
 
@@ -19,10 +23,6 @@ class PseudoTerminal:
     - fileno()
     - get_child_pid()
     - get_exit_code()
-    - get_process_list()
-    - get_gui_windows()
-    - poll_gui_windows()
-    - close_gui_window()
     """
 
     def get_type(self) -> str:
@@ -69,9 +69,6 @@ class PseudoTerminal:
         """关闭 PTY 并清理资源"""
         raise NotImplementedError
 
-    def kill_tree(self):
-        """强杀整个进程树（不等待退出），close() 仍需调用以清理资源"""
-
     def fileno(self):
         """返回 PTY 的文件描述符（如适用）"""
         return None
@@ -90,78 +87,6 @@ class PseudoTerminal:
             Optional[int]: 退出码或 None。
         """
         return None
-
-    def get_child_process_exit_code(self, pid: int) -> Optional[int]:
-        """查询子/孙进程退出码（通过 Job Object）
-
-        用于检测子进程崩溃：即使主进程正常退出，子进程异常退出
-        也能被检测到。非 Windows 后端返回 None。
-
-        Args:
-            pid: 子/孙进程 ID。
-
-        Returns:
-            退出码（int），若无法查询或进程仍在运行则返回 None。
-        """
-        return None
-
-    def get_job_notifications(self) -> list:
-        """获取 Job Object IOCP 实时通知
-
-        返回 JobNotification 列表，由 Session 的 _drain_job_notifications 消费。
-        非 Windows 后端返回空列表。
-
-        Returns:
-            JobNotification 列表。
-        """
-        return []
-
-    # ---- Job Object 进程树追踪 ----
-
-    def get_process_list(self) -> List[int]:
-        """获取进程树所有进程的 PID 列表
-
-        Windows 后端通过 Job Object 查询所有子/孙进程 PID。
-        Unix 后端仅返回直接子进程 PID。
-
-        Returns:
-            PID 列表。
-        """
-        pid = self.get_child_pid()
-        return [pid] if pid is not None else []
-
-    # ---- GUI 窗口检测 ----
-
-    def get_gui_windows(self) -> List[dict]:
-        """获取已检测到的 GUI 窗口列表
-
-        Returns:
-            窗口信息字典列表，每项含 hwnd/pid/title/class_name。
-            Windows 后端返回实际信息，其他后端返回空列表。
-        """
-        return []
-
-    def poll_gui_windows(self) -> List[dict]:
-        """轮询检测新增 GUI 窗口
-
-        与 get_gui_windows 不同，此方法执行一次新的 EnumWindows 扫描，
-        仅返回本轮新增的窗口。
-
-        Returns:
-            本轮新增的窗口信息字典列表。
-        """
-        return []
-
-    def close_gui_window(self, hwnd: int) -> bool:
-        """关闭指定 GUI 窗口
-
-        Args:
-            hwnd: 窗口句柄。
-
-        Returns:
-            True 表示 WM_CLOSE 已发送。
-        """
-        return False
 
     def inject_mouse_event(self, x: int, y: int, button: int, is_release: bool, control_key_state: int = 0) -> bool:
         """向子进程控制台直接注入鼠标事件（Windows ConPTY 专用）

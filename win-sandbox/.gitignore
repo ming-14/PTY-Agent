@@ -1,0 +1,110 @@
+# ===== Build artifacts =====
+build/
+out/
+[Bb]uild/
+[Bb]in/
+[Oo]bj/
+*.exe
+*.dll
+*.lib
+*.exp
+
+# ===== CMake =====
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+CMakeUserPresets.json
+CTestTestfile.cmake
+install_manifest.txt
+*.tlog
+*.lastbuildstate
+
+# ===== Ninja =====
+.ninja_deps
+.ninja_log
+build.ninja
+
+# ===== Visual Studio =====
+.vs/
+*.user
+*.suo
+*.sln.docstates
+*.pdb
+*.ipdb
+*.idb
+*.ilk
+*.iobj
+*.pch
+*.map
+
+# ===== Other IDEs =====
+.vscode/
+.idea/
+.cache/
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.pyd
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+
+# ===== Logs =====
+*.log
+logs/
+
+# ===== OS =====
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ===== Temp / sandbox runtime =====
+*.tmp
+*.bak
+*.dmp
+*.mdmp
+
+# ===== Debug / temp scripts =====
+_debug_*
+_debug*.py
+debug_*.py
+debug_*.txt
+debug_*.bat
+debug_*.ps1
+_fix_*.py
+_fix_doc*.py
+build_check.cmd
+build_log*.txt
+build_out.txt
+build_result.txt
+do_build.bat
+query_etw.bat
+run_*.bat
+run_*.ps1
+test_compile.obj
+test_*.txt
+*.whl
+.codeartsdoer/
+
+# ===== Test output files =====
+tests/e2e/test_output_*.txt
+tests/e2e/debug_*.py
+tests/e2e/diag_*.py
+tests/e2e/run_*.bat
+tests/e2e/run_*.ps1
+tests/e2e/*.cmd
+tests/e2e/test_stderr.txt
+sandbox_std*.txt
+
+# ===== Third-party headers =====
+third_party/wfp_headers/

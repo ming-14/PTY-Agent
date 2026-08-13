@@ -199,7 +199,10 @@ class TestIsRunning:
             mock_lock = MagicMock()
             mock_lock.is_locked.return_value = False
             mock_lock_cls.return_value = mock_lock
-            with patch("src.daemon.lifecycle._cleanup_port") as mock_cleanup:
+            with patch("src.daemon.lifecycle.read_daemon_info_from_shm",
+                       return_value=(99999, 12345)), \
+                 patch("src.daemon.lifecycle._pid_exists", return_value=False), \
+                 patch("src.daemon.lifecycle._cleanup_port") as mock_cleanup:
                 is_running()
                 mock_cleanup.assert_called_once()
 

@@ -32,6 +32,7 @@ class SessionComponents:
         out_buf:       线程安全输出缓冲区。
         trig_mat:      触发条件匹配器。
         proc_mon:      进程树监控器。
+        tracker:       进程树追踪器（自然结束检测的进程列表来源）。
         gui_detector:  GUI 窗口检测器。
         screen:        终端屏幕快照管理器。
         session_id:    会话 ID（用于日志）。
@@ -42,6 +43,7 @@ class SessionComponents:
     out_buf: OutputBuffer
     trig_mat: TriggerMatcher
     proc_mon: ProcessMonitor
+    tracker: "ProcessTreeTracker"
     gui_detector: GuiDetector
     screen: TerminalScreen
     session_id: str
@@ -235,7 +237,9 @@ class SessionThreads:
             # 自然退出检测：所有子进程已退出且 PTY 仍在运行，主动关闭 PTY 让 reader EOF
             if pty and not self._stop_event.is_set():
                 try:
-                    pids = pty.get_process_list()
+                    # 进程列表来自 tracker（PTY 基类无 get_process_list；
+                    # 沙箱后端的 Job 回调排除根进程，必须经 tracker 探测）
+                    pids = comp.tracker.get_process_list()
                     if pids is not None and len(pids) == 0:
                         session = comp.session_ref()
                         if session and session.running:

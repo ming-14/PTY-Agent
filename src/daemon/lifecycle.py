@@ -423,9 +423,13 @@ def _try_stop_via_plain(port) -> bool:
     """通过明文 TCP 连接停止守护进程（token/none 模式）
 
     装配 HMAC 签名器（从 SHM 读取密钥），发送 stop 消息。
+    函数返回前恢复原签名器：签名器为线程级隐式全局状态，
+    若装配后不恢复会污染调用线程后续所有收发（如测试进程）。
     """
+    prev_out = Message.get_outbound_signer()
+    prev_in = Message.get_inbound_verifier()
     try:
-        if Message.get_outbound_signer() is None:
+        if prev_out is None:
             key = read_hmac_key()
             if key is not None:
                 Message.set_outbound_signer(HmacMessageSigner(key))
@@ -444,6 +448,9 @@ def _try_stop_via_plain(port) -> bool:
     except Exception as e:
         _safe_print(f"[pty-agent] TCP stop failed: {e}")
         return False
+    finally:
+        Message.set_outbound_signer(prev_out)
+        Message.set_inbound_verifier(prev_in)
 
 
 def _try_stop_via_tls(
@@ -480,15 +487,19 @@ def _try_stop_via_tls(
         _logger.info("已连接远程守护进程 (TLS) %s:%d，发送 stop", tls_host, tls_port)
 
         # 装配 Ed25519 签名器 + 凭证提供者
-        private_key = PrivateKey.from_file(PUBKEY_PRIVATE_KEY_PATH)
-        if Message.get_outbound_signer() is None:
-            Message.set_outbound_signer(Ed25519MessageSigner(private_key=private_key))
+        prev_out = Message.get_outbound_signer()
+        try:
+            private_key = PrivateKey.from_file(PUBKEY_PRIVATE_KEY_PATH)
+            if prev_out is None:
+                Message.set_outbound_signer(Ed25519MessageSigner(private_key=private_key))
 
-        msg = {"type": "stop"}
-        PubkeyCredentialProvider(private_key).enrich(msg)
+            msg = {"type": "stop"}
+            PubkeyCredentialProvider(private_key).enrich(msg)
 
-        Message.send(ssl_sock, msg)
-        resp = Message.recv(ssl_sock)
+            Message.send(ssl_sock, msg)
+            resp = Message.recv(ssl_sock)
+        finally:
+            Message.set_outbound_signer(prev_out)
         ssl_sock.close()
 
         if resp and resp.get("commandType") == "stop" and resp.get("code") == 0:

@@ -2,36 +2,38 @@
 
 import pytest
 
-from src.config import (
+from src.config.common import (
     DAEMON_HOST,
+    MAX_COMMAND_LEN,
+    MAX_INPUT_LEN,
+    MAX_PATTERN_LEN,
+    MAX_SESSION_ID_LEN,
+    IS_WINDOWS,
+)
+from src.config.daemon import (
     DEFAULT_DAEMON_PORT,
     MAX_OUTPUT_BUFFER,
     MAX_TRIGGER_SCAN,
     DEFAULT_TRIGGER_TIMEOUT,
     DAEMON_START_TIMEOUT,
     PING_TIMEOUT,
-    CONNECT_TIMEOUT,
     STOP_TIMEOUT,
     SOCKET_LISTEN_BACKLOG,
     SOCKET_RECV_BUFSIZE,
     PTY_READ_SIZE,
-    MAX_SESSION_ID_LEN,
-    MAX_COMMAND_LEN,
-    MAX_PATTERN_LEN,
-    MAX_INPUT_LEN,
     MMAP_NAME,
     MMAP_SIZE,
     AUTH_TOKEN_NAME,
     AUTH_TOKEN_SIZE,
     AUTH_TOKEN_ROTATE_INTERVAL,
     AUTH_TOKEN_GRACE_PERIOD,
-    IS_WINDOWS,
 )
+from src.config.client import CONNECT_TIMEOUT
 
 
 class TestNetworkConfig:
     def test_daemon_host(self):
-        assert DAEMON_HOST == "0.0.0.0"
+        assert DAEMON_HOST == "127.0.0.1"
 
     def test_default_port(self):
         assert isinstance(DEFAULT_DAEMON_PORT, int)

@@ -19,6 +19,7 @@ from src.config import daemon as daemon_config
 # ENABLE_FASTSCREEN），前端不可修改，故不在 VALID_KEYS 中
 _EXPECTED_VALID_KEYS = {
     "basic.theme",
+    "rikka.enabled",
     "ime.enabled",
     "ime.candidateCount",
     "ime.vertical",

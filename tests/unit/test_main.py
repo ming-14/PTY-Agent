@@ -83,7 +83,7 @@ class TestBuildParser:
     def test_parse_send(self):
         """解析 send 子命令"""
         parser = build_parser()
-        args = parser.parse_args(["send", "test-id", "input text"])
+        args = parser.parse_args(["send", "test-id", "-i", "input text"])
         assert args.subcmd == "send"
         assert args.id == "test-id"
         assert args.input == "input text"
@@ -224,7 +224,7 @@ class TestBuildParser:
     def test_parse_send_snapshot(self):
         """解析 send --snapshot"""
         parser = build_parser()
-        args = parser.parse_args(["send", "test-id", "input", "--snapshot"])
+        args = parser.parse_args(["send", "test-id", "-i", "input", "--snapshot"])
         assert args.snapshot is True
 
     def test_parse_read_snapshot(self):
@@ -242,7 +242,7 @@ class TestBuildParser:
     def test_parse_send_send_eol(self):
         """解析 send --send-eol"""
         parser = build_parser()
-        args = parser.parse_args(["send", "test-id", "input", "--send-eol", "cr"])
+        args = parser.parse_args(["send", "test-id", "-i", "input", "--send-eol", "cr"])
         assert args.send_eol == "cr"
 
     def test_parse_exec_force_pty_mode(self):
@@ -278,7 +278,7 @@ class TestBuildParser:
     def test_parse_send_response_format(self):
         """解析 send --response-format"""
         parser = build_parser()
-        args = parser.parse_args(["send", "test-id", "input", "--response-format", "svg"])
+        args = parser.parse_args(["send", "test-id", "-i", "input", "--response-format", "svg"])
         assert args.response_format == "svg"
 
     def test_parse_read_response_format(self):
@@ -296,7 +296,7 @@ class TestBuildParser:
     def test_parse_send_svg_compression_level(self):
         """解析 send --svg-compression-level"""
         parser = build_parser()
-        args = parser.parse_args(["send", "test-id", "input", "--svg-compression-level", "0"])
+        args = parser.parse_args(["send", "test-id", "-i", "input", "--svg-compression-level", "0"])
         assert args.svg_compression_level == 0
 
     def test_parse_read_svg_compression_level(self):
@@ -314,7 +314,7 @@ class TestBuildParser:
     def test_parse_send_output(self):
         """解析 send --output/-o"""
         parser = build_parser()
-        args = parser.parse_args(["send", "test-id", "input", "-o", "out.svg"])
+        args = parser.parse_args(["send", "test-id", "-i", "input", "-o", "out.svg"])
         assert args.output_path == "out.svg"
 
     def test_parse_default_response_format(self):

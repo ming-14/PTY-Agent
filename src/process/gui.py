@@ -1,7 +1,8 @@
 """GUI 窗口检测模块
 
-管理 Job 进程树中 GUI 窗口的轮询检测，节流控制检测频率。
+管理进程树中 GUI 窗口的轮询检测，节流控制检测频率。
 当检测到新窗口时，通过事件接收器发布 gui_window 事件。
+依赖 ProcessTreeTracker 抽象（poll_gui_windows / get_process_list）。
 """
 
 import time
@@ -10,6 +11,7 @@ import threading
 from typing import List
 
 from ..output.events import PendingEvent
+from .base import ProcessTreeTracker
 
 _logger = logging.getLogger("pty-session")
 
@@ -17,8 +19,8 @@ _logger = logging.getLogger("pty-session")
 class GuiDetector:
     """GUI 窗口检测器
 
-    轮询 PTY 后端检测 Job 进程树中新增的 GUI 窗口，
-    节流 2s 避免高频检测。检测到新窗口时通过 event_sink 发布事件。
+    轮询 tracker 检测进程树中新增的 GUI 窗口，节流 2s 避免高频检测。
+    检测到新窗口时通过 event_sink 发布事件。
 
     Attributes:
         gui_windows: 已检测到的 GUI 窗口列表（线程安全写入）。
@@ -38,11 +40,11 @@ class GuiDetector:
         self._last_poll_ms = 0.0
         self._event_sink = event_sink
 
-    def check(self, pty, session_id: str) -> None:
-        """轮询检测 Job 进程树中新增的 GUI 窗口（节流 2s）
+    def check(self, tracker: ProcessTreeTracker, session_id: str) -> None:
+        """轮询检测进程树中新增的 GUI 窗口（节流 2s）
 
         Args:
-            pty:        PTY 后端实例（提供 poll_gui_windows / get_process_list）。
+            tracker:   进程树追踪器（ProcessTreeTracker 抽象端口）。
             session_id: 会话 ID，用于日志。
         """
         now = time.monotonic()
@@ -50,10 +52,10 @@ class GuiDetector:
             return
         self._last_poll_ms = now
 
-        if not pty:
+        if not tracker:
             return
         try:
-            new_windows = pty.poll_gui_windows()
+            new_windows = tracker.poll_gui_windows()
             if new_windows:
                 with self._lock:
                     self.gui_windows.extend(new_windows)
@@ -71,7 +73,7 @@ class GuiDetector:
                         detail={"title": w.get("title", ""), "className": w.get("class_name", "")},
                     ))
             # 更新进程树信息
-            pids = pty.get_process_list()
+            pids = tracker.get_process_list()
             if pids:
                 with self._lock:
                     self.processes = pids

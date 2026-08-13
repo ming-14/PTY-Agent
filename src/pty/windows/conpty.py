@@ -15,22 +15,13 @@ from ...config.common import DEFAULT_COLS, DEFAULT_ROWS
 _logger = logging.getLogger("pty-windows")
 from .win32_api import (
     K,
-    _CreatePseudoConsole,
-    _ResizePseudoConsole,
-    _ClosePseudoConsole,
-    _ReadFile,
-    _WriteFile,
     _CloseHandle,
     _CreateFileW,
-    _GetExitCodeProcess,
-    _PeekNamedPipe,
     _InitAttrList,
     _UpdateAttr,
     _DeleteAttrList,
     _CreateProcess,
-    _CancelIoEx,
     _HPCON,
-    _COORD,
     _SIE,
     _PI,
     _AttachConsole,
@@ -64,9 +55,9 @@ from .win32_api import (
     KEY_EVENT,
     _KEY_EVENT_RECORD,
 )
-from .win32_error_msg import STILL_ACTIVE
-from .job import ProcessJob
-from .gui_monitor import GuiWindowMonitor, GuiWindowInfo
+from ...process.windows.api import _GetExitCodeProcess
+from ...process.win32_error import STILL_ACTIVE
+from ...process.base import ProcessTreeTracker
 
 # AttachConsole/FreeConsole 是进程级操作，多个线程同时调用会互相 detached，
 # 因此所有需要附加到子进程控制台的操作都通过此锁串行化。
@@ -123,37 +114,24 @@ class WindowsPseudoTerminal(PseudoTerminal):
     """
 
     def __init__(self, command, cols: int = DEFAULT_COLS, rows: int = DEFAULT_ROWS, env=None, cwd=None,
-                 encoding: Optional[str] = None):
-        self._inR = W.HANDLE()
-        self._inW = W.HANDLE()
-        self._outR = W.HANDLE()
-        self._outW = W.HANDLE()
-        self._hpc = None
+                 encoding: Optional[str] = None, tracker: Optional["ProcessTreeTracker"] = None):
+        self._pty_h = None
         self._ph = None
         self._child_pid = None
         self._cols = cols
         self._rows = rows
-        self._job = ProcessJob(name=f"pty-{id(self)}")
-        self._gui_monitor = GuiWindowMonitor(job=self._job)
+        # Session 注入的进程树追踪器（spawn 成功后同一路径内 register_root，
+        # 子进程自动继承 Job 归属，杜绝进程树逃逸）
+        self._tracker = tracker
 
         if encoding:
             _logger.debug("WindowsPseudoTerminal: encoding=%s (ConPTY output is always UTF-8)", encoding)
         _logger.info("WindowsPseudoTerminal: creating pipes for cmd=%r", command)
-        K.CreatePipe(ctypes.byref(self._inR), ctypes.byref(self._inW), None, 0)
-        K.CreatePipe(ctypes.byref(self._outR), ctypes.byref(self._outW), None, 0)
-
-        HANDLE_FLAG_INHERIT = 1
-        K.SetHandleInformation(self._inR, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)
-        K.SetHandleInformation(self._outW, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)
-
-        self._hpc = _HPCON()
-        hr = _CreatePseudoConsole(
-            _COORD(cols, rows), self._inR, self._outW, 0,
-            ctypes.byref(self._hpc),
-        )
-        if hr < 0:
-            raise OSError(f"CreatePseudoConsole 失败 hr={hr:#x}")
-        _logger.info("CreatePseudoConsole OK hr=%d", hr)
+        # ConPTY 句柄组件：双管道 + CreatePseudoConsole（COORD 按值传参），
+        # 与 SandboxPty（沙箱外部传入 hpcon）共用同一实现
+        from .conpty_handle import ConPtyHandle
+        self._pty_h = ConPtyHandle(cols, rows)
+        self._hpc = self._pty_h.hpc
 
         cmdline = subprocess.list2cmdline(command)
         cmdline_buf = ctypes.create_unicode_buffer(cmdline)
@@ -208,53 +186,24 @@ class WindowsPseudoTerminal(PseudoTerminal):
         self._ph = pi.hProcess
         _logger.info("CreateProcessW OK pid=%d", self._child_pid)
         _CloseHandle(pi.hThread)
-        # 将子进程分配到 Job Object
-        self._job.assign(pi.hProcess)
+        # 同一代码路径内登记 root 到 tracker（AssignProcessToJobObject，
+        # 子进程自动继承 Job 归属）
+        if self._tracker:
+            self._tracker.register_root(self._child_pid, pi.hProcess)
 
-        # 关闭父进程中不再需要的管道句柄副本
+        # 关闭父进程中不再需要的可继承句柄副本
         # （CreatePseudoConsole 内部已复制了这些句柄给 conhost）
-        _CloseHandle(self._inR)
-        self._inR = None
-        _CloseHandle(self._outW)
-        self._outW = None
+        self._pty_h.discard_inherited_ends()
         # 注意：不在此处关闭 _hpc（ClosePseudoConsole），
         # 因为 conhost 仍需要伪控制台存活。在 close() 中统一清理。
 
     def read(self, n: int = 65536) -> bytes:
-        buf = ctypes.create_string_buffer(n)
-        br = W.DWORD(0)
-        if not _ReadFile(self._outR, buf, n, ctypes.byref(br), None):
-            err = ctypes.get_last_error()
-            if err == 109:  # ERROR_BROKEN_PIPE
-                _logger.debug("read: broken pipe (EOF)")
-                return b""
-            _logger.warning("read: ReadFile failed err=%d", err)
-            return b""
-        if br.value:
-            _logger.debug("read: %d bytes", br.value)
-        return buf.raw[:br.value]
+        """阻塞读取输出（最多 n 字节）；EOF 返回 b"""""
+        return self._pty_h.read(n)
 
     def drain(self, max_bytes: int = 65536) -> bytes:
         """排空管道输出缓冲区中当前所有就绪数据（基于 PeekNamedPipe 非阻塞检查）"""
-        chunks = []
-        total = 0
-        while True:
-            avail = W.DWORD(0)
-            ok = _PeekNamedPipe(self._outR, None, 0, None, ctypes.byref(avail), None)
-            if not ok or avail.value == 0:
-                break
-            n = min(avail.value, max_bytes)
-            buf = ctypes.create_string_buffer(n)
-            br = W.DWORD(0)
-            if not _ReadFile(self._outR, buf, n, ctypes.byref(br), None):
-                break
-            if br.value == 0:
-                break
-            chunks.append(buf.raw[:br.value])
-            total += br.value
-        if total:
-            _logger.debug("drain: %d total bytes", total)
-        return b"".join(chunks)
+        return self._pty_h.drain(max_bytes)
 
     def write(self, data):
         if isinstance(data, str):
@@ -264,85 +213,32 @@ class WindowsPseudoTerminal(PseudoTerminal):
             _logger.info("write: %d bytes SGR_MOUSE data=%r", len(data), data[:200])
         else:
             _logger.debug("write: %d bytes", len(data))
-        wr = W.DWORD(0)
-        _WriteFile(self._inW, data, len(data), ctypes.byref(wr), None)
+        self._pty_h.write(data)
 
     def _cleanup(self, caller: str = ""):
-        """统一清理：CancelIoEx → Job.close → ClosePseudoConsole → 关闭管道 → 关闭进程句柄 → GUI
+        """统一清理：CancelIoEx → ClosePseudoConsole → 关闭管道 → 关闭进程句柄
 
         关闭顺序很关键（避免死锁）：
         1. CancelIoEx(_outR) → 取消 reader 线程挂起的 ReadFile
-        2. 关闭 Job (KILL_ON_JOB_CLOSE) → 立即终止所有子进程（必须在 ClosePseudoConsole 之前，
-           否则 ClosePseudoConsole 会等待 conhost 退出，而 conhost 等待子进程退出 → 死锁）
-        3. 关闭伪控制台 → conhost 退出（进程已死，不会阻塞）
-        4. 关闭管道句柄 → reader 后续 read 也立即失败
-        5. 关闭进程句柄 + GUI 监控
+        2. 关闭伪控制台 → conhost 退出（进程树已由 Session 在 kill_tree 阶段终止）
+        3. 关闭管道句柄 → reader 后续 read 也立即失败
+        4. 关闭进程句柄
+
+        注意：进程树终止（kill_tree）与 tracker 关闭由 Session 编排，
+        顺序为 kill_tree → pty.close → tracker.close。
         """
-        if self._outR:
-            try:
-                _CancelIoEx(self._outR, None)
-            except Exception:
-                pass
-        if self._job:
-            try:
-                self._job.close()
-            except Exception as e:
-                _logger.warning("%s: job.close failed: %s", caller, e)
-        if self._hpc:
-            try:
-                _ClosePseudoConsole(self._hpc)
-            except Exception as e:
-                _logger.warning("%s: ClosePseudoConsole failed: %s", caller, e)
-            self._hpc = None
-        if self._outR:
-            try:
-                _CloseHandle(self._outR)
-            except Exception:
-                pass
-            self._outR = None
-        if self._inW:
-            try:
-                _CloseHandle(self._inW)
-            except Exception:
-                pass
-            self._inW = None
-        for h in (self._inR, self._outW):
-            if h:
-                try:
-                    _CloseHandle(h)
-                except Exception:
-                    pass
-        self._inR = self._outW = None
+        if self._pty_h is not None:
+            self._pty_h.close()
         if self._ph:
             try:
                 _CloseHandle(self._ph)
             except Exception:
                 pass
             self._ph = None
-        self._gui_monitor.close()
-
-    def kill_tree(self):
-        """强杀整个进程树（带计时日志）"""
-        import time as _time
-        _t0 = _time.monotonic()
-        _logger.info("kill_tree: pid=%d", self._child_pid)
-        self._cleanup("kill_tree")
-        _logger.info("kill_tree: done pid=%d total %.3fs", self._child_pid, _time.monotonic() - _t0)
 
     def resize(self, cols: int, rows: int):
-        if not self._hpc:
-            return
-        try:
-            coord = _COORD(X=cols, Y=rows)
-            hr = _ResizePseudoConsole(self._hpc, coord)
-            if hr != 0:
-                _logger.warning("ResizePseudoConsole failed: hr=0x%08X", hr & 0xFFFFFFFF)
-            else:
-                self._cols = cols
-                self._rows = rows
-                _logger.debug("resize: %dx%d", cols, rows)
-        except Exception as e:
-            _logger.warning("resize failed: %s", e)
+        if self._pty_h is not None:
+            self._pty_h.resize(cols, rows)
 
     def close(self):
         """关闭伪终端并清理资源（幂等：kill_tree 可能已清理）"""
@@ -951,51 +847,4 @@ class WindowsPseudoTerminal(PseudoTerminal):
         except Exception:
             return None
 
-    # ---- Job Object + GUI 窗口检测 ----
-
-    def get_process_list(self) -> List[int]:
-        """获取进程树所有进程的 PID 列表
-
-        通过 QueryInformationJobObject 查询 Job 内所有进程。
-
-        Returns:
-            PID 列表。
-        """
-        return self._job.query_process_list()
-
-    def get_child_process_exit_code(self, pid: int) -> Optional[int]:
-        """查询 Job 进程中某个 PID 的退出码"""
-        return self._job.query_process_exit_code(pid)
-
-    def get_job_notifications(self) -> list:
-        """获取 Job Object 实时通知"""
-        if not self._job:
-            return []
-        return self._job.drain_notifications()
-
-    def get_gui_windows(self) -> List[dict]:
-        """获取已检测到的 GUI 窗口列表
-
-        Returns:
-            窗口信息字典列表（hwnd, pid, title, class_name）。
-        """
-        return [w.to_dict() for w in self._gui_monitor.windows]
-
-    def poll_gui_windows(self) -> List[dict]:
-        """轮询检测新增 GUI 窗口
-
-        Returns:
-            本轮新增的窗口信息字典列表。
-        """
-        return [w.to_dict() for w in self._gui_monitor.poll()]
-
-    def close_gui_window(self, hwnd: int) -> bool:
-        """关闭指定 GUI 窗口
-
-        Args:
-            hwnd: 窗口句柄。
-
-        Returns:
-            True 表示 WM_CLOSE 已发送。
-        """
-        return self._gui_monitor.close_window(hwnd)
+    # ---- 进程树追踪已迁出到 process/tracker（register_root 时注入）----

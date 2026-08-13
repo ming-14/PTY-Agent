@@ -24,7 +24,8 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过伪终端（
 | `start/stop [options]` | 手动启动/停止守护进程；启动守护进程`exec`可直接启动，一般无需手动 | `stop --force` | |
 | `status` | 查看守护进程状态 | | |
 | `exec <new-session-id> <options>` | 执行命令以启动会话 | `-c "<command>"`(-c req), `-t "<regex>"`, `--timeout <seconds>`, `--cwd <path>`, `--env KEY=VALUE`, `--snapshot-mode`, `--size WxH`, `-o <path>`, `--ai-analyse <mode>`, `--ai-prompt <text>` | `exec id_py -c "python -i" -t ">>>"` |
-| `send <session-id> "<content>" [options]` | 发送输入到运行中的会话 | `-t "<regex>"`, `-j`, `-e <lf|crlf|cr|none>`, `--timeout <seconds>`, `--snapshot` | `send id_py "print(1)" -t ">>>"`；`send id_py "{ctrl+c}" -e none` |
+| `send <session-id> <options>` | 发送输入到运行中的会话 | `-i "<content>"`(-i req), `-t "<regex>"`, `-j`, `-e <lf|crlf|cr|none>`, `--timeout <seconds>`, `--snapshot` | `send id_py -i "print(1)" -t ">>>"`；`send id_py -i "{ctrl+c}" -e none` |
+
 | `read <session-id> [options]` | 读取会话输出 | `-l <N>`, `-g "<regex>"`, `--snapshot`, `-o <path>` | `read myid -l 10` |
 | `list` | 列出所有会话 | | |
 | `kill <session-id>` | 终止会话 | | |
@@ -32,6 +33,7 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过伪终端（
 | `closewin <session-id> <window-handle>` | 关闭 GUI 窗口；`<window-handle>`支持十进制或 0x十六进制| | |
 | `mouse <session-id> <action>` | 发送鼠标动作到 PTY 会话 | `--button`, `--count`, `--ctrl`, `--shift`, `--alt`, `--grep` | `mouse myid click 10,5 --button right` / `mouse myid _get_cursor_location` |
 | `set-default <KEY> <VALUE>` | 覆盖默认配置（sid会话级）；全局set-default一次只能配置一个 | | `set-default timeout 30` |
+| `file read/write/edit/grep/glob/upload/download` | 文件工具：读（带行号）/覆盖写/唯一匹配替换/内容搜索/文件名匹配/上传/下载 | 详情见下方 `file 用法` | `file read src/a.py --limit 50`，`file grep "def " src --include *.py`，`file upload a.txt /tmp/a.txt -s sid` |
 
 ### 两种输出状态
 
@@ -79,9 +81,9 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过伪终端（
 
 ## send 用法
 
-`python app.py send <session-id> "<content>" [options]`
+`python app.py send <session-id> -i "<content>" [options]`
 
-send 没有`-i`/`--input`参数，直接加`"<content>"`
+send 通过 `-i`/`--input` 参数（必填）指定要发送的输入文本，例如 `send id_py -i "print(1)" -t ">>>"`
 
 选项：
 - `-t/--trigger "<regex>"` 匹配正则
@@ -175,7 +177,7 @@ send 没有`-i`/`--input`参数，直接加`"<content>"`
 
 ```powershell
 app.py exec vim -c "vim" --snapshot-mode --timeout 3 -o screen.svg
-app.py send myid "dir" -t ">" -o output.txt
+app.py send myid -i "dir" -t ">" -o output.txt
 app.py read myid --snapshot -o output.png
 ```
 
@@ -347,6 +349,49 @@ python app.py mouse myid click 10,5 -t ">>>" --timeout 10
 - `--since <iso-datetime\|HH:MM>`
 - `--until <iso-datetime\|HH:MM>`
 
+## file 用法
+
+这工具和你能使用的文件操作工具**一模一样**，你的工具怎么用这个就怎么用
+但是必须注意的一个点，你在输入带换行/"\"'`"的字符的时候，必须先调用你的write文件夹写一个中转文件，然后必须使用`--content-file` --old-file --new-file，也就是**必须分两步**，一次调用两个工具：write和shell
+先使用内置工具write再使用该命令行操作文件是**必须的**，原因：1.Shell复杂转义 2.命令行命令有上限
+ 
+`python app.py file <read|write|edit|grep|glob|upload|download> ... -s <session-id>`（`-s/--cwd-session` **必填**：取该会话 cwd 作为路径解析基准，不操作该会话；相对路径基于会话 cwd 拼接、`~` 按 daemon 用户展开、绝对路径原样使用；跨机场景（CLI 与 daemon 异机）语义依然正确）
+
+| 子命令 | 用法 | 要点 |
+| ------ | ---- | ---- |
+| `file read <path> [--offset N] [--limit N]` | 读文件（带行号，默认 2000 行） | 超过 250KB / 图片拒绝；不存在时提示相似文件名；`--offset` 0-based |
+| `file write <path> --content TEXT | --content-file FILE` | 覆盖写/新建（自动建父目录） | **已存在文件必须先 `file read`**；外部修改后拒绝；内容相同拒绝；大文件用 `--content-file`（互斥） |
+| `file edit <path> --old TEXT | --old-file FILE [--new TEXT | --new-file FILE]` | 唯一匹配替换 | `--old` 空=新建（文件须不存在）；`--new` 空=删除；old 须唯一 |
+| `file grep <pattern> [path] [--include GLOB] [--literal-text]` | 内容搜索 | rg 引擎优先，缺失自动降级；`path` 缺省=会话 cwd |
+| `file glob <pattern> [path]` | 文件名匹配 | rg 引擎优先，缺失自动降级；支持 `**` 任意层级；`path` 缺省=会话 cwd |
+| `file upload <local-path> <remote-path> [--force] [--timeout N]` | 上传本地文件/目录到会话侧（scp -r 语义） | local 为 CLI 本机路径，remote 由 daemon 按会话 cwd 解析（支持 `~`）；目标已存在且相同→跳过，不同→拒绝提示 `--force`；`--timeout` 整个传输总时限（默认 120s），超时中止并清理临时文件 |
+| `file download <remote-path> <local-path> [--force] [--timeout N]` | 下载会话侧文件/目录到本地（scp -r 语义） | 同 upload 语义反向；远端可为文件或目录；覆盖策略与 `--timeout` 同上 |
+
+路径规则：相对路径基于会话 cwd 拼接；`~` 按 daemon 用户展开；绝对路径原样使用；cwd 是会话创建时的值，shell 内 cd 后不更新。
+
+示例：
+```bash
+# 先拉起一个会话，作为cwd基准
+app.py exec sid_cwd -c "cmd" --cwd <path>
+
+python app.py file read src/main.py -s myapp --limit 50 -s sid_cwd
+python app.py file grep "def " src -s myapp --include *.py -s sid_cwd
+python app.py file glob "src/**/*.py" -s myapp -s sid_cwd
+
+# write 两步
+(先使用你的write工具写要write的内容)
+python app.py file write out.txt -s myapp --content-file tempfiles/_write_temp1.txt -s sid_cwd
+
+# edit 三步
+(先使用你的write工具写oldtext的内容)
+(先使用你的write工具写要write的内容)
+python app.py file edit src/main.py -s myapp --old-file tempfiles/_editold_temp1.txt --new-file tempfiles/_editnew_temp1.txt -s sid_cwd
+
+# upload / download
+python app.py file upload ./local.txt remote_dir/ -s sid_cwd
+python app.py file download remote_dir/local.txt ./local.txt --force -s sid_cwd
+```
+
 ## 全局/通用选项
 
 - `--keep-ansi` 通用子命令：保留完整VT序列（默认过滤掉终端颜色/样式码，只保留清屏/光标等控制序列，开启后保留全部）
@@ -393,9 +438,9 @@ app.py events job1 -l 10 # 查看崩溃事件详情（process_crash 类型）
 
 ```bash
 app.py exec mimo -c "mimo.exe --trust" --default response-format svg --snapshot-mode --timeout 5  # 启动 TUI 程序，5秒后返回屏幕快照
-app.py send mimo --send-eol cr --timeout 5 "j" -s # 发送按键，等5秒后返回快照
+app.py send mimo --send-eol cr --timeout 5 -i "j" -s # 发送按键，等5秒后返回快照
 app.py read mimo -s
-app.py send mimo "帮我写一个贪吃蛇游戏" -s
+app.py send mimo -i "帮我写一个贪吃蛇游戏" -s
 app.py kill mimo
 ```
 
@@ -416,10 +461,10 @@ app.py --show-config terminal-size
 
 ```bash
 app.py exec dbg1 -c '"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe" myapp.exe' -t ">"
-app.py send dbg1 "g" -t "0:000" # 继续执行
-app.py send dbg1 "k" -t "0:000" # 查看调用栈
-app.py send dbg1 "db esp L100" -t "0:000" # 查看内存
-app.py send dbg1 "q" -t ">" # 退出调试器
+app.py send dbg1 -i "g" -t "0:000" # 继续执行
+app.py send dbg1 -i "k" -t "0:000" # 查看调用栈
+app.py send dbg1 -i "db esp L100" -t "0:000" # 查看内存
+app.py send dbg1 -i "q" -t ">" # 退出调试器
 app.py send kill dbg1
 ```
 

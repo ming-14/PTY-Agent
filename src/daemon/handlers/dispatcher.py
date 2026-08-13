@@ -21,6 +21,13 @@ from .status_handler import StatusHandler
 from .list_handler import ListHandler
 from .stop_handler import StopHandler
 from .wait_handler import WaitHandler
+from .file_read_handler import FileReadHandler
+from .file_write_handler import FileWriteHandler
+from .file_edit_handler import FileEditHandler
+from .file_grep_handler import FileGrepHandler
+from .file_glob_handler import FileGlobHandler
+from .file_upload_handler import FileUploadHandler
+from .file_download_handler import FileDownloadHandler
 
 _logger = logging.getLogger("pty-daemon")
 
@@ -46,6 +53,13 @@ class DaemonDispatcher:
             "list": ListHandler(),
             "stop": StopHandler(),
             "wait": WaitHandler(),
+            "file_read": FileReadHandler(),
+            "file_write": FileWriteHandler(),
+            "file_edit": FileEditHandler(),
+            "file_grep": FileGrepHandler(),
+            "file_glob": FileGlobHandler(),
+            "file_upload": FileUploadHandler(),
+            "file_download": FileDownloadHandler(),
         }
 
     def dispatch(self, conn, msg: dict):

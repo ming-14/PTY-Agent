@@ -9,7 +9,7 @@
 python app.py exec py -c "python -u -i" -t ">>>"
 
 # 发送命令并等待提示符
-python app.py send py "print(100*100)" -t ">>>"
+python app.py send py -i "print(100*100)" -t ">>>"
 
 # 读取输出
 python app.py read py --lines 10
@@ -49,7 +49,7 @@ pip install cryptography tomli
 | 命令 | 用途 |
 |------|------|
 | `exec <id> -c "<cmd>"` | 启动会话（执行命令） |
-| `send <id> "<input>"` | 发送输入到运行中的会话 |
+| `send <id> -i "<input>"` | 发送输入到运行中的会话（`-i` 必填） |
 | `read <id>` | 读取会话输出 |
 | `list` | 列出所有会话 |
 | `kill <id>` | 终止会话 |
@@ -57,6 +57,7 @@ pip install cryptography tomli
 | `start` / `stop` | 手动启停守护进程 |
 | `closewin <id> <hwnd>` | 关闭 GUI 窗口 |
 | `mouse <id> <action>` | 发送鼠标动作 |
+| `file <read\|write\|edit\|grep\|glob>` | 文件工具（读/写/唯一匹配替换/内容搜索/文件名匹配） |
 | `keygen` | 生成 Ed25519 密钥对 |
 
 ## 认证模式

@@ -14,7 +14,7 @@ import socket
 import threading
 import pytest
 
-from src.session.shm_utils import (
+from src.ipc.shm import (
     read_daemon_info_from_shm,
     read_port_from_shm,
     write_daemon_info_to_shm,
@@ -25,7 +25,7 @@ from src.daemon.lifecycle import (
     _find_daemon_port,
     is_running,
 )
-from src.config import DATA_DIR, IS_WINDOWS
+from src.config.common import DATA_DIR, IS_WINDOWS
 
 
 @pytest.mark.skipif(not IS_WINDOWS, reason="Windows 共享内存集成测试")
@@ -95,8 +95,14 @@ class TestSingleInstanceIntegration:
         assert not os.path.exists(pid_file)
 
     def test_no_data_dir_created(self):
+        # 单实例检查（shm 读写）不应创建数据目录：
+        # 运行前后目录存在性不变（环境可能已有历史目录，仅验证不新增）
         if IS_WINDOWS:
-            assert not os.path.exists(DATA_DIR)
+            existed_before = os.path.exists(DATA_DIR)
+            shm = write_daemon_info_to_shm(11111, 22222)
+            shm.close()
+            is_running()
+            assert os.path.exists(DATA_DIR) == existed_before
 
     def test_overwrite_shm_with_new_daemon(self):
         shm1 = write_daemon_info_to_shm(11111, 22222)

@@ -45,30 +45,14 @@ class TestPseudoTerminalBase:
         pty = PseudoTerminal()
         assert pty.get_exit_code() is None
 
-    def test_get_child_process_exit_code_returns_none(self):
+    def test_inject_mouse_event_returns_false(self):
         pty = PseudoTerminal()
-        assert pty.get_child_process_exit_code(123) is None
+        assert pty.inject_mouse_event(0, 0, 0, False) is False
 
-    def test_get_job_notifications_returns_empty(self):
+    def test_no_process_management_methods(self):
+        """进程管理方法（kill_tree/进程列表/通知/GUI）已迁出到 process/tracker"""
         pty = PseudoTerminal()
-        assert pty.get_job_notifications() == []
-
-    def test_get_process_list_returns_empty(self):
-        pty = PseudoTerminal()
-        assert pty.get_process_list() == []
-
-    def test_get_gui_windows_returns_empty(self):
-        pty = PseudoTerminal()
-        assert pty.get_gui_windows() == []
-
-    def test_poll_gui_windows_returns_empty(self):
-        pty = PseudoTerminal()
-        assert pty.poll_gui_windows() == []
-
-    def test_close_gui_window_returns_false(self):
-        pty = PseudoTerminal()
-        assert pty.close_gui_window(0) is False
-
-    def test_kill_tree_does_nothing(self):
-        pty = PseudoTerminal()
-        pty.kill_tree()
+        for name in ("kill_tree", "get_process_list", "get_child_process_exit_code",
+                     "get_job_notifications", "get_gui_windows",
+                     "poll_gui_windows", "close_gui_window"):
+            assert not hasattr(pty, name), f"PseudoTerminal 不应再暴露 {name}"
