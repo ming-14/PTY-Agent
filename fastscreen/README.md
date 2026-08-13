@@ -6,30 +6,38 @@
 
 - **三级捕获策略**：DXGI Desktop Duplication → Windows Graphics Capture → BitBlt，自动选择最优方法
 - **DXGI Desktop Duplication**：GPU 直读桌面，全屏捕获最高性能
-- **Windows Graphics Capture**：支持窗口捕获（含被遮挡窗口），persistent session 连续捕获 55+ FPS
+- **Windows Graphics Capture**：支持窗口捕获（含被遮挡窗口），persistent session 连续捕获高帧率
 - **BitBlt**：通用回退方案，兼容性最佳
 - **C++ 核心引擎**：零拷贝 GPU 纹理读取、WIC 硬件加速图像编码
-- **Python API**：ctypes 绑定，简洁易用
+- **Python API**：ctypes 绑定（fastscreencore），简洁易用
 - **PySide6 GUI**：实时预览、连续捕获、FPS 显示
 - **自动回退**：Auto 模式下捕获失败自动降级，显式模式不回退
 
 ## 系统要求
 
 - Windows 10 1903+（WGC 需要）
-- Python 3.8+
 - MSVC 2019+ / Visual Studio Build Tools
 - CMake 3.16+
 
 ## 构建
 
+Python 绑定层（`fastscreencore` 包，含编译后的 DLL）位于项目根 `bin/fastscreencore/`，由构建脚本生成：
+
 ```bash
-python build.py build
+python build.py build   # 仅编译 C++ DLL 并复制到 bin/fastscreencore/
+python build.py gui     # 启动 PySide6 GUI
+python build.py test    # 运行 pytest 测试
+python build.py all     # 构建 DLL + 启动 GUI
+
+# 或走 PTY-Agent 整体发布构建
+# 项目根目录执行 .\BUILD.ps1
 ```
 
 ## 快速开始
 
 ```python
-from fastscreen import CaptureEngine, CaptureMethod
+# 需将 PTY-Agent/bin 加入 sys.path（或安装 fastscreencore）
+from fastscreencore import CaptureEngine, CaptureMethod
 
 engine = CaptureEngine()
 
@@ -72,8 +80,6 @@ engine.stop_continuous()
 ## GUI
 
 ```bash
-python run.py
-# 或
 python build.py gui
 ```
 
@@ -85,31 +91,28 @@ python build.py gui
 
 ```
 fastscreen/
-├── src/core/              # C++ 核心引擎
-│   ├── api.cpp            # C API 导出层
-│   ├── capture_session.h  # 捕获会话管理
-│   ├── dxgi_capture.*     # DXGI Desktop Duplication
-│   ├── wgc_capture.*      # Windows Graphics Capture
-│   ├── bitblt_capture.*   # BitBlt 回退
-│   ├── image_encoder.*    # WIC 图像编码
-│   ├── enum_helper.*      # 显示器/窗口枚举
-│   └── common.h           # 公共类型定义
-├── fastscreen/            # Python 包
-│   ├── __init__.py
-│   ├── _core.py           # ctypes 绑定
-│   ├── capture.py         # 高级 API
-│   └── fastscreen.dll     # 编译后的 DLL
-├── gui/                   # PySide6 GUI
+├── CMakeLists.txt        # CMake 构建配置
+├── build.py              # 构建脚本（build/gui/test/all）
+├── fastscreen.def        # DLL 导出定义
+├── gui/                  # PySide6 GUI 测试工具
 │   ├── main.py
-│   └── main_window.py
-├── tests/
-│   ├── unit/              # 单元测试
-│   ├── integration/       # 集成测试
-│   └── e2e/               # 端到端测试
-├── CMakeLists.txt
-├── build.py               # 一键构建脚本
-└── run.py                 # 运行入口
+│   ├── main_window.py
+│   └── requirements.txt
+├── src/core/             # C++ 核心引擎
+│   ├── api.cpp           # C API 导出层
+│   ├── capture_session.* # 捕获会话管理
+│   ├── dxgi_capture.*    # DXGI Desktop Duplication
+│   ├── wgc_capture.*     # Windows Graphics Capture
+│   ├── bitblt_capture.*  # BitBlt 回退
+│   ├── image_encoder.*   # WIC 图像编码
+│   ├── enum_helper.*     # 显示器/窗口枚举
+│   ├── frame_pool.cpp    # 帧缓冲池（连续捕获内存复用）
+│   ├── frame_buffer.h    # 帧缓冲/环形队列结构
+│   └── common.h          # 公共类型定义
+└── tests/                # pytest 测试（依赖 bin/fastscreencore）
 ```
+
+Python 绑定层（`fastscreencore`：`_core.py` + `capture.py` + `fastscreen.dll`）为构建产物，位于 `bin/fastscreencore/`；上游流服务层在 `src/fastscreen/`（见父项目文档）。
 
 ## 测试
 
@@ -129,6 +132,7 @@ python -m pytest tests/ -v
 | `capture_window(hwnd, method)` | 截取指定窗口 |
 | `start_continuous(type, id, callback, fps, method)` | 开始连续捕获 |
 | `stop_continuous()` | 停止连续捕获 |
+| `is_running()` | 是否正在连续捕获 |
 
 ### CapturedFrame
 
@@ -138,7 +142,10 @@ python -m pytest tests/ -v
 | `stride`, `bpp` | 步长和每像素字节数 |
 | `timestamp_ms` | 时间戳 |
 | `to_bytes()` | 转为 bytes |
+| `to_bytes_gil_safe()` | 转为 bytes（C 端 memcpy，GIL-safe） |
+| `to_bytearray()` | 转为 bytearray |
 | `to_numpy()` | 转为 numpy 数组（需 numpy） |
 | `to_qimage()` | 转为 QImage（需 PySide6） |
+| `to_image_bytes(format, quality, width, height)` | 编码为 PNG/JPEG/BMP 字节（可缩放） |
 | `save(path, format)` | 保存为 PNG/JPEG/BMP |
 | `release()` | 释放资源 |

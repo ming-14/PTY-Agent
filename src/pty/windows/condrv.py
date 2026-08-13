@@ -33,6 +33,7 @@ from typing import Optional, List
 
 from ..base import PseudoTerminal
 from ...config.common import DEFAULT_COLS, DEFAULT_ROWS
+from .vt_input import spawn_vt_input_init
 from .win32_api import (
     K,
     _CONDRV_OK,
@@ -397,20 +398,24 @@ class ConDrvPseudoTerminal(PseudoTerminal):
         # ── 8. 启动子进程（通过 PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE 附着）──
         self._start_child(command, env, cwd)
 
-        # ── 9. 启用 ConHost 鼠标跟踪模式（DECSET ?1002 + ?1006）──
-        # ConHost B 是 PTY-Agent 创建的独立 conhost，与 WT 的 conhost A 隔离。
-        # 子进程的鼠标 SGR 序列由 conhost B 翻译，但 conhost B 必须自己启用
-        # ?1002（button event mouse mode）+ ?1006（SGR extended mouse mode）后
-        # 才能把 MOUSE_EVENT_RECORD 翻译为 SGR 1006 字节流送子进程 stdin。
-        # mediator 无法影响 conhost B（其 stdout 走 conhost A），所以必须由
-        # PTY-Agent 在创建 ConPTY 后主动发 DECSET 到 _inW 启用 conhost B 鼠标模式。
-        # 对非鼠标程序无副作用（conhost 启用鼠标跟踪但没人注入 MOUSE_EVENT_RECORD
-        # 就不会有 SGR 输出）。
-        try:
-            self.write(b'\x1b[?1002h\x1b[?1006h')
-            _logger.info("ConPTY 初始化：已发送 \\x1b[?1002h\\x1b[?1006h 启用 conhost 鼠标模式")
-        except Exception as e:
-            _logger.warning("ConPTY 初始化：启用鼠标模式失败 err=%s", e)
+        # ── 9. 后台启用输入侧 VT 解析 + conhost 鼠标 SGR 翻译 ──
+        # 启用 VT_INPUT 后 conhost 输入侧解析 VT：\x03 → CTRL_C_EVENT；
+        # 注入的 MOUSE_EVENT_RECORD 被 conhost 翻译为 SGR-1006 字节流送子进程
+        # stdin（前提：conhost 自身启用 ?1006，见 interceptor._intercept_sgr_mouse
+        # 的机制说明——由 on_ready 在 VT_INPUT 开启后向输入端发送
+        # \x1b[?1002h\x1b[?1006h 激活）。
+        # 时序关键：DECSET 必须在 conhost 可解析 VT 输入后发送，且 VT_INPUT
+        # 模式下已解析的序列不会被透传污染子进程输入（python REPL 实测
+        # VT_INPUT=ON 时回车正常，模式 0x1f7→0x3f7 无回显副作用）。
+        def _post_vt_ready():
+            try:
+                self.write(b'\x1b[?1002h\x1b[?1006h')
+                _logger.info("ConPTY 初始化：已发送 \\x1b[?1002h\\x1b[?1006h 启用 conhost 鼠标 SGR 翻译")
+            except Exception as e:
+                _logger.warning("ConPTY 初始化：启用鼠标模式失败 err=%s", e)
+
+        spawn_vt_input_init(self._child_pid, _CONSOLE_ATTACH_LOCK, _logger,
+                            on_ready=_post_vt_ready)
 
     @staticmethod
     def _cleanup_handles(*handles):
@@ -1075,7 +1080,7 @@ class ConDrvPseudoTerminal(PseudoTerminal):
 
     def inject_mouse_event(self, x: int, y: int, button: int, is_release: bool,
                            control_key_state: int = 0) -> bool:
-        """直接注入单个鼠标事件（向后兼容接口）"""
+        """直接注入单个鼠标事件（单事件便捷接口）"""
         return self.inject_mouse_events([(x, y, button, is_release)])
 
     def get_child_pid(self):

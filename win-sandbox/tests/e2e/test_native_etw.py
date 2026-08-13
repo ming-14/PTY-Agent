@@ -1,4 +1,4 @@
-"""test_native_etw.py - ETW 行为监控回调测试（Phase 13 T13.8）
+"""test_native_etw.py - ETW 行为监控回调测试
 
 测试：
   - ETW 启用后 SandboxInstance 可创建进程
@@ -125,7 +125,7 @@ def test_access_denied_callback_stderr():
     sb = win_sandbox_native.SandboxInstance()
     try:
         proc = sb.start_process(
-            command_line='cmd.exe /c type C:\\Windows\\System32\\config\\SAM',
+            command_line=f'cmd.exe /c type {os.environ["SYSTEMROOT"]}\\System32\\config\\SAM',
         )
         check(proc is not None, "start_process with Low IL isolation")
 

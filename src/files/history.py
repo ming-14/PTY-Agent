@@ -11,7 +11,7 @@
         UNIQUE(path, version)
     )
 
-版本链语义（同 opencode history）：
+版本链语义：
 - 每个 path 首个版本为 `0`（对应 initial），后续依次 v1/v2...（整数文本递增）
 - MAX 按 CAST(version AS INTEGER) 取值，避免字符串排序 "v9" > "v10" 问题
 - 线程安全：threading.Lock + 每操作短连接（仿 web/.../history_store.py 模式）

@@ -13,6 +13,7 @@ from ..base import PseudoTerminal
 from ...config.common import DEFAULT_COLS, DEFAULT_ROWS
 
 _logger = logging.getLogger("pty-windows")
+from .vt_input import spawn_vt_input_init
 from .win32_api import (
     K,
     _CloseHandle,
@@ -196,6 +197,9 @@ class WindowsPseudoTerminal(PseudoTerminal):
         self._pty_h.discard_inherited_ends()
         # 注意：不在此处关闭 _hpc（ClosePseudoConsole），
         # 因为 conhost 仍需要伪控制台存活。在 close() 中统一清理。
+
+        # 后台启用输入侧 VT 解析（使 \x03 触发 CTRL_C_EVENT）
+        spawn_vt_input_init(self._child_pid, _CONSOLE_ATTACH_LOCK, _logger)
 
     def read(self, n: int = 65536) -> bytes:
         """阻塞读取输出（最多 n 字节）；EOF 返回 b"""""
@@ -813,7 +817,7 @@ class WindowsPseudoTerminal(PseudoTerminal):
                            control_key_state: int = 0) -> bool:
         """直接注入单个鼠标事件到子进程控制台输入缓冲区
 
-        保留向后兼容的单事件接口。内部调用 inject_mouse_events 批量接口。
+        单事件便捷接口。内部调用 inject_mouse_events 批量接口。
 
         Args:
             x:                  列坐标（0-based，Windows 控制台坐标）。

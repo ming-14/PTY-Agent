@@ -1,5 +1,5 @@
 // =============================================================================
-// Phase 8 测试助手：crash_dummy.exe
+// 测试助手：crash_dummy.exe
 //
 // 故意触发 ACCESS_VIOLATION（0xC0000005）崩溃的可执行程序，供:
 //   - verify_t28（SetCrashSilent 运行时验证）

@@ -1,14 +1,14 @@
-"""test_degraded_monitor.py - ETW 降级模式扩展验证（Phase 14 pybind11 直调形态）。
+"""test_degraded_monitor.py - ETW 降级模式扩展验证（pybind11 直调形态）。
 
 降级模式（force_degraded 强制走降级路径，或非管理员自动降级）行为验证。
 pybind11 形态下 ETW 事件按 pid 路由到对应进程的 on_behavior_event 回调：
 
-  T1: process_stop 事件 — 沙箱进程退出后收到（验证降级轮询活跃）
-  T2: 首次轮询无噪音 — 启动后短时间内 process_start 数量有限
-  T3: file_create 事件 — SKIP（ReadDirectoryChangesW 事件 pid=0，被路由表过滤）
-  T4: file_write 事件 — SKIP（同 T3）
-  T5: tcp_connect 事件 — 沙箱内进程建立 TCP 连接后收到
-  T6: Shutdown 正常停止（无崩溃、无死锁）
+  process_stop 事件 — 沙箱进程退出后收到（验证降级轮询活跃）
+  首次轮询无噪音 — 启动后短时间内 process_start 数量有限
+  file_create 事件 — SKIP（ReadDirectoryChangesW 事件 pid=0，被路由表过滤）
+  file_write 事件 — SKIP（同 file_create）
+  tcp_connect 事件 — 沙箱内进程建立 TCP 连接后收到
+  Shutdown 正常停止（无崩溃、无死锁）
 
 架构说明：
   pybind11 形态下 ETW 事件按 OS pid 路由到 start_process 启动的进程回调。
@@ -131,12 +131,12 @@ def _start_tcp_server():
 # =============================================================================
 
 def test_process_stop_event():
-    """T1: 沙箱进程退出后收到 process_stop 事件（验证降级轮询活跃）。
+    """沙箱进程退出后收到 process_stop 事件（验证降级轮询活跃）。
 
     降级模式 500ms 进程列表轮询，沙箱直接启动的进程退出后，
     其 pid 在路由表中，process_stop 事件能被 on_behavior_event 回调接收。
     """
-    print("\n[T1] process_stop event (degraded polling active)", flush=True)
+    print("\nprocess_stop event (degraded polling active)", flush=True)
     cfg_path = write_config()
     try:
         sb = make_sandbox(config=cfg_path, log_level="info")
@@ -164,12 +164,12 @@ def test_process_stop_event():
 
 
 def test_no_first_poll_noise():
-    """T2: 首次轮询不产生全系统进程噪音。
+    """首次轮询不产生全系统进程噪音。
 
     降级模式首次轮询只建基线，不产生 process_start 事件。
     启动后短时间内 process_start 数量应有限（< 15）。
     """
-    print("\n[T2] no first-poll noise", flush=True)
+    print("\nno first-poll noise", flush=True)
     cfg_path = write_config()
     try:
         sb = make_sandbox(config=cfg_path, log_level="info")
@@ -193,36 +193,36 @@ def test_no_first_poll_noise():
 
 
 def test_file_create_event():
-    """T3: 监控目录创建文件 → file_create 事件。
+    """监控目录创建文件 → file_create 事件。
 
     SKIP 原因：pybind11 形态下 ETW 事件按 pid 路由，ReadDirectoryChangesW
     产生的文件事件 ev.pid=0，不在 pid_to_usecase_ 路由表中，被丢弃。
     无法通过 on_behavior_event 回调接收文件事件。
     """
-    print("\n[T3] file_create event", flush=True)
+    print("\nfile_create event", flush=True)
     print("  [SKIP] pybind11 路由限制：文件事件 pid=0 不路由到 proc 回调",
           flush=True)
     return "skip"
 
 
 def test_file_write_event():
-    """T4: 监控目录文件被修改 → file_write 事件。
+    """监控目录文件被修改 → file_write 事件。
 
-    SKIP 原因：同 T3，ReadDirectoryChangesW 事件 pid=0 被路由表过滤。
+    SKIP 原因：ReadDirectoryChangesW 事件 pid=0 被路由表过滤。
     """
-    print("\n[T4] file_write event", flush=True)
+    print("\nfile_write event", flush=True)
     print("  [SKIP] pybind11 路由限制：文件事件 pid=0 不路由到 proc 回调",
           flush=True)
     return "skip"
 
 
 def test_network_tcp_connect():
-    """T5: 沙箱内进程建立 TCP 连接 → tcp_connect 事件。
+    """沙箱内进程建立 TCP 连接 → tcp_connect 事件。
 
     沙箱直接启动的进程（powershell）建立 TCP 连接，其 pid 在路由表中，
     tcp_connect 事件能被 on_behavior_event 回调接收。
     """
-    print("\n[T5] tcp_connect event (in-sandbox process)", flush=True)
+    print("\ntcp_connect event (in-sandbox process)", flush=True)
     cfg_path = write_config()
     try:
         sb = make_sandbox(config=cfg_path, log_level="info")
@@ -279,8 +279,8 @@ def test_network_tcp_connect():
 
 
 def test_shutdown_no_crash():
-    """T6: Shutdown 正常停止（含文件监控线程，无崩溃/死锁）。"""
-    print("\n[T6] shutdown no crash", flush=True)
+    """Shutdown 正常停止（含文件监控线程，无崩溃/死锁）。"""
+    print("\nshutdown no crash", flush=True)
     monitor_dir = tempfile.mkdtemp(prefix="ws_dg_mon_")
     cfg_path = write_config(monitor_dirs=[monitor_dir])
     try:
@@ -342,7 +342,7 @@ _TESTS = [
 
 def main() -> int:
     print("=" * 60)
-    print("ETW Degraded Mode Tests (Phase 14 pybind11)")
+    print("ETW Degraded Mode Tests （pybind11）")
     print("=" * 60)
 
     passed = 0

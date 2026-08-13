@@ -1,5 +1,5 @@
 // =============================================================================
-// StartupCleanup - 启动时残留资源清理（T7.6）
+// StartupCleanup - 启动时残留资源清理
 //
 // 职责：
 //   1. 扫描并清理残留的沙箱会话目录（%LOCALAPPDATA%\win-sandbox\sessions\<os-pid>-<process_id>）

@@ -39,12 +39,8 @@ from ..process import (
     ProcessMonitor,
     GuiDetector,
     ProcessTreeTracker,
+    create_process_tree_tracker,
 )
-
-if IS_WINDOWS:
-    from ..process.windows import JobProcessTreeTracker
-else:
-    from ..process.unix import PgidProcessTreeTracker
 from ..output import (
     OutputBuffer,
     TriggerMatcher,
@@ -62,36 +58,7 @@ from .session_threads import (
     _extract_crash_error_from_output,
 )
 
-if IS_WINDOWS:
-    from ..process.win32_error import (
-        STILL_ACTIVE, translate_windows_error,
-        format_process_exit_code,
-    )
-
 _logger = logging.getLogger("pty-session")
-
-
-def create_process_tracker() -> ProcessTreeTracker:
-    """创建平台对应的进程树追踪器（Session 生命周期 owner）
-
-    Windows：sandbox.enabled=true → SandboxProcessTreeTracker（winsandbox 委派）；
-            否则 JobProcessTreeTracker（Job Object）
-    Unix：process group（PgidProcessTreeTracker）
-
-    沙箱与原生后端共用同一端口，Session/PTY 对实现无感知。
-    """
-    if IS_WINDOWS:
-        from ..config import sandbox as _sbx_cfg
-        if _sbx_cfg.ENABLED:
-            from ..sandbox import SandboxProcessTreeTracker, SandboxSessionManager
-            manager = SandboxSessionManager(
-                quota=_sbx_cfg.QUOTA,
-                isolation=_sbx_cfg.ISOLATION,
-                log_level=_sbx_cfg.LOG_LEVEL,
-            )
-            return SandboxProcessTreeTracker(manager)
-        return JobProcessTreeTracker(name=f"session-{uuid.uuid4().hex[:8]}")
-    return PgidProcessTreeTracker()
 
 # Windows 下发送 Ctrl+C 需要 AttachConsole，而一个线程同时只能附加到一个控制台，
 # 多会话并发发送信号时必须串行化，否则会互相抢占控制台归属
@@ -166,7 +133,7 @@ class Session:
         self._out_buf = OutputBuffer(max_size=MAX_OUTPUT_BUFFER)
         self._trig_mat = TriggerMatcher(decode_func=self._decode_only)
         self._evt_hist = EventHistoryManager()
-        self._tracker = create_process_tracker()
+        self._tracker = create_process_tree_tracker()
         self._proc_mon = ProcessMonitor(
             tracker=self._tracker,
             event_sink=self._evt_hist.add_event,
@@ -473,7 +440,7 @@ class Session:
     def capture_scrollback(self) -> str:
         """捕获 scrollback 历史区为 ANSI 字符串（带 SGR 颜色）
 
-        Phase 3: 供 web 层 subscribe 响应返回给前端，
+        供 web 层 subscribe 响应返回给前端，
         前端写入 xterm.js 推入 scrollback 区，实现 F5 刷新/重开浏览器后 scrollback 不丢。
 
         Returns:

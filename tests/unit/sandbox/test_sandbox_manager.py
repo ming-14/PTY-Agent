@@ -45,8 +45,9 @@ class _FakeProcess:
         return list(self.query_list_result)
 
     def query_process_exit_code(self, pid):
-        # 活跃进程返回 STILL_ACTIVE(259)，已退出返回退出码（对齐 native 语义）
-        return self.exit_codes.get(pid, 259)
+        # 契约对齐 native 语义：(exit_code, is_active)，运行中 (259, True)，已退出 (真实码, False)
+        code = self.exit_codes.get(pid, 259)
+        return (code, code == 259)
 
     def wait(self, timeout_ms=-1):
         # 根进程退出码：exit_codes[self.pid] 有值 = 已退出，否则仍在运行

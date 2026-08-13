@@ -7,9 +7,11 @@
 //   2. Manifest-based provider 事件：用 TdhGetEventInformation 获取 schema
 //      按属性名提取字段值
 //
-// Phase 6 T6.4
 // =============================================================================
 #include "infra/etw/EventRecordParser.hpp"
+
+// InetNtopW（IP 地址格式化）
+#include <ws2tcpip.h>
 
 namespace winsandbox {
 
@@ -80,31 +82,12 @@ void EventRecordParser::Parse(PEVENT_RECORD record, BehaviorEvent& out, bool is_
     }
 }
 
-void EventRecordParser::ClearCache()
-{
-    std::lock_guard<std::mutex> lk(cache_mutex_);
-    schema_cache_.clear();
-}
-
 // =============================================================================
 // NT Kernel Logger 事件解析（PROCESS_TRACE_MODE_EVENT_RECORD 模式）
 //
 // Provider GUID 因 Windows 版本而异，不能硬编码匹配。
 // 策略：先尝试 TDH schema 解析，失败则按 opcode MOF 回退。
 // =============================================================================
-
-static std::string HexDump(const BYTE* data, ULONG len, ULONG max_bytes = 64)
-{
-    std::string out;
-    ULONG dump_len = (std::min)(len, max_bytes);
-    for (ULONG i = 0; i < dump_len; ++i) {
-        char buf[8];
-        sprintf_s(buf, "%02x ", data[i]);
-        out += buf;
-        if ((i + 1) % 16 == 0) out += "| ";
-    }
-    return out;
-}
 
 static std::string GuidToString(const GUID& g)
 {
@@ -128,19 +111,6 @@ void EventRecordParser::ParseKernelSessionEvent(PEVENT_RECORD record, BehaviorEv
     USHORT event_id = record->EventHeader.EventDescriptor.Id;
     BYTE* data = reinterpret_cast<BYTE*>(record->UserData);
     ULONG data_len = record->UserDataLength;
-
-    // 调试：记录所有事件
-    {
-        static FILE* af = nullptr;
-        if (!af) af = fopen("C:\\Users\\rikka\\AppData\\Local\\Temp\\ws_all_events.txt", "a");
-        if (af) {
-            fprintf(af, "EVENT: opcode=%d event_id=%d prov=%08x-%04x-%04x pid=%lu data_len=%lu\n",
-                opcode, event_id, provider.Data1, provider.Data2, provider.Data3,
-                (ULONG)record->EventHeader.ProcessId,
-                (ULONG)record->UserDataLength);
-            fflush(af);
-        }
-    }
 
     // 先尝试 TDH schema 解析（EVENT_RECORD 格式的字段偏移只能通过 TDH 获取）
     auto* info = GetEventInfo(record);
@@ -240,7 +210,7 @@ void EventRecordParser::ParseKernelSessionEvent(PEVENT_RECORD record, BehaviorEv
             auto ws = ExtractWideString(record, info, file_idx);
             if (!ws.empty()) out.file_path = WideToUtf8(ws);
 
-            // T6.8: 检测 NtStatus
+// 检测 NtStatus
             int status_idx = FindPropertyIndex(info, L"NtStatus");
             if (status_idx < 0) status_idx = FindPropertyIndex(info, L"Status");
             if (status_idx >= 0) {
@@ -330,22 +300,6 @@ void EventRecordParser::ParseKernelSessionEvent(PEVENT_RECORD record, BehaviorEv
 
     // MOF 回退：发生在 TDH 完全失败时
     // 使用 ParseNtKernelEvent 按 opcode 分类，但 UserData 字段不准确
-    if (info) {
-        // TDH schema 存在但未匹配到任何属性 — 可能是 schema 无有效属性或属性名不匹配
-        // 记录 debug 信息以便后续排查
-        // (info->TopLevelPropertyCount 可能为 0)
-    } else {
-        // 调试：TDH 完全失败时记录所有事件
-        static FILE* mf = nullptr;
-        if (!mf) mf = fopen("C:\\Users\\rikka\\AppData\\Local\\Temp\\ws_mof_all.txt", "a");
-        if (mf) {
-            fprintf(mf, "MOF: opcode=%d prov=%08x-%04x-%04x pid=%lu data_len=%lu\n",
-                opcode, provider.Data1, provider.Data2, provider.Data3,
-                (ULONG)record->EventHeader.ProcessId,
-                (ULONG)record->UserDataLength);
-            fflush(mf);
-        }
-    }
     uint32_t header_pid = static_cast<uint32_t>(record->EventHeader.ProcessId);
     uint32_t header_tid = static_cast<uint32_t>(record->EventHeader.ThreadId);
     ParseNtKernelEvent(record, provider, out);
@@ -513,8 +467,10 @@ void EventRecordParser::ParseNtKernelEvent(PEVENT_RECORD record, const GUID& pro
         break;
 
     case 17: // FileIo Create/Open (EVENT_RECORD format)
-    case 36: // FileIo Delete
         out.type = BehaviorEventType::FileCreate;
+        break;
+    case 36: // FileIo Delete（与 ParseKernelSessionEvent/MOF 回退一致，归类为删除）
+        out.type = BehaviorEventType::FileDelete;
         break;
 
     // Registry 事件（EVENT_RECORD format，来自 NT Kernel Logger）
@@ -527,24 +483,6 @@ void EventRecordParser::ParseNtKernelEvent(PEVENT_RECORD record, const GUID& pro
         if (out.key_path.empty()) {
             // 尝试 offset 2（可能的前缀长度字段）
             ExtractNtKernelString(data, data_len, 2, out.key_path);
-        }
-        if (out.key_path.empty()) {
-            // 调试：dump 原始 UserData 前 64 字节
-            static FILE* dump_fp = nullptr;
-            if (!dump_fp) dump_fp = fopen("C:\\Users\\rikka\\AppData\\Local\\Temp\\ws_reg_dump.txt", "a");
-            if (dump_fp) {
-                fprintf(dump_fp, "opcode=%d data_len=%lu is_64bit=%d pid=%lu prov=%08x-%04x-%04x\n",
-                    opcode, data_len, is_64bit, (ULONG)hdr.ProcessId,
-                    provider.Data1, provider.Data2, provider.Data3);
-                for (ULONG i = 0; i < (data_len < 64 ? data_len : 64); ++i) {
-                    fprintf(dump_fp, "%02x", data[i]);
-                    if ((i + 1) % 16 == 0) fprintf(dump_fp, "\n");
-                    else if ((i + 1) % 8 == 0) fprintf(dump_fp, "  ");
-                    else fprintf(dump_fp, " ");
-                }
-                fprintf(dump_fp, "\n\n");
-                fflush(dump_fp);
-            }
         }
         break;
     case 34: // RegistryDeleteKey
@@ -598,7 +536,7 @@ void EventRecordParser::ParseFileEvent(PEVENT_RECORD record, BehaviorEvent& out)
     idx = FindPropertyIndex(info, L"ProcessId");
     if (idx >= 0) out.pid = ExtractUInt32(record, info, idx);
 
-    // T6.8: 检测 NtStatus 属性，STATUS_ACCESS_DENIED → AccessDenied 事件
+    // 检测 NtStatus 属性，STATUS_ACCESS_DENIED → AccessDenied 事件
     UINT32 nt_status = 0;
     int status_idx = FindPropertyIndex(info, L"NtStatus");
     if (status_idx < 0) status_idx = FindPropertyIndex(info, L"Status");
@@ -640,30 +578,6 @@ void EventRecordParser::ParseRegistryEvent(PEVENT_RECORD record, BehaviorEvent& 
         }
     }
 
-    // 调试：dump 所有 ParseRegistryEvent 调用
-    {
-        static FILE* dump_fp = nullptr;
-        if (!dump_fp) dump_fp = fopen("C:\\Users\\rikka\\AppData\\Local\\Temp\\ws_reg_dump2.txt", "a");
-        if (dump_fp) {
-            fprintf(dump_fp, "ParseRegistryEvent: opcode=%d data_len=%lu pid=%lu key_path=%s\n",
-                record->EventHeader.EventDescriptor.Opcode,
-                (ULONG)record->UserDataLength,
-                (ULONG)record->EventHeader.ProcessId,
-                out.key_path.c_str());
-            if (record->UserData && record->UserDataLength > 0) {
-                ULONG dump_len = record->UserDataLength < 64 ? record->UserDataLength : 64;
-                for (ULONG i = 0; i < dump_len; ++i) {
-                    fprintf(dump_fp, "%02x", ((BYTE*)record->UserData)[i]);
-                    if ((i + 1) % 16 == 0) fprintf(dump_fp, "\n");
-                    else if ((i + 1) % 8 == 0) fprintf(dump_fp, "  ");
-                    else fprintf(dump_fp, " ");
-                }
-            }
-            fprintf(dump_fp, "\n\n");
-            fflush(dump_fp);
-        }
-    }
-
     idx = FindPropertyIndex(info, L"ValueName");
     if (idx >= 0) {
         auto ws = ExtractWideString(record, info, idx);
@@ -673,7 +587,7 @@ void EventRecordParser::ParseRegistryEvent(PEVENT_RECORD record, BehaviorEvent& 
     idx = FindPropertyIndex(info, L"ProcessId");
     if (idx >= 0) out.pid = ExtractUInt32(record, info, idx);
 
-    // T6.8: 检测 NtStatus 属性，STATUS_ACCESS_DENIED → AccessDenied 事件
+    // 检测 NtStatus 属性，STATUS_ACCESS_DENIED → AccessDenied 事件
     UINT32 nt_status = 0;
     int status_idx = FindPropertyIndex(info, L"NtStatus");
     if (status_idx < 0) status_idx = FindPropertyIndex(info, L"Status");
@@ -873,7 +787,13 @@ void EventRecordParser::ParseNtFileIoMof(PEVENT_RECORD record, BehaviorEvent& ou
 }
 
 // =============================================================================
-// TDH Schema 缓存
+// TDH Schema 缓存（含失败负缓存）
+//
+// 无 schema 的事件（NT Kernel Logger 大量 MOF 事件）每次事件都做两次
+// TdhGetEventInformation 是显著开销 → 解析失败结果也缓存（空 buffer 表示
+// 已知失败），避免重复查询。
+// 注意：返回的 info 指针指向缓存内 buffer，缓存不可在监控运行中清空
+//（无 ClearCache 接口，防止调用方误触发 use-after-free）。
 // =============================================================================
 
 TRACE_EVENT_INFO* EventRecordParser::GetEventInfo(PEVENT_RECORD record)
@@ -888,29 +808,28 @@ TRACE_EVENT_INFO* EventRecordParser::GetEventInfo(PEVENT_RECORD record)
         std::lock_guard<std::mutex> lk(cache_mutex_);
         auto it = schema_cache_.find(key);
         if (it != schema_cache_.end()) {
-            return it->second.info();
+            // 负缓存（空 buffer）= 已知解析失败
+            return it->second.buffer.empty() ? nullptr : it->second.info();
         }
     }
 
     ULONG buf_size = 0;
     ULONG status = TdhGetEventInformation(record, 0, nullptr, nullptr, &buf_size);
-    if (status != ERROR_INSUFFICIENT_BUFFER) {
-        // TDH schema not available for this event
-        return nullptr;
-    }
-
     SchemaValue val;
-    val.buffer.resize(buf_size);
-    auto* info = reinterpret_cast<PTRACE_EVENT_INFO>(val.buffer.data());
+    if (status == ERROR_INSUFFICIENT_BUFFER) {
+        val.buffer.resize(buf_size);
+        auto* info = reinterpret_cast<PTRACE_EVENT_INFO>(val.buffer.data());
 
-    status = TdhGetEventInformation(record, 0, nullptr, info, &buf_size);
-    if (status != ERROR_SUCCESS) return nullptr;
-
-    // 为调试目的记录 TDH schema 信息
-    // info->TopLevelPropertyCount 可能为 0（NT Kernel Logger 事件常见）
+        status = TdhGetEventInformation(record, 0, nullptr, info, &buf_size);
+        if (status != ERROR_SUCCESS) {
+            // 第二次调用失败：置为空 buffer，走负缓存
+            val.buffer.clear();
+        }
+    }
+    // 成功与失败结果都缓存（失败 = 负缓存）
     std::lock_guard<std::mutex> lk(cache_mutex_);
     auto [it, inserted] = schema_cache_.emplace(key, std::move(val));
-    return it->second.info();
+    return it->second.buffer.empty() ? nullptr : it->second.info();
 }
 
 // =============================================================================
@@ -989,13 +908,12 @@ std::wstring EventRecordParser::ExtractWideString(PEVENT_RECORD record,
     }
 
     if (outType == TDH_OUTTYPE_IPV6 && prop_size >= 16) {
-        auto* addr = reinterpret_cast<const BYTE*>(buf.data());
-        wchar_t wbuf[128];
-        swprintf_s(wbuf,
-                   L"%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
-                   addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], addr[6], addr[7],
-                   addr[8], addr[9], addr[10], addr[11], addr[12], addr[13], addr[14], addr[15]);
-        return std::wstring(wbuf);
+        // 标准 IPv6 文本格式（含 :: 压缩），与 inet_ntop 输出一致
+        wchar_t wbuf[INET6_ADDRSTRLEN];
+        if (InetNtopW(AF_INET6, buf.data(), wbuf, INET6_ADDRSTRLEN)) {
+            return std::wstring(wbuf);
+        }
+        return {};
     }
 
     // SocketAddress 类型（SOCKADDR_STORAGE）

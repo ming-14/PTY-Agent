@@ -367,7 +367,7 @@ def tls_env(tmp_path):
         Raises:
             RuntimeError: daemon 6 秒内未就绪
         """
-        from src.daemon.lifecycle import start_daemon, _find_daemon_port, is_running
+        from src.client.lifecycle import start_daemon, _find_daemon_port, is_running
         start_daemon()
 
         import socket as _socket
@@ -396,7 +396,7 @@ def tls_env(tmp_path):
         不依赖 stop_daemon() 的 TLS 路由（TOFU mismatch 时 TLS stop 会失败）。
         通过互斥锁定位 PID 并 force-kill，兼容所有模式。
         """
-        from src.daemon.lifecycle import is_running, _stop_daemon_force, _cleanup_port
+        from src.client.lifecycle import is_running, _stop_daemon_force, _cleanup_port
         if is_running():
             _stop_daemon_force()
             for _ in range(30):
@@ -620,7 +620,7 @@ class TestCrossMachineStop:
             f"stop 应成功: stdout={result_stop.stdout!r} stderr={result_stop.stderr!r}"
 
         # 验证 daemon 已停止
-        from src.daemon.lifecycle import is_running
+        from src.client.lifecycle import is_running
         for _ in range(30):
             if not is_running():
                 break

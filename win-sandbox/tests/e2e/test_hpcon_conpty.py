@@ -1,4 +1,4 @@
-"""T-xx e2e 测试：ConPTY（hpcon 外部传入）集成验证
+"""e2e 测试：ConPTY（hpcon 外部传入）集成验证
 
 覆盖（复用 _bbtest 阶段的验证链，正式纳入 e2e）：
   1. hpcon 启动：is_pty=True、stdio 句柄全 None

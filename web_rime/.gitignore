@@ -4,6 +4,7 @@ dist
 *.wasm
 build
 *.woff2
+__debug_statics/
 .vscode
 .idea
 .DS_Store

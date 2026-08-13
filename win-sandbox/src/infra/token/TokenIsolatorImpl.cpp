@@ -25,7 +25,7 @@ namespace winsandbox {
 
 namespace {
 
-// 与实验脚本一致（lowil_test.py / verify_low_flow.py build_low_token）
+// 隔离 token 派生所需访问权限
 constexpr DWORD kTokenAccess = TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY | TOKEN_ADJUST_DEFAULT | TOKEN_QUERY;
 
 } // namespace

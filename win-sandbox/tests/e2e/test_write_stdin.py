@@ -1,6 +1,6 @@
-"""T3.3 e2e 测试：WriteStdin（交互式 REPL 场景）（Phase 14 pybind11 直调形态）。
+"""e2e 测试：WriteStdin（交互式 REPL 场景）（pybind11 直调形态）。
 
-验证 Phase 3 T3.3 WriteStdin 功能在 pybind11 直调链路上的行为，覆盖 6 个子用例：
+验证 WriteStdin 功能在 pybind11 直调链路上的行为，覆盖 6 个子用例：
   1. 基础交互：启动 python -i，发 print(1+1)，收到 stdout 含 "2"
   2. 多次写入：连续发多条命令，每条都有正确响应
   3. interactive=false 时 write_pipe → OSError（stdin_handle is None）
@@ -109,7 +109,7 @@ def test_1_basic_repl_interaction() -> None:
       3. write_pipe(proc.stdin_handle, "print(1+1)\\n")
       4. 等 stdout 含 "2"
     """
-    print("\n[T3.3-1] 基础 REPL 交互", flush=True)
+    print("\n基础 REPL 交互", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -159,7 +159,7 @@ def test_2_multiple_writes() -> None:
       3. 连续发 3 条命令：print("a1"), print("a2"), print("a3")
       4. 断言 stdout 含所有 "a1" / "a2" / "a3"
     """
-    print("\n[T3.3-2] 多次连续写入", flush=True)
+    print("\n多次连续写入", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -218,7 +218,7 @@ def test_3_write_stdin_to_non_interactive() -> None:
       2. proc.stdin_handle 应为 None
       3. write_pipe(None, data) → OSError
     """
-    print("\n[T3.3-3] interactive=false 时 stdin_handle is None", flush=True)
+    print("\ninteractive=false 时 stdin_handle is None", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -260,7 +260,7 @@ def test_4_write_stdin_to_exited_process() -> None:
       2. wait
       3. write_pipe(proc.stdin_handle, data) → OSError
     """
-    print("\n[T3.3-4] 已退出进程 write_pipe → Error", flush=True)
+    print("\n已退出进程 write_pipe → Error", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -306,7 +306,7 @@ def test_5_write_stdin_invalid_handle() -> None:
     流程：
       1. write_pipe(invalid_handle, data) → OSError
     """
-    print("\n[T3.3-5] 无效 handle write_pipe → Error", flush=True)
+    print("\n无效 handle write_pipe → Error", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -334,7 +334,7 @@ def test_6_invalid_data_type() -> None:
       1. start_process(python -i, interactive=true)
       2. write_pipe(proc.stdin_handle, None) → TypeError
     """
-    print("\n[T3.3-6] 无效 data 类型 → Error", flush=True)
+    print("\n无效 data 类型 → Error", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:

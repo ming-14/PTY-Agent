@@ -1,4 +1,4 @@
-"""test_helpers.py - Python helpers 单元测试（Phase 13 T13.9）
+"""test_helpers.py - Python helpers 单元测试
 
 测试：
   - contains_access_denied_keyword 工具函数
@@ -135,32 +135,29 @@ def test_close_handle():
 
 
 def test_wall_clock_timer():
-    """WallClockTimer 超时触发 terminate"""
+    """WallClockTimer 超时触发回调（文档签名 (timeout_ms, on_timeout)）"""
     print("--- test_wall_clock_timer ---")
 
-    class FakeProc:
-        def __init__(self):
-            self.terminated = False
-            self.exit_code = None
-        def terminate(self, exit_code=1):
-            self.terminated = True
-            self.exit_code = exit_code
-
-    proc = FakeProc()
-    timer = helpers.WallClockTimer(proc, timeout_ms=100, exit_code=42)
+    fired = []
+    timer = helpers.WallClockTimer(100, lambda: fired.append(True))
     timer.start()
     time.sleep(0.3)  # 等待超时
-    check(proc.terminated, "terminate was called")
-    check(proc.exit_code == 42, f"exit_code={proc.exit_code}")
+    check(len(fired) == 1, f"on_timeout was called {len(fired)} times")
     check(timer.fired, "timer.fired is True")
 
     # cancel 测试
-    proc2 = FakeProc()
-    timer2 = helpers.WallClockTimer(proc2, timeout_ms=10000)
+    fired2 = []
+    timer2 = helpers.WallClockTimer(10000, lambda: fired2.append(True))
     timer2.start()
     timer2.cancel()
     time.sleep(0.2)
-    check(not proc2.terminated, "cancelled timer did not fire")
+    check(len(fired2) == 0, "cancelled timer did not fire")
+
+    # with 上下文管理器
+    fired3 = []
+    with helpers.WallClockTimer(100, lambda: fired3.append(True)):
+        time.sleep(0.3)
+    check(len(fired3) == 1, f"with-context timer fired {len(fired3)} times")
 
 
 def test_stats_poller():
@@ -182,6 +179,12 @@ def test_stats_poller():
     poller.stop()
     check(len(results) >= 2, f"poller called {len(results)} times (expected >= 2)")
     check(all(isinstance(r, dict) for r in results), "all results are dicts")
+
+    # with 上下文管理器
+    results2 = []
+    with helpers.StatsPoller(proc, interval_ms=50, callback=results2.append):
+        time.sleep(0.3)
+    check(len(results2) >= 2, f"with-context poller called {len(results2)} times")
 
 
 def test_drain_stdout():

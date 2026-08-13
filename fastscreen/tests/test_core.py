@@ -1,6 +1,6 @@
 import ctypes
 import pytest
-from fastscreen._core import (
+from fastscreencore._core import (
     MonitorInfo, WindowInfo, Frame, FRAME_CALLBACK,
     TargetType, CaptureMethod, ImageFormat, ErrorCode, _Lib,
 )

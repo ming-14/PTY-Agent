@@ -1,4 +1,4 @@
-"""_native_helpers.py - e2e 测试共用工具（Phase 14）
+"""_native_helpers.py - e2e 测试共用工具
 
 提供 pybind11 直调形态的测试辅助函数：
   - make_sandbox: 创建默认 SandboxInstance

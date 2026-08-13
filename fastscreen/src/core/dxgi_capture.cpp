@@ -1,3 +1,5 @@
+// DXGI Desktop Duplication 捕获：性能最优的整屏捕获方案。
+// 采集到的纹理拷贝到 staging 纹理后映射回读，并按格式转换为统一 BGRA 输出。
 #include "dxgi_capture.h"
 #include <chrono>
 #include <cstdio>
@@ -240,6 +242,7 @@ ErrorCode DXGICapture::capture_frame(FrameData& frame) {
         if (frame.data[i] != 0) { all_zero = false; break; }
     }
 
+    // 全 0 帧检测：部分显卡会周期性返回全黑帧，识别后重试最多 5 次，仍全 0 则报 NoOutput。
     if (all_zero) {
         fs::frame_free(frame.data, frame.stride * frame.height);
         frame.data = nullptr;
@@ -290,6 +293,7 @@ ErrorCode DXGICapture::capture_frame(FrameData& frame) {
     return ErrorCode::OK;
 }
 
+// R8G8B8A8 → BGRA：使用 AVX2 通道重排（pshufb）批量完成 RGBA→BGRA 字节交换。
 static void convert_r8g8b8a8_to_bgra(const uint8_t* src, uint8_t* dst, int pixel_count) {
     int i = 0;
     const int simd_end = pixel_count & ~7;
@@ -311,6 +315,7 @@ static void convert_r8g8b8a8_to_bgra(const uint8_t* src, uint8_t* dst, int pixel
     }
 }
 
+// IEEE 754 half-float（16 位）→ float（32 位）位运算转换，供 R16G16B16A16_FLOAT 使用。
 static inline uint16_t half_to_float_bits(uint16_t h) {
     uint32_t sign = (h >> 15) & 0x1;
     uint32_t exponent = (h >> 10) & 0x1F;

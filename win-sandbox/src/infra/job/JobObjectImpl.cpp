@@ -25,7 +25,7 @@
 
 #include <windows.h>
 #include <jobapi2.h>  // SetIoRateControlInformationJobObject / JOBOBJECT_IO_RATE_CONTROL_INFORMATION
-#include <tlhelp32.h> // CreateToolhelp32Snapshot / Process32FirstW / Process32NextW（Phase 9 parent_pid）
+#include <tlhelp32.h> // CreateToolhelp32Snapshot / Process32FirstW / Process32NextW（parent_pid）
 
 #include <chrono>
 #include <format>
@@ -125,8 +125,6 @@ Result<void> JobObjectImpl::SetResourceLimits(const ResourceQuota& quota) {
         return Result<void>::Err(ErrorCode::InternalError, "Job not created");
     }
 
-    quota_ = quota;
-
     // 1. ExtendedLimits（CPU 时间/内存/进程数/breakaway/KILL_ON_JOB）
     auto ext_result = SetExtendedLimits(quota);
     if (!ext_result) return ext_result;
@@ -145,13 +143,19 @@ Result<void> JobObjectImpl::SetResourceLimits(const ResourceQuota& quota) {
         if (!r) return r;
     }
 
-    // 4. UI 限制
+    // 4. UI 限制（no_ui：窗口/系统级限制，不含剪贴板——
+    //    剪贴板由 isolation_policy.clipboard_isolate 单独控制（StartProcess 显式设置），
+    //    避免 no_ui 默认值误伤剪贴板可用性）
     if (quota.no_ui) {
-        auto r = SetUiLimits(true);
+        DWORD flags = JOB_OBJECT_UILIMIT_HANDLES           // 禁止访问其他进程窗口句柄
+                    | JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS  // 禁止改系统参数
+                    | JOB_OBJECT_UILIMIT_DISPLAYSETTINGS   // 禁止改显示设置
+                    | JOB_OBJECT_UILIMIT_GLOBALATOMS;      // 禁止全局原子表
+        auto r = SetUiRestrictions(flags);
         if (!r) return r;
     }
 
-    // 5. Phase 8：崩溃静默（DIE_ON_UNHANDLED_EXCEPTION）
+    // 5. 崩溃静默（DIE_ON_UNHANDLED_EXCEPTION）
     if (quota.crash_silent) {
         auto r = SetCrashSilent(true);
         if (!r) return r;
@@ -206,7 +210,7 @@ Result<void> JobObjectImpl::SetExtendedLimits(const ResourceQuota& quota) {
         ext.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
     }
 
-    // breakaway 控制（修正 LLD-01 §5.2.2 反转 bug）
+    // breakaway 控制
     // true  → 设置 BREAKAWAY_OK，允许子进程逃逸
     // false → 不设置，子进程强制留在 Job（沙箱默认安全语义）
     if (quota.breakaway_ok) {
@@ -240,10 +244,6 @@ Result<void> JobObjectImpl::SetCpuRateControl(uint32_t percent) {
     //   HARD_CAP    硬上限（超出即挂起，而非调度延迟）
     //   WEIGHT_BASED 用 Weight 字段（1-9 权重），与 CpuRate 互斥
     //   不设 WEIGHT_BASED：默认使用 CpuRate 字段（0.01% 单位，100% = 10000）
-    //
-    // 修复历史 BUG：曾同时设置 WEIGHT_BASED + CpuRate，是非法组合，
-    // SetInformationJobObject 会失败并被下面的降级分支静默吞掉，
-    // 导致 cpu_rate_percent 配置完全不生效。
     JOBOBJECT_CPU_RATE_CONTROL_INFORMATION cpu = {};
     cpu.ControlFlags = JOB_OBJECT_CPU_RATE_CONTROL_ENABLE
                      | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
@@ -299,6 +299,10 @@ Result<void> JobObjectImpl::SetIoRateControl(uint64_t bytes_per_sec, uint64_t io
 
 // =============================================================================
 // SetUiLimits / SetUiRestrictions - UI 限制
+//
+// SetUiLimits(true) = 全量限制（含剪贴板），供 clipboard_isolate 使用；
+// 窗口/系统级限制（不含剪贴板）由 SetResourceLimits 的 no_ui 分支直接
+// 拼 flags 调用 SetUiRestrictions。
 // =============================================================================
 Result<void> JobObjectImpl::SetUiLimits(bool no_ui) {
     DWORD flags = 0;
@@ -430,6 +434,7 @@ Result<JobAccountingInfo> JobObjectImpl::QueryAccounting() const {
     }
 
     JobAccountingInfo result;
+    result.sample_time_ms = NowUnixMs();
     result.total_user_time_100ns = static_cast<uint64_t>(info.BasicInfo.TotalUserTime.QuadPart);
     result.total_kernel_time_100ns = static_cast<uint64_t>(info.BasicInfo.TotalKernelTime.QuadPart);
     result.this_period_user_time_100ns = static_cast<uint64_t>(info.BasicInfo.ThisPeriodTotalUserTime.QuadPart);
@@ -446,6 +451,18 @@ Result<JobAccountingInfo> JobObjectImpl::QueryAccounting() const {
     result.active_processes = info.BasicInfo.ActiveProcesses;
     result.terminated_processes = info.BasicInfo.TotalTerminatedProcesses;
     result.total_page_faults = info.BasicInfo.TotalPageFaultCount;
+
+    // 内存峰值补充（best-effort：失败不影响会计主数据）
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION ext = {};
+    if (QueryInformationJobObject(job_handle_.get(),
+                                  JobObjectExtendedLimitInformation,
+                                  &ext, sizeof(ext), nullptr)) {
+        result.peak_process_memory = static_cast<uint64_t>(ext.PeakProcessMemoryUsed);
+        result.peak_job_memory = static_cast<uint64_t>(ext.PeakJobMemoryUsed);
+    } else {
+        logger_->Log(LogLevel::Debug,
+                     std::format("peak memory query failed: err={}", GetLastError()));
+    }
 
     return Result<JobAccountingInfo>::Ok(std::move(result));
 }
@@ -472,7 +489,7 @@ Result<uint64_t> JobObjectImpl::QueryPeakMemory() const {
 }
 
 // =============================================================================
-// QueryProcessList - 获取 Job 内所有进程的 PID 列表（Phase 8 T-8.3）
+// QueryProcessList - 获取 Job 内所有进程的 PID 列表
 //
 // 使用 JOBOBJECT_BASIC_PROCESS_ID_LIST（两次调用模式）：
 //   1. 第一次调用（nullptr + 0）获取所需缓冲区大小
@@ -535,16 +552,15 @@ Result<std::vector<uint32_t>> JobObjectImpl::QueryProcessList() const {
 }
 
 // =============================================================================
-// ReadExitCodeSettled - 读取已退出进程的最终退出码（Phase 8 T-8.7）
+// ReadExitCodeSettled - 读取已退出进程的最终退出码
 //
 // 退出消息（msg=7/8）送达时，进程处于终止初期，GetExitCodeProcess 可能返回:
 //   - STILL_ACTIVE(259)：进程尚未完全终止
 //   - 0：退出码尚未落定（终止初期的中间态，崩溃场景尤为常见）
 // 本函数用缓存句柄（含 SYNCHRONIZE）等进程终止后再读退出码：
-//   1. WaitForSingleObject 等进程完全终止（退出码此时必然落定）
-//   2. 若仍读到 0/259（跨进程读存在短竞态窗口），低延迟重试最多 40ms
-//      保证拿到最终码（如崩溃的 0xC0000005）
-// 等待上限 2s（正常毫秒级，仅防极端情况阻塞 IOCP 线程）。
+//   1. WaitForSingleObject 等进程完全终止（退出码此时必然落定；0 是合法
+//      退出码，不再走重试路径）
+//   2. 等待超时（2s 极端情况）时低延迟重试最多 40ms 兜底
 // 读取成功后释放缓存句柄（进程已终止，句柄不再需要）。
 // =============================================================================
 Result<uint32_t> JobObjectImpl::ReadExitCodeSettled(uint32_t pid) {
@@ -557,10 +573,21 @@ Result<uint32_t> JobObjectImpl::ReadExitCodeSettled(uint32_t pid) {
         process_handles_.erase(it);
 
         // 等待进程完全终止（退出码落定），最多 2s
-        ::WaitForSingleObject(handle.get(), 2000);
+        DWORD wait_r = ::WaitForSingleObject(handle.get(), 2000);
 
         DWORD code = 0;
-        // 低延迟重试：若读到 0/259 中间值，等 5ms 再读，最多 8 次（40ms）
+        if (wait_r == WAIT_OBJECT_0) {
+            // 进程已完全终止：退出码必然落定（0 是合法退出码，无需重试）
+            if (!::GetExitCodeProcess(handle.get(), &code)) {
+                DWORD err = GetLastError();
+                return Result<uint32_t>::Err(
+                    ErrorCode::JobQueryFailed,
+                    std::format("GetExitCodeProcess failed: pid={} err={}", pid, err));
+            }
+            return Result<uint32_t>::Ok(code);
+        }
+
+        // 2s 超时（极端情况）：低延迟重试，最多 8 次（40ms）
         for (int attempt = 0; attempt < 8; ++attempt) {
             if (!::GetExitCodeProcess(handle.get(), &code)) {
                 DWORD err = GetLastError();
@@ -581,19 +608,19 @@ Result<uint32_t> JobObjectImpl::ReadExitCodeSettled(uint32_t pid) {
 }
 
 // =============================================================================
-// QueryProcessExitCode - 查询单个进程的退出码（Phase 8 T-8.4）
+// QueryProcessExitCode - 查询单个进程的退出码
 //
 // OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION) + GetExitCodeProcess。
 // 进程仍在运行时返回 STILL_ACTIVE (259)；进程已不存在/权限不足返回 JobQueryFailed。
 //
-// Phase 9（黑盒复核 B5 修复）：Job 归属校验 —— pid 必须是本 Job 的进程
+// Job 归属校验 —— pid 必须是本 Job 的进程
 // （曾见 pid 集合，含已退出进程），否则返回 ProcessNotFound。
 // 这拒绝跨 sandbox 实例的 pid 探测（实例 B 查不到实例 A 的进程状态），
 // 且对"从未在本 Job 出现的 pid"（如系统进程 pid=1）返回语义更准确的
 // process_not_found 而非 query_failed。
 // =============================================================================
 Result<uint32_t> JobObjectImpl::QueryProcessExitCode(uint32_t pid) const {
-    // 归属校验：曾见集合优先（已退出进程也在集合中，B2/B3 行为保持），
+    // 归属校验：曾见集合优先（已退出进程也在集合中），
     // 未命中则兜底查 Job 活进程列表（覆盖 NEW_PROCESS 通知尚未处理的竞态窗口）。
     {
         std::lock_guard<std::mutex> lock(seen_pids_mutex_);
@@ -626,7 +653,7 @@ Result<uint32_t> JobObjectImpl::QueryProcessExitCode(uint32_t pid) const {
 }
 
 // =============================================================================
-// IsPidInJobAlive - 指定 pid 是否为本 Job 当前活进程（Phase 9，B5 修复辅助）
+// IsPidInJobAlive - 指定 pid 是否为本 Job 当前活进程
 //
 // JobObjectBasicProcessIdList 单次枚举遍历匹配（实时快照，不依赖通知处理时序）。
 // 与 QueryProcessList 不同：不重试、不区分增长窗口——仅用于"是否存在"判断，
@@ -664,7 +691,7 @@ bool JobObjectImpl::IsPidInJobAlive(uint32_t pid) const {
 }
 
 // =============================================================================
-// QueryParentPid - 查询进程父 PID（Phase 9 T-9.3）
+// QueryParentPid - 查询进程父 PID
 //
 // CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS) 全系统快照 + Process32FirstW/
 // NextW 遍历，匹配 pid 取 th32ParentProcessID。文档化 Win32 API（避免未文档化
@@ -704,7 +731,7 @@ std::optional<uint32_t> JobObjectImpl::QueryParentPid(uint32_t pid) const {
 }
 
 // =============================================================================
-// QueryProcessPath - 查询进程完整路径（Phase 8 T-8.5）
+// QueryProcessPath - 查询进程完整路径
 //
 // OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION) + QueryFullProcessImageNameW，
 // 路径转换为 UTF-8 返回。失败（进程已退出/权限不足）返回 JobQueryFailed，
@@ -757,7 +784,7 @@ Result<std::string> JobObjectImpl::QueryProcessPath(uint32_t pid) const {
 }
 
 // =============================================================================
-// SetCrashSilent - 设置崩溃静默标志（Phase 8 T-8.6）
+// SetCrashSilent - 设置崩溃静默标志
 //
 // JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION：Job 内进程未处理异常时直接终止
 // （不弹 Windows 错误对话框 / 不触发 WER），适用于无头自动化场景。
@@ -806,6 +833,12 @@ Result<void> JobObjectImpl::SetCrashSilent(bool silent) {
 Result<void> JobObjectImpl::RegisterNotificationSink(IJobNotificationSink& sink) {
     {
         std::lock_guard<std::mutex> lock(sink_mutex_);
+        // Shutdown 后 IOCP 线程已停止，注册永不生效 → 显式报错（防静默失效）
+        if (!running_.load(std::memory_order_acquire) || !iocp_thread_.joinable()) {
+            return Result<void>::Err(
+                ErrorCode::InternalError,
+                "RegisterNotificationSink called after Shutdown (IOCP thread stopped)");
+        }
         sink_ = &sink;
     }
     logger_->Log(LogLevel::Info, "notification sink registered");
@@ -815,18 +848,14 @@ Result<void> JobObjectImpl::RegisterNotificationSink(IJobNotificationSink& sink)
 // =============================================================================
 // Shutdown - 停止通知线程并注销 sink（Shutdown 清理前调用）
 //
-// 竞态修复（BUG-1，2026-08-06）：
+// 关闭顺序（先停 IOCP 线程，再清 sink_）：
 //   IOCP 线程持 sink_（非拥有）调 OnNotification；若 usercase 先于 Job 析构
 //   （SandboxInstance::ShutdownAll 显式 reset 顺序：usecase → ... → job），
 //   IOCP 线程可能仍在 usercase 析构后回调 → use-after-free → 0xC0000005。
-//   本方法先停 IOCP 线程再清 sink_，保证清理后不再有任何回调。
-//   注意：不关闭 job_handle_（usercase 析构仍需 TerminateAll 兜底）。
-//
-// Phase 14 黑盒修复：交换 StopIocpThread / 清 sink_ 顺序
-//   原顺序（先清 sink_ → 停线程）会丢弃待处理的子进程退出通知
-//   （on_job_process_exited 不触发）。改为先停 IOCP 线程（让剩余通知
-//   被 sink_->OnNotification 处理），再清 sink_。
+//   先停 IOCP 线程让剩余通知（含子进程退出通知）被 sink_->OnNotification
+//   处理完，再清 sink_，保证清理后不再有任何回调。
 //   安全性：Close() 释放 GIL 调本方法，IOCP 线程可获 GIL 完成回调。
+//   注意：不关闭 job_handle_（usercase 析构仍需 TerminateAll 兜底）。
 // =============================================================================
 Result<void> JobObjectImpl::Shutdown() {
     StopIocpThread();
@@ -926,9 +955,24 @@ void JobObjectImpl::IocpLoop() {
         DWORD message = bytes_transferred;
         DWORD pid = static_cast<DWORD>(reinterpret_cast<ULONG_PTR>(overlapped));
 
+        // EXIT_PROCESS / ABNORMAL_EXIT_PROCESS 去重（提前到翻译之前）
+        // 崩溃路径（DIE_ON_UNHANDLED_EXCEPTION）会先发 ABNORMAL_EXIT_PROCESS（msg=8）
+        // 再发 EXIT_PROCESS（msg=7），避免同一进程通知两次。
+        // 第一次已投递退出通知的 pid，后续退出消息直接跳过（跳过前释放查询句柄，
+        // 不进入 TranslateMessage 的退出码查询路径，省去重复 OpenProcess/等待）。
+        const bool is_exit_msg = (message == JOB_OBJECT_MSG_EXIT_PROCESS ||
+                                  message == JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS);
+        if (is_exit_msg && exited_pids_.count(pid) > 0) {
+            // 释放查询句柄（退出通知已处置，句柄不再需要）
+            process_handles_.erase(pid);
+            logger_->Log(LogLevel::Debug,
+                         std::format("duplicate exit notification suppressed: pid={}", pid));
+            continue;
+        }
+
         JobNotification notif = TranslateMessage(message, pid);
 
-        // Phase 8 T-8.7：打开查询句柄并缓存，供 EXIT_PROCESS 查退出码
+        // 打开查询句柄并缓存，供 EXIT_PROCESS 查退出码
         // 进程对象一旦销毁，OpenProcess 会失败；NEW_PROCESS 时进程仍在，
         // 缓存句柄（含 SYNCHRONIZE，供退出时等待终止）确保退出码查询必成功。
         if (notif.type == JobNotificationType::NewProcess) {
@@ -948,24 +992,10 @@ void JobObjectImpl::IocpLoop() {
             }
         }
 
-        // Phase 8 T-8.7：EXIT_PROCESS / ABNORMAL_EXIT_PROCESS 去重
-        // 崩溃路径（DIE_ON_UNHANDLED_EXCEPTION）会先发 ABNORMAL_EXIT_PROCESS（msg=8）
-        // 再发 EXIT_PROCESS（msg=7），避免同一进程通知两次。
-        // 第一次已投递退出通知的 pid，后续退出消息直接跳过。
-        const bool is_exit_msg = (message == JOB_OBJECT_MSG_EXIT_PROCESS ||
-                                  message == JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS);
-        if (is_exit_msg && exited_pids_.count(pid) > 0) {
-            // 释放查询句柄（退出通知已处置，句柄不再需要）
-            process_handles_.erase(pid);
-            logger_->Log(LogLevel::Debug,
-                         std::format("duplicate exit notification suppressed: pid={}", pid));
-            continue;
-        }
-
-        // Phase 8 T-8.8：NEW_PROCESS 时查询进程路径（仅查询一次，进程存续期路径不变）
+        // NEW_PROCESS 时查询进程路径（仅查询一次，进程存续期路径不变）
         // 失败不阻塞通知投递：仅记录警告，process_name/process_path 保持为空
         if (notif.type == JobNotificationType::NewProcess) {
-            // Phase 9（黑盒复核 B5 修复）：登记曾见 pid（含主进程 Assign 加入时），
+            // 登记曾见 pid（含主进程 Assign 加入时），
             // 供 QueryProcessExitCode 做 Job 归属校验。仅 IocpLoop 线程写。
             {
                 std::lock_guard<std::mutex> lock(seen_pids_mutex_);
@@ -989,7 +1019,7 @@ void JobObjectImpl::IocpLoop() {
                                          path_r.Message()));
             }
 
-            // Phase 9 T-9.3：best-effort 填充 parent_pid
+            // best-effort 填充 parent_pid
             // 父进程已退出/快照失败 → nullopt（事件中省略该字段），不阻塞投递
             notif.parent_pid = QueryParentPid(pid);
             logger_->Log(LogLevel::Debug,
@@ -1007,14 +1037,21 @@ void JobObjectImpl::IocpLoop() {
             continue;
         }
 
-        // Phase 8 T-8.7：记录已投递退出通知的 pid（去重 msg=7/msg=8 双通知）
+        // EXIT_PROCESS / ABNORMAL_EXIT_PROCESS 去重（在 TranslateMessage 之前完成，
+        // 见上方；此处仅登记本次投递的退出 pid）
         if (is_exit_msg) {
             exited_pids_.insert(pid);
         }
 
-        std::lock_guard<std::mutex> lock(sink_mutex_);
-        if (sink_) {
-            sink_->OnNotification(notif);
+        // sink 拷出锁外调用：Shutdown 先 join IOCP 线程再清 sink_，
+        // 锁外调用不会与 sink 析构并发（join 已串行化）
+        IJobNotificationSink* sink = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(sink_mutex_);
+            sink = sink_;
+        }
+        if (sink) {
+            sink->OnNotification(notif);
         }
     }
 
@@ -1024,7 +1061,7 @@ void JobObjectImpl::IocpLoop() {
 // =============================================================================
 // TranslateMessage - 翻译 JOB_OBJECT_MSG_* → JobNotification
 //
-// Phase 8 T-8.7：退出分类
+// 退出分类
 //   - JOB_OBJECT_MSG_EXIT_PROCESS（msg=7）：进程正常退出路径，按退出码分类：
 //     退出码 == 0 → ProcessExitNormal，否则 ProcessExitAbnormal。
 //     GetExitCodeProcess 在进程终止初期可能短暂读到中间值，做短重试等待最终码。
@@ -1057,7 +1094,7 @@ JobNotification JobObjectImpl::TranslateMessage(DWORD message, DWORD pid) {
             break;
 
         case JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS:
-            // Phase 8：未处理异常导致的终止 → 一律异常退出
+            // 未处理异常导致的终止 → 一律异常退出
             {
                 auto code = ReadExitCodeSettled(pid);
                 if (code) {
@@ -1075,7 +1112,7 @@ JobNotification JobObjectImpl::TranslateMessage(DWORD message, DWORD pid) {
             break;
 
         case JOB_OBJECT_MSG_EXIT_PROCESS:
-            // Phase 8：按退出码分类（0=正常，非 0=异常）
+            // 按退出码分类（0=正常，非 0=异常）
             {
                 auto code_r = ReadExitCodeSettled(pid);
                 if (code_r) {
@@ -1101,8 +1138,7 @@ JobNotification JobObjectImpl::TranslateMessage(DWORD message, DWORD pid) {
             notif.type = JobNotificationType::NewProcess;
             break;
         default:
-            // 未知消息类型，归为 Unknown；上层应忽略或告警
-            // 修复历史 BUG：原归类为 ProcessExit，会让上层误以为有进程退出
+            // 未知消息类型归为 Unknown：上层应忽略或告警，避免误以为有进程退出
             notif.type = JobNotificationType::Unknown;
             break;
     }

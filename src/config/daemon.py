@@ -20,7 +20,7 @@ _all["IS_WINDOWS"] = _common.IS_WINDOWS
 _all["DATA_DIR"] = _common.DATA_DIR
 _all["PROJECT_ROOT"] = _common.PROJECT_ROOT
 _all["PORT_FILE"] = os.path.join(_common.DATA_DIR, "daemon.port")
-_all["LOG_DIR"] = os.path.join(_common.PROJECT_ROOT, "logs")
+_all["LOG_DIR"] = os.path.join(_common.DATA_DIR, "logs")
 
 globals().update(_all)
 __all__ = list(_all.keys())

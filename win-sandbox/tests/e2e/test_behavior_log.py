@@ -1,11 +1,11 @@
-"""test_behavior_log.py - Phase 6 行为事件日志 e2e 测试（Phase 14 pybind11 直调形态）。
+"""test_behavior_log.py - 行为事件日志 e2e 测试（pybind11 直调形态）。
 
 测试 ETW 行为监控功能（通过 on_behavior_event 回调收集）：
-  T1: 默认配置（未启用 ETW）→ 无 behavior 事件
-  T2: 配置启用 ETW → 收到 behavior 事件
-  T3: behavior 事件格式校验（event_type/pid/timestamp_ms）
-  T4: 启动子进程后 → behavior 事件中包含该进程的 process_start/process_stop
-  T5: Shutdown 后 → ETW monitor 正常停止（无崩溃）
+  默认配置（未启用 ETW）→ 无 behavior 事件
+  配置启用 ETW → 收到 behavior 事件
+  behavior 事件格式校验（event_type/pid/timestamp_ms）
+  启动子进程后 → behavior 事件中包含该进程的 process_start/process_stop
+  Shutdown 后 → ETW monitor 正常停止（无崩溃）
 
 注意：on_behavior_event 回调签名 callback(info: dict)，info 字段：
   event_type / pid / path / operation / status / timestamp_ms / source
@@ -101,7 +101,7 @@ def _run_simple(sb, command_line, timeout_ms=15000, **kwargs):
 # =============================================================================
 
 def test_etw_disabled_no_events() -> str:
-    """T1: 默认配置（未启用 ETW）→ 无 behavior 事件。
+    """默认配置（未启用 ETW）→ 无 behavior 事件。
 
     ETW 未启用时不设 on_behavior_event 回调，仅验证进程正常运行。
     """
@@ -123,7 +123,7 @@ def test_etw_disabled_no_events() -> str:
 
 
 def test_etw_enabled_receives_events() -> str:
-    """T2: 配置启用 ETW → 收到 behavior 事件。"""
+    """配置启用 ETW → 收到 behavior 事件。"""
     print("\n  [T2_etw_enabled_receives_events] ...", end=" ", flush=True)
     cfg_path = write_config(etw_enabled=True)
     try:
@@ -144,7 +144,7 @@ def test_etw_enabled_receives_events() -> str:
 
 
 def test_behavior_log_format() -> str:
-    """T3: behavior 事件格式校验。"""
+    """behavior 事件格式校验。"""
     print("\n  [T3_behavior_log_format] ...", end=" ", flush=True)
     cfg_path = write_config(etw_enabled=True)
     try:
@@ -187,7 +187,7 @@ def test_behavior_log_format() -> str:
 
 
 def test_child_process_in_behavior_log() -> str:
-    """T4: 启动子进程后 → behavior 事件中包含该进程的 process_start/process_stop。"""
+    """启动子进程后 → behavior 事件中包含该进程的 process_start/process_stop。"""
     print("\n  [T4_child_process_in_behavior_log] ...", end=" ", flush=True)
     cfg_path = write_config(etw_enabled=True)
     try:
@@ -214,7 +214,7 @@ def test_child_process_in_behavior_log() -> str:
 
 
 def test_shutdown_no_crash() -> str:
-    """T5: Shutdown 后 → ETW monitor 正常停止（无崩溃）。"""
+    """Shutdown 后 → ETW monitor 正常停止（无崩溃）。"""
     print("\n  [T5_shutdown_no_crash] ...", end=" ", flush=True)
     cfg_path = write_config(etw_enabled=True)
     try:
@@ -251,7 +251,7 @@ _TESTS = [
 
 def main() -> int:
     print("=" * 60)
-    print("Phase 6: Behavior Event Log (ETW Monitor) Tests")
+    print("Behavior Event Log (ETW Monitor) Tests")
     print("=" * 60)
 
     passed = 0

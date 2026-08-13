@@ -2,7 +2,7 @@ import pytest
 import time
 import os
 import tempfile
-from fastscreen import CaptureEngine, CapturedFrame, TargetType, CaptureMethod, ErrorCode
+from fastscreencore import CaptureEngine, CapturedFrame, TargetType, CaptureMethod, ErrorCode
 
 
 class TestFullWorkflowMonitor:

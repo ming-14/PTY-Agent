@@ -1,7 +1,7 @@
 """文件传输公共定义 —— 帧常量再导出、传输错误、条目结构
 
 依赖方向：src/files/transfer/ 是两端（CLI/daemon）共用的业务层，
-依赖 src/protocol/transfer.py（帧 IO）与 src/config/，不反向依赖 daemon/client。
+依赖 src/protocol/transfer.py（帧 IO）与 config/，不反向依赖 daemon/client。
 """
 
 from ...protocol.transfer import (  # noqa: F401  （帧类型向上再导出，业务层统一从此取）

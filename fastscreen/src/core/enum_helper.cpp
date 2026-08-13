@@ -1,3 +1,4 @@
+// 系统对象枚举：遍历显示器（EnumDisplayMonitors）与顶层可见窗口（EnumWindows）。
 #include "enum_helper.h"
 #include <Windows.h>
 #include <dwmapi.h>

@@ -322,7 +322,7 @@ class SubscribeSessionHandler(MessageHandler):
         # 在 term.clear() 后重放会导致错位。pyte snapshot 是当前屏幕的"真相"，
         # 与 ConPTY repaint 同源，显示正确。
         # 后续实时输出通过 publisher 持续推送。
-        # Phase 3: 同时返回 scrollback（GridScreen 历史区），前端写入 xterm.js
+        # 同时返回 scrollback（GridScreen 历史区），前端写入 xterm.js
         # 推入 scrollback 区，实现 F5 刷新/重开浏览器后历史不丢。
         sub_data = await ctx.subscription.prepare_subscription(session_id, session)
         replay_text = sub_data["replay"]

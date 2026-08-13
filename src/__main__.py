@@ -1,4 +1,4 @@
-r"""PTY-Agent — 命令行交互式程序交互代理
+r"""命令行交互式程序交互代理
 
 通过伪终端（PTY）与交互式 CLI 程序双向通信。
 守护进程以独立子进程运行，首次执行命令时自动启动。
@@ -20,7 +20,7 @@ if sys.platform == "win32":
 from .client.transport import Client
 from .client.formatter import set_debug_mode
 from .client.config_manager import ConfigManager
-from .daemon.lifecycle import setup_client_logging
+from .client.lifecycle import setup_client_logging
 from .protocol.response import Response
 
 _logger = logging.getLogger("pty-client")

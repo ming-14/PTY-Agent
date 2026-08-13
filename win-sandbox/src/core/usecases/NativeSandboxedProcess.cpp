@@ -1,15 +1,11 @@
 // =============================================================================
 // NativeSandboxedProcess 实现（pybind11/native 形态）
 //
-// 复用 StartProcessUseCase 的隔离准备 + Launch + Assign + IOCP 通知逻辑，
-// 删除 StreamReader / wait 线程 / wall_clock 线程 / IEventEmitter。
-//
-// Phase 16（Low IL 转型）：隔离准备替换为 TokenIsolator + WriteArea，
-// AppContainer/EnforcePolicy/fs_isolator 分支全部移除（见 Phase-16 文档）。
+// 隔离准备 + Launch + Assign + IOCP 通知逻辑；
+// 无 StreamReader / wait 线程 / wall_clock 线程 / IEventEmitter。
+// 隔离准备：TokenIsolator + WriteArea（Low IL 模型）。
 // =============================================================================
 #include "core/usecases/NativeSandboxedProcess.hpp"
-
-#include <windows.h>
 
 #include <chrono>
 #include <format>
@@ -18,7 +14,7 @@
 
 namespace winsandbox {
 
-// ----- local helper：命令行脱敏（与 StartProcessUseCase.cpp / SandboxInstance.cpp 同模式）-----
+// ----- local helper：命令行脱敏 -----
 static std::string RedactCommandLine(std::string_view cmdline) {
     if (cmdline.empty()) {
         return "(empty)";
@@ -49,17 +45,17 @@ static std::string RedactCommandLine(std::string_view cmdline) {
 // =============================================================================
 
 NativeSandboxedProcess::NativeSandboxedProcess(std::shared_ptr<ILogger> logger,
-                                               IJobObject* job_object,
-                                               IProcessLauncher* process_launcher,
-                                               ITokenIsolator* token_isolator,
-                                               IWriteArea* write_area,
-                                               IWfpEngine* wfp_engine)
+                                               std::shared_ptr<IJobObject> job_object,
+                                               std::shared_ptr<IProcessLauncher> process_launcher,
+                                               std::shared_ptr<ITokenIsolator> token_isolator,
+                                               std::shared_ptr<IWriteArea> write_area,
+                                               std::shared_ptr<IWfpEngine> wfp_engine)
     : logger_(std::move(logger))
-    , job_object_(job_object)
-    , process_launcher_(process_launcher)
-    , token_isolator_(token_isolator)
-    , write_area_(write_area)
-    , wfp_engine_(wfp_engine) {
+    , job_object_(std::move(job_object))
+    , process_launcher_(std::move(process_launcher))
+    , token_isolator_(std::move(token_isolator))
+    , write_area_(std::move(write_area))
+    , wfp_engine_(std::move(wfp_engine)) {
     logger_->Log(LogLevel::Debug, "NativeSandboxedProcess created (Low IL mode)");
 }
 
@@ -76,7 +72,7 @@ uint64_t NativeSandboxedProcess::NowUnixMs() {
 // =============================================================================
 // Execute - 启动隔离进程并返回句柄
 //
-// 流程（Phase 16 Low IL）：
+// 流程（Low IL 模型）：
 //   1. 隔离准备：TokenIsolator::Prepare()（Low IL token）+ WriteArea::Create()
 //      + %TEMP%/%TMP% 重定向 + Allowlist 时 SOCKS5 代理注入
 //   2. Launch（CreateProcessAsUserW(isolated_token)）
@@ -159,7 +155,7 @@ Result<NativeExecuteResult> NativeSandboxedProcess::Execute(const StartProcessRe
                             std::format("network blocked (native): ip={} port={} proto={} reason={}",
                                         ip, port, protocol, reason));
             };
-            uint64_t instance_id = static_cast<uint64_t>(::GetCurrentProcessId()) * 1000 + NowUnixMs() % 1000;
+            uint64_t instance_id = process_launcher_->CurrentProcessId() * 1000 + NowUnixMs() % 1000;
             auto reg_r = wfp_engine_->RegisterConnectFilter(
                 req.isolation_policy.net_allowlist, on_blocked, instance_id);
             if (!reg_r) {
@@ -202,7 +198,7 @@ Result<NativeExecuteResult> NativeSandboxedProcess::Execute(const StartProcessRe
     auto& launch_result = launch_r.Value();
     process_handle_.store(launch_result.process_handle, std::memory_order_release);
     thread_handle_ = launch_result.thread_handle;
-    stdin_write_ = launch_result.stdin_write;
+    stdin_write_.store(launch_result.stdin_write);
 
     process_.pid = launch_result.process.pid;
     process_.process_id = req.process_id;
@@ -223,19 +219,19 @@ Result<NativeExecuteResult> NativeSandboxedProcess::Execute(const StartProcessRe
         void* ph = process_handle_.load(std::memory_order_acquire);
         process_launcher_->Terminate(ph, 1);
         process_handle_.store(nullptr, std::memory_order_release);
-        ::CloseHandle(ph);
-        ::CloseHandle(thread_handle_);
+        process_launcher_->CloseHandle(ph);
+        process_launcher_->CloseHandle(thread_handle_);
         thread_handle_ = nullptr;
-        ::CloseHandle(stdin_write_);
-        stdin_write_ = nullptr;
-        ::CloseHandle(launch_result.stdout_read);
-        ::CloseHandle(launch_result.stderr_read);
+        process_launcher_->CloseHandle(stdin_write_.load());
+        stdin_write_.store(nullptr);
+        process_launcher_->CloseHandle(launch_result.stdout_read);
+        process_launcher_->CloseHandle(launch_result.stderr_read);
         return Result<NativeExecuteResult>::Err(assign_r.Code(), assign_r.Message());
     }
 
     // 4. 关闭 thread_handle（不需要）
     if (thread_handle_ != nullptr) {
-        ::CloseHandle(thread_handle_);
+        process_launcher_->CloseHandle(thread_handle_);
         thread_handle_ = nullptr;
     }
 
@@ -243,10 +239,10 @@ Result<NativeExecuteResult> NativeSandboxedProcess::Execute(const StartProcessRe
     //    ConPTY 模式（hpcon 非空）：stdin_write_ 为 nullptr，跳过（I/O 由外部 ConPTY 管理）
     //    interactive=true：先写 stdin_data（如有），再保留 stdin_write_ 给 Python
     //    interactive=false：写 stdin_data 后关闭 stdin_write_，让子进程 ReadFile(stdin) EOF
-    if (stdin_write_ != nullptr) {
+    if (stdin_write_.load() != nullptr) {
         if (!req.stdin_data.empty()) {
             auto write_r = process_launcher_->WriteStdin(
-                stdin_write_, req.stdin_data.data(), req.stdin_data.size());
+                stdin_write_.load(), req.stdin_data.data(), req.stdin_data.size());
             if (!write_r) {
                 logger_->Log(LogLevel::Warn,
                              std::format("initial stdin_data write failed: [{}] {}",
@@ -260,8 +256,8 @@ Result<NativeExecuteResult> NativeSandboxedProcess::Execute(const StartProcessRe
         }
         if (!req.interactive) {
             // 非交互：关闭 stdin_write，让子进程 ReadFile(stdin) 立即 EOF
-            process_launcher_->CloseStdin(stdin_write_);
-            stdin_write_ = nullptr;
+            process_launcher_->CloseStdin(stdin_write_.load());
+            stdin_write_.store(nullptr);
         }
         // 交互：保留 stdin_write_，Python 后续 WriteStdin
     }
@@ -277,7 +273,7 @@ Result<NativeExecuteResult> NativeSandboxedProcess::Execute(const StartProcessRe
     NativeExecuteResult result;
     result.process = process_;
     result.process_handle = process_handle_.load(std::memory_order_acquire);
-    result.stdin_write = stdin_write_;        // interactive=true 时非空，Python 拥有
+    result.stdin_write = stdin_write_.load();  // interactive=true 时非空，Python 拥有
     result.stdout_read = launch_result.stdout_read;  // Python 拥有
     result.stderr_read = launch_result.stderr_read;  // Python 拥有
     result.is_pty = (req.hpcon != nullptr);   // ConPTY 模式标记
@@ -285,82 +281,174 @@ Result<NativeExecuteResult> NativeSandboxedProcess::Execute(const StartProcessRe
 }
 
 // =============================================================================
-// OnNotification - IOCP 通知翻译为回调 payload
+// 回调注册 / Invoke / 清空 - 线程安全回调管理
 //
-// 复用 StartProcessUseCase::OnNotification 的 TerminateAllOnLimit 逻辑，
-// 把 Emit* 调用改为 std::function 回调。
+// SetXxx/ClearAllCallbacks：Python 主线程调用（Clear 须持 GIL）
+// InvokeXxx：IOCP/ETW 线程调用；锁内拷贝副本，锁外执行（防回调阻塞持锁）
+// =============================================================================
+void NativeSandboxedProcess::SetOnResourceLimit(std::function<void(const ResourceLimitInfo&)> cb) {
+    std::lock_guard<std::mutex> lk(cb_mutex_);
+    on_resource_limit_ = std::move(cb);
+}
+
+void NativeSandboxedProcess::SetOnJobProcessStarted(std::function<void(const JobProcessStartedInfo&)> cb) {
+    std::lock_guard<std::mutex> lk(cb_mutex_);
+    on_job_process_started_ = std::move(cb);
+}
+
+void NativeSandboxedProcess::SetOnJobProcessExited(std::function<void(const JobProcessExitedInfo&)> cb) {
+    std::lock_guard<std::mutex> lk(cb_mutex_);
+    on_job_process_exited_ = std::move(cb);
+}
+
+void NativeSandboxedProcess::SetOnBehaviorEvent(std::function<void(const BehaviorEventInfo&)> cb) {
+    std::lock_guard<std::mutex> lk(cb_mutex_);
+    on_behavior_event_ = std::move(cb);
+}
+
+void NativeSandboxedProcess::SetOnAccessDenied(std::function<void(const AccessDeniedInfo&)> cb) {
+    std::lock_guard<std::mutex> lk(cb_mutex_);
+    on_access_denied_ = std::move(cb);
+}
+
+void NativeSandboxedProcess::ClearAllCallbacks() {
+    std::lock_guard<std::mutex> lk(cb_mutex_);
+    on_resource_limit_ = nullptr;
+    on_job_process_started_ = nullptr;
+    on_job_process_exited_ = nullptr;
+    on_behavior_event_ = nullptr;
+    on_access_denied_ = nullptr;
+}
+
+void NativeSandboxedProcess::InvokeResourceLimit(const ResourceLimitInfo& info) const {
+    std::function<void(const ResourceLimitInfo&)> cb;
+    {
+        std::lock_guard<std::mutex> lk(cb_mutex_);
+        cb = on_resource_limit_;
+    }
+    if (cb) {
+        cb(info);
+    }
+}
+
+void NativeSandboxedProcess::InvokeJobProcessStarted(const JobProcessStartedInfo& info) const {
+    std::function<void(const JobProcessStartedInfo&)> cb;
+    {
+        std::lock_guard<std::mutex> lk(cb_mutex_);
+        cb = on_job_process_started_;
+    }
+    if (cb) {
+        cb(info);
+    }
+}
+
+void NativeSandboxedProcess::InvokeJobProcessExited(const JobProcessExitedInfo& info) const {
+    std::function<void(const JobProcessExitedInfo&)> cb;
+    {
+        std::lock_guard<std::mutex> lk(cb_mutex_);
+        cb = on_job_process_exited_;
+    }
+    if (cb) {
+        cb(info);
+    }
+}
+
+void NativeSandboxedProcess::InvokeBehaviorEvent(const BehaviorEventInfo& info) const {
+    std::function<void(const BehaviorEventInfo&)> cb;
+    {
+        std::lock_guard<std::mutex> lk(cb_mutex_);
+        cb = on_behavior_event_;
+    }
+    if (cb) {
+        cb(info);
+    }
+}
+
+void NativeSandboxedProcess::InvokeAccessDenied(const AccessDeniedInfo& info) const {
+    std::function<void(const AccessDeniedInfo&)> cb;
+    {
+        std::lock_guard<std::mutex> lk(cb_mutex_);
+        cb = on_access_denied_;
+    }
+    if (cb) {
+        cb(info);
+    }
+}
+
+// =============================================================================
+// OnNotification - IOCP 通知翻译为回调 payload
 // =============================================================================
 void NativeSandboxedProcess::OnNotification(const JobNotification& notif) {
     switch (notif.type) {
         case JobNotificationType::EndOfJobTime:
         case JobNotificationType::EndOfProcessTime:
             pending_exit_reason_.store(ExitReason::KilledByCpuLimit);
-            if (on_resource_limit) {
+            {
                 ResourceLimitInfo info;
                 info.type = "cpu_limit";
                 info.pid = notif.pid;
                 info.timestamp_ms = notif.timestamp_ms;
-                on_resource_limit(info);
+                InvokeResourceLimit(info);
             }
             TerminateAllOnLimit();
             break;
         case JobNotificationType::ProcessMemoryLimit:
         case JobNotificationType::JobMemoryLimit:
             pending_exit_reason_.store(ExitReason::KilledByMemoryLimit);
-            if (on_resource_limit) {
+            {
                 ResourceLimitInfo info;
                 info.type = "memory_limit";
                 info.pid = notif.pid;
                 info.timestamp_ms = notif.timestamp_ms;
-                on_resource_limit(info);
+                InvokeResourceLimit(info);
             }
             TerminateAllOnLimit();
             break;
         case JobNotificationType::ActiveProcessLimit:
             // 进程数超限：仅通知，不 TerminateAll（创建时拒绝，既有进程未违规）
             pending_exit_reason_.store(ExitReason::KilledByProcessLimit);
-            if (on_resource_limit) {
+            {
                 ResourceLimitInfo info;
                 info.type = "process_count_limit";
                 info.pid = notif.pid;
                 info.timestamp_ms = notif.timestamp_ms;
-                on_resource_limit(info);
+                InvokeResourceLimit(info);
             }
             break;
         case JobNotificationType::ProcessExit:
             logger_->Log(LogLevel::Debug,
                          std::format("IOCP ProcessExit: pid={}", notif.pid));
-            if (notif.pid != process_.pid && on_job_process_exited) {
+            if (notif.pid != process_.pid) {
                 JobProcessExitedInfo info;
                 info.pid = notif.pid;
                 info.exit_kind = "unknown";
                 info.timestamp_ms = notif.timestamp_ms;
-                on_job_process_exited(info);
+                InvokeJobProcessExited(info);
             }
             break;
         case JobNotificationType::ProcessExitNormal:
             logger_->Log(LogLevel::Debug,
                          std::format("IOCP ProcessExitNormal: pid={}", notif.pid));
-            if (notif.pid != process_.pid && on_job_process_exited) {
+            if (notif.pid != process_.pid) {
                 JobProcessExitedInfo info;
                 info.pid = notif.pid;
                 info.exit_kind = "normal";
                 info.exit_code = static_cast<int32_t>(notif.exit_code.value_or(0));
                 info.timestamp_ms = notif.timestamp_ms;
-                on_job_process_exited(info);
+                InvokeJobProcessExited(info);
             }
             break;
         case JobNotificationType::ProcessExitAbnormal:
             logger_->Log(LogLevel::Warn,
                          std::format("IOCP ProcessExitAbnormal: pid={} exit_code={}",
                                      notif.pid, notif.exit_code.value_or(0)));
-            if (notif.pid != process_.pid && on_job_process_exited) {
+            if (notif.pid != process_.pid) {
                 JobProcessExitedInfo info;
                 info.pid = notif.pid;
                 info.exit_kind = "abnormal";
                 info.exit_code = static_cast<int32_t>(notif.exit_code.value_or(0));
                 info.timestamp_ms = notif.timestamp_ms;
-                on_job_process_exited(info);
+                InvokeJobProcessExited(info);
             }
             break;
         case JobNotificationType::ActiveProcessEmpty:
@@ -369,14 +457,14 @@ void NativeSandboxedProcess::OnNotification(const JobNotification& notif) {
         case JobNotificationType::NewProcess:
             logger_->Log(LogLevel::Debug,
                          std::format("IOCP NewProcess: pid={}", notif.pid));
-            if (notif.pid != process_.pid && on_job_process_started) {
+            if (notif.pid != process_.pid) {
                 JobProcessStartedInfo info;
                 info.pid = notif.pid;
                 info.process_name = notif.process_name;
                 info.process_path = notif.process_path;
                 info.parent_pid = notif.parent_pid;
                 info.timestamp_ms = notif.timestamp_ms;
-                on_job_process_started(info);
+                InvokeJobProcessStarted(info);
             }
             break;
         case JobNotificationType::Unknown:
@@ -385,8 +473,7 @@ void NativeSandboxedProcess::OnNotification(const JobNotification& notif) {
 }
 
 // =============================================================================
-// TerminateAllOnLimit - Job 资源限制通知后强制终止（H-1/H-2 修复）
-// 复用 StartProcessUseCase::TerminateAllOnLimit 逻辑
+// TerminateAllOnLimit - Job 资源限制通知后强制终止
 // =============================================================================
 void NativeSandboxedProcess::TerminateAllOnLimit() {
     if (finished_.load()) {
@@ -396,8 +483,7 @@ void NativeSandboxedProcess::TerminateAllOnLimit() {
     if (ph == nullptr) {
         return;
     }
-    DWORD wait_r = ::WaitForSingleObject(ph, 0);
-    if (wait_r == WAIT_OBJECT_0) {
+    if (process_launcher_->WaitForExit(ph, 0)) {
         return;
     }
     auto r = job_object_->TerminateAll(1);
@@ -410,7 +496,6 @@ void NativeSandboxedProcess::TerminateAllOnLimit() {
 
 // =============================================================================
 // Terminate - 主动终止 Job 内所有进程
-// 复用 StartProcessUseCase::Terminate 逻辑
 // =============================================================================
 Result<void> NativeSandboxedProcess::Terminate(uint32_t exit_code, ExitReason reason) {
     if (finished_.load()) {
@@ -424,8 +509,7 @@ Result<void> NativeSandboxedProcess::Terminate(uint32_t exit_code, ExitReason re
     }
 
     // race 修复：检查进程是否已退出
-    DWORD wait_r = ::WaitForSingleObject(ph, 0);
-    if (wait_r == WAIT_OBJECT_0) {
+    if (process_launcher_->WaitForExit(ph, 0)) {
         logger_->Log(LogLevel::Debug,
                      std::format("Terminate: process already exited (pid={}), no-op",
                                  process_.pid));
@@ -445,7 +529,6 @@ Result<void> NativeSandboxedProcess::Terminate(uint32_t exit_code, ExitReason re
 
 // =============================================================================
 // SignalProcess - 发送信号（CtrlBreak / Kill）
-// 复用 StartProcessUseCase::SignalProcess 逻辑
 // =============================================================================
 Result<void> NativeSandboxedProcess::SignalProcess(ProcessSignal sig) {
     if (!started_.load()) {
@@ -463,8 +546,7 @@ Result<void> NativeSandboxedProcess::SignalProcess(ProcessSignal sig) {
     }
 
     if (sig == ProcessSignal::Kill) {
-        DWORD wait_r = ::WaitForSingleObject(ph, 0);
-        if (wait_r == WAIT_OBJECT_0) {
+        if (process_launcher_->WaitForExit(ph, 0)) {
             logger_->Log(LogLevel::Debug,
                          std::format("SignalProcess(Kill): process already exited (pid={}), no-op",
                                      process_.pid));
@@ -479,7 +561,6 @@ Result<void> NativeSandboxedProcess::SignalProcess(ProcessSignal sig) {
 
 // =============================================================================
 // WriteStdin / CloseStdinWrite / CloseProcessHandle
-// 复用 StartProcessUseCase 同名方法逻辑
 // =============================================================================
 Result<void> NativeSandboxedProcess::WriteStdin(const void* data, size_t size) {
     if (!started_.load()) {
@@ -490,17 +571,15 @@ Result<void> NativeSandboxedProcess::WriteStdin(const void* data, size_t size) {
         return Result<void>::Err(ErrorCode::ProcessAlreadyExited,
                                   "process already exited, stdin closed");
     }
-    if (stdin_write_ == nullptr) {
+    if (stdin_write_.load() == nullptr) {
         return Result<void>::Err(ErrorCode::InvalidArgument,
                                   "stdin_write is null (interactive=false or already closed)");
     }
-    return process_launcher_->WriteStdin(stdin_write_, data, size);
+    return process_launcher_->WriteStdin(stdin_write_.load(), data, size);
 }
 
 void NativeSandboxedProcess::CloseStdinWrite() {
-    void* expected = stdin_write_;
-    if (expected == nullptr) return;
-    void* old = InterlockedExchangePointer(&stdin_write_, nullptr);
+    void* old = stdin_write_.exchange(nullptr);
     if (old != nullptr) {
         process_launcher_->CloseStdin(old);
         logger_->Log(LogLevel::Debug, "stdin_write closed");
@@ -510,7 +589,7 @@ void NativeSandboxedProcess::CloseStdinWrite() {
 void NativeSandboxedProcess::CloseProcessHandle() {
     void* old = process_handle_.exchange(nullptr, std::memory_order_acq_rel);
     if (old != nullptr) {
-        ::CloseHandle(old);
+        process_launcher_->CloseHandle(old);
     }
 }
 
@@ -550,27 +629,34 @@ Result<NativeWaitResult> NativeSandboxedProcess::Wait(uint64_t timeout_ms) {
             ErrorCode::InvalidArgument, "process_handle is null");
     }
 
-    DWORD timeout = (timeout_ms == UINT64_MAX) ? INFINITE : static_cast<DWORD>(timeout_ms);
-    DWORD wait_r = ::WaitForSingleObject(reinterpret_cast<HANDLE>(ph), timeout);
-
-    if (wait_r == WAIT_TIMEOUT) {
-        return Result<NativeWaitResult>::Err(
-            ErrorCode::ProcessStillRunning, "wait timed out");
+    auto wait_r = process_launcher_->WaitForExit(ph, timeout_ms);
+    if (!wait_r) {
+        if (wait_r.Code() == ErrorCode::ProcessStillRunning) {
+            return Result<NativeWaitResult>::Err(
+                ErrorCode::ProcessStillRunning, "wait timed out");
+        }
+        return Result<NativeWaitResult>::Err(wait_r.Code(), wait_r.Message());
     }
-    if (wait_r != WAIT_OBJECT_0) {
-        return Result<NativeWaitResult>::Err(
-            ErrorCode::ProcessWaitFailed,
-            std::format("WaitForSingleObject failed: result={}", wait_r));
-    }
-
-    // 获取退出码
-    DWORD exit_code = 0;
-    ::GetExitCodeProcess(reinterpret_cast<HANDLE>(ph), &exit_code);
+    int32_t exit_code = wait_r.Value();
 
     // 构造返回结果
     NativeWaitResult wr;
-    wr.exit_code = static_cast<int32_t>(exit_code);
+    wr.exit_code = exit_code;
     wr.exit_reason = pending_exit_reason_.load();
+
+    // 崩溃识别：pending 未标记特定原因且退出码为 NTSTATUS 异常段
+    //（0xC0000000-0xCFFFFFFF，未处理异常/致命错误）→ 分类为 crash。
+    // 排除 STATUS_CONTROL_C_EXIT (0xC000013A)：它是 Ctrl+C/Ctrl+Break 的
+    // 控制事件统一终止状态（文档 §4.3），语义是"被信号终止"而非崩溃。
+    if (wr.exit_reason == ExitReason::NormalExit) {
+        const uint32_t ucode = static_cast<uint32_t>(wr.exit_code);
+        if ((ucode & 0xC0000000u) == 0xC0000000u && ucode != 0xC000013Au) {
+            wr.exit_reason = ExitReason::Crashed;
+            logger_->Log(LogLevel::Warn,
+                         std::format("process crashed: pid={} exit_code=0x{:08X}",
+                                     process_.pid, ucode));
+        }
+    }
 
     // 采集 resource_usage（best-effort，失败不致命）
     auto acc_r = job_object_->QueryAccounting();
@@ -598,7 +684,7 @@ Result<NativeWaitResult> NativeSandboxedProcess::Wait(uint64_t timeout_ms) {
 // Close - 显式清理（Python proc.close() 调用，析构兜底）
 //
 // 流程：
-//   1. 停止 IOCP 通知线程（防 use-after-free，BUG-1 修复同理）
+//   1. 停止 IOCP 通知线程（防 use-after-free）
 //   2. 若进程仍在运行 → TerminateAll（Job kill-on-close 兜底，但显式终止更可控）
 //   3. 关闭 C++ 端持有的句柄（process_handle_ / thread_handle_ / stdin_write_）
 //   4. 清理可写区（WriteArea Teardown，会话目录整体删除）
@@ -629,7 +715,7 @@ void NativeSandboxedProcess::Close() {
     // 3. 关闭 C++ 端句柄
     CloseProcessHandle();
     if (thread_handle_ != nullptr) {
-        ::CloseHandle(thread_handle_);
+        process_launcher_->CloseHandle(thread_handle_);
         thread_handle_ = nullptr;
     }
     CloseStdinWrite();

@@ -1,20 +1,20 @@
 // =============================================================================
-// T8.9 Phase 8 Job 功能增强运行时验证
+// Job 功能增强运行时验证
 //
-// 覆盖（Phase-8-JobEnhancement §T-8.3 / T-8.4 / T-8.5 / T-8.6 / T-8.7 / T-8.8）：
-//   T-8.3 QueryProcessList：
+// 覆盖：
+//   QueryProcessList：
 //     1. 空 Job → Ok 且 pids 为空
 //     2. 启动进程并 Assign → 列表包含该 pid 且 count >= 1
 //     3. 进程退出后 QueryProcessList → 不再包含已退出的 pid
-//   T-8.4 QueryProcessExitCode：
+//   QueryProcessExitCode：
 //     4. 运行中 ping → 259 (STILL_ACTIVE)
 //     5. cmd /c exit 7 退出后 → 7
-//   T-8.5/T-8.8 进程路径（NEW_PROCESS 通知携带 process_name/process_path）：
+//   进程路径（NEW_PROCESS 通知携带 process_name/process_path）：
 //     6. 启动 ping → NewProcess 通知带非空 process_path，process_name 含 ping/cmd
-//   T-8.6 SetCrashSilent：
+//   SetCrashSilent：
 //     7. SetCrashSilent(true)/(false) 幂等
 //     8. crash_dummy（空指针崩溃）在 crash_silent=true 下：10s 内死亡（无 WER 挂起）
-//   T-8.7 退出分类（正常/异常）：
+//   退出分类（正常/异常）：
 //     9.  cmd /c exit 0 → ProcessExitNormal，exit_code == 0
 //    10.  cmd /c exit 7 → ProcessExitAbnormal，exit_code == 7
 //    11. crash_dummy    → ProcessExitAbnormal，exit_code == 0xC0000005
@@ -366,7 +366,7 @@ static int RunTests() {
     }
 
     // -------------------------------------------------------------------------
-    // 测试 6：NEW_PROCESS 通知携带 process_name/process_path（T-8.5/8.8）
+    // 测试 6：NEW_PROCESS 通知携带 process_name/process_path
     // -------------------------------------------------------------------------
     {
         spdlog::info("---- Test 6: NewProcess notification carries path ----");

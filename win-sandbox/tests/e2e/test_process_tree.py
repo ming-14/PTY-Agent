@@ -1,22 +1,23 @@
-"""T-9 e2e 测试：进程树管理（job_process_* 事件 + 退出码查询）（Phase 14 pybind11 直调形态）。
+"""e2e 测试：进程树管理（job_process_* 事件 + 退出码查询）（pybind11 直调形态）。
 
-验证 Phase 9 在 pybind11 直调链路上的行为，覆盖 11 个子用例：
+验证进程树管理在 pybind11 直调链路上的行为，覆盖 11 个子用例：
   1. 子进程创建事件 job_process_started（含 process_name/process_path/parent_pid）
   2. 主进程不重复（只走 process_started / process_exited，无 job_process_* 重复）
   3. 子进程正常退出 job_process_exited（exit_kind=normal, exit_code=0）
   4. 子进程异常退出 job_process_exited（exit_kind=abnormal, exit_code=7）
   5. 崩溃路径去重（crash_dummy：同一 pid 仅一次 job_process_exited）
-  6. query_process_exit_code（运行中）：返回 259（STILL_ACTIVE）
-  7. query_process_exit_code（已退出）：返回真实退出码
+  6. query_process_exit_code（运行中）：返回 (259, True)（STILL_ACTIVE）
+  7. query_process_exit_code（已退出）：返回 (真实退出码, False)
   8. query_process_exit_code 错误路径（process_not_found / TypeError）
-  9. 同步全链路（原 AsyncSandboxClient 用例改为同步调用）
+  9. 同步全链路
   10. pid 类型严格校验（float 拒绝）
   11. 跨实例 PID 隔离（创建两个 SandboxInstance）
 
 设计要点：
   - job_process_* 事件通过 proc.on_job_process_started/on_job_process_exited 回调收集
   - 回调在 IOCP 线程中调用（持 GIL），回调内只做入队列
-  - query_process_exit_code(pid) 返回退出码（uint32_t），259=STILL_ACTIVE
+  - query_process_exit_code(pid) 返回 (exit_code, is_active) 元组，
+    运行中 exit_code=259=STILL_ACTIVE、is_active=True；已退出为 (真实退出码, False)
   - 跨实例用例创建两个 SandboxInstance
 
 运行方式（在仓库根目录）：
@@ -28,6 +29,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import time
 import threading
@@ -110,8 +112,8 @@ def _finish_wait(proc, wait_result, wait_done, wait_thread):
 # =============================================================================
 
 def test_1_child_start_event() -> None:
-    """用例 1（FR-9.1/FR-9.6）：子进程创建事件 job_process_started。"""
-    print("\n[T9-1] job_process_started 子进程创建事件", flush=True)
+    """用例 1：子进程创建事件 job_process_started。"""
+    print("\njob_process_started 子进程创建事件", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -152,8 +154,8 @@ def test_1_child_start_event() -> None:
 
 
 def test_2_main_process_no_duplicate() -> None:
-    """用例 2（FR-9.3）：主进程不重复下发。"""
-    print("\n[T9-2] 主进程零重复事件", flush=True)
+    """用例 2：主进程不重复下发。"""
+    print("\n主进程零重复事件", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -183,12 +185,12 @@ def test_2_main_process_no_duplicate() -> None:
 
 
 def test_3_child_normal_exit() -> None:
-    """用例 3（FR-9.2）：子进程正常退出 job_process_exited。
+    """用例 3：子进程正常退出 job_process_exited。
 
-    注：Phase 16 Low IL 语义下 ping 的 ICMP 被拒（100% 丢包，exit 1 判 abnormal），
+    注：Low IL 语义下 ping 的 ICMP 被拒（100% 丢包，exit 1 判 abnormal），
     子进程正常退出改用嵌套 cmd（cmd /c "cmd /c exit 0"）。
     """
-    print("\n[T9-3] 子进程正常退出", flush=True)
+    print("\n子进程正常退出", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -232,8 +234,8 @@ def test_3_child_normal_exit() -> None:
 
 
 def test_4_child_abnormal_exit() -> None:
-    """用例 4（FR-9.2）：子进程异常退出 job_process_exited。"""
-    print("\n[T9-4] 子进程异常退出", flush=True)
+    """用例 4：子进程异常退出 job_process_exited。"""
+    print("\n子进程异常退出", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -266,10 +268,25 @@ def test_4_child_abnormal_exit() -> None:
 
 
 def test_5_crash_dedup() -> None:
-    """用例 5（FR-9.4）：崩溃路径同一 pid 仅一次 job_process_exited。"""
-    print("\n[T9-5] 崩溃路径退出事件去重", flush=True)
+    """用例 5：崩溃路径同一 pid 仅一次 job_process_exited。"""
+    print("\n崩溃路径退出事件去重", flush=True)
     if not _CRASH_DUMMY.exists():
         print(f"  [SKIP] crash_dummy.exe 不存在: {_CRASH_DUMMY}", flush=True)
+        return
+
+    # crash_dummy.exe 的构建目录可能带显式 ACL（低 IL 进程不可读，cmd /c
+    # 中转时由低 IL 打开 exe 会失败）。复制到 %LOCALAPPDATA%\win-sandbox\probe\
+    # （无显式 ACL，低 IL 可读）再经 cmd /c 启动，保持「cmd 内层子进程崩溃」场景。
+    probe_dir = Path(os.environ.get("LOCALAPPDATA", "")) / "win-sandbox" / "probe"
+    if not probe_dir.is_dir():
+        print(f"  [SKIP] LOCALAPPDATA 缺失: {probe_dir}", flush=True)
+        return
+    probe_dir.mkdir(parents=True, exist_ok=True)
+    crash_copy = probe_dir / "crash_dummy.exe"
+    try:
+        shutil.copy2(_CRASH_DUMMY, crash_copy)
+    except OSError as e:
+        print(f"  [SKIP] 复制 crash_dummy 失败: {e}", flush=True)
         return
 
     sb = make_sandbox(log_level="info")
@@ -277,7 +294,7 @@ def test_5_crash_dedup() -> None:
     try:
         proc, job_started, job_exited, wait_result, wait_done, wait_thread = \
             _start_with_callbacks(
-                sb, f'cmd.exe /c "{_CRASH_DUMMY}"',
+                sb, f'cmd.exe /c "{crash_copy}"',
                 quota={"crash_silent": True},
             )
 
@@ -315,11 +332,11 @@ def test_5_crash_dedup() -> None:
 
 
 def test_6_query_exit_code_active() -> None:
-    """用例 6（FR-9.5）：退出码查询（运行中）。
+    """用例 6：退出码查询（运行中）。
 
-    主进程长跑中查询自身 pid：返回 259（STILL_ACTIVE）。
+    主进程长跑中查询自身 pid：返回 (259, True)（STILL_ACTIVE）。
     """
-    print("\n[T9-6] query_process_exit_code（运行中）", flush=True)
+    print("\nquery_process_exit_code（运行中）", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -330,14 +347,17 @@ def test_6_query_exit_code_active() -> None:
         helpers.drain_stdout(proc, lambda x: None)
         helpers.drain_stderr(proc, lambda x: None)
 
-        # 查询运行中进程的退出码 → 259 (STILL_ACTIVE)
-        exit_code = proc.query_process_exit_code(main_pid)
-        print(f"  query_process_exit_code(pid={main_pid}) = {exit_code}", flush=True)
+        # 查询运行中进程的退出码 → (259, True) (STILL_ACTIVE)
+        exit_code, is_active = proc.query_process_exit_code(main_pid)
+        print(f"  query_process_exit_code(pid={main_pid}) = ({exit_code}, {is_active})",
+              flush=True)
 
         _assert(exit_code == 259,
                 f"运行中 exit_code 应为 259(STILL_ACTIVE)，实际 {exit_code}")
+        _assert(is_active is True,
+                f"运行中 is_active 应为 True，实际 {is_active}")
 
-        print("  [PASS] 运行中返回 259", flush=True)
+        print("  [PASS] 运行中返回 (259, True)", flush=True)
 
         proc.wait(timeout_ms=30000)
         proc.close()
@@ -346,11 +366,11 @@ def test_6_query_exit_code_active() -> None:
 
 
 def test_7_query_exit_code_finished() -> None:
-    """用例 7（FR-9.5）：退出码查询（已退出）。
+    """用例 7：退出码查询（已退出）。
 
     主进程退出后查询：返回真实退出码。
     """
-    print("\n[T9-7] query_process_exit_code（已退出）", flush=True)
+    print("\nquery_process_exit_code（已退出）", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -368,29 +388,33 @@ def test_7_query_exit_code_finished() -> None:
         # 查询已退出进程的退出码
         # 注意：进程退出后进程对象存活窗口内可查询，窗口过后 OpenProcess 失败
         queried_code = None
+        queried_active = None
         for attempt in range(3):
             try:
-                queried_code = proc.query_process_exit_code(main_pid)
+                queried_code, queried_active = proc.query_process_exit_code(main_pid)
                 break
             except RuntimeError as e:
                 print(f"  attempt={attempt} 查询失败: {e}", flush=True)
                 time.sleep(0.05)
 
         _assert(queried_code is not None, "应在存活窗口内查到退出码")
-        print(f"  query_process_exit_code(pid={main_pid}) = {queried_code}", flush=True)
+        print(f"  query_process_exit_code(pid={main_pid}) = "
+              f"({queried_code}, {queried_active})", flush=True)
 
         _assert(queried_code == exit_code,
                 f"查询退出码应为 {exit_code}，实际 {queried_code}")
+        _assert(queried_active is False,
+                f"已退出 is_active 应为 False，实际 {queried_active}")
 
-        print("  [PASS] 已退出返回真实退出码", flush=True)
+        print("  [PASS] 已退出返回 (真实退出码, False)", flush=True)
         proc.close()
     finally:
         sb.shutdown()
 
 
 def test_8_query_exit_code_errors() -> None:
-    """用例 8（FR-9.5 错误路径）：process_not_found / TypeError。"""
-    print("\n[T9-8] query_process_exit_code 错误路径", flush=True)
+    """用例 8（错误路径）：process_not_found / TypeError。"""
+    print("\nquery_process_exit_code 错误路径", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -442,8 +466,8 @@ def test_8_query_exit_code_errors() -> None:
 
 
 def test_9_sync_flow() -> None:
-    """用例 9（FR-9.5）：同步全链路（原 AsyncSandboxClient 用例改为同步调用）。"""
-    print("\n[T9-9] 同步全链路", flush=True)
+    """用例 9：同步全链路。"""
+    print("\n同步全链路", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -466,10 +490,12 @@ def test_9_sync_flow() -> None:
         print(f"  子进程创建事件: {child_started}", flush=True)
 
         # 查询退出码（运行中）
-        exit_code = proc.query_process_exit_code(main_pid)
-        print(f"  查询响应: exit_code={exit_code}", flush=True)
+        exit_code, is_active = proc.query_process_exit_code(main_pid)
+        print(f"  查询响应: exit_code={exit_code} is_active={is_active}", flush=True)
         _assert(exit_code == 259,
                 f"运行中应为 259，实际 {exit_code}")
+        _assert(is_active is True,
+                f"运行中 is_active 应为 True，实际 {is_active}")
 
         print("  [PASS] 同步全链路正确", flush=True)
 
@@ -480,11 +506,11 @@ def test_9_sync_flow() -> None:
 
 
 def test_10_strict_pid_type_check() -> None:
-    """用例 10（黑盒复核 F9 修复）：pid 类型严格校验。
+    """用例 10：pid 类型严格校验。
 
     float 等非整数必须拒绝，不得静默截断。
     """
-    print("\n[T9-10] pid 类型严格校验", flush=True)
+    print("\npid 类型严格校验", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -517,12 +543,12 @@ def test_10_strict_pid_type_check() -> None:
 
 
 def test_11_cross_instance_pid_isolation() -> None:
-    """用例 11（黑盒复核 B5 修复）：跨实例 PID 隔离。
+    """用例 11：跨实例 PID 隔离。
 
     实例 2 查询实例 1 的主进程 pid：
     必须抛 RuntimeError（pid 不属于实例 2 的 Job），不得返回实例 1 进程的状态。
     """
-    print("\n[T9-11] 跨实例 PID 隔离", flush=True)
+    print("\n跨实例 PID 隔离", flush=True)
 
     sb1 = make_sandbox(log_level="info")
     try:
@@ -554,9 +580,11 @@ def test_11_cross_instance_pid_isolation() -> None:
             _assert(raised, "跨实例查询应抛 RuntimeError（pid 不属于实例2 的 Job）")
 
             # 对照：实例 2 查询自身主进程 pid → 正常成功
-            exit_code = proc2.query_process_exit_code(main2)
+            exit_code, is_active = proc2.query_process_exit_code(main2)
             _assert(exit_code == 259,
                     f"自身查询应为 259(STILL_ACTIVE)，实际 {exit_code}")
+            _assert(is_active is True,
+                    f"自身查询 is_active 应为 True，实际 {is_active}")
 
             print("  [PASS] 跨实例拒绝 + 自身实例正常", flush=True)
 

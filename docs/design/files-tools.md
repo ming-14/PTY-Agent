@@ -1,7 +1,7 @@
 # 文件工具设计（File Tools）
 
 > 状态：全部完成（Phase 1-6 + 6.1 `--content-file` + 6.2 `--cwd-session`，见 §6）
-> 适用范围：`src/files/` 新包、`src/config/files.toml`、CLI 子命令、`daemon/handlers/`、`client/transport.py`
+> 适用范围：`src/files/` 新包、`config/files.toml`、CLI 子命令、`daemon/handlers/`、`client/transport.py`
 > 关联文档：[ARCHITECTURE.md](../ARCHITECTURE.md)、[gaps-analysis.md](../gaps-analysis.md)、[files-transfer.md](files-transfer.md)（file upload/download 传输设计）
 > 参考实现：opencode Go 版（`internal/llm/tools/write.go` / `edit.go` / `view.go` / `grep.go` / `glob.go` / `file.go`）
 
@@ -204,7 +204,7 @@ CREATE INDEX IF NOT EXISTS idx_files_history_path ON files_history(path);
 
 ## 5. 配置（files.toml）
 
-仿 `src/config/sandbox.py` 模式新建 `src/config/files.py`：
+仿 `config/sandbox.py` 模式新建 `config/files.py`：
 
 ```toml
 [files]
@@ -231,7 +231,7 @@ IGNORED_DIRS = [".git", "node_modules", "vendor", "dist", "build", "target", "__
 
 ### Phase 1：基础设施
 - 新建 `src/files/` 包：`paths.py`、`state.py`（FileRecordStore）、`errors.py`、`__init__.py`（ignored filter 后在 search/ 包落位）
-- 新建 `src/config/files.toml` + `src/config/files.py`（加载模板）
+- 新建 `config/files.toml` + `config/files.py`（加载模板）
 - 测试：`tests/unit/files/test_state.py`、`test_paths.py`（ignore 测试随 search/ 迁移至 `tests/unit/files/search/`）
 - 验收：pytest 全量通过
 

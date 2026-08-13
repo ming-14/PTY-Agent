@@ -1,13 +1,12 @@
 """读写状态机 —— 记录文件 readTime/writeTime，检测外部修改冲突
 
-仿 opencode internal/llm/tools/file.go：
 - view（file read）成功后 record_read 刷新 readTime
 - write/edit 前检查：modTime > readTime → 文件已被外部修改，拒绝
 - 写成功后 record_write + record_read 双刷新（工具自身知道最新内容）
 
-writeTime 本期只记录不消费（预留"写后未读再写"检测），与 opencode 同款。
+writeTime 本期只记录不消费（预留"写后未读再写"检测）。
 
-进程内存储：daemon 重启即失效（与 opencode 一致，不落盘避免过度工程）。
+进程内存储：daemon 重启即失效（不落盘避免过度工程）。
 线程安全：daemon 每连接一线程，读写互斥。
 """
 
@@ -68,6 +67,6 @@ def get_default_store() -> FileRecordStore:
     """daemon 级单例状态机
 
     RequestHandler 每连接重建，状态记录必须跨连接共享，
-    故用模块级单例（与 opencode 包级 map 同款语义）。
+    故用模块级单例。
     """
     return _default_store

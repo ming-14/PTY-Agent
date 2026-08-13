@@ -1,4 +1,4 @@
-"""test_job_enhancement.py - Job 功能增强验证（Phase 14 pybind11 直调形态）。
+"""test_job_enhancement.py - Job 功能增强验证（pybind11 直调形态）。
 
 验证 Job 功能增强在 pybind11 直调链路上的行为，覆盖 6 个子用例：
   1. query_process_list 返回运行中进程 Job 内的 PID 列表（含子进程）
@@ -89,7 +89,7 @@ def test_1_query_process_list_contains_child():
     启动 cmd 长跑 + ping 子进程，query_process_list 应返回 2 个以上 pid，
     且包含 proc.pid（主进程）。
     """
-    print("\n[T8-1] query_process_list 包含子进程", flush=True)
+    print("\nquery_process_list 包含子进程", flush=True)
     sb = make_sandbox(log_level="info")
     try:
         proc = sb.start_process(command_line='cmd.exe /c "ping -n 6 127.0.0.1 >nul"')
@@ -121,7 +121,7 @@ def test_2_query_process_list_after_exit():
 
     短命令退出后，列表应清空。
     """
-    print("\n[T8-2] 退出后 query_process_list 清空", flush=True)
+    print("\n退出后 query_process_list 清空", flush=True)
     sb = make_sandbox(log_level="info")
     try:
         proc = sb.start_process(command_line='cmd.exe /c echo t8-2-done')
@@ -152,7 +152,7 @@ def test_3_query_process_list_not_found():
     pybind11 形态下 query_process_exit_code 接受 OS pid，
     不存在的 pid 返回 RuntimeError（pid not in this Job）。
     """
-    print("\n[T8-3] 不存在的 pid → Error", flush=True)
+    print("\n不存在的 pid → Error", flush=True)
     sb = make_sandbox(log_level="info")
     try:
         proc = sb.start_process(command_line='cmd.exe /c echo t8-3')
@@ -182,10 +182,10 @@ def test_3_query_process_list_not_found():
 def test_4_crash_silent_crash_dummy():
     """用例 4：crash_silent 下崩溃进程快速退出且退出码为 0xC0000005。
 
-    需要 crash_dummy.exe（与 sandbox.exe 同目录），否则跳过。
+    需要 crash_dummy.exe（与 pyd 同目录），否则跳过。
     exit_kind 验证通过 on_job_process_exited 回调（crash_dummy 作为子进程）。
     """
-    print("\n[T8-4] crash_silent 崩溃检测", flush=True)
+    print("\ncrash_silent 崩溃检测", flush=True)
     if not _CRASH_DUMMY.exists():
         print(f"  [SKIP] crash_dummy.exe 不存在: {_CRASH_DUMMY}", flush=True)
         return "skip"
@@ -217,7 +217,7 @@ def test_4_crash_silent_crash_dummy():
 
 def test_5_exit_code_7():
     """用例 5：cmd /c exit 7 → exit_code == 7。"""
-    print("\n[T8-5] exit 7 退出码上报", flush=True)
+    print("\nexit 7 退出码上报", flush=True)
     sb = make_sandbox(log_level="info")
     try:
         proc = sb.start_process(command_line='cmd.exe /c exit 7')
@@ -237,7 +237,7 @@ def test_6_exit_kind_normal_via_callback():
     pybind11 形态下无 ready 事件/phase 概念（SKIP phase 验证）。
     通过 on_job_process_exited 回调验证子进程正常退出时 exit_kind == "normal"。
     """
-    print("\n[T8-6] exit_kind(normal) via on_job_process_exited", flush=True)
+    print("\nexit_kind(normal) via on_job_process_exited", flush=True)
     sb = make_sandbox(log_level="info")
     try:
         # cmd /c (cmd /c exit 0) — 内层 cmd 正常退出

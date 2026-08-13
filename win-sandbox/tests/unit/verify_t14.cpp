@@ -1,7 +1,7 @@
 // =============================================================================
-// T1.4 ProcessLauncherImpl 运行时验证
+// ProcessLauncherImpl 运行时验证
 //
-// 不依赖 GoogleTest，使用简单 assert + 控制台输出。
+// 简单 assert + 控制台输出。
 // 覆盖：
 //   1. Launch `cmd.exe /c echo hello` → 进程启动成功，pid > 0
 //   2. WaitForExit(5s) → 退出码 0
@@ -11,8 +11,8 @@
 //      （用 cmd.exe /c "ping -n 10 127.0.0.1" + 100ms 超时触发）
 //
 // 不覆盖：
-//   - stdout/stderr 内容读取（T1.5 StreamReader 负责）
-//   - Job 资源限制（T1.6 StartProcessUseCase 集成）
+//   - stdout/stderr 内容读取（StreamReader 负责）
+//   - Job 资源限制（StartProcessUseCase 集成）
 // =============================================================================
 
 #include "core/ports/ILogger.hpp"

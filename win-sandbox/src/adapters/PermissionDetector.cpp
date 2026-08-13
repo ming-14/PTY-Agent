@@ -12,7 +12,7 @@ namespace winsandbox {
 
 // 静态成员初始化
 PermissionMode PermissionDetector::cached_mode_ = PermissionMode::StandardUser;
-bool PermissionDetector::cached_ = false;
+std::once_flag PermissionDetector::cached_once_;
 
 // ----------------------------------------------------------------------------- 
 // CapabilityReport 方法
@@ -55,26 +55,21 @@ std::string CapabilityReport::ToJson() const {
 // ----------------------------------------------------------------------------- 
 
 PermissionMode PermissionDetector::Detect() {
-    if (cached_) return cached_mode_;
-
-    HANDLE token = nullptr;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
-        cached_mode_ = PermissionMode::StandardUser;
-        cached_ = true;
-        return cached_mode_;
-    }
-
-    TOKEN_ELEVATION elev = {};
-    DWORD ret_len = 0;
-    BOOL ok = GetTokenInformation(token, TokenElevation, &elev, sizeof(elev), &ret_len);
-    CloseHandle(token);
-
-    if (ok && elev.TokenIsElevated != 0) {
-        cached_mode_ = PermissionMode::Admin;
-    } else {
-        cached_mode_ = PermissionMode::StandardUser;
-    }
-    cached_ = true;
+    // std::call_once 线程安全初始化（并发首次调用无数据竞争）
+    std::call_once(cached_once_, [] {
+        HANDLE token = nullptr;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+            cached_mode_ = PermissionMode::StandardUser;
+            return;
+        }
+        TOKEN_ELEVATION elev = {};
+        DWORD ret_len = 0;
+        BOOL ok = GetTokenInformation(token, TokenElevation, &elev, sizeof(elev), &ret_len);
+        CloseHandle(token);
+        cached_mode_ = (ok && elev.TokenIsElevated != 0)
+                           ? PermissionMode::Admin
+                           : PermissionMode::StandardUser;
+    });
     return cached_mode_;
 }
 
@@ -95,7 +90,7 @@ CapabilityReport PermissionDetector::BuildReport() {
         "job_object", true, ""
     });
 
-    // Low IL 隔离 token（Phase 16）：纯用户态（DuplicateTokenEx + SetTokenInformation
+    // Low IL 隔离 token：纯用户态（DuplicateTokenEx + SetTokenInformation
     // IL=Low + SetNamedSecurityInfo 打标），非管理员可用，始终可用
     report.capabilities.push_back({
         "low_il_token", true, ""

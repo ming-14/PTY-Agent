@@ -10,7 +10,7 @@ from PySide6.QtGui import QAction, QIcon, QKeySequence, QShortcut, QPixmap, QIma
 import time
 from datetime import datetime
 
-from fastscreen import CaptureEngine, CapturedFrame, TargetType, CaptureMethod
+from fastscreencore import CaptureEngine, CapturedFrame, TargetType, CaptureMethod
 
 
 _METHOD_MAP = (CaptureMethod.AUTO, CaptureMethod.DXGI, CaptureMethod.WGC, CaptureMethod.BITBLT)

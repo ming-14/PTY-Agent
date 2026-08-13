@@ -1,11 +1,11 @@
-"""T7.10 e2e 测试：残留清理 (StartupCleanup + WriteArea)（Phase 16 语义）。
+"""e2e 测试：残留清理 (StartupCleanup + WriteArea)。
 
-测试沙箱的残留清理能力（AppContainer 移除后收敛为会话目录模型）：
+测试沙箱的残留清理能力（会话目录模型）：
   1. 会话目录清理 — 析构 Teardown + 启动时 StartupCleanup 扫描残留
   2. ETW 会话清理
 
-pybind11 直调形态下的测试模型：
-  - 没有独立 sandbox.exe 子进程，SandboxInstance 直接在测试进程内
+测试模型：
+  - SandboxInstance 直接在测试进程内（无独立沙箱子进程）
   - "异常退出"模拟：不调 sb.shutdown()，直接 del sb（触发 C++ 析构清理）
   - 会话目录位置：%LOCALAPPDATA%\\win-sandbox\\sessions\\<os-pid>-<process_id>
   - 残留模拟：手工创建假会话目录（os-pid 不存在），启动实例时被 StartupCleanup 清理

@@ -15,6 +15,7 @@ CaptureSession::~CaptureSession() {
 ErrorCode CaptureSession::start(TargetType type, int target_id, CaptureMethod method, int fps) {
     if (running_.load()) return ErrorCode::AlreadyRunning;
 
+    // Auto 模式按目标类型选择最优方法；显式方法失败时仅在 Auto 下回退 BitBlt。
     target_type_ = type;
     target_id_ = target_id;
     method_ = method;
@@ -135,6 +136,8 @@ ErrorCode CaptureSession::capture_single(FrameData& frame) {
 }
 
 void CaptureSession::capture_loop() {
+    // 固定帧率节拍循环：以 steady_clock + sleep_until 平滑限速；
+    // 连续失败达到阈值时回退 BitBlt（Auto 模式）或停止会话。
     auto frame_duration = std::chrono::nanoseconds(static_cast<int64_t>(1000000000.0 / target_fps_));
     auto next_time = std::chrono::steady_clock::now();
     int consecutive_failures = 0;

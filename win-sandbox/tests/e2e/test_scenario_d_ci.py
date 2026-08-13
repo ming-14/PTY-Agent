@@ -1,4 +1,4 @@
-"""T7.10 e2e 测试：CI 多实例并行（Phase 14 pybind11 直调形态）。
+"""e2e 测试：CI 多实例并行（pybind11 直调形态）。
 
 验证多个沙箱实例同时运行而互不干扰：
   1. 单进程内创建 3 个 SandboxInstance（pybind11 直调形态）
@@ -10,7 +10,7 @@
   4. 所有实例必须成功完成，互不干扰
 
 测试模型：
-  - 单进程内创建 3 个 SandboxInstance（替代旧形态 3 个 sandbox.exe 子进程）
+  - 单进程内创建 3 个 SandboxInstance
   - 通过 threading 实现并行启动与输出收集
   - 每个实例独立 drain stdout/stderr + wait + 验证
 

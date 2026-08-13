@@ -64,25 +64,25 @@ public:
     // 查询峰值内存（单进程峰值，字节）
     virtual Result<uint64_t> QueryPeakMemory() const = 0;
 
-    // Phase 8 T-8.3：获取 Job 内所有进程的 PID 列表
+    // 获取 Job 内所有进程的 PID 列表
     // 使用 QueryInformationJobObject(JobObjectBasicProcessIdList)
     // 返回: 成功返回 PID 列表（空 Job 返回空列表），失败返回错误码
     virtual Result<std::vector<uint32_t>> QueryProcessList() const = 0;
 
-    // Phase 8 T-8.4：查询单个进程的退出码
+    // 查询单个进程的退出码
     // 参数: pid - 进程 PID
     // 返回: 成功返回退出码，失败返回错误码
     // 注意: 进程仍在运行时返回 STILL_ACTIVE (259)；进程已退出且句柄关闭时
     //       OpenProcess 可能失败（权限/已不存在）→ JobQueryFailed
     virtual Result<uint32_t> QueryProcessExitCode(uint32_t pid) const = 0;
 
-    // Phase 8 T-8.5：查询进程完整路径（FR-8.3，黑盒报告修复 2026-08-09）
+    // 查询进程完整路径
     // 参数: pid - 进程 PID
     // 返回: 成功返回 UTF-8 完整路径，失败（进程已退出/权限不足）返回 JobQueryFailed
     // 实现: OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION) + QueryFullProcessImageNameW
     virtual Result<std::string> QueryProcessPath(uint32_t pid) const = 0;
 
-    // Phase 8 T-8.6：设置崩溃静默标志（JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION）
+    // 设置崩溃静默标志（JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION）
     // 参数: silent - true 崩溃时不弹 Windows 错误对话框（进程直接终止）
     // 返回: 成功返回 Ok，失败返回错误码
     virtual Result<void> SetCrashSilent(bool silent) = 0;
@@ -92,10 +92,10 @@ public:
 
     // 停止通知线程并注销 sink（Shutdown 清理前调用）
     //
-    // 背景（BUG-1 修复，2026-08-06）：IOCP 通知线程持有 sink_ 指针（非拥有），
-    // 若 usercase 先于 Job 析构，IOCP 线程仍可能调用已析构 usercase 的
+    // IOCP 通知线程持有 sink_ 指针（非拥有），
+    // 若 usecase 先于 Job 析构，IOCP 线程仍可能调用已析构 usecase 的
     // OnNotification → use-after-free → 0xC0000005（间歇性 Shutdown 崩溃）。
-    // 本方法在 usercase 析构前停止 IOCP 线程并清空 sink_，消除该竞态。
+    // 本方法在 usecase 析构前停止 IOCP 线程并清空 sink_，消除该竞态。
     // 注意：只停通知线程，不关闭 Job 句柄（usercase 析构仍需 TerminateAll）。
     virtual Result<void> Shutdown() = 0;
 

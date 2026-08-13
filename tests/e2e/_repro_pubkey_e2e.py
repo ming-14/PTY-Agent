@@ -161,7 +161,7 @@ TOFU_STRICT         = true
     print(f"[REPRO] client.toml 已写入（客户端 TLS 配置）")
 
     # 6. 启动 daemon（用 start_daemon，生产方式）
-    from src.daemon.lifecycle import start_daemon, _find_daemon_port, stop_daemon, is_running
+    from src.client.lifecycle import start_daemon, _find_daemon_port, stop_daemon, is_running
     print(f"[REPRO] 启动 daemon（start_daemon）...")
     start_daemon()
 
@@ -200,7 +200,8 @@ TOFU_STRICT         = true
         print(f"[REPRO] list stderr={list_result.stderr!r}")
 
     # 9. 找最新的 daemon 日志文件
-    logs_dir = _PROJECT_ROOT / "logs"
+    from src.config.daemon import LOG_DIR
+    logs_dir = Path(LOG_DIR)
     log_files = sorted(logs_dir.glob("daemon-*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
     if log_files:
         latest_log = log_files[0]

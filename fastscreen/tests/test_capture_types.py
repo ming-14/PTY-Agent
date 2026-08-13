@@ -3,10 +3,10 @@ import pytest
 import tempfile
 import os
 from unittest.mock import patch, MagicMock
-from fastscreen._core import (
+from fastscreencore._core import (
     MonitorInfo, WindowInfo, Frame, ErrorCode, ImageFormat,
 )
-from fastscreen.capture import CapturedFrame, Monitor, Window
+from fastscreencore.capture import CapturedFrame, Monitor, Window
 
 
 class TestMonitor:

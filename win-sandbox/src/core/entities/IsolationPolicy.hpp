@@ -1,7 +1,7 @@
 // =============================================================================
 // IsolationPolicy - 隔离策略实体（core 层）
 //
-// Phase 16：Low IL Token + Job 纯用户态隔离模型。
+// Low IL Token + Job 纯用户态隔离模型。
 //
 // 文件系统语义固定（无配置项）：
 //   - 全盘只读：进程 token IL=Low(4096)，NO_WRITE_UP 强制写任何 Medium 对象被拒
@@ -9,9 +9,8 @@
 //     打 Low 标签并重定向 %TEMP%
 //
 // 网络策略收敛为 unrestricted | allowlist：
-//   AppContainer 移除后 capability 网络限制机制不复存在，none/loopback_only/
-//   outbound 无法在纯用户态下系统级执行（WFP 系统过滤需管理员），故删除；
-//   解析层对旧值显式拒绝，杜绝"声明了限制却不生效"的静默失败。
+//   none/loopback_only/outbound 无法在纯用户态下系统级执行（WFP 系统过滤需
+//   管理员），解析层对非法值显式拒绝，杜绝"声明了限制却不生效"的静默失败。
 // =============================================================================
 
 #pragma once
@@ -23,7 +22,7 @@
 
 namespace winsandbox {
 
-// ----- 网络策略（Phase 16 收敛）-----
+// ----- 网络策略 -----
 enum class NetworkPolicy {
     Unrestricted,  // 不限制（用户 token 天然全通）
     Allowlist,     // SOCKS5 代理白名单（HTTP/HTTPS 走代理，非 HTTP 流量不受控）

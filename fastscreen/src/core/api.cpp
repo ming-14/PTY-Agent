@@ -1,3 +1,6 @@
+// C ABI 导出层，供外部调用方（如 Python ctypes/ctypes 绑定）动态链接使用。
+// 管理会话注册表与各捕获器（DXGI/WGC/BitBlt）的全局单例，提供
+// 枚举、单帧捕获、连续捕获回调、帧编码等接口。
 #include "common.h"
 #include "capture_session.h"
 #include "enum_helper.h"
@@ -328,6 +331,8 @@ FS_API int fs_capture_frame(int64_t session_id, int target_type, int target_id, 
             }
         }
     }
+    // 注意：各 case 之间存在隐式 fall-through —— Auto 模式下当前方法失败后置 cm=BitBlt
+    // 但不 break，会继续走下一个 case，形成"DXGI→WGC→BitBlt"的回退链。
     case fs::CaptureMethod::WGC: {
         auto* wgc = get_wgc_capture();
         if (tt == fs::TargetType::Window) {

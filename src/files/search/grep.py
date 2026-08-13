@@ -2,7 +2,7 @@
 
 引擎1: bin/rg/rg.exe -H -n --no-heading [--glob include] <pattern> <path>
    用 rg 的真实 regex 语义；literal_text 时对 pattern 做 re.escape
-   （修正 opencode 手写转义不严谨问题）。rg 退出码 1 = 无匹配，合法空结果；
+   （literal_text 时对 pattern 做 re.escape）。rg 退出码 1 = 无匹配，合法空结果；
    其他非 0 退出（含 rg 缺失）→ 降级。
 引擎2（降级）: os.walk + 逐行 regex + SkipHidden 过滤，收集满上限提前停。
 两引擎结果统一按文件 modTime 排序（最新优先），上限 MAX_GREP_MATCHES。

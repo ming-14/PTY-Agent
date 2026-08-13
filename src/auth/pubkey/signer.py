@@ -18,7 +18,7 @@ from typing import Dict, Optional
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from ..base import MessageSigner
+from ...protocol.signing import MessageSigner
 from ..keys import PrivateKey, PublicKey
 
 _logger = logging.getLogger("pty-auth")

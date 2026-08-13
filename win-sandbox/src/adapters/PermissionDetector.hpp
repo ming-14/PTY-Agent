@@ -1,8 +1,8 @@
 // =============================================================================
 // PermissionDetector - 权限检测适配器（adapters 层）
 //
-// T7.1：检测当前进程的权限级别，输出 PermissionMode。
-// T7.2：生成 CapabilityReport（实际生效能力集）。
+// 检测当前进程的权限级别，输出 PermissionMode。
+// 生成 CapabilityReport（实际生效能力集）。
 //
 // 设计要点：
 //   - 纯检测，不修改任何系统状态
@@ -14,6 +14,7 @@
 #include "core/entities/ErrorCode.hpp"
 #include "core/ports/ILogger.hpp"
 
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -48,7 +49,7 @@ struct CapabilityReport {
 
 class PermissionDetector {
 public:
-    // 检测当前进程权限级别（结果缓存）
+    // 检测当前进程权限级别（结果缓存，线程安全：std::call_once 初始化）
     static PermissionMode Detect();
 
     // 是否管理员
@@ -56,14 +57,16 @@ public:
 
     // 生成完整能力报告
     // 根据 PermissionMode + 系统环境检测各模块可用性
+    //（"available" 表示预期可用；实际启动失败（ETW/代理）以运行时日志为准）
     static CapabilityReport BuildReport();
 
     // 能力报告序列化为日志友好格式
     static std::string FormatReport(const CapabilityReport& report);
 
 private:
+    // std::call_once 保护的缓存（并发首次调用无数据竞争）
     static PermissionMode cached_mode_;
-    static bool cached_;
+    static std::once_flag cached_once_;
 };
 
 } // namespace winsandbox

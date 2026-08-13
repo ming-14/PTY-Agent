@@ -1,6 +1,6 @@
-"""T3.5 e2e 测试：多进程管理（Phase 14 pybind11 直调形态）。
+"""e2e 测试：多进程管理（pybind11 直调形态）。
 
-验证 Phase 3 T3.5 SandboxInstance 多进程架构在 pybind11 直调链路上的行为，覆盖 6 个子用例：
+验证 SandboxInstance 多进程架构在 pybind11 直调链路上的行为，覆盖 6 个子用例：
   1. 并发启动 3 个进程，stdout 互不串扰
   2. 并发 WriteStdin 到 3 个 REPL，每个 REPL 只响应发给自己的命令
   3. TerminateProcess 单个进程不影响其他进程
@@ -79,7 +79,7 @@ def test_1_concurrent_start_event_routing() -> None:
       2. 等所有 3 个进程退出
       3. 断言每个 stdout 只含自己的 "p1"/"p2"/"p3"
     """
-    print("\n[T3.5-1] 并发启动 3 进程 + stdout 互不串扰", flush=True)
+    print("\n并发启动 3 进程 + stdout 互不串扰", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -138,7 +138,7 @@ def test_2_concurrent_write_stdin() -> None:
       3. 对每个进程发不同的 print 命令
       4. 收集 stdout，断言每个进程只输出自己的命令结果
     """
-    print("\n[T3.5-2] 并发 WriteStdin 到 3 个 REPL", flush=True)
+    print("\n并发 WriteStdin 到 3 个 REPL", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -208,7 +208,7 @@ def test_3_terminate_one_does_not_affect_others() -> None:
       4. 验证 proc2 仍在运行（list_processes 中 state=running）
       5. 清理：Kill proc2
     """
-    print("\n[T3.5-3] TerminateProcess 单杀不影响其他进程", flush=True)
+    print("\nTerminateProcess 单杀不影响其他进程", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -267,7 +267,7 @@ def test_4_list_processes_returns_all() -> None:
       2. 等 2 个短进程退出
       3. list_processes → 长进程仍在，短进程已退出（state=exited 或被清理不在列表）
     """
-    print("\n[T3.5-4] list_processes 返回进程列表", flush=True)
+    print("\nlist_processes 返回进程列表", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -319,7 +319,7 @@ def test_5_operate_on_nonexistent_process_id() -> None:
     pybind11 直调形态下无 process_id 参数的 API，改为测试
     query_process_exit_code(不存在的 pid) → RuntimeError。
     """
-    print("\n[T3.5-5] 操作不存在的 pid → Error", flush=True)
+    print("\n操作不存在的 pid → Error", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:
@@ -360,7 +360,7 @@ def test_6_process_id_auto_increment() -> None:
       3. 等进程退出
       4. 再启动 1 个进程，断言 process_id 是 4（不复用）
     """
-    print("\n[T3.5-6] process_id 自增不复用", flush=True)
+    print("\nprocess_id 自增不复用", flush=True)
     sb = make_sandbox(log_level="info")
 
     try:

@@ -1,14 +1,11 @@
 // =============================================================================
 // StartProcessRequest - 启动进程请求（core 层）
 //
-// 由 IPC StartProcess 命令反序列化而来，作为 StartProcessUseCase::Execute 的输入。
+// 由 start_process 的 JSON payload 解析而来，作为 NativeSandboxedProcess::Execute 的输入。
 // 携带命令行、工作目录、环境变量、资源配额、隔离策略。
 //
-// Phase 1：不实现 stdin_data 写入（stdin 管道已建立但暂不写数据）
-// Phase 2：增加 isolation_policy 字段
-// Phase 3：实现 stdin_data 一次性写入 + WriteStdin 命令
-// Phase 16：isolation_policy 收敛为 {net_policy, net_allowlist, clipboard_isolate}，
-//           文件系统隔离为 Low IL token 固有语义（无配置项）
+// isolation_policy 收敛为 {net_policy, net_allowlist, clipboard_isolate}，
+// 文件系统隔离为 Low IL token 固有语义（无配置项）
 // =============================================================================
 #pragma once
 
@@ -23,39 +20,40 @@
 namespace winsandbox {
 
 struct StartProcessRequest {
-    std::string request_id;                     // 关联 IPC 命令的 request_id
+    std::string request_id;                     // 关联 start_process 请求的 request_id
     std::string command_line;                   // 完整命令行（含可执行路径），UTF-8
     std::string working_dir;                    // 工作目录，空表示继承父进程
 
     std::vector<std::pair<std::string, std::string>> env_vars;  // 额外环境变量
     bool inherit_env = true;                    // 是否继承父进程环境变量
 
-    ResourceQuota quota;                        // 资源配额（Phase 3 T3.5：仅 wall_clock 等 per-process 项生效；
-                                                //  Job 级限制由 SandboxInstance 创建 Job 时统一设置）
+    ResourceQuota quota;                        // 资源配额（仅 wall_clock 等 per-process 项生效；
+                                                //  Job 级限制由沙箱实例创建 Job 时统一设置）
 
-    // Phase 2：隔离策略（Phase 16 收敛：无 fs 配置项，网络两态 + 剪贴板开关）
+    // 隔离策略（无 fs 配置项，网络两态 + 剪贴板开关）
     IsolationPolicy isolation_policy;
 
-    // Phase 3：交互模式标志
-    // false（默认）→ Execute 后立即关闭 stdin_write，子进程 ReadFile(stdin) 立即 EOF（Phase 1 行为）
+    // 交互模式标志
+    // false（默认）→ Execute 后立即关闭 stdin_write，子进程 ReadFile(stdin) 立即 EOF
     // true          → 保留 stdin_write，可后续通过 WriteStdin 命令写入数据
     //                 析构或进程退出时关闭 stdin_write
     // 适用场景：REPL（python -i）、shell（cmd /k）、长跑服务
     bool interactive = false;
 
-    // Phase 3 用：启动时一次性写入 stdin 的数据（在 Execute 内写入后关闭 stdin_write）
-    // 仅当 interactive=false 时生效；interactive=true 时忽略此字段
-    // Phase 1 留空，stdin_write 句柄由 StartProcessUseCase 立即关闭（避免子进程读阻塞）
+    // 启动时一次性写入 stdin 的数据（在 Execute 内写入；interactive=true 时
+    // 同样写入，随后保留 stdin_write 供后续 WriteStdin）
+    // 留空时：interactive=false 的 stdin_write 由 Execute 立即关闭（子进程读 EOF），
+    //         interactive=true 保留 stdin_write
     std::string stdin_data;
 
-    // Phase 3 T3.5：沙箱内部进程 ID，由 SandboxInstance 分配后填入
+    // 沙箱内部进程 ID，由沙箱实例分配后填入
     // Execute 内会把它存到 SandboxedProcess.process_id，并出现在所有事件 payload 中
-    // 调用方（SandboxInstance）负责分配，StartProcessUseCase 只读取
+    // 调用方（沙箱实例）负责分配，NativeSandboxedProcess 只读取
     uint32_t process_id = 0;
 
-    // Phase 3 T3.8：单次 ReadFile 缓冲大小（字节）
-    // 0（默认）→ 用 StreamReader 默认值（64KB）
-    // >0       → 用指定大小（用于触发大块 stdout 输出以测试消息分片）
+    // 单次 ReadFile 缓冲大小（字节）
+    // 0（默认）→ 用默认值（64KB）
+    // >0       → 用指定大小（用于触发大块 stdout 输出）
     // 注意：此值会 commit 全部内存（vector 初始化时触摸所有字节），设大值会按进程×流数线性增加内存占用
     size_t stream_buffer_size = 0;
 

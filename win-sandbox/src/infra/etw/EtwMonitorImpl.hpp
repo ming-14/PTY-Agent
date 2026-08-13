@@ -70,6 +70,7 @@ public:
     bool IsRunning() const override { return running_.load(std::memory_order_acquire); }
     uint64_t GetDroppedCount() const override;
     uint64_t GetTotalEventCount() const override { return total_events_.load(std::memory_order_relaxed); }
+    uint64_t GetGapCount() const override { return gap_count_.load(std::memory_order_relaxed); }
 
 private:
     // ETW session 内部表示
@@ -89,17 +90,12 @@ private:
     // 停止单个 session
     void StopSession(EtwSession& session);
 
-    // ETW 事件回调（静态，通过 context 转发到实例）
+    // ETW 事件回调（静态，通过 EVENT_TRACE_LOGFILEW.Context → record->UserContext
+    // 路由到具体实例，替代进程级静态单例：多沙箱实例共存互不干扰）
     static void WINAPI EventRecordCallback(PEVENT_RECORD record);
-
-    // 旧式 MOF 格式事件回调（NT Kernel Logger 兼容）
-    static void WINAPI LegacyEventCallback(PEVENT_TRACE event);
 
     // 处理单个 EventRecord
     void ProcessEventRecord(PEVENT_RECORD record);
-
-    // 处理旧式 EVENT_TRACE（MOF 格式）
-    void ProcessLegacyEvent(PEVENT_TRACE event);
 
     // Dispatch 线程主循环
     void DispatchLoop();
@@ -130,11 +126,20 @@ private:
     BehaviorEventCallback callback_;
     EventRecordParser parser_;
 
-    // T6.10: 事件类型过滤（空 = 全部通过）
+    // 事件类型过滤（空 = 全部通过）
     std::vector<int> filter_types_;
+
+    // PID 白名单（空 = 不过滤；非空时只处理这些进程的事件，源头减噪）
+    std::vector<uint32_t> filter_pids_;
+
+    // Dispatch 批量大小（EtwConfig.dispatch_batch_size，0 = 默认 100）
+    uint32_t dispatch_batch_size_ = 0;
 
     std::atomic<bool> running_{false};
     std::atomic<bool> started_{false};
+
+    // seq 跳跃检测（Dispatch 线程统计：RingBuffer 满之外的丢包信号）
+    std::atomic<uint64_t> gap_count_{0};
 
     std::vector<EtwSession> sessions_;
     std::thread dispatch_thread_;
@@ -164,10 +169,6 @@ private:
 
     // Push 互斥锁：降级模式下多个生产者线程（进程轮询 / 文件监控）并发写 RingBuffer
     std::mutex push_mutex_;
-
-    // 用于 EventRecordCallback 转发的实例指针
-    static std::mutex instance_mutex_;
-    static EtwMonitorImpl* instance_;
 
     std::atomic<uint64_t> total_events_{0};
 

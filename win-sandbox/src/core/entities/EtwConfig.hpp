@@ -3,8 +3,6 @@
 //
 // 定义 ETW session 的配置参数，包括 session 名称、provider 列表、
 // ring buffer 大小、事件过滤等。
-//
-// Phase 6：行为监控
 // =============================================================================
 #pragma once
 
@@ -42,6 +40,9 @@ struct EtwConfig {
     // 事件类型过滤（空 = 全部订阅）
     std::vector<int> filter_types;
 
+    // 进程 PID 白名单（空 = 不过滤；非空时只处理这些进程的事件，源头减噪）
+    std::vector<uint32_t> filter_pids;
+
     // 降级模式文件监控目录（ReadDirectoryChangesW 监控，非管理员可用）
     // 空 = 不启用降级模式文件事件；非空 = 递归监控每个目录
     // 注意：仅对指定目录树生效，无法做到全盘监控（管理员 ETW 无此限制）
@@ -60,15 +61,18 @@ struct EtwConfig {
         cfg.enabled = true;
 
         // Session 1: NT Kernel Logger（进程/线程/镜像/文件/注册表/网络）
-        // NT Kernel Logger 是单例，session 名必须为 "NT Kernel Logger"
+        // NT Kernel Logger 是系统单例，session 名必须为 "NT Kernel Logger"
         // EnableFlags 控制采集哪些事件类别
         EtwSessionConfig s1;
         s1.session_name = "NT Kernel Logger";
         s1.is_kernel_session = true;
         EtwProviderConfig p1;
-        p1.provider_guid = "{9e81416d-55d3-4f1a-9f6f-4e89a8e918ba}";  // SystemTraceControlGuid
+        // provider_guid 仅用于 EnableTraceEx2；内核分支（NT Kernel Logger）用
+        // StartTraceW + EnableFlags，不走 EnableTraceEx2，此处不生效
+        p1.provider_guid = "";
         // EVENT_TRACE_FLAG_PROCESS | THREAD | IMAGE_LOAD | DISK_IO | DISK_FILE_IO | NETWORK | REGISTRY
-        // 注意：DISK_IO_INIT (0x00000800) 产生大量噪音，不启用
+        // 注意：DISK_IO_INIT (0x00000800) 产生大量噪音，不启用；
+        //       REGISTRY (0x00010000) 噪音大且解析为粗分类，如无需求可关闭
         p1.enable_flags = 0x00000001 | 0x00000002 | 0x00000004 | 0x00000100 | 0x00000200 | 0x00010000 | 0x00000400;
         p1.level = 0;
         p1.keyword_mask = 0;

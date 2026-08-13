@@ -5,9 +5,9 @@
 //   - NtSetInformationJobObject(JobObjectCreateSilo=35)  把 Job 就地转换为 Silo
 //   - NtQueryInformationJobObject(JobObjectSiloBasicInformation=36) 探测确认
 //
-// 平台支持（docs/design/Phase2-Candidates-Evaluation-20260806.md）：
+// 平台支持：
 //   - 仅 Win Server / Win11 预览支持用户态创建 Server Silo
-//   - Win10 客户端（含 22H2）实测 JobObjectCreateSilo 返回 STATUS_INVALID_PARAMETER
+//   - Win10 客户端（含 22H2）JobObjectCreateSilo 返回 STATUS_INVALID_PARAMETER
 //   - 非管理员无权限（需 SeTcbPrivilege / SeAssignPrimaryTokenPrivilege）
 //
 // 设计（条件启用，失败优雅降级）：
@@ -21,6 +21,7 @@
 #include <winternl.h>
 
 #include <format>
+#include <mutex>
 
 namespace winsandbox {
 
@@ -48,6 +49,25 @@ bool LoadNtExport(const char* name, T& out) {
     }
     out = reinterpret_cast<T>(p);
     return true;
+}
+
+// ntdll 导出缓存（std::call_once 线程安全装载，IsAvailable/ElevateJob 共用）
+struct SiloExports {
+    NtSetInformationJobObject_t set = nullptr;
+    NtQueryInformationJobObject_t query = nullptr;
+    NtCreateJobObject_t create = nullptr;
+    bool loaded = false;
+};
+
+const SiloExports& GetSiloExports() {
+    static SiloExports e;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        e.loaded = LoadNtExport("NtSetInformationJobObject", e.set) &&
+                   LoadNtExport("NtQueryInformationJobObject", e.query) &&
+                   LoadNtExport("NtCreateJobObject", e.create);
+    });
+    return e;
 }
 
 // 是否管理员（Silo 创建要求 SeTcbPrivilege / SeAssignPrimaryTokenPrivilege）
@@ -84,21 +104,13 @@ bool SiloImpl::IsAvailable() const
         return false;
     }
 
-    // 需要 ntdll 导出函数
-    static NtSetInformationJobObject_t fn_set = nullptr;
-    static NtQueryInformationJobObject_t fn_query = nullptr;
-    static NtCreateJobObject_t fn_create = nullptr;
-    static bool fn_loaded = false;
-    if (!fn_loaded) {
-        fn_loaded = LoadNtExport("NtSetInformationJobObject", fn_set) &&
-                    LoadNtExport("NtQueryInformationJobObject", fn_query) &&
-                    LoadNtExport("NtCreateJobObject", fn_create);
-    }
-    if (!fn_loaded) {
+    // 需要 ntdll 导出函数（call_once 线程安全装载）
+    const auto& nt = GetSiloExports();
+    if (!nt.loaded) {
         return false;
     }
 
-    // 缓存探测结果
+    // 缓存探测结果（双检锁）
     if (probe_done_.load(std::memory_order_acquire)) {
         return probe_available_.load(std::memory_order_acquire);
     }
@@ -109,7 +121,7 @@ bool SiloImpl::IsAvailable() const
 
     // 创建临时 Job 并尝试转换为 Silo 探测平台支持
     HANDLE job = nullptr;
-    NTSTATUS st = fn_create(&job, JOB_OBJECT_ALL_ACCESS, nullptr);
+    NTSTATUS st = nt.create(&job, JOB_OBJECT_ALL_ACCESS, nullptr);
     if (st != 0 || !job) {
         logger_->Log(LogLevel::Warn,
             "Silo: probe NtCreateJobObject failed: 0x" +
@@ -119,14 +131,14 @@ bool SiloImpl::IsAvailable() const
         return false;
     }
 
-    st = fn_set(job, kJobObjectCreateSilo, nullptr, 0);
+    st = nt.set(job, kJobObjectCreateSilo, nullptr, 0);
     bool supported = (st == 0);
 
     // 查询 Silo 基本信息二次确认
     if (supported) {
         BYTE info[32] = {};
         ULONG len = 0;
-        NTSTATUS qs = fn_query(job, kJobObjectSiloBasicInformation, info, sizeof(info), &len);
+        NTSTATUS qs = nt.query(job, kJobObjectSiloBasicInformation, info, sizeof(info), &len);
         // STATUS_JOB_NO_CONTAINER = job 不是 container；转换成功后应返回 0
         supported = (qs == 0);
     }
@@ -156,17 +168,13 @@ Result<void> SiloImpl::ElevateJob(void* job_handle)
             "Server Silo not available on this platform");
     }
 
-    static NtSetInformationJobObject_t fn_set = nullptr;
-    static bool fn_loaded = false;
-    if (!fn_loaded) {
-        fn_loaded = LoadNtExport("NtSetInformationJobObject", fn_set);
-    }
-    if (!fn_loaded || !fn_set) {
+    const auto& nt = GetSiloExports();
+    if (!nt.loaded || !nt.set) {
         return Result<void>::Err(ErrorCode::SiloUnavailable,
             "ntdll NtSetInformationJobObject not available");
     }
 
-    NTSTATUS st = fn_set(static_cast<HANDLE>(job_handle), kJobObjectCreateSilo, nullptr, 0);
+    NTSTATUS st = nt.set(static_cast<HANDLE>(job_handle), kJobObjectCreateSilo, nullptr, 0);
     if (st != 0) {
         logger_->Log(LogLevel::Error,
             "Silo: JobObjectCreateSilo failed: 0x" +

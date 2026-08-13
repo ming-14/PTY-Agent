@@ -2,20 +2,18 @@
 
 Windows 进程沙箱隔离系统用户指南。本文档面向最终用户，介绍安装、配置与使用。
 
-> 对应 Phase 7 任务 T7.11。API 细节见 [API_REFERENCE.md](API_REFERENCE.md)，部署见 [DEPLOYMENT.md](DEPLOYMENT.md)，故障排查见 [TROUBLESHOOTING.md](memory/TROUBLESHOOTING.md)。
-
 ---
 
 ## 1. 产品简介
 
-win-sandbox 是一个 Windows 进程沙箱隔离系统，通过 **Job Object + Low IL token** 组合实现进程级隔离（Phase 16 起以 Low IL 完整性隔离替换原 AppContainer 链），Python 通过 pybind11 in-process 库（`win_sandbox_native.pyd`）直接调用 C++ 核心，无子进程、无 IPC。
+win-sandbox 是一个 Windows 进程沙箱隔离系统，通过 **Job Object + Low IL token** 组合实现进程级隔离，Python 通过 pybind11 in-process 库（`win_sandbox_native.pyd`）直接调用 C++ 核心，无子进程、无 IPC。
 
 核心能力：
 
 | 能力 | 说明 |
 |------|------|
 | 资源限制 | CPU 速率/时间上限、内存上限、进程数上限、墙钟超时 |
-| 进程隔离 | Low IL（完整性级别）隔离 token，全盘只读 + 可写区（Phase 16） |
+| 进程隔离 | Low IL（完整性级别）隔离 token，全盘只读 + 可写区 |
 | 文件系统隔离 | Low IL 完整性强制：全盘只读、写入落到 `%TEMP%` 重定向的可写区 |
 | 网络隔离 | `unrestricted` / `allowlist`（SOCKS5 代理白名单） |
 | 行为监控 | ETW 事件采集（管理员模式内核级；普通用户降级为进程列表轮询） |
@@ -28,14 +26,10 @@ win-sandbox 是一个 Windows 进程沙箱隔离系统，通过 **Job Object + L
 | 项目 | 要求 |
 |------|------|
 | 操作系统 | Windows 10 1809+ / Windows 11 |
-| 构建工具（源码部署） | Visual Studio 2022 或 2026 Preview（C++ 桌面开发负载）、CMake 3.20+、Ninja |
-| Python | 3.10 - 3.12（代码使用 `X | Y` 联合类型注解，3.10+ 语法） |
-| 权限 | 普通用户可运行（部分能力降级）；管理员可启用全部能力 |
+| Python | 3.10+ |
+| 权限 | 普通用户可运行（部分能力降级）；管理员可启用全部能力（权限模式能力对照见 [DEPLOYMENT.md §2](DEPLOYMENT.md)，降级语义见 §11） |
 
-> **普通用户 vs 管理员**：
-> - 普通用户：Job 资源限制 + Low IL 隔离 + 文件系统隔离全部可用（Low IL token 纯用户态派生）；仅 WFP 网络拦截（`allowlist`）与 ETW 内核监控不可用，自动降级（`allowlist` 降级为 `unrestricted` 语义，ETW 降级为目录文件监控 + 网络轮询）。
-> - 管理员：全部能力可用（ETW 内核 session、WFP 网络白名单拦截）。
-> - Server Silo 需要 Win Server / Win11 预览（`silo.enabled` 时检测，不可用自动降级）。
+源码部署（克隆 / 构建 / 安装）所需构建工具见 [DEPLOYMENT.md §3](DEPLOYMENT.md)。
 
 ---
 
@@ -51,37 +45,9 @@ pip install win-sandbox
 
 ### 3.2 源码部署
 
-```powershell
-git clone https://github.com/ming-14/win-sandbox
-cd win-sandbox
-git submodule init
-git submodule update
-```
+源码部署（clone + 子模块 + 构建 + 安装）见 [DEPLOYMENT.md §3](DEPLOYMENT.md)。
 
-> 国内网络可使用镜像：`git -c url.https://v4.gh-proxy.org/.insteadOf=https://github.com/. submodule update`
-
-### 3.3 构建 win_sandbox_native.pyd
-
-```powershell
-# 加载 MSVC 环境（VS 2026 Preview 示例）
-& "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat"
-
-# 配置 + 构建（Release）
-cmake -B build -G "Visual Studio 18 2026" -A x64 -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release --parallel
-```
-
-构建产物：`build/bin/Release/win_sandbox_native.pyd`（pybind11 扩展模块）
-
-### 3.4 安装 Python 包
-
-```powershell
-pip install .
-```
-
-包内绑定 `win_sandbox_native.pyd`，`import win_sandbox` 自动加载。
-
-### 3.5 验证安装
+### 3.3 验证安装
 
 ```powershell
 python tests/e2e/smoke.py
@@ -265,6 +231,7 @@ sb = win_sandbox.SandboxInstance(config=r"config.json", log_level="debug")
         "dispatch_batch_size": 100,
         "dispatch_timeout_ms": 10,
         "stats_interval_ms": 5000,
+        "filter_pids": [],
         "degraded_monitor_dirs": ["%LOCALAPPDATA%\\win-sandbox-workspace"],
         "degraded_net_polling": true,
         "force_degraded": false
@@ -298,6 +265,7 @@ sb = win_sandbox.SandboxInstance(config=r"config.json", log_level="debug")
 | `monitoring.dispatch_batch_size` | | 批量回调每条 batch 的最大事件数（默认 100） |
 | `monitoring.dispatch_timeout_ms` | | 批量回调最大累积等待（默认 10ms） |
 | `monitoring.stats_interval_ms` | | ETW 统计上报间隔（默认 5000ms） |
+| `monitoring.filter_pids` | | 仅采集这些 pid 的行为事件（非空时其余进程事件过滤，默认空 = 全部采集） |
 | `monitoring.degraded_monitor_dirs` | | 降级模式文件监控目录数组（非管理员时 ReadDirectoryChangesW 递归监控） |
 | `monitoring.degraded_net_polling` | | 降级模式网络轮询开关（默认 true） |
 | `monitoring.force_degraded` | | 强制走降级路径（管理员环境验证降级能力用，默认 false） |
@@ -306,36 +274,15 @@ sb = win_sandbox.SandboxInstance(config=r"config.json", log_level="debug")
 
 ### 5.3 `default_quota` 字段
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `cpu_ms` | int | CPU 时间上限（ms） |
-| `cpu_rate_percent` | int | CPU 速率限制（1-100，需管理员） |
-| `memory_mb` | int | 单进程内存上限（MB） |
-| `job_memory_mb` | int | Job 总内存上限（MB） |
-| `io_rate_bytes_per_sec` | int | IO 速率限制（bytes/s，需管理员） |
-| `io_rate_iops` | int | IO 速率限制（IOPS，需管理员） |
-| `max_processes` | int | 最大活动进程数 |
-| `wall_clock_timeout_ms` | int | 墙钟超时（ms） |
-| `cpu_timeout_ms` | int | CPU 超时（ms） |
-| `no_ui` | bool | 禁止 UI 交互 |
-| `breakaway_ok` | bool | 允许子进程脱离 Job |
-| `crash_silent` | bool | Phase 8：崩溃静默。true 时启用 Job `DIE_ON_UNHANDLED_EXCEPTION`——Job 内进程未处理异常（崩溃）直接终止，不弹 Windows 错误对话框、不触发 WER 挂起（无头自动化场景建议开启）。崩溃进程的 `process_exited.exit_code` 为 NTSTATUS 崩溃码（如空指针解引用 `0xC0000005`） |
+默认配额字段全集（`cpu_ms` / `memory_mb` / `max_processes` / `wall_clock_timeout_ms` / `crash_silent` 等）见 [API_REFERENCE.md §7.1](API_REFERENCE.md)。
 
 > `cpu_rate_percent` / `io_rate_*` 在普通用户下不可用，会自动降级并记录在 capabilities 报告。
 
 ### 5.4 `isolation` 段字段
 
-默认隔离策略（Phase 16），`start_process` 未显式传 `isolation_policy` 时使用：
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `net_policy` | str | `unrestricted`（默认，网络不受限） / `allowlist`（SOCKS5 代理白名单，见 §6.3） |
-| `net_allowlist` | list[dict] | 网络白名单 `{"ip": str, "port": int, "protocol": int}`；`ip` 空 = 任意 IP、`port` 0 = 任意端口、`protocol` 6=TCP / 17=UDP / 0=任意 |
-| `clipboard_isolate` | bool | 默认 false。true 时启用 Job UI 限制：子进程无法读宿主剪贴板 / 全局原子表 / 系统参数 |
+默认隔离策略（`net_policy` / `net_allowlist` / `clipboard_isolate`），`start_process` 未显式传 `isolation_policy` 时使用。字段说明见 [API_REFERENCE.md §7.2](API_REFERENCE.md)。
 
 > 文件系统隔离**无需配置**：Low IL token 天然全盘只读，写入落到重定向的 `%TEMP%`（可写区）。
-> Phase 16 起旧段 `appcontainer` / `filesystem` / `network` 与旧字段 `fs_mode` / `capabilities` /
-> `path_rules` 已删除，配置含这些键会**显式报错拒绝**（`unknown field`）。
 
 ### 5.5 环境变量展开
 
@@ -343,15 +290,7 @@ sb = win_sandbox.SandboxInstance(config=r"config.json", log_level="debug")
 
 ### 5.6 `global_quota` 段字段
 
-多沙箱全局资源配额：多个 `SandboxInstance` 实例共享一个配额池，合计占用 CPU/内存/进程数不超过上限。跨进程通过命名共享内存实现。
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `enabled` | bool | 是否启用全局配额（默认 false） |
-| `pool_name` | string | 共享池名，同名的多个 `SandboxInstance` 实例共享同一池（默认 `win-sandbox-quota`） |
-| `max_cpu_rate_percent` | int | 全局 CPU 速率上限（所有实例合计，1-100） |
-| `max_memory_mb` | int | 全局内存上限（所有实例合计，MB） |
-| `max_processes` | int | 全局进程数上限（所有实例合计） |
+多沙箱全局资源配额：多个 `SandboxInstance` 实例共享一个配额池，合计占用 CPU/内存/进程数不超过上限。跨进程通过命名共享内存实现。字段说明见 [API_REFERENCE.md §8](API_REFERENCE.md)。
 
 > 超限时 `start_process` 抛异常（`GlobalQuotaExceeded`），进程不会启动。
 
@@ -366,16 +305,16 @@ sb = win_sandbox.SandboxInstance(config=r"config.json", log_level="debug")
 - **CPU 时间**：`cpu_ms` 达到后触发 `on_resource_limit` 回调，沙箱终止进程
 - **内存**：`memory_mb` / `job_memory_mb` 超限同样触发回调
 - **进程数**：`max_processes` 限制 Job 内同时运行进程数
-- **超时**：`wall_clock_timeout_ms` 为墙钟硬超时（Python 端 `WallClockTimer` 实现）；`cpu_timeout_ms` 为 CPU 累积超时
+- **超时**：`wall_clock_timeout_ms` 为墙钟硬超时（沙箱内建：`start_process` 时自动挂墙钟定时器，到期调用 `Terminate`，`exit_reason=wall_clock_timeout`）；`cpu_timeout_ms` 为 CPU 累积超时
 
 ### 6.2 文件系统隔离（Low IL）
 
-Phase 16 起文件系统隔离由 **Low IL 完整性级别**强制（纯用户态，无需管理员）：
+文件系统隔离由 **Low IL 完整性级别**强制（纯用户态，无需管理员）：
 
 | 语义 | 行为 |
 |------|------|
 | 全盘只读 | Low IL token 的 NO_WRITE_UP：子进程对任何目录（含宿主 `%TEMP%`、`C:\Windows` 等）只读，写/改/删一律拒绝 |
-| 全盘可读可执行 | 完整性级别不限制读/执行（Low 进程可读任意常规文件，执行用户可读的可执行文件） |
+| 全盘可读可执行 | 完整性级别不限制读/执行（Low 进程可读任意常规文件，执行用户可读的可执行文件）。**例外**：宿主目录带显式受限 DACL（受控文件夹/安全工具注入的 AppContainer ACE）时，读/执行同样被拒（DACL 优先于 IL 检查）——需沙箱内访问的文件应放普通 ACL 目录（如 `%LOCALAPPDATA%` 下） |
 | 可写区 | 唯一可写目录：`%LOCALAPPDATA%\win-sandbox\sessions\<os-pid>-<process_id>\writable`（创建时打 Low 标签 + 用户完全控制 DACL） |
 | `%TEMP%` / `%TMP%` | 启动时重定向到可写区（子进程看到的 `%TEMP%` 即可写区） |
 | 工作目录 | `working_dir` 未传时默认落到可写区 |
@@ -393,8 +332,10 @@ Phase 16 起文件系统隔离由 **Low IL 完整性级别**强制（纯用户�
 
 > **allowlist 实现要点与边界**：
 > - 代理仅拦截**走代理的应用**（curl、requests 等识别代理环境变量的程序）；**直接 socket 连接不受代理管控**，可绕过白名单直连外网——敏感场景不要单独依赖 allowlist 作为硬边界。
-> - `allowlist` 依赖 WFP callout（需管理员）：非管理员下 Open 失败，记 Warn 降级（`allowlist` 不生效，进程网络不受限，语义等同 `unrestricted`，见 §7 capabilities 的 `network` 模块）。
-> - 代理仅实现 SOCKS5 CONNECT 命令（不支持 BIND / UDP ASSOCIATE）。
+> - `allowlist` 依赖 WFP callout（需管理员）：非管理员下 Open 失败，记 Warn 降级（`allowlist` 不生效，进程网络不受限，语义等同 `unrestricted`，见 [API_REFERENCE.md §6.1](API_REFERENCE.md) 的 `network` 模块）。
+> - 代理仅实现 SOCKS5 CONNECT 命令（不支持 BIND / UDP ASSOCIATE）；**IPv6 目标地址（ATYP=0x04）被拒绝**。
+> - 每个连接独立工作线程（并发放行上限 16）；上游连接 10s 超时（上游不可达时连接快速失败，不挂死线程）。
+> - 代理监听端口在启动后立即确定（bind+listen 于初始化阶段完成），无"端口已公示但未监听"的竞争窗口。
 > - 拦截事件通过日志（`network blocked (native): ip=... port=... proto=...`）上报。
 
 ### 6.4 行为监控（ETW）
@@ -408,7 +349,7 @@ Phase 16 起文件系统隔离由 **Low IL 完整性级别**强制（纯用户�
   - 首次轮询只建基线，不把全系统进程当新进程（无噪音）
 - 降级模式的事件类型仍带 `seq` 序号，支持丢包检测
 
-行为事件通过 `proc.on_behavior_event` 回调批量上报（Phase 6），每条 batch 为 dict 列表。
+行为事件通过 `proc.on_behavior_event` 回调批量上报，每条 batch 为 dict 列表。
 
 ### 6.5 Server Silo 更强隔离（可选）
 
@@ -453,27 +394,7 @@ Server Silo 是 Windows 的进程隔离容器（Silo Job），提供**视图级�
 
 ## 7. 权限模式与 capabilities 报告
 
-启动时沙箱自动检测权限，`sb.capabilities` 属性返回 capabilities 报告：
-
-```python
-import win_sandbox
-
-sb = win_sandbox.SandboxInstance()
-print(sb.capabilities)
-# {
-#     "mode": "standard_user",
-#     "capabilities": [
-#         {"module": "job_object", "available": true},
-#         {"module": "low_il_token", "available": true},
-#         {"module": "etw", "available": false, "degraded_reason": "non-admin: degraded to process polling + dir file watch + network polling (no registry events)"},
-#         {"module": "network", "available": false, "degraded_reason": "non-admin: WFP connect filter unavailable, only net_policy=unrestricted"},
-#         {"module": "pipe_security", "available": true}
-#     ]
-# }
-sb.shutdown()
-```
-
-Python 端可通过 `sb.capabilities` 判断实际可用能力，据此决定测试/功能降级策略。
+启动时沙箱自动检测权限，`sb.capabilities` 属性返回 capabilities 报告（结构与字段说明见 [API_REFERENCE.md §6.1](API_REFERENCE.md)）。Python 端据此判断实际可用能力，决定测试/功能降级策略。
 
 ---
 
@@ -561,7 +482,7 @@ proc = sb.start_process(command_line="main.exe", quota={"memory_mb": 256})
 
 当池中配额耗尽时，后续 `start_process` 抛异常（`GlobalQuotaExceeded`），进程不启动。
 
-### 8.5 进程列表查询与崩溃静默（Phase 8）
+### 8.5 进程列表查询与崩溃静默
 
 Job 功能增强：查询进程的 Job 内进程列表、识别崩溃进程、禁用崩溃弹窗。
 
@@ -575,7 +496,7 @@ proc = sb.start_process(
     command_line="python.exe script.py",
     quota={"crash_silent": True, "wall_clock_timeout_ms": 30000},
 )
-#    process_started 携带主进程路径（Phase 8 FR-8.3，黑盒报告修复 2026-08-09）
+#    process_started 携带主进程路径
 print(f"可执行文件: {proc.process_path}")
 
 # 2. 查询 Job 内进程列表（含子进程，未 escape 的）
@@ -584,8 +505,7 @@ pids = proc.query_process_list()
 print(f"Job 内进程: {pids}")
 
 # 3. 崩溃检测：exit_code 为非零 NTSTATUS（如 0xC0000005 = -1073741819），
-#    且 exit_reason 对应异常退出（Phase 8 FR-8.4，黑盒报告修复
-#    2026-08-09：0 退出码 → normal，非零（含崩溃 NTSTATUS）→ abnormal）
+#    且 exit_reason 对应异常退出（0 退出码 → normal，非零（含崩溃 NTSTATUS）→ abnormal）
 exit_code, exit_reason, usage = proc.wait(timeout_ms=40000)
 if exit_code != 0:
     print(f"进程异常退出: code={exit_code}, reason={exit_reason}")
@@ -598,9 +518,9 @@ sb.shutdown()
 - 进程退出后 Job 内 pid 清理有短暂延迟，查询实时性要求高时建议轮询
 - 崩溃退出码是 int32（NTSTATUS），Python 端为负数；与 `0xC0000005` 比较请用 `code & 0xFFFFFFFF`
 
-### 8.6 进程树管理：生命周期事件与退出码查询（Phase 9）
+### 8.6 进程树管理：生命周期事件与退出码查询
 
-Phase 9 补全 Job 进程树管理的 Python 面：**子/孙进程生命周期实时事件**（`on_job_process_started` / `on_job_process_exited` 回调）与**任意 PID 退出码查询**（`query_process_exit_code`）。
+补全 Job 进程树管理的 Python 面：**子/孙进程生命周期实时事件**（`on_job_process_started` / `on_job_process_exited` 回调）与**任意 PID 退出码查询**（`query_process_exit_code`）。
 
 ```python
 import win_sandbox
@@ -639,8 +559,8 @@ sb.shutdown()
 - `exit_kind` 语义：`normal`（退出码 0）/ `abnormal`（非 0 含崩溃）/ `unknown`（兜底：退出码查询失败，此时**无 `exit_code` 字段**，用 `info.get("exit_code")` 访问）
 - 崩溃路径（ABNORMAL_EXIT + EXIT 双通知）同一 pid 仅一条 `on_job_process_exited`（服务端已去重）
 - `is_active` 语义：`exit_code == 259`（STILL_ACTIVE）时 `true`；进程恰好以 259 退出时会误判为运行中（Win32 约定）
-- **已退出进程的查询窗口**：进程对象在退出后仅存活短暂时间（实测 ≥100ms），之后查询抛异常（`query_failed`）；需要已退出进程的退出码时，请在收到退出回调后立即查询
-- **Job 归属校验（黑盒复核修复 2026-08-10）**：`pid` 必须是该 `proc` 对应 Job 内的进程（含已退出进程），跨实例/无关 pid 的查询抛异常（`process_not_found`），不会泄露其他沙箱实例的进程状态
+- **已退出进程的查询窗口**：进程对象在退出后仅存活短暂时间（约 100ms），之后查询抛异常（`query_failed`）；需要已退出进程的退出码时，请在收到退出回调后立即查询
+- **Job 归属校验**：`pid` 必须是该 `proc` 对应 Job 内的进程（含已退出进程），跨实例/无关 pid 的查询抛异常（`process_not_found`），不会泄露其他沙箱实例的进程状态
 - 错误码：`process_id` 无效或 pid 不属于本 Job → `process_not_found`；pid 属于本 Job 但进程对象已回收 → `query_failed`；缺字段或类型错误（pid 须为整数，float 会被拒绝）→ `invalid_payload`
 
 ### 8.7 启用 Server Silo 更强隔离（test_silo.py）
@@ -704,8 +624,9 @@ sb2.shutdown()
 Python 端日志：`logging.getLogger("win_sandbox")`，可配置级别。
 
 C++ 端日志（spdlog）：
-- 配置文件 `logging.dir` 指定持久化日志目录（默认 `%LOCALAPPDATA%\win-sandbox\logs`）
+- 配置文件 `logging.dir` 指定持久化日志目录（默认 `%LOCALAPPDATA%\win-sandbox\logs`；`%LOCALAPPDATA%` 缺失时回退 `%TEMP%\win-sandbox-logs`）
 - `log_level=debug` 时额外写 stderr
+- 过期日志按 `retention_days` 自动清理（含历史 `%TEMP%\win-sandbox-<pid>` 目录）
 
 日志级别：`trace < debug < info < warn < error`。
 
@@ -714,11 +635,12 @@ C++ 端日志（spdlog）：
 ## 11. 已知限制
 
 1. **Low IL 单向墙**：完整性级别阻止"低写高"（子进程不能写宿主），但"高读低"不受限——子进程可读宿主常规文件（敏感文件请用 ACL 另行限制）；完整性级别不阻止通过继承句柄访问宿主资源，进程创建时已最小化句柄继承
-2. **可写区集中在 `%TEMP%` 重定向**：子进程写任意路径失败（全盘只读），需持久化时从可写区（`%LOCALAPPDATA%\win-sandbox\sessions\...\writable`）取回
-3. **ETW 内核 session 需管理员**：普通用户降级为进程轮询 + 目录文件监控 + 网络轮询（无注册表事件）
-4. **allowlist 不是硬网络边界**：SOCKS5 代理仅拦截走代理的应用；直接 socket 连接可绕过；非管理员下 `allowlist` 降级为 `unrestricted`（WFP 不可用）
-5. **CtrlC 信号不支持**：Windows 上无法定向投递，用 `ctrl_break` 替代
-6. **Server Silo 需平台支持**：Win10 客户端不支持用户态创建 Server Silo（`silo.enabled` 时自动降级）
-7. **全局配额仅软性拒绝**：超限时新进程被拒绝，已运行进程不受影响（不做 OOM/强杀）
-
-详细排查见 [TROUBLESHOOTING.md](memory/TROUBLESHOOTING.md)。
+2. **宿主显式 ACL 目录不可达**：带显式受限 DACL 的宿主目录（受控文件夹、安全工具注入 AppContainer ACE 的目录、系统 Temp 等）对 Low IL 沙箱**读/执行也被拒绝**（DACL 检查先于 IL 检查）；`cmd /c` 中转启动此类目录下的程序会报"参数格式不正确/系统找不到文件"——沙箱内要运行的程序请放普通 ACL 目录（如 `%LOCALAPPDATA%` 下）
+3. **可写区集中在 `%TEMP%` 重定向**：子进程写任意路径失败（全盘只读），需持久化时从可写区（`%LOCALAPPDATA%\win-sandbox\sessions\...\writable`）取回
+4. **ETW 内核 session 需管理员**：普通用户降级为进程轮询 + 目录文件监控 + 网络轮询（无注册表事件）
+5. **allowlist 不是硬网络边界**：SOCKS5 代理仅拦截走代理的应用；直接 socket 连接可绕过；非管理员下 `allowlist` 降级为 `unrestricted`（WFP 不可用）；代理不支持 IPv6 目标与 UDP ASSOCIATE
+6. **CtrlC 信号不支持**：Windows 上无法定向投递，用 `ctrl_break` 替代
+7. **Server Silo 需平台支持**：Win10 客户端不支持用户态创建 Server Silo（`silo.enabled` 时自动降级）
+8. **全局配额仅软性拒绝**：超限时新进程被拒绝，已运行进程不受影响（不做 OOM/强杀）
+9. **stdin 写入等待上限 30s**：子进程不读 stdin 时 `write_pipe` 超时抛异常（OVERLAPPED 写 + CancelIoEx 取消），不会无限挂起调用线程
+10. **`cmd /c "绝对路径\a.exe"` 引号陷阱**：cmd 引号剥除规则会把"路径+参数"整串当文件名（"系统找不到文件"）；请用 `cmd /c ""C:\path\a.exe" arg"` 双层引号或省略引号（路径无空格时）

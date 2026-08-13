@@ -1,7 +1,7 @@
 // =============================================================================
-// T2.7 验证程序：ConfigLoader isolation 段 + payload isolation_policy 解析
+// 验证程序：ConfigLoader isolation 段 + payload isolation_policy 解析
 //
-// Phase 16 重构版：appcontainer/filesystem/network 段删除，收敛为 isolation 段
+// 配置收敛为 isolation 段
 // （net_policy=unrestricted|allowlist + net_allowlist + clipboard_isolate）。
 //
 // 测试组：
@@ -43,138 +43,138 @@ static nlohmann::json MakePayload(const std::string& payload_json) {
 }
 
 // =============================================================================
-// A. ConfigLoader 单元测试（Phase 16 isolation 段）
+// A. ConfigLoader 单元测试（isolation 段）
 // =============================================================================
 
 static void TestConfigLoader(ConfigLoader& loader) {
     spdlog::info("==== A. ConfigLoader isolation 段测试 ====");
 
-    // T1: net_policy=unrestricted
+    // net_policy=unrestricted
     {
-        spdlog::info("---- T1: isolation.net_policy=unrestricted ----");
+        spdlog::info("---- isolation.net_policy=unrestricted ----");
         auto r = loader.LoadFromJsonString(R"({"isolation": {"net_policy": "unrestricted"}})");
-        Check(static_cast<bool>(r), "T1: parses OK");
+        Check(static_cast<bool>(r), "parses OK");
         if (r) {
             Check(r.Value().default_isolation_policy.net_policy == NetworkPolicy::Unrestricted,
-                  "T1: net_policy == Unrestricted");
+                  "net_policy == Unrestricted");
         }
     }
 
-    // T2: net_policy=allowlist
+    // net_policy=allowlist
     {
-        spdlog::info("---- T2: isolation.net_policy=allowlist ----");
+        spdlog::info("---- isolation.net_policy=allowlist ----");
         auto r = loader.LoadFromJsonString(R"({"isolation": {"net_policy": "allowlist"}})");
-        Check(static_cast<bool>(r), "T2: parses OK");
+        Check(static_cast<bool>(r), "parses OK");
         if (r) {
             Check(r.Value().default_isolation_policy.net_policy == NetworkPolicy::Allowlist,
-                  "T2: net_policy == Allowlist");
+                  "net_policy == Allowlist");
         }
     }
 
-    // T3: isolation 缺省 → Unrestricted
+    // isolation 缺省 → Unrestricted
     {
-        spdlog::info("---- T3: isolation 缺省 ----");
+        spdlog::info("---- isolation 缺省 ----");
         auto r = loader.LoadFromJsonString(R"({"logging": {"level": "info"}})");
-        Check(static_cast<bool>(r), "T3: parses OK");
+        Check(static_cast<bool>(r), "parses OK");
         if (r) {
             Check(r.Value().default_isolation_policy.net_policy == NetworkPolicy::Unrestricted,
-                  "T3: net_policy == Unrestricted (default)");
+                  "net_policy == Unrestricted (default)");
         }
     }
 
-    // T4: 旧值 net_policy=none 拒绝（Phase 16 已删除）
+    // 非法值 net_policy=none 拒绝
     {
-        spdlog::info("---- T4: net_policy=none 拒绝 ----");
+        spdlog::info("---- net_policy=none 拒绝 ----");
         auto r = loader.LoadFromJsonString(R"({"isolation": {"net_policy": "none"}})");
-        Check(!r, "T4: rejected");
+        Check(!r, "rejected");
         if (!r) {
-            Check(r.Code() == ErrorCode::ConfigSchemaValidationFailed, "T4: code");
+            Check(r.Code() == ErrorCode::ConfigSchemaValidationFailed, "code");
         }
     }
 
-    // T5: 旧值 net_policy=outbound 拒绝
+    // 非法值 net_policy=outbound 拒绝
     {
-        spdlog::info("---- T5: net_policy=outbound 拒绝 ----");
+        spdlog::info("---- net_policy=outbound 拒绝 ----");
         auto r = loader.LoadFromJsonString(R"({"isolation": {"net_policy": "outbound"}})");
-        Check(!r, "T5: rejected");
+        Check(!r, "rejected");
         if (!r) {
-            Check(r.Code() == ErrorCode::ConfigSchemaValidationFailed, "T5: code");
+            Check(r.Code() == ErrorCode::ConfigSchemaValidationFailed, "code");
         }
     }
 
-    // T6: 旧段 appcontainer 拒绝（顶层未知字段）
+    // 未知段 appcontainer 拒绝（顶层未知字段）
     {
-        spdlog::info("---- T6: appcontainer 段拒绝 ----");
+        spdlog::info("---- appcontainer 段拒绝 ----");
         auto r = loader.LoadFromJsonString(R"({"appcontainer": {"enabled": true}})");
-        Check(!r, "T6: rejected");
+        Check(!r, "rejected");
         if (!r) {
-            Check(r.Code() == ErrorCode::ConfigSchemaValidationFailed, "T6: code");
+            Check(r.Code() == ErrorCode::ConfigSchemaValidationFailed, "code");
         }
     }
 
-    // T7: 旧段 filesystem 拒绝
+    // 未知段 filesystem 拒绝
     {
-        spdlog::info("---- T7: filesystem 段拒绝 ----");
+        spdlog::info("---- filesystem 段拒绝 ----");
         auto r = loader.LoadFromJsonString(R"({"filesystem": {"read_paths": ["C:\\Tools"]}})");
-        Check(!r, "T7: rejected");
+        Check(!r, "rejected");
         if (!r) {
-            Check(r.Code() == ErrorCode::ConfigSchemaValidationFailed, "T7: code");
+            Check(r.Code() == ErrorCode::ConfigSchemaValidationFailed, "code");
         }
     }
 
-    // T8: 旧段 network 拒绝
+    // 未知段 network 拒绝
     {
-        spdlog::info("---- T8: network 段拒绝 ----");
+        spdlog::info("---- network 段拒绝 ----");
         auto r = loader.LoadFromJsonString(R"({"network": {"policy": "unrestricted"}})");
-        Check(!r, "T8: rejected");
+        Check(!r, "rejected");
         if (!r) {
-            Check(r.Code() == ErrorCode::ConfigSchemaValidationFailed, "T8: code");
+            Check(r.Code() == ErrorCode::ConfigSchemaValidationFailed, "code");
         }
     }
 
-    // T9: clipboard_isolate=true
+    // clipboard_isolate=true
     {
-        spdlog::info("---- T9: clipboard_isolate=true ----");
+        spdlog::info("---- clipboard_isolate=true ----");
         auto r = loader.LoadFromJsonString(R"({"isolation": {"clipboard_isolate": true}})");
-        Check(static_cast<bool>(r), "T9: parses OK");
+        Check(static_cast<bool>(r), "parses OK");
         if (r) {
-            Check(r.Value().default_isolation_policy.clipboard_isolate, "T9: clipboard_isolate");
+            Check(r.Value().default_isolation_policy.clipboard_isolate, "clipboard_isolate");
         }
     }
 
-    // T10: clipboard_isolate 非 bool
+    // clipboard_isolate 非 bool
     {
-        spdlog::info("---- T10: clipboard_isolate 非 bool ----");
+        spdlog::info("---- clipboard_isolate 非 bool ----");
         auto r = loader.LoadFromJsonString(R"({"isolation": {"clipboard_isolate": "yes"}})");
-        Check(!r, "T10: rejected");
+        Check(!r, "rejected");
         if (!r) {
-            Check(r.Code() == ErrorCode::ConfigSchemaValidationFailed, "T10: code");
+            Check(r.Code() == ErrorCode::ConfigSchemaValidationFailed, "code");
         }
     }
 
-    // T11: isolation 未知字段
+    // isolation 未知字段
     {
-        spdlog::info("---- T11: isolation 未知字段 ----");
+        spdlog::info("---- isolation 未知字段 ----");
         auto r = loader.LoadFromJsonString(R"({"isolation": {"net_policy": "unrestricted", "extra": 1}})");
-        Check(!r, "T11: rejected");
+        Check(!r, "rejected");
         if (!r) {
-            Check(r.Code() == ErrorCode::ConfigSchemaValidationFailed, "T11: code");
+            Check(r.Code() == ErrorCode::ConfigSchemaValidationFailed, "code");
         }
     }
 
-    // T12: net_policy 非字符串
+    // net_policy 非字符串
     {
-        spdlog::info("---- T12: net_policy 非字符串 ----");
+        spdlog::info("---- net_policy 非字符串 ----");
         auto r = loader.LoadFromJsonString(R"({"isolation": {"net_policy": 42}})");
-        Check(!r, "T12: rejected");
+        Check(!r, "rejected");
         if (!r) {
-            Check(r.Code() == ErrorCode::ConfigSchemaValidationFailed, "T12: code");
+            Check(r.Code() == ErrorCode::ConfigSchemaValidationFailed, "code");
         }
     }
 
-    // T13: net_allowlist 解析
+    // net_allowlist 解析
     {
-        spdlog::info("---- T13: net_allowlist ----");
+        spdlog::info("---- net_allowlist ----");
         auto r = loader.LoadFromJsonString(R"({
             "isolation": {
                 "net_policy": "allowlist",
@@ -184,31 +184,31 @@ static void TestConfigLoader(ConfigLoader& loader) {
                 ]
             }
         })");
-        Check(static_cast<bool>(r), "T13: parses OK");
+        Check(static_cast<bool>(r), "parses OK");
         if (r) {
             auto& al = r.Value().default_isolation_policy.net_allowlist;
-            Check(al.size() == 2, "T13: 2 rules");
+            Check(al.size() == 2, "2 rules");
             Check(al.size() >= 1 && al[0].ip == "127.0.0.1" && al[0].port == 8080 && al[0].protocol == 6,
-                  "T13: rule[0]");
-            Check(al.size() >= 2 && al[1].ip == "10.0.0.1", "T13: rule[1]");
+                  "rule[0]");
+            Check(al.size() >= 2 && al[1].ip == "10.0.0.1", "rule[1]");
         }
     }
 
-    // T14: 空配置 {}
+    // 空配置 {}
     {
-        spdlog::info("---- T14: 空配置 ----");
+        spdlog::info("---- 空配置 ----");
         auto r = loader.LoadFromJsonString("{}");
-        Check(static_cast<bool>(r), "T14: parses OK");
+        Check(static_cast<bool>(r), "parses OK");
         if (r) {
             auto& p = r.Value().default_isolation_policy;
-            Check(p.net_policy == NetworkPolicy::Unrestricted, "T14: net_policy == Unrestricted");
-            Check(!p.clipboard_isolate, "T14: clipboard_isolate == false");
+            Check(p.net_policy == NetworkPolicy::Unrestricted, "net_policy == Unrestricted");
+            Check(!p.clipboard_isolate, "clipboard_isolate == false");
         }
     }
 
-    // T15: 完整配置
+    // 完整配置
     {
-        spdlog::info("---- T15: 完整配置 ----");
+        spdlog::info("---- 完整配置 ----");
         auto r = loader.LoadFromJsonString(R"({
             "isolation": {
                 "net_policy": "allowlist",
@@ -216,19 +216,19 @@ static void TestConfigLoader(ConfigLoader& loader) {
                 "clipboard_isolate": true
             }
         })");
-        Check(static_cast<bool>(r), "T15: parses OK");
+        Check(static_cast<bool>(r), "parses OK");
         if (r) {
             auto& p = r.Value().default_isolation_policy;
-            Check(p.net_policy == NetworkPolicy::Allowlist, "T15: net_policy == Allowlist");
-            Check(p.clipboard_isolate, "T15: clipboard_isolate");
+            Check(p.net_policy == NetworkPolicy::Allowlist, "net_policy == Allowlist");
+            Check(p.clipboard_isolate, "clipboard_isolate");
             Check(p.net_allowlist.size() == 1 && p.net_allowlist[0].ip == "1.2.3.4",
-                  "T15: net_allowlist");
+                  "net_allowlist");
         }
     }
 }
 
 // =============================================================================
-// B. StartProcessPayloadParser payload 测试（Phase 16 schema）
+// B. StartProcessPayloadParser payload schema 测试
 // =============================================================================
 
 static void TestIpcPayloadParser() {
@@ -241,155 +241,155 @@ static void TestIpcPayloadParser() {
     default_quota.memory_mb = 256;
     default_quota.max_processes = 64;
 
-    // T16: payload net_policy=unrestricted
+    // payload net_policy=unrestricted
     {
-        spdlog::info("---- T16: net_policy=unrestricted ----");
+        spdlog::info("---- net_policy=unrestricted ----");
         auto msg = MakePayload(
             R"({"command_line": "cmd /c echo hi", "isolation_policy": {"net_policy": "unrestricted"}})");
         auto r = ParseStartProcessPayload(msg, default_quota, default_policy);
-        Check(static_cast<bool>(r), "T16: parses OK");
+        Check(static_cast<bool>(r), "parses OK");
         if (r) {
             Check(r.Value().isolation_policy.net_policy == NetworkPolicy::Unrestricted,
-                  "T16: net_policy == Unrestricted");
+                  "net_policy == Unrestricted");
         }
     }
 
-    // T17: payload net_policy=allowlist
+    // payload net_policy=allowlist
     {
-        spdlog::info("---- T17: net_policy=allowlist ----");
+        spdlog::info("---- net_policy=allowlist ----");
         auto msg = MakePayload(
             R"({"command_line": "cmd /c echo hi", "isolation_policy": {"net_policy": "allowlist"}})");
         auto r = ParseStartProcessPayload(msg, default_quota, default_policy);
-        Check(static_cast<bool>(r), "T17: parses OK");
+        Check(static_cast<bool>(r), "parses OK");
         if (r) {
             Check(r.Value().isolation_policy.net_policy == NetworkPolicy::Allowlist,
-                  "T17: net_policy == Allowlist");
+                  "net_policy == Allowlist");
         }
     }
 
-    // T18: payload 无 isolation_policy → 兜底
+    // payload 无 isolation_policy → 兜底
     {
-        spdlog::info("---- T18: 兜底 ----");
+        spdlog::info("---- 兜底 ----");
         auto msg = MakePayload(R"({"command_line": "cmd /c echo hi"})");
         auto r = ParseStartProcessPayload(msg, default_quota, default_policy);
-        Check(static_cast<bool>(r), "T18: parses OK");
+        Check(static_cast<bool>(r), "parses OK");
         if (r) {
             auto& p = r.Value().isolation_policy;
-            Check(p.net_policy == NetworkPolicy::Unrestricted, "T18: net_policy 兜底");
-            Check(!p.clipboard_isolate, "T18: clipboard 兜底");
+            Check(p.net_policy == NetworkPolicy::Unrestricted, "net_policy 兜底");
+            Check(!p.clipboard_isolate, "clipboard 兜底");
         }
     }
 
-    // T19: 旧值 net_policy=none 拒绝
+    // 非法值 net_policy=none 拒绝
     {
-        spdlog::info("---- T19: net_policy=none 拒绝 ----");
+        spdlog::info("---- net_policy=none 拒绝 ----");
         auto msg = MakePayload(
             R"({"command_line": "cmd", "isolation_policy": {"net_policy": "none"}})");
         auto r = ParseStartProcessPayload(msg, default_quota, default_policy);
-        Check(!r, "T19: rejected");
+        Check(!r, "rejected");
         if (!r) {
-            Check(r.Code() == ErrorCode::IpcSchemaValidationFailed, "T19: code");
+            Check(r.Code() == ErrorCode::IpcSchemaValidationFailed, "code");
         }
     }
 
-    // T20: 旧字段 fs_mode 拒绝（未知字段）
+    // 非法字段 fs_mode 拒绝（未知字段）
     {
-        spdlog::info("---- T20: fs_mode 拒绝 ----");
+        spdlog::info("---- fs_mode 拒绝 ----");
         auto msg = MakePayload(
             R"({"command_line": "cmd", "isolation_policy": {"fs_mode": "default_deny"}})");
         auto r = ParseStartProcessPayload(msg, default_quota, default_policy);
-        Check(!r, "T20: rejected");
+        Check(!r, "rejected");
         if (!r) {
-            Check(r.Code() == ErrorCode::IpcSchemaValidationFailed, "T20: code");
+            Check(r.Code() == ErrorCode::IpcSchemaValidationFailed, "code");
         }
     }
 
-    // T21: 旧字段 capabilities 拒绝
+    // 非法字段 capabilities 拒绝
     {
-        spdlog::info("---- T21: capabilities 拒绝 ----");
+        spdlog::info("---- capabilities 拒绝 ----");
         auto msg = MakePayload(
             R"({"command_line": "cmd", "isolation_policy": {"capabilities": ["internetClient"]}})");
         auto r = ParseStartProcessPayload(msg, default_quota, default_policy);
-        Check(!r, "T21: rejected");
+        Check(!r, "rejected");
         if (!r) {
-            Check(r.Code() == ErrorCode::IpcSchemaValidationFailed, "T21: code");
+            Check(r.Code() == ErrorCode::IpcSchemaValidationFailed, "code");
         }
     }
 
-    // T22: 旧字段 path_rules 拒绝
+    // 非法字段 path_rules 拒绝
     {
-        spdlog::info("---- T22: path_rules 拒绝 ----");
+        spdlog::info("---- path_rules 拒绝 ----");
         auto msg = MakePayload(
             R"({"command_line": "cmd", "isolation_policy": {"path_rules": [{"path": "C:\\X", "access": ["read"]}]}})");
         auto r = ParseStartProcessPayload(msg, default_quota, default_policy);
-        Check(!r, "T22: rejected");
+        Check(!r, "rejected");
         if (!r) {
-            Check(r.Code() == ErrorCode::IpcSchemaValidationFailed, "T22: code");
+            Check(r.Code() == ErrorCode::IpcSchemaValidationFailed, "code");
         }
     }
 
-    // T23: 旧字段 filesystem 拒绝
+    // 非法字段 filesystem 拒绝
     {
-        spdlog::info("---- T23: filesystem 拒绝 ----");
+        spdlog::info("---- filesystem 拒绝 ----");
         auto msg = MakePayload(
             R"({"command_line": "cmd", "isolation_policy": {"filesystem": {"mode": "redirect"}}})");
         auto r = ParseStartProcessPayload(msg, default_quota, default_policy);
-        Check(!r, "T23: rejected");
+        Check(!r, "rejected");
         if (!r) {
-            Check(r.Code() == ErrorCode::IpcSchemaValidationFailed, "T23: code");
+            Check(r.Code() == ErrorCode::IpcSchemaValidationFailed, "code");
         }
     }
 
-    // T24: clipboard_isolate=true 解析
+    // clipboard_isolate=true 解析
     {
-        spdlog::info("---- T24: clipboard_isolate=true ----");
+        spdlog::info("---- clipboard_isolate=true ----");
         auto msg = MakePayload(
             R"({"command_line": "cmd", "isolation_policy": {"clipboard_isolate": true}})");
         auto r = ParseStartProcessPayload(msg, default_quota, default_policy);
-        Check(static_cast<bool>(r), "T24: parses OK");
+        Check(static_cast<bool>(r), "parses OK");
         if (r) {
-            Check(r.Value().isolation_policy.clipboard_isolate, "T24: clipboard_isolate");
+            Check(r.Value().isolation_policy.clipboard_isolate, "clipboard_isolate");
         }
     }
 
-    // T25: clipboard_isolate 非 bool
+    // clipboard_isolate 非 bool
     {
-        spdlog::info("---- T25: clipboard_isolate 非 bool ----");
+        spdlog::info("---- clipboard_isolate 非 bool ----");
         auto msg = MakePayload(
             R"({"command_line": "cmd", "isolation_policy": {"clipboard_isolate": 1}})");
         auto r = ParseStartProcessPayload(msg, default_quota, default_policy);
-        Check(!r, "T25: rejected");
+        Check(!r, "rejected");
         if (!r) {
-            Check(r.Code() == ErrorCode::IpcSchemaValidationFailed, "T25: code");
+            Check(r.Code() == ErrorCode::IpcSchemaValidationFailed, "code");
         }
     }
 
-    // T26: isolation_policy 非对象
+    // isolation_policy 非对象
     {
-        spdlog::info("---- T26: isolation_policy 非对象 ----");
+        spdlog::info("---- isolation_policy 非对象 ----");
         auto msg = MakePayload(
             R"({"command_line": "cmd", "isolation_policy": "not_an_object"})");
         auto r = ParseStartProcessPayload(msg, default_quota, default_policy);
-        Check(!r, "T26: rejected");
+        Check(!r, "rejected");
         if (!r) {
-            Check(r.Code() == ErrorCode::IpcSchemaValidationFailed, "T26: code");
+            Check(r.Code() == ErrorCode::IpcSchemaValidationFailed, "code");
         }
     }
 
-    // T27: 缺 command_line
+    // 缺 command_line
     {
-        spdlog::info("---- T27: 缺 command_line ----");
+        spdlog::info("---- 缺 command_line ----");
         auto msg = MakePayload(R"({"working_dir": "C:\\"})");
         auto r = ParseStartProcessPayload(msg, default_quota, default_policy);
-        Check(!r, "T27: rejected");
+        Check(!r, "rejected");
         if (!r) {
-            Check(r.Code() == ErrorCode::IpcSchemaValidationFailed, "T27: code");
+            Check(r.Code() == ErrorCode::IpcSchemaValidationFailed, "code");
         }
     }
 
-    // T28: net_allowlist 解析
+    // net_allowlist 解析
     {
-        spdlog::info("---- T28: net_allowlist ----");
+        spdlog::info("---- net_allowlist ----");
         auto msg = MakePayload(R"({
             "command_line": "cmd",
             "isolation_policy": {
@@ -398,17 +398,17 @@ static void TestIpcPayloadParser() {
             }
         })");
         auto r = ParseStartProcessPayload(msg, default_quota, default_policy);
-        Check(static_cast<bool>(r), "T28: parses OK");
+        Check(static_cast<bool>(r), "parses OK");
         if (r) {
             auto& al = r.Value().isolation_policy.net_allowlist;
             Check(al.size() == 1 && al[0].ip == "192.168.1.1" && al[0].port == 443,
-                  "T28: net_allowlist");
+                  "net_allowlist");
         }
     }
 
-    // T29: 完整 payload
+    // 完整 payload
     {
-        spdlog::info("---- T29: 完整 payload ----");
+        spdlog::info("---- 完整 payload ----");
         auto msg = MakePayload(R"({
             "command_line": "cmd /c type C:\\secret.txt",
             "working_dir": "C:\\Temp",
@@ -420,17 +420,17 @@ static void TestIpcPayloadParser() {
             }
         })");
         auto r = ParseStartProcessPayload(msg, default_quota, default_policy);
-        Check(static_cast<bool>(r), "T29: parses OK");
+        Check(static_cast<bool>(r), "parses OK");
         if (r) {
             auto& req = r.Value();
-            Check(req.command_line == "cmd /c type C:\\secret.txt", "T29: command_line");
-            Check(req.working_dir == "C:\\Temp", "T29: working_dir");
-            Check(!req.inherit_env, "T29: inherit_env=false");
-            Check(req.quota.memory_mb.value() == 512, "T29: memory_mb=512");
-            Check(req.quota.max_processes.value() == 32, "T29: max_processes=32");
+            Check(req.command_line == "cmd /c type C:\\secret.txt", "command_line");
+            Check(req.working_dir == "C:\\Temp", "working_dir");
+            Check(!req.inherit_env, "inherit_env=false");
+            Check(req.quota.memory_mb.value() == 512, "memory_mb=512");
+            Check(req.quota.max_processes.value() == 32, "max_processes=32");
             Check(req.isolation_policy.net_policy == NetworkPolicy::Unrestricted,
-                  "T29: net_policy=Unrestricted");
-            Check(req.isolation_policy.clipboard_isolate, "T29: clipboard_isolate");
+                  "net_policy=Unrestricted");
+            Check(req.isolation_policy.clipboard_isolate, "clipboard_isolate");
         }
     }
 }

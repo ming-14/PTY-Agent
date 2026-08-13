@@ -1,3 +1,6 @@
+// Windows.Graphics.Capture 捕获：支持窗口与显示器捕获，可为指定目标建立
+// 持久会话（独立 STA 线程 + 消息泵），或一次性捕获（FrameArrived 等待）。
+// WinRT 对象的线程模型与资源释放详见 session_thread_func 内的注释。
 #include "wgc_capture.h"
 #include <chrono>
 #include <cstring>
@@ -555,7 +558,7 @@ ErrorCode WGCCapture::capture_from_session(FrameData& frame) {
             // ContentSize 与 pool_size_ 不一致时设置 resize 请求标志。
             // Recreate 必须在创建 session_pool_ 的 STA 线程执行（跨线程会 RPC_E_WRONG_THREAD）。
             // 设置 resize_pending_ 让 session_thread_func 消息循环检查并执行 Recreate。
-            // 当前帧按 pool_size_ 尺寸复制（旧尺寸），待 Recreate 完成后后续帧自动更新。
+            // 当前帧仍按 pool_size_ 尺寸复制，Recreate 完成后后续帧自动使用新尺寸。
             if (content_size.Width != pool_size_.Width || content_size.Height != pool_size_.Height) {
                 FS_LOG("WGC: ContentSize != pool_size (%dx%d vs %dx%d), requesting STA Recreate",
                        content_size.Width, content_size.Height,

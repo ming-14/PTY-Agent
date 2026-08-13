@@ -226,8 +226,8 @@ class TerminalScreen:
     def capture_scrollback(self) -> str:
         """捕获 scrollback 历史区为 ANSI 字符串（带 SGR 颜色）
 
-        Phase 2 新增：委托给 GridScreen.capture_scrollback()。
-        用于 subscribe 响应时前端恢复 scrollback 历史（Phase 3 启用）。
+        委托给 GridScreen.capture_scrollback()。
+        用于 subscribe 响应时前端恢复 scrollback 历史。
 
         Returns:
             每行 ANSI 内容 + \\r\\n 的字符串；无 scrollback 时返回 ""。

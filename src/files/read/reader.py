@@ -1,6 +1,5 @@
 """file read 用例 —— 读取文件内容并输出（带行号）
 
-仿 opencode internal/llm/tools/view.go：
 - 单文件大小上限 MAX_READ_SIZE；默认读取 DEFAULT_READ_LIMIT 行
 - 超长行截断显示（MAX_LINE_LENGTH）；图片扩展名识别
 - 文件不存在时提供同目录相似名建议（包含/被包含匹配，最多 3 条）

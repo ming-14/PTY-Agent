@@ -19,8 +19,8 @@ from src.ipc.shm import (
     read_port_from_shm,
     write_daemon_info_to_shm,
 )
-from src.daemon.lifecycle import (
-    _pid_exists,
+from src.process.info import pid_exists
+from src.client.lifecycle import (
     _ping_daemon,
     _find_daemon_port,
     is_running,

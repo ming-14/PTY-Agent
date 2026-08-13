@@ -1,4 +1,4 @@
-// T1.1 头文件编译验证：core 层实体与端口必须无 Win32 依赖
+// 头文件编译验证：core 层实体与端口必须无 Win32 依赖
 // 编译通过即通过；故意不包含 windows.h
 #include "core/entities/JobAccountingInfo.hpp"
 #include "core/entities/JobNotification.hpp"

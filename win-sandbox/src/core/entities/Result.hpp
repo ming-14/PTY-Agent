@@ -9,8 +9,8 @@
 //   if (r) { use(r.Value()); }
 //   else   { log(r.Message()); }
 //
-//   Result<void> r2 = AnotherFunc();
-//   if (!r2) { ... }
+//   Result<void> rv = AnotherFunc();
+//   if (!rv) { ... }
 // =============================================================================
 #pragma once
 

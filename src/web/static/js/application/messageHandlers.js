@@ -273,7 +273,7 @@ export function initSessionState(sid, msg, isHistory) {
   s.errorMessage = msg.errorMessage;
   s.pendingReplay = msg.replay || null;
   s.pendingSnapshot = msg.snapshot || null;
-  // Phase 3: 守护进程返回的 scrollback（GridScreen 历史区）
+  // 守护进程返回的 scrollback（GridScreen 历史区）
   // 仅首次订阅非空（已订阅时为 ""），replayPending 消费后清空
   s.pendingScrollback = msg.scrollback || null;
   if (msg.startTime) s.startTime = msg.startTime;

@@ -1,2 +1,1 @@
-fastscreen
 PySide6>=6.5

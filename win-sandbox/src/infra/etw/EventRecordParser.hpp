@@ -7,7 +7,7 @@
 // TDH schema 缓存：同一 Provider+EventDescriptor 的 schema 只查询一次，
 // 后续使用缓存，避免 TdhGetEventInformation 的重复开销。
 //
-// Phase 6 T6.4：EventRecord 解析
+// EventRecord 解析
 // =============================================================================
 #pragma once
 
@@ -34,8 +34,12 @@ public:
     EventRecordParser(const EventRecordParser&) = delete;
     EventRecordParser& operator=(const EventRecordParser&) = delete;
 
+    // 解析单个事件
+    // record: ETW 事件记录
+    // out: 输出事件
+    // is_kernel_session: 事件来自 NT Kernel Logger（provider GUID 因 Windows
+    //   版本而异，不能硬编码匹配，需按消费线程身份路由）
     void Parse(PEVENT_RECORD record, BehaviorEvent& out, bool is_kernel_session = false);
-    void ClearCache();
 
 private:
     void ParseNtKernelEvent(PEVENT_RECORD record, const GUID& provider, BehaviorEvent& out);

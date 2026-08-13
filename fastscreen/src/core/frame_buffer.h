@@ -9,6 +9,7 @@
 
 namespace fs {
 
+// 固定容量、线程安全的环形缓冲，用于捕获线程与消费线程之间传递帧数据。
 template<typename T, size_t N>
 class RingBuffer {
 public:

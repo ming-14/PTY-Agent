@@ -1,4 +1,4 @@
-"""PTY-Agent Web 模块。
+"""Web 模块。
 
 内部按干净架构组织为 domain / application / infrastructure / presentation 四层。
 

@@ -3,9 +3,8 @@
 引擎1: bin/rg/rg.exe --files -L --null --glob <pattern>（cwd=搜索根）
    rg 的 --glob 遵循 gitignore 语义（不含 / 的 pattern 匹配任意深度）。
 引擎2（降级）: os.walk + 逐段递归 glob 匹配（`**` 支持任意层含 0 层、
-   `*` 不跨 /，pattern 无 / 时前置 `**/` 对齐 rg 全深度语义），SkipHidden 过滤。
-修正 opencode 不一致（glob.go rg 引擎按路径长度排序、fallback 按
-modTime 排序）：两引擎统一按 modTime 排序，上限 MAX_GLOB_FILES。
+    `*` 不跨 /，pattern 无 / 时前置 `**/` 对齐 rg 全深度语义），SkipHidden 过滤。
+两引擎统一按 modTime 排序（最新优先），上限 MAX_GLOB_FILES。
 """
 
 import fnmatch

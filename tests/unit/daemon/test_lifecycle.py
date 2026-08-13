@@ -1,8 +1,9 @@
-"""daemon/lifecycle.py 单元测试"""
+"""客户端守护进程控制 + 进程探测单元测试"""
 
 import pytest
 
-from src.daemon.lifecycle import _find_free_port, _pid_exists
+from src.client.lifecycle import _find_free_port
+from src.process.info import pid_exists
 
 
 class TestFindFreePort:
@@ -23,7 +24,7 @@ class TestFindFreePort:
 class TestPidExists:
     def test_current_pid_exists(self):
         import os
-        assert _pid_exists(os.getpid()) is True
+        assert pid_exists(os.getpid()) is True
 
     def test_nonexistent_pid(self):
-        assert _pid_exists(9999999) is False
+        assert pid_exists(9999999) is False

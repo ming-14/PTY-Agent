@@ -6,7 +6,7 @@
 // 设计要点：
 //   1. 不分配到 Job：Launch 仅创建进程并返回句柄，由上层 StartProcessUseCase
 //      调用 IJobObject::AssignProcess。这样 ProcessLauncher 与 Job 解耦，
-//      隔离 token（Phase 16：Low IL，TokenIsolator 派生）由上层经 isolated_token 传入。
+//      隔离 token（Low IL，TokenIsolator 派生）由上层经 isolated_token 传入。
 //   2. stdio 管道：3 个匿名继承管道（stdin/stdout/stderr）
 //      - 沙箱端 HANDLE 不继承（HANDLE_FLAG_INHERIT 清除）
 //      - 子进程端 HANDLE 继承（HANDLE_FLAG_INHERIT 设置）
@@ -36,6 +36,7 @@
 
 #include <wil/resource.h>
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <utility>
@@ -60,6 +61,8 @@ public:
     Result<void> Terminate(void* process_handle, uint32_t exit_code) override;
     Result<void> Signal(void* process_handle, uint32_t pid, ProcessSignal sig) override;
     Result<int32_t> WaitForExit(void* process_handle, uint64_t timeout_ms) override;
+    uint64_t CurrentProcessId() override;
+    void CloseHandle(void* handle) override;
 
 private:
     // 创建匿名继承管道
@@ -67,14 +70,17 @@ private:
     // write_inherit: 写端句柄是否可被子进程继承
     // 返回 {read_handle, write_handle}
     //
-    // 设计说明（Phase 3 T3.3 修复）：
-    //   旧版参数名为 parent_inherit/child_inherit，与 CreatePipe 实际返回的
-    //   (read_end, write_end) 顺序语义错位，导致 stdin 调用方误把写端当读端传给
+    // 设计说明：
+    //   read_inherit/write_inherit 语义直接对应 CreatePipe 返回的
+    //   (read_end, write_end) 句柄顺序，避免调用方传错句柄：若把写端传给
     //   子进程 hStdInput，子进程 ReadFile(写端) 立即失败 → REPL 进程视为 EOF 退出。
-    //   重构为 read_inherit/write_inherit，语义直接对应 CreatePipe 的句柄顺序，
-    //   消除调用方混淆空间。
     Result<std::pair<wil::unique_handle, wil::unique_handle>>
         CreateInheritablePipe(bool read_inherit, bool write_inherit);
+
+    // 创建 stdin 专用管道：写端（沙箱）以 FILE_FLAG_OVERLAPPED 打开，
+    // 供 WriteStdin 支持超时/取消（防大块写入 + 子进程不读时无限期阻塞）；
+    // 读端（子进程）可继承。返回 {read_handle, write_handle}。
+    Result<std::pair<wil::unique_handle, wil::unique_handle>> CreateStdinPipe();
 
     // 构建子进程环境块（UTF-16，双 null 结尾）
     // inherit_env=true：复制父进程环境，再合并 env_vars（同名覆盖）

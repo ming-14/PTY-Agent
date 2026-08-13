@@ -5,7 +5,7 @@
 //
 // 设计要点：
 //   1. schema 校验：手工实现（不引入 json-schema 库）
-//      - Phase 1 字段少，手工校验更可控且无新依赖
+//      - 字段少，手工校验更可控且无新依赖
 //      - 用 helper 函数（Require* / Optional*）让校验代码读起来像声明式
 //      - 严格模式：未知字段拒绝（防止配置漂移）
 //   2. 环境变量展开：%LOCALAPPDATA% 等通过 ExpandEnvironmentStringsW 展开
@@ -61,7 +61,7 @@ private:
 
     // 展开环境变量（严格版）：展开后仍含 '%'（未定义/未闭合/畸形变量按字面
     // 残留）→ 返回 false + err。用于路径字段，防止畸形变量被按字面创建为
-    // 磁盘目录（黑盒报告 r4 D3）。
+    // 磁盘目录。
     static bool ExpandEnvStrict(const std::string& s, std::string& out,
                                 std::string& err);
 

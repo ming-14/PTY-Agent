@@ -32,8 +32,8 @@ class TestConnectBasic:
         t = threading.Thread(target=handle, daemon=True)
         t.start()
 
-        with patch("src.daemon.lifecycle._find_daemon_port", return_value=port), \
-             patch("src.daemon.lifecycle._ping_daemon", return_value=True):
+        with patch("src.client.lifecycle._find_daemon_port", return_value=port), \
+             patch("src.client.lifecycle._ping_daemon", return_value=True):
             client = Client()
             sock = client._connect()
             assert sock is not None
@@ -60,7 +60,7 @@ class TestConnectAutoStart:
                 return None
             return None
 
-        with patch("src.daemon.lifecycle._find_daemon_port", side_effect=mock_find_port), \
+        with patch("src.client.lifecycle._find_daemon_port", side_effect=mock_find_port), \
              patch("src.client.transport.start_daemon", side_effect=mock_start):
             client = Client()
             try:
@@ -70,7 +70,7 @@ class TestConnectAutoStart:
             assert started["called"]
 
     def test_exits_when_start_fails(self):
-        with patch("src.daemon.lifecycle._find_daemon_port", return_value=None), \
+        with patch("src.client.lifecycle._find_daemon_port", return_value=None), \
              patch("src.client.transport.start_daemon"):
             client = Client()
             with pytest.raises(SystemExit):
@@ -94,7 +94,7 @@ class TestConnectZombieRecovery:
         def mock_start():
             restarted["called"] = True
 
-        with patch("src.daemon.lifecycle._find_daemon_port", side_effect=mock_find_port), \
+        with patch("src.client.lifecycle._find_daemon_port", side_effect=mock_find_port), \
              patch("src.client.transport.start_daemon", side_effect=mock_start):
             client = Client()
             try:
@@ -127,7 +127,7 @@ class TestConnectZombieRecovery:
                 return None
             return real_port
 
-        with patch("src.daemon.lifecycle._find_daemon_port", side_effect=mock_find_port), \
+        with patch("src.client.lifecycle._find_daemon_port", side_effect=mock_find_port), \
              patch("src.client.transport.start_daemon"):
             client = Client()
             try:
@@ -168,7 +168,7 @@ class TestConnectRetry:
                 return 19999
             return real_port
 
-        with patch("src.daemon.lifecycle._find_daemon_port", side_effect=mock_find_port):
+        with patch("src.client.lifecycle._find_daemon_port", side_effect=mock_find_port):
             client = Client()
             try:
                 sock = client._connect()

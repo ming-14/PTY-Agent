@@ -2,16 +2,16 @@
 // WriteAreaImpl 实现
 //
 // 手写 SYSTEM_MANDATORY_LABEL_ACE 布局（SDK 无 AddMandatoryAce 声明，
-// label_probe.py 已验证此字节布局 + SetNamedSecurityInfo 组合 rc=0 成功）：
+// 已验证此字节布局 + SetNamedSecurityInfo 组合成功）：
 //   ACE_HEADER(4): AceType=0x11(SYSTEM_MANDATORY_LABEL_ACE_TYPE), AceFlags=0,
 //                  AceSize=8+4+16=24（SID=S-1-16-4096 长 16 字节）
 //   ACCESS_MASK(4): SYSTEM_MANDATORY_LABEL_NO_WRITE_UP(0x1)
 //   SID(16): S-1-16-4096
 // ACL 总长 = 8 + 8 + 4 + 16 = 36
 //
-// 实测语义（verify_low_flow / label_inherit / label_subdir）：
+// 标签语义：
 //   - 完整性强制为单向墙：低完整性不可写高；宿主 Medium 写可写区放行
-//     （高写低，属特性：宿主侧 Teardown 清理需要），威胁模型已对齐接受
+//     （高写低，属特性：宿主侧 Teardown 清理需要），威胁模型已接受
 //   - Low 创建的子目录/子文件全链继承 Low+NW 标签（无需继承 ACE 标志）
 //   - Host Medium 创建的嵌套对象无标签（默认 Medium 语义），不影响宿主清理
 // =============================================================================
@@ -70,12 +70,14 @@ std::string WideToUtf8(const std::wstring& w) {
 
 // 会话根目录：%LOCALAPPDATA%\win-sandbox\sessions
 std::wstring SessionRoot() {
-    wchar_t buf[32768];
-    const DWORD n = ::GetEnvironmentVariableW(L"LOCALAPPDATA", buf, static_cast<DWORD>(std::size(buf)));
-    if (n == 0 || n >= std::size(buf)) {
+    // 先查长度再分配（避免 64KB 栈缓冲）
+    const DWORD n = ::GetEnvironmentVariableW(L"LOCALAPPDATA", nullptr, 0);
+    if (n == 0 || n > 32768) {
         return L"";
     }
-    return std::wstring(buf) + L"\\win-sandbox\\sessions";
+    std::wstring buf(static_cast<size_t>(n) - 1, L'\0');  // n 含结尾 null
+    ::GetEnvironmentVariableW(L"LOCALAPPDATA", buf.data(), n);
+    return buf + L"\\win-sandbox\\sessions";
 }
 
 } // namespace
@@ -191,7 +193,7 @@ Result<void> WriteAreaImpl::ApplyLowLabel(const std::wstring& dir) {
     *reinterpret_cast<DWORD*>(p + 20) = kMandatoryLabelLevelLow;  // SubAuthority[1] = 4096
     acl->AceCount = 1;
 
-    // SetNamedSecurityInfo(SI_LABEL)：非管理员可用（label_probe.py 实测 rc=0）
+    // SetNamedSecurityInfo(SI_LABEL)：非管理员可用
     const DWORD rc = ::SetNamedSecurityInfoW(const_cast<LPWSTR>(dir.c_str()), SE_FILE_OBJECT,
                                              LABEL_SECURITY_INFORMATION,
                                              nullptr, nullptr, nullptr, acl);
@@ -242,7 +244,10 @@ Result<void> WriteAreaImpl::EnsureUserFullControl(const std::wstring& dir) {
                                  "GetNamedSecurityInfo failed rc=" + std::to_string(gs_rc));
     }
 
-    // 遍历现有 ACE，检查当前用户是否已含 GENERIC_ALL
+    // 遍历现有 ACE，检查当前用户是否已含 FILE_ALL_ACCESS（Full Control）
+    // 注意：文件对象 DACL 中常规存储的是 FILE_ALL_ACCESS (0x001F01FF)，
+    // 而非 GENERIC_ALL (0x10000000)——用 GENERIC_ALL 匹配恒为 false，
+    // 导致每次创建都重复追加 ACE 并改写 DACL
     bool has_full = false;
     if (dacl != nullptr && dacl->AceCount > 0) {
         for (WORD i = 0; i < dacl->AceCount; ++i) {
@@ -254,8 +259,10 @@ Result<void> WriteAreaImpl::EnsureUserFullControl(const std::wstring& dir) {
                 continue;
             }
             auto* allow = reinterpret_cast<ACCESS_ALLOWED_ACE*>(hdr);
+            constexpr ACCESS_MASK kFullControl =
+                FILE_ALL_ACCESS;  // 0x001F01FF（Full Control 的位组形态）
             if (::EqualSid(&allow->SidStart, user_sid) &&
-                (allow->Mask & GENERIC_ALL) == GENERIC_ALL) {
+                (allow->Mask & kFullControl) == kFullControl) {
                 has_full = true;
                 break;
             }
@@ -271,8 +278,12 @@ Result<void> WriteAreaImpl::EnsureUserFullControl(const std::wstring& dir) {
 
     // 追加 (OI)(CI)F：新 ACL = 原 ACL + 新 ACE
     ACL_SIZE_INFORMATION size_info{};
-    DWORD acl_info_size = sizeof(size_info);
-    ::GetAclInformation(dacl, &size_info, acl_info_size, AclSizeInformation);
+    if (dacl != nullptr) {
+        // 无 DACL（受保护文件的空 DACL）时按空 ACL 处理（AclBytesInUse=0）；
+        // 显式判空避免对 nullptr 调 GetAclInformation 的未文档化行为
+        DWORD acl_info_size = sizeof(size_info);
+        ::GetAclInformation(dacl, &size_info, acl_info_size, AclSizeInformation);
+    }
     const DWORD new_ace_size = sizeof(ACCESS_ALLOWED_ACE) +
                                ::GetLengthSid(user_sid) - sizeof(DWORD);  // SidStart 已含 1 DWORD
     std::vector<BYTE> new_acl_buf(size_info.AclBytesInUse + new_ace_size + sizeof(ACL));

@@ -1,7 +1,7 @@
 # 文件传输设计（file upload / file download）
 
 > 状态：设计待确认（Phase 0）
-> 适用范围：`src/files/transfer/`、`src/protocol/transfer.py`、`src/config/files.toml`、CLI 子命令、`daemon/handlers/file_upload_handler.py` / `file_download_handler.py`、`client/transport.py`
+> 适用范围：`src/files/transfer/`、`src/protocol/transfer.py`、`config/files.toml`、CLI 子命令、`daemon/handlers/file_upload_handler.py` / `file_download_handler.py`、`client/transport.py`
 > 关联文档：[files-tools.md](files-tools.md)、[ARCHITECTURE.md](../ARCHITECTURE.md)
 
 ---
@@ -212,7 +212,7 @@ TRANSFER_PROGRESS_INTERVAL = 60    # 非 TTY 强制进度打印间隔（秒）
 ### Phase 1：协议与基础
 - `src/protocol/transfer.py`：帧编解码 + `recv_frame`/`send_frame`（残留缓冲处理）
 - `src/files/transfer/map.py` + `judge.py` + `common.py` + `scan.py`
-- `src/config/files.toml` 新配置项 + `files.py` 加载
+- `config/files.toml` 新配置项 + `files.py` 加载
 - 测试：帧编解码（边界：零长度/超限/粘包拆包）、judge 全分支、map 持久化、scan 树结构
 
 ### Phase 2：upload 链路

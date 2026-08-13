@@ -5,7 +5,7 @@
 // 1. 管理员模式：真 ETW session（StartTraceW + EnableTraceEx2 + ProcessTrace）
 // 2. 降级模式：非管理员，通过轮询进程列表模拟 ProcessStart/Stop 事件
 //
-// 降级模式（2026-08-06 扩展）：
+// 降级模式（扩展）：
 //   - 进程事件：Toolhelp32Snapshot 轮询进程列表（ProcessStart/Stop）
 //   - 文件事件：ReadDirectoryChangesW 监控 degraded_monitor_dirs（FileCreate/Write/Delete）
 //   - 网络事件：GetExtendedTcpTable/GetUdpTable 轮询连接表（TcpConnect/UdpSend）
@@ -28,10 +28,11 @@
 
 namespace winsandbox {
 
-// 静态成员初始化
-std::mutex EtwMonitorImpl::instance_mutex_;
-EtwMonitorImpl* EtwMonitorImpl::instance_ = nullptr;
+// thread-local 标记：当前线程是否为 NT Kernel Logger consumer
 thread_local bool EtwMonitorImpl::tl_is_kernel_consumer_ = false;
+
+// 会话名唯一化计数器（同一进程内多实例各自独立 session，互不停对方的）
+std::atomic<uint32_t> g_session_uid{0};
 
 EtwMonitorImpl::EtwMonitorImpl(std::shared_ptr<ILogger> logger)
     : logger_(std::move(logger))
@@ -58,6 +59,15 @@ bool EtwMonitorImpl::IsElevated()
     return ok && elev.TokenIsElevated != 0;
 }
 
+// =============================================================================
+// Start - 启动 ETW 监控（管理员模式）
+//
+// 多实例语义：用户态 session 名带唯一后缀（<pid>-<uid> 前缀保持
+// win-sandbox-etw- 以便 StartupCleanup 按前缀清理残留），同进程/跨进程
+// 多实例的 session 互不冲突；NT Kernel Logger 是系统单例，仅本实例
+// 成功创建（StartTraceW SUCCESS）时消费，ALREADY_EXISTS（他人已启）时
+// 跳过该 session——绝不 STOP/消费他人内核 session。
+// =============================================================================
 Result<void> EtwMonitorImpl::Start(const EtwConfig& config, BehaviorEventCallback callback)
 {
     if (running_.load(std::memory_order_acquire)) {
@@ -69,7 +79,9 @@ Result<void> EtwMonitorImpl::Start(const EtwConfig& config, BehaviorEventCallbac
 
     callback_ = std::move(callback);
     ring_buffer_ = std::make_unique<RingBuffer>(config.ring_buffer_size);
-    filter_types_ = config.filter_types;  // T6.10: 事件类型过滤
+    filter_types_ = config.filter_types;  // 事件类型过滤
+    filter_pids_ = config.filter_pids;    // PID 白名单（源头过滤）
+    dispatch_batch_size_ = config.dispatch_batch_size;
     degraded_monitor_dirs_ = config.degraded_monitor_dirs;
     degraded_net_polling_ = config.degraded_net_polling;
 
@@ -99,16 +111,22 @@ Result<void> EtwMonitorImpl::Start(const EtwConfig& config, BehaviorEventCallbac
     // 管理员模式：创建 ETW sessions
     sessions_.reserve(config.sessions.size());
 
-    {
-        std::lock_guard<std::mutex> lk(instance_mutex_);
-        instance_ = this;
-    }
+    // 用户态 session 名唯一化（防多实例互停对方 session）
+    uint32_t uid = g_session_uid.fetch_add(1, std::memory_order_relaxed);
+    std::string suffix = "-" + std::to_string(::GetCurrentProcessId()) + "-" +
+                         std::to_string(uid);
 
     for (const auto& sc : config.sessions) {
         EtwSession session;
-        session.name = sc.session_name;
         session.is_kernel = sc.is_kernel_session;
         session.providers = sc.providers;
+        if (session.is_kernel) {
+            // NT Kernel Logger 是系统单例，保持固定名
+            session.name = sc.session_name;
+        } else {
+            // 加唯一后缀；保留 win-sandbox-etw- 前缀供 StartupCleanup 清理残留
+            session.name = sc.session_name + suffix;
+        }
 
         for (const auto& p : sc.providers) {
             session.enable_flags |= p.enable_flags;
@@ -153,7 +171,8 @@ Result<void> EtwMonitorImpl::StartSession(EtwSession& session)
     // 先尝试停止已有同名 session（避免 ERROR_ALREADY_EXISTS）
     // 注意：NT Kernel Logger 是系统特殊会话，不能在此停止，否则会导致 consumer 立即退出
     if (!session.is_kernel) {
-        ULONG stop_size = sizeof(EVENT_TRACE_PROPERTIES) + (wname.size() + 1) * sizeof(wchar_t);
+        ULONG stop_size = static_cast<ULONG>(sizeof(EVENT_TRACE_PROPERTIES) +
+                                             (wname.size() + 1) * sizeof(wchar_t));
         EVENT_TRACE_PROPERTIES* stop_props = reinterpret_cast<EVENT_TRACE_PROPERTIES*>(calloc(1, stop_size));
         if (stop_props) {
             stop_props->Wnode.BufferSize = stop_size;
@@ -166,7 +185,8 @@ Result<void> EtwMonitorImpl::StartSession(EtwSession& session)
         }
     }
 
-    ULONG prop_size = sizeof(EVENT_TRACE_PROPERTIES) + (wname.size() + 1) * sizeof(wchar_t);
+    ULONG prop_size = static_cast<ULONG>(sizeof(EVENT_TRACE_PROPERTIES) +
+                                         (wname.size() + 1) * sizeof(wchar_t));
     EVENT_TRACE_PROPERTIES* props = reinterpret_cast<EVENT_TRACE_PROPERTIES*>(calloc(1, prop_size));
     if (!props) {
         return Result<void>::Err(ErrorCode::EtwSessionFailed, "calloc failed for trace properties");
@@ -192,26 +212,17 @@ Result<void> EtwMonitorImpl::StartSession(EtwSession& session)
         logger_->Log(LogLevel::Info, std::string("ETW: StartTraceW(kernel) returned ") +
             std::to_string(status) + " handle=" + std::to_string(static_cast<ULONG64>(session.session_handle)));
         if (status == ERROR_ALREADY_EXISTS) {
-            // 尝试更新现有 session 的 EnableFlags（确保获取了所需的事件类别）
-            ULONG update_status = ControlTraceW(0, wname.c_str(), props,
-                                                  EVENT_TRACE_CONTROL_UPDATE);
-            if (update_status != ERROR_SUCCESS) {
-                logger_->Log(LogLevel::Warn,
-                    "ETW: Failed to update existing NT Kernel Logger EnableFlags: " +
-                    std::to_string(update_status));
-            } else {
-                logger_->Log(LogLevel::Info,
-                    "ETW: Updated existing NT Kernel Logger with new EnableFlags");
-            }
+            // 系统内核 logger 已被他人启用：不消费、不 STOP、不接管（多消费方
+            // 共享实时缓冲 + Stop 会停掉他人的 session）。明确置句柄 0 并跳过。
+            session.session_handle = 0;
+            free(props);
+            return Result<void>::Err(ErrorCode::EtwSessionFailed,
+                "NT Kernel Logger already owned by another session; skipped");
         }
         free(props);
-        if (status != ERROR_SUCCESS && status != ERROR_ALREADY_EXISTS) {
+        if (status != ERROR_SUCCESS) {
             return Result<void>::Err(ErrorCode::EtwSessionFailed,
                 "StartTraceW(kernel) failed: " + std::to_string(status));
-        }
-        if (status == ERROR_ALREADY_EXISTS) {
-            logger_->Log(LogLevel::Info,
-                "ETW: NT Kernel Logger already exists, using existing session");
         }
     } else {
         // 用户态 session：StartTraceW + EnableTraceEx2
@@ -259,7 +270,11 @@ Result<void> EtwMonitorImpl::StartSession(EtwSession& session)
     // 启动消费线程（按值捕获 session 名，避免悬垂引用）
     std::string session_name_copy = session.name;
     bool is_kernel_consumer = session.is_kernel;
-    session.consumer_thread = std::thread([this, session_name_copy, wname, is_kernel_consumer]() {
+    std::shared_ptr<ILogger> thread_logger = logger_;
+    void* instance_ptr = this;
+    session.consumer_thread = std::thread([this, session_name_copy, wname,
+                                           is_kernel_consumer, thread_logger,
+                                           instance_ptr]() {
         // 标记当前线程是否为 NT Kernel Logger consumer
         // NT Kernel Logger 事件的 provider GUID 因 Windows 版本而异，
         // 不能硬编码匹配，需通过 consumer 线程身份路由
@@ -268,6 +283,9 @@ Result<void> EtwMonitorImpl::StartSession(EtwSession& session)
         EVENT_TRACE_LOGFILEW logfile = {};
         logfile.LoggerName = const_cast<LPWSTR>(wname.c_str());
         // 统一使用 EventRecordCallback + PROCESS_TRACE_MODE_EVENT_RECORD
+        // Context → record->UserContext：回调按实例路由（替代进程级静态单例，
+        // 多沙箱实例共存互不干扰）
+        logfile.Context = instance_ptr;
         logfile.EventRecordCallback = &EtwMonitorImpl::EventRecordCallback;
         logfile.ProcessTraceMode = PROCESS_TRACE_MODE_EVENT_RECORD |
                                    PROCESS_TRACE_MODE_REAL_TIME |
@@ -275,18 +293,18 @@ Result<void> EtwMonitorImpl::StartSession(EtwSession& session)
 
         TRACEHANDLE consumer_handle = OpenTraceW(&logfile);
         if (consumer_handle == INVALID_PROCESSTRACE_HANDLE) {
-            logger_->Log(LogLevel::Warn,
+            thread_logger->Log(LogLevel::Warn,
                 "ETW: OpenTraceW failed for " + session_name_copy +
                 ": " + std::to_string(GetLastError()));
             return;
         }
 
-        logger_->Log(LogLevel::Info,
+        thread_logger->Log(LogLevel::Info,
             std::string("ETW: Consumer started for ") + session_name_copy +
             " handle=" + std::to_string(static_cast<ULONG64>(consumer_handle)));
 
         ULONG ret = ProcessTrace(&consumer_handle, 1, nullptr, nullptr);
-        logger_->Log(LogLevel::Info,
+        thread_logger->Log(LogLevel::Info,
             "ETW: Consumer exited for " + session_name_copy +
             " ret=" + std::to_string(ret));
         CloseTrace(consumer_handle);
@@ -298,11 +316,14 @@ Result<void> EtwMonitorImpl::StartSession(EtwSession& session)
 
 void EtwMonitorImpl::StopSession(EtwSession& session)
 {
-    // 始终用 session 名称停止 trace（即使 session_handle == 0）
-    // 避免 ProcessTrace 无法退出导致 consumer_thread.join() 死锁
-    {
-        ULONG prop_size = sizeof(EVENT_TRACE_PROPERTIES) +
-                          (session.name.size() + 1) * sizeof(wchar_t);
+    // 仅停止本实例拥有的 session：
+    //   - kernel：本实例创建成功（session_handle != 0）才 Stop（NT Kernel Logger
+    //     是系统单例，ALREADY_EXISTS 跳过时绝不能 STOP 他人的）
+    //   - 用户态：session 名带实例唯一后缀，只有本实例持有
+    // session_handle == 0 且无消费线程时不存在可停对象（StartSession 失败/被跳过）
+    if (session.session_handle != 0) {
+        ULONG prop_size = static_cast<ULONG>(sizeof(EVENT_TRACE_PROPERTIES) +
+                                             (session.name.size() + 1) * sizeof(wchar_t));
         EVENT_TRACE_PROPERTIES* props = reinterpret_cast<EVENT_TRACE_PROPERTIES*>(calloc(1, prop_size));
         if (props) {
             props->Wnode.BufferSize = prop_size;
@@ -322,119 +343,13 @@ void EtwMonitorImpl::StopSession(EtwSession& session)
 
 void EtwMonitorImpl::EventRecordCallback(PEVENT_RECORD record)
 {
-    std::lock_guard<std::mutex> lk(instance_mutex_);
-    if (instance_) {
-        instance_->ProcessEventRecord(record);
+    // 通过 record->UserContext（OpenTraceW 的 EVENT_TRACE_LOGFILEW.Context）
+    // 路由到具体实例：无全局锁、无静态单例，多沙箱实例共存互不干扰
+    if (!record) return;
+    auto* self = static_cast<EtwMonitorImpl*>(record->UserContext);
+    if (self) {
+        self->ProcessEventRecord(record);
     }
-}
-
-void EtwMonitorImpl::LegacyEventCallback(PEVENT_TRACE event)
-{
-    std::lock_guard<std::mutex> lk(instance_mutex_);
-    if (instance_) {
-        instance_->ProcessLegacyEvent(event);
-    }
-}
-
-void EtwMonitorImpl::ProcessLegacyEvent(PEVENT_TRACE event)
-{
-    if (!event || !ring_buffer_) return;
-
-    BehaviorEvent beh;
-    beh.pid = static_cast<uint32_t>(event->Header.ProcessId);
-    beh.tid = static_cast<uint32_t>(event->Header.ThreadId);
-
-    ULARGE_INTEGER ft;
-    ft.LowPart = event->Header.TimeStamp.LowPart;
-    ft.HighPart = event->Header.TimeStamp.HighPart;
-    beh.timestamp_ms = (ft.QuadPart - 116444736000000000ULL) / 10000;
-
-    // 通过 EVENT_HEADER.Class.Type（opcode）区分事件类型
-    // 旧式 EVENT_TRACE_HEADER 用 Class.Type 作为 opcode
-    UCHAR opcode = event->Header.Class.Type;
-    UCHAR class_id = event->Header.Class.Level;  // 在 NT Kernel Logger 中，Class.Level 存 event id
-
-    if (event->Header.Guid == SystemTraceControlGuid) {
-        switch (opcode) {
-        case 1:  // EVENT_TRACE_TYPE_START
-            if (class_id == 1) beh.type = BehaviorEventType::ProcessStart;
-            else if (class_id == 2) beh.type = BehaviorEventType::ThreadStart;
-            break;
-        case 2:  // EVENT_TRACE_TYPE_END
-            if (class_id == 1) beh.type = BehaviorEventType::ProcessStop;
-            else if (class_id == 2) beh.type = BehaviorEventType::ThreadStop;
-            break;
-        case 3:
-            if (class_id == 2) beh.type = BehaviorEventType::ThreadStart;
-            break;
-        case 4:
-            if (class_id == 2) beh.type = BehaviorEventType::ThreadStop;
-            break;
-        case 10:  // Image Load
-            beh.type = BehaviorEventType::ImageLoad;
-            break;
-        case 11:
-            beh.type = BehaviorEventType::ProcessStop;
-            break;
-        default:
-            beh.type = BehaviorEventType::Unknown;
-            break;
-        }
-    } else {
-        beh.type = BehaviorEventType::Unknown;
-    }
-
-    if (beh.type == BehaviorEventType::Unknown) return;
-
-    // 从 MoF UserData 提取字段（简单偏移读取）
-    if (event->MofData && event->MofLength > 0) {
-        BYTE* data = reinterpret_cast<BYTE*>(event->MofData);
-        ULONG data_len = event->MofLength;
-        bool is_64bit = (event->Header.Flags & EVENT_HEADER_FLAG_64_BIT_HEADER) != 0;
-
-        if (beh.type == BehaviorEventType::ProcessStart) {
-            if (data_len >= (is_64bit ? 24u : 16u)) {
-                beh.pid = *reinterpret_cast<ULONG*>(data + (is_64bit ? 8 : 4));
-                beh.parent_pid = *reinterpret_cast<ULONG*>(data + (is_64bit ? 12 : 8));
-            }
-            // 字符串在固定字段后
-            ULONG str_off = is_64bit ? 24 : 16;
-            if (str_off + sizeof(WCHAR) <= data_len) {
-                WCHAR* ws = reinterpret_cast<WCHAR*>(data + str_off);
-                ULONG max_chars = (data_len - str_off) / sizeof(WCHAR);
-                ULONG len = 0;
-                while (len < max_chars && ws[len] != L'\0') ++len;
-                if (len > 0) {
-                    int utf8_len = WideCharToMultiByte(CP_UTF8, 0, ws, len, nullptr, 0, nullptr, nullptr);
-                    if (utf8_len > 0) {
-                        beh.image_path.resize(utf8_len);
-                        WideCharToMultiByte(CP_UTF8, 0, ws, len, &beh.image_path[0], utf8_len, nullptr, nullptr);
-                    }
-                }
-            }
-        } else if (beh.type == BehaviorEventType::ImageLoad) {
-            ULONG str_off = is_64bit ? 24 : 16;
-            if (str_off + sizeof(WCHAR) <= data_len) {
-                WCHAR* ws = reinterpret_cast<WCHAR*>(data + str_off);
-                ULONG max_chars = (data_len - str_off) / sizeof(WCHAR);
-                ULONG len = 0;
-                while (len < max_chars && ws[len] != L'\0') ++len;
-                if (len > 0) {
-                    int utf8_len = WideCharToMultiByte(CP_UTF8, 0, ws, len, nullptr, 0, nullptr, nullptr);
-                    if (utf8_len > 0) {
-                        beh.image_path.resize(utf8_len);
-                        WideCharToMultiByte(CP_UTF8, 0, ws, len, &beh.image_path[0], utf8_len, nullptr, nullptr);
-                    }
-                }
-            }
-        }
-    }
-
-    logger_->Log(LogLevel::Debug,
-        std::format("ETW: LegacyEvent type={} pid={}", static_cast<int>(beh.type), beh.pid));
-
-    total_events_.fetch_add(1, std::memory_order_relaxed);
-    ring_buffer_->Push(std::move(beh));
 }
 
 void EtwMonitorImpl::ProcessEventRecord(PEVENT_RECORD record)
@@ -445,6 +360,13 @@ void EtwMonitorImpl::ProcessEventRecord(PEVENT_RECORD record)
     event.pid = static_cast<uint32_t>(record->EventHeader.ProcessId);
     event.tid = static_cast<uint32_t>(record->EventHeader.ThreadId);
 
+    // PID 白名单源头过滤（非空时只处理白名单内进程，减少 RingBuffer/回调压力）
+    if (!filter_pids_.empty() &&
+        std::find(filter_pids_.begin(), filter_pids_.end(), event.pid)
+            == filter_pids_.end()) {
+        return;
+    }
+
     ULARGE_INTEGER ft;
     ft.LowPart = record->EventHeader.TimeStamp.LowPart;
     ft.HighPart = record->EventHeader.TimeStamp.HighPart;
@@ -454,95 +376,10 @@ void EtwMonitorImpl::ProcessEventRecord(PEVENT_RECORD record)
     event.type = BehaviorEventType::Unknown;
     parser_.Parse(record, event, tl_is_kernel_consumer_);
 
-    // 临时调试：打印 TDH schema 信息和 UserData hex dump
-    if (tl_is_kernel_consumer_ && record->UserData && record->UserDataLength > 0) {
-        USHORT op = record->EventHeader.EventDescriptor.Opcode;
-        USHORT ev_id = record->EventHeader.EventDescriptor.Id;
-        const GUID& pguid = record->EventHeader.ProviderId;
-        char guid_str[64];
-        sprintf_s(guid_str, "{%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}",
-            pguid.Data1, pguid.Data2, pguid.Data3,
-            pguid.Data4[0], pguid.Data4[1], pguid.Data4[2], pguid.Data4[3],
-            pguid.Data4[4], pguid.Data4[5], pguid.Data4[6], pguid.Data4[7]);
-        if (op == 10 || op == 1) {
-            // 尝试直接获取 TDH schema 信息
-            ULONG buf_size2 = 0;
-            ULONG tdh_status = TdhGetEventInformation(record, 0, nullptr, nullptr, &buf_size2);
-            if (tdh_status == ERROR_INSUFFICIENT_BUFFER) {
-                std::vector<BYTE> tdh_buf(buf_size2);
-                auto* tdh_info = reinterpret_cast<PTRACE_EVENT_INFO>(tdh_buf.data());
-                tdh_status = TdhGetEventInformation(record, 0, nullptr, tdh_info, &buf_size2);
-                if (tdh_status == ERROR_SUCCESS) {
-                    logger_->Log(LogLevel::Debug,
-                        std::format("ETW: TDH op={} prop_count={}",
-                            op, tdh_info->TopLevelPropertyCount));
-                    // 打印所有属性名
-                    if (tdh_info->TopLevelPropertyCount > 0) {
-                        std::string all_props;
-                        for (ULONG pi = 0; pi < tdh_info->TopLevelPropertyCount; ++pi) {
-                            auto& prop2 = tdh_info->EventPropertyInfoArray[pi];
-                            LPCWSTR pname2 = reinterpret_cast<LPCWSTR>(
-                                reinterpret_cast<BYTE*>(tdh_info) + prop2.NameOffset);
-                            int wlen2 = 0;
-                            while (pname2[wlen2] != L'\0') ++wlen2;
-                            if (wlen2 > 0) {
-                                int utf8_len2 = WideCharToMultiByte(CP_UTF8, 0, pname2, wlen2, nullptr, 0, nullptr, nullptr);
-                                if (utf8_len2 > 0) {
-                                    std::string pname_utf8_2(utf8_len2, '\0');
-                                    WideCharToMultiByte(CP_UTF8, 0, pname2, wlen2, &pname_utf8_2[0], utf8_len2, nullptr, nullptr);
-                                    if (!all_props.empty()) all_props += ", ";
-                                    all_props += pname_utf8_2;
-                                }
-                            }
-                        }
-                        logger_->Log(LogLevel::Debug,
-                            std::format("ETW: TDH op={} props=[{}]", op, all_props));
-
-                        auto& prop = tdh_info->EventPropertyInfoArray[0];
-                        LPCWSTR pname = reinterpret_cast<LPCWSTR>(
-                            reinterpret_cast<BYTE*>(tdh_info) + prop.NameOffset);
-                        // 转换宽字符串到窄字符串用于日志
-                        int wlen = 0;
-                        while (pname[wlen] != L'\0') ++wlen;
-                        std::string pname_utf8;
-                        if (wlen > 0) {
-                            int utf8_len = WideCharToMultiByte(CP_UTF8, 0, pname, wlen, nullptr, 0, nullptr, nullptr);
-                            if (utf8_len > 0) {
-                                pname_utf8.resize(utf8_len);
-                                WideCharToMultiByte(CP_UTF8, 0, pname, wlen, &pname_utf8[0], utf8_len, nullptr, nullptr);
-                            }
-                        }
-                        logger_->Log(LogLevel::Debug,
-                            std::format("ETW: TDH first_prop=\"{}\" inType={} outType={}",
-                                pname_utf8, prop.nonStructType.InType, prop.nonStructType.OutType));
-                    }
-                }
-            } else {
-                logger_->Log(LogLevel::Debug,
-                    std::format("ETW: TDH op={} no_schema status={}", op, tdh_status));
-            }
-            BYTE* d = reinterpret_cast<BYTE*>(record->UserData);
-            ULONG dl = record->UserDataLength < 64 ? record->UserDataLength : 64;
-            char hex[256];
-            char* p = hex;
-            for (ULONG i = 0; i < dl; ++i) {
-                p += sprintf_s(p, sizeof(hex) - (p - hex), "%02x ", d[i]);
-            }
-            *p = '\0';
-            logger_->Log(LogLevel::Debug,
-                std::format("ETW: HEX op={} pid={} tid={} data_len={} hex={}",
-                    op, record->EventHeader.ProcessId, record->EventHeader.ThreadId,
-                    record->UserDataLength, hex));
-        }
-    }
-
     // 过滤 Unknown 事件（减少噪音）
     if (event.type == BehaviorEventType::Unknown) {
         return;
     }
-
-    logger_->Log(LogLevel::Debug,
-        std::format("ETW: ProcessEventRecord type={} pid={}", static_cast<int>(event.type), event.pid));
 
     total_events_.fetch_add(1, std::memory_order_relaxed);
     ring_buffer_->Push(std::move(event));
@@ -551,14 +388,31 @@ void EtwMonitorImpl::ProcessEventRecord(PEVENT_RECORD record)
 void EtwMonitorImpl::DispatchLoop()
 {
     std::vector<BehaviorEvent> batch;
-    constexpr size_t MAX_BATCH = 100;
+    // 批量大小走配置（EtwConfig.dispatch_batch_size），缺失/0 时默认 100
+    size_t max_batch = (dispatch_batch_size_ > 0) ? dispatch_batch_size_ : 100;
 
-    // T6.10: 预计算过滤集合（空 = 全部通过）
+    // 预计算过滤集合（空 = 全部通过）
     const bool has_filter = !filter_types_.empty();
+
+    // seq 跳跃检测：RingBuffer 满丢弃之外的可检测丢包信号
+    uint64_t last_seq = 0;
+    bool has_last_seq = false;
+    auto detect_gaps = [&](const std::vector<BehaviorEvent>& evs) {
+        for (const auto& ev : evs) {
+            if (has_last_seq && ev.seq != last_seq + 1) {
+                gap_count_.fetch_add(1, std::memory_order_relaxed);
+                logger_->Log(LogLevel::Warn,
+                    std::format("ETW: seq gap detected: expected={} got={} (event lost)",
+                                last_seq + 1, ev.seq));
+            }
+            last_seq = ev.seq;
+            has_last_seq = true;
+        }
+    };
 
     while (running_.load(std::memory_order_acquire)) {
         batch.clear();
-        ring_buffer_->PopBatch(batch, MAX_BATCH);
+        ring_buffer_->PopBatch(batch, max_batch);
 
         if (!batch.empty()) {
             if (has_filter) {
@@ -572,15 +426,26 @@ void EtwMonitorImpl::DispatchLoop()
                     batch.end());
             }
             if (!batch.empty()) {
-                callback_(batch);
+                detect_gaps(batch);
+                // 回调异常防护：Python 回调/用户回调抛异常时不得 kill 派发线程，
+                // 否则监控静默死亡（RingBuffer 无消费者 → 满丢弃）
+                try {
+                    callback_(batch);
+                } catch (const std::exception& e) {
+                    logger_->Log(LogLevel::Warn,
+                        std::format("ETW: dispatch callback threw: {}", e.what()));
+                } catch (...) {
+                    logger_->Log(LogLevel::Warn, "ETW: dispatch callback threw (unknown)");
+                }
             }
         } else {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
     }
 
+    // 退出前排空剩余事件
     batch.clear();
-    ring_buffer_->PopBatch(batch, MAX_BATCH);
+    ring_buffer_->PopBatch(batch, max_batch);
     if (has_filter && !batch.empty()) {
         batch.erase(
             std::remove_if(batch.begin(), batch.end(),
@@ -592,7 +457,16 @@ void EtwMonitorImpl::DispatchLoop()
             batch.end());
     }
     if (!batch.empty()) {
-        callback_(batch);
+        detect_gaps(batch);
+        try {
+            callback_(batch);
+        } catch (const std::exception& e) {
+            logger_->Log(LogLevel::Warn,
+                std::format("ETW: dispatch callback threw (drain): {}", e.what()));
+        } catch (...) {
+            logger_->Log(LogLevel::Warn,
+                "ETW: dispatch callback threw (drain, unknown)");
+        }
     }
 }
 
@@ -621,7 +495,15 @@ void EtwMonitorImpl::DegradedMonitorLoop()
                     ev.parent_pid = pe.th32ParentProcessID;
 
                     std::wstring wexe(pe.szExeFile);
-                    ev.image_path = std::string(wexe.begin(), wexe.end());
+                    // WideString → UTF-8（非 ASCII 进程名不乱码）
+                    int u8_len = WideCharToMultiByte(CP_UTF8, 0, wexe.c_str(),
+                        static_cast<int>(wexe.size()), nullptr, 0, nullptr, nullptr);
+                    if (u8_len > 0) {
+                        ev.image_path.resize(u8_len);
+                        WideCharToMultiByte(CP_UTF8, 0, wexe.c_str(),
+                            static_cast<int>(wexe.size()), &ev.image_path[0],
+                            u8_len, nullptr, nullptr);
+                    }
 
                     auto now = std::chrono::system_clock::now();
                     ev.timestamp_ms = std::chrono::duration_cast<
@@ -830,7 +712,13 @@ void EtwMonitorImpl::ParseFileNotifyEvents(const std::string& base_path, const B
     while (offset + sizeof(FILE_NOTIFY_INFORMATION) <= len) {
         const auto* fni = reinterpret_cast<const FILE_NOTIFY_INFORMATION*>(data + offset);
 
-        // 文件名长度（字节），转换到 UTF-8
+        // 文件名长度（字节）；必须校验文件名区不越过缓冲边界（ReadDirectoryChangesW
+        // 尾部截断/畸形记录时防越界读）
+        if (fni->FileNameLength > len - offset - sizeof(FILE_NOTIFY_INFORMATION)) {
+            logger_->Log(LogLevel::Warn, "ETW: degraded file notify record truncated, skip");
+            break;
+        }
+
         DWORD name_len_chars = fni->FileNameLength / sizeof(WCHAR);
         std::wstring wname(fni->FileName, name_len_chars);
         std::string name;
@@ -869,6 +757,12 @@ void EtwMonitorImpl::ParseFileNotifyEvents(const std::string& base_path, const B
         }
 
         if (fni->NextEntryOffset == 0) {
+            break;
+        }
+        // 防畸形记录：NextEntryOffset 必须 ≥ 记录头大小且不越过缓冲
+        if (fni->NextEntryOffset < sizeof(FILE_NOTIFY_INFORMATION) ||
+            offset + fni->NextEntryOffset > len) {
+            logger_->Log(LogLevel::Warn, "ETW: degraded file notify offset invalid, skip");
             break;
         }
         offset += fni->NextEntryOffset;
@@ -1086,16 +980,12 @@ Result<void> EtwMonitorImpl::Stop()
         degraded_file_thread_.join();
     }
 
-    {
-        std::lock_guard<std::mutex> lk(instance_mutex_);
-        instance_ = nullptr;
-    }
-
     started_.store(false, std::memory_order_release);
     logger_->Log(LogLevel::Info,
         "ETW: Monitor stopped (total_events=" +
         std::to_string(GetTotalEventCount()) +
-        ", dropped=" + std::to_string(GetDroppedCount()) + ")");
+        ", dropped=" + std::to_string(GetDroppedCount()) +
+        ", gaps=" + std::to_string(GetGapCount()) + ")");
     return Result<void>::Ok();
 }
 

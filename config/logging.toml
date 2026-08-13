@@ -1,0 +1,39 @@
+# 日志配置常量
+# 集中管理所有日志相关的配置：级别、格式、logger 分组、前一日日志归档。
+#
+# 日志文件按模块分组拆分，每组对应一个独立的带毫秒时间戳的日志文件
+# （如 session-20260814-020831.091.log），无轮转；
+# 后台线程会将本地 0 点前的 *.log 自动 gzip 归档为 .log.gz。
+
+[level]
+DAEMON_LOG_LEVEL = "DEBUG"
+WEB_LOG_LEVEL    = "DEBUG"
+CLIENT_LOG_LEVEL = "DEBUG"
+CLIENT_DEBUG     = true
+
+[format]
+LOG_FORMAT      = "%(asctime)s.%(msecs)03d [%(levelname)-8s] [%(name)s:%(threadName)s] %(filename)s:%(lineno)d - %(message)s"
+LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+[archive]
+# 前一日日志自动 gzip 归档的后台检查间隔（秒）
+LOG_ARCHIVE_INTERVAL = 600
+
+[loggers]
+# 守护进程侧分组：daemon=核心+命令处理+文件工具；session=会话运行（含 process/ipc/grid）
+DAEMON_LOGGERS    = ["pty-daemon"]
+SESSION_LOGGERS   = ["pty-session", "pty-grid", "pty-grid-screen", "pty-ipc",
+                     "process-job-tracker", "process-gui-monitor", "process-win32-error",
+                     "process-base", "process-pgid-tracker"]
+# pty=PTY 后端（factory/windows/condrv/unix）
+PTY_LOGGERS       = ["pty-factory", "pty-windows", "pty-condrv", "pty-unix", "pty-unix-process"]
+PROTOCOL_LOGGERS  = ["pty-protocol"]
+AUTH_LOGGERS      = ["pty-auth", "pty-auth-tls"]
+SANDBOX_LOGGERS   = ["sandbox-tracker", "sandbox-pty", "sandbox-manager"]
+# Web 侧分组
+WEB_LOGGERS       = ["pty-web", "pty-web-settings", "pty-web-auth", "pty-vnc"]
+FASTSCREEN_LOGGERS = ["pty-web-fastscreen", "pty-fastscreenservice", "pty-fastscreenservice-encoder",
+                      "fastscreen", "fastscreen.manager", "fastscreen.h264_mse",
+                      "fastscreen.fmp4", "fastscreen.h264_webcodecs"]
+# 客户端分组
+CLIENT_LOGGERS    = ["pty-client"]

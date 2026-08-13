@@ -53,7 +53,7 @@ def _decompress_screen_buffer(resp: dict):
         _logger.warning("解压 screenBufferZ 失败: %s", e)
 
 
-from ..daemon.lifecycle import is_running, start_daemon, stop_daemon
+from .lifecycle import is_running, start_daemon, stop_daemon
 from .input import process_input
 from .formatter import print_response
 from .config_manager import ConfigManager, _DEFAULTS as _DEFAULTS_MAP
@@ -211,7 +211,7 @@ class Client:
         通过共享内存发现 daemon 端口，创建 plain socket 连接，
         装配签名器与凭证提供者。autostart=True 时守护进程未运行则自动启动。
         """
-        from ..daemon.lifecycle import _find_daemon_port, _ping_daemon
+        from .lifecycle import _find_daemon_port, _ping_daemon
 
         port = _find_daemon_port()
         if port is None:
@@ -360,7 +360,7 @@ class Client:
         - responseOutput：把 outputStream 拼进 prompt
 
         提示词优先级：命令行 ai_prompt > --default ai-prompt > ai_analyser 内置默认。
-        超时取自 src/config/common.toml 的 AICHAT_TIMEOUT。
+        超时取自 config/common.toml 的 AICHAT_TIMEOUT。
 
         Args:
             resp:        守护进程返回的 response 字典。
@@ -413,7 +413,7 @@ class Client:
         _logger.info("cmd_start")
         already_running = start_daemon()
         if already_running:
-            from ..daemon.lifecycle import is_running
+            from .lifecycle import is_running
             if is_running():
                 resp = self._send_recv({"type": "list"}, autostart=False)
                 print_response(resp)
@@ -428,7 +428,7 @@ class Client:
 
     def cmd_status(self):
         _logger.info("cmd_status")
-        from ..daemon.lifecycle import _find_daemon_port, _find_daemon_pid
+        from .lifecycle import _find_daemon_port, _find_daemon_pid
         port = _find_daemon_port()
         if port is None:
             print_response({"type": "status", "running": False})
@@ -1078,7 +1078,7 @@ class Client:
         if not session_id or not isinstance(session_id, str):
             print_response(Response.error("invalid session id"))
             return
-        from ..daemon.lifecycle import is_running
+        from .lifecycle import is_running
         if not is_running():
             print_response({"commandType": "kill", "code": -1, "msg": "Daemon not running"})
             return

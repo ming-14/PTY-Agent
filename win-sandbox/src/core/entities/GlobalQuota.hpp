@@ -1,13 +1,12 @@
 // =============================================================================
 // GlobalQuota - 多沙箱全局资源配额实体（core 层）
 //
-// 描述多个 sandbox.exe 进程（= 多个沙箱实例）间共享的资源上限。
+// 描述多个沙箱实例（= 多个 SandboxInstance）间共享的资源上限。
 // 由 infra/globalquota/GlobalQuotaManagerImpl 通过命名共享内存 + Mutex
 // 跨进程维护实际计数。
 //
-// 背景（docs/design/Phase2-Candidates-Evaluation-20260806.md）：
-//   "多沙箱 = 多进程"（每个 sandbox.exe 独立实例），跨进程全局配额
-//   只能通过共享内存 + 命名 Mutex 协调，无法用嵌套 Job（跨进程不可共享）。
+// 多沙箱 = 多进程（每实例独立对象），跨进程全局配额只能通过共享内存 +
+// 命名 Mutex 协调，无法用嵌套 Job（跨进程不可共享）。
 //
 // 字段单位（与 ResourceQuota 一致）：
 //   - CPU 速率：百分比（1-100）

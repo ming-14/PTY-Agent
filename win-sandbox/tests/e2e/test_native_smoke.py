@@ -1,5 +1,5 @@
 """
-test_native_smoke - Phase 11 pybind11 native 扩展冒烟测试
+test_native_smoke - pybind11 native 扩展冒烟测试
 
 验证：
   1. win_sandbox_native 模块可 import

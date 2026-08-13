@@ -13,18 +13,20 @@ def find_cmake():
     cmake = shutil.which("cmake")
     if cmake:
         return cmake
-    for p in [
-        r"C:\Program Files\CMake\bin\cmake.exe",
-        r"C:\Program Files (x86)\CMake\bin\cmake.exe",
-    ]:
+    # 未加入 PATH 时，探测标准安装位置（%ProgramFiles%）
+    for base in (os.environ.get("ProgramFiles", ""), os.environ.get("ProgramFiles(x86)", "")):
+        if not base:
+            continue
+        p = os.path.join(base, "CMake", "bin", "cmake.exe")
         if os.path.exists(p):
             return p
     return None
 
 
 def find_msbuild():
-    vswhere = r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
-    if not os.path.exists(vswhere):
+    pf86 = os.environ.get("ProgramFiles(x86)", "")
+    vswhere = os.path.join(pf86, "Microsoft Visual Studio", "Installer", "vswhere.exe") if pf86 else ""
+    if not vswhere or not os.path.exists(vswhere):
         return None
 
     result = subprocess.run(
@@ -99,7 +101,8 @@ def build_dll():
         print(f"ERROR: {DLL_NAME} not found in build directory")
         sys.exit(1)
 
-    dest = ROOT / "fastscreen" / DLL_NAME
+    # DLL 复制到项目根 bin/fastscreencore/（开发环境绑定层所在位置）
+    dest = ROOT.parent / "bin" / "fastscreencore" / DLL_NAME
     shutil.copy2(dll_found, dest)
     print(f"DLL copied to: {dest}")
     print("Build complete!")

@@ -4,7 +4,7 @@
 // 通过 ntdll 动态加载方式访问未文档化的 Server Silo API（JobObjectCreateSilo
 // 信息类），把现有 Job 就地升级为 Server Silo。平台不支持（Win10 客户端）或
 // 非管理员时优雅降级：IsAvailable() 返回 false，ElevateJob() 返回 SiloUnavailable，
-// 调用方继续用现有 Job + Low IL 隔离（Phase 16 语义不变）。
+// 调用方继续用现有 Job + Low IL 隔离（语义不变）。
 //
 // 线程安全：
 //   - IsAvailable() 内部用 mutex 保护单次探测，结果缓存

@@ -7,7 +7,13 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib
 
-_CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
+# TOML 配置目录：<项目根>/config/（与 src/ 平级的部署配置目录）。
+# 基于 __file__ 定位（src/config/_loader.py → 项目根），与运行 cwd 无关。
+# 发布形态（BUILD.ps1）中 config/ 与 src/ 同级，同规则生效。
+_CONFIG_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "config",
+)
 
 
 def load_toml(filename: str) -> dict:

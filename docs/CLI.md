@@ -47,7 +47,6 @@ python -m src.daemon          # 守护进程入口 (转调 lifecycle.main())
 
 | 脚本                          | 作用                                   |
 | ----------------------------- | -------------------------------------- |
-| `start.ps1` / `start.sh`      | 停止已有守护进程 → 启动 → 验证状态      |
 | `stop.ps1` / `stop.sh`        | 停止守护进程                           |
 | `restart.ps1` / `restart.sh`  | 强制停止 → 等待 1 秒 → 启动            |
 | `BUILD.ps1`                   | 打包构建 pty-agent 到 `./pty-agent/`   |
@@ -101,7 +100,7 @@ python app.py --host 10.0.0.5 --port 18767 exec s1 -c "bash"
 | `closewin <id> <hwnd>` | 关闭指定 GUI 窗口                 |
 | `mouse <id> <action>`  | 发送鼠标动作到 PTY 会话           |
 | `wait`                 | 恒等待指定秒数（守护进程侧等待）  |
-| `file <read\|write\|edit\|grep\|glob>` | 文件工具（读/写/唯一匹配替换/内容搜索/文件名匹配） |
+| `file <read\|write\|edit\|grep\|glob\|upload\|download>` | 文件工具（读/写/唯一匹配替换/内容搜索/文件名匹配/上传/下载） |
 | `keygen`               | 生成 Ed25519 公私钥对             |
 | `set-default <key> <val>` | 覆盖默认配置（会话级）         |
 
@@ -125,7 +124,7 @@ python app.py start [公共选项]
 
 ```powershell
 python app.py start
-.\start.ps1                 # 等价于 stop --force + start + status
+.\restart.ps1                 # 等价于 stop --force + start
 ```
 
 ---
@@ -623,7 +622,7 @@ python app.py keygen [--force | -f] [--key-dir DIR] [--comment TEXT | -C TEXT]
 
 ```bash
 python app.py keygen
-python app.py keygen -f -C "rikka@laptop"
+python app.py keygen -f -C "user@laptop"
 python app.py keygen --key-dir D:\keys
 ```
 
@@ -751,7 +750,7 @@ python app.py read s1 --no-debug
 
 ## 6. 配置系统
 
-**配置目录：** `src/config/`
+**配置目录：** `config/`
 
 **加载机制：** 从 TOML 文件展平为模块级常量
 
@@ -759,6 +758,8 @@ python app.py read s1 --no-debug
 common.py  = common.toml + 运行时计算
 daemon.py  = common.toml + daemon.toml + logging.toml + web.toml
 client.py  = common.toml + client.toml
+files.py   = files.toml + 运行时计算（RG_EXE 自动探测 bin/rg/ 与 PATH）
+sandbox.py = sandbox.toml
 ```
 
 **数据目录：** `~/.pty-agent/`
@@ -875,6 +876,9 @@ TOFU_STRICT         = true          # true=指纹不匹配拒绝
 
 ### 6.4  logging.toml - 日志配置
 
+日志文件写入 `<用户目录>/.pty-agent/logs/`，按模块分组拆分（时间戳命名、无轮转），
+后台线程自动将前一日（本地 0 点前）的 `*.log` gzip 归档为 `.log.gz`。
+
 ```toml
 [level]
 DAEMON_LOG_LEVEL = "DEBUG"
@@ -886,9 +890,27 @@ CLIENT_DEBUG     = true
 LOG_FORMAT      = "%(asctime)s.%(msecs)03d [%(levelname)-8s] ..."
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-[rotation]
-LOG_MAX_BYTES    = 10_485_760      # 10 MB
-LOG_BACKUP_COUNT = 5
+[archive]
+LOG_ARCHIVE_INTERVAL = 600        # 前一日日志 gzip 归档检查间隔（秒）
+
+[loggers]
+# 守护进程侧：daemon（核心/命令/文件）、session（会话运行）、pty（PTY 后端）、
+# protocol（通信协议）、auth（认证）、sandbox（沙箱）
+DAEMON_LOGGERS    = ["pty-daemon"]
+SESSION_LOGGERS   = ["pty-session", "pty-grid", "pty-grid-screen", "pty-ipc",
+                     "process-job-tracker", "process-gui-monitor", "process-win32-error",
+                     "process-base", "process-pgid-tracker"]
+PTY_LOGGERS       = ["pty-factory", "pty-windows", "pty-condrv", "pty-unix", "pty-unix-process"]
+PROTOCOL_LOGGERS  = ["pty-protocol"]
+AUTH_LOGGERS      = ["pty-auth", "pty-auth-tls"]
+SANDBOX_LOGGERS   = ["sandbox-tracker", "sandbox-pty", "sandbox-manager"]
+# Web 侧：web（HTTP/WS/VNC）、fastscreen（屏幕串流）
+WEB_LOGGERS       = ["pty-web", "pty-web-settings", "pty-web-auth", "pty-vnc"]
+FASTSCREEN_LOGGERS = ["pty-web-fastscreen", "pty-fastscreenservice", "pty-fastscreenservice-encoder",
+                      "fastscreen", "fastscreen.manager", "fastscreen.h264_mse",
+                      "fastscreen.fmp4", "fastscreen.h264_webcodecs"]
+# 客户端侧
+CLIENT_LOGGERS    = ["pty-client"]
 ```
 
 ### 6.5  web.toml - Web 服务器配置
@@ -944,12 +966,14 @@ IME_KB_SCALE          = 1.0
 | `response_format`         | stream    | 响应格式（stream/svg）     |
 | `svg_compression_level`   | 1         | SVG 压缩等级               |
 | `terminal_size`           | 80x24     | 终端尺寸                   |
+| `ai_analyse`              | none      | AI 分析模式（none/fileOutput/responseOutput） |
+| `ai_prompt`               | 内置提示词 | AI 分析提示词              |
 
 ---
 
 ## 7. 认证模式
 
-PTY-Agent 支持三种认证模式，通过 `common.toml [auth]` 配置选择：
+支持三种认证模式，通过 `common.toml [auth]` 配置选择：
 
 ### 7.1  Token + HMAC 认证（同机，默认）
 
@@ -1003,8 +1027,11 @@ python app.py --host <server> --port 18767 exec s1 -c "bash"
 | --------------------------------- | --------------------------------------------- |
 | `-NoAichat`                       | 跳过 aichat 下载                              |
 | `-NoFastscreen`                   | 跳过 fastscreen.dll 编译                      |
+| `-NoWinsandbox`                   | 跳过 win_sandbox_native.pyd 编译              |
 | `-NoUltravnc`                     | 跳过 UltraVNC 下载                            |
 | `-NoTerminalInjector`            | 跳过 terminal_injector 下载                   |
+| `-NoRime`                         | 跳过 rime-plugin 构建                         |
+| `-NoRg`                           | 跳过 ripgrep 下载                             |
 | `-Mirror <url>` / `-m <url>`      | GitHub 下载镜像（设置 `$env:GITHUB_MIRROR`）  |
 | `-ApiMirror <url>` / `-am <url>`  | GitHub API 镜像（默认 `https://api.github.com`） |
 
@@ -1016,18 +1043,24 @@ python app.py --host <server> --port 18767 exec s1 -c "bash"
 | `GITHUB_API_MIRROR`        | `https://api.github.com`  | GitHub API 镜像         |
 | `DOWNLOAD_AICHAT`          | `true`                    | 是否下载 aichat         |
 | `BUILD_FASTSCREEN`         | `true`                    | 是否编译 fastscreen.dll |
+| `BUILD_WINSANDBOX`         | `true`                    | 是否编译 win_sandbox_native.pyd |
 | `DOWNLOAD_ULTRAVNC`        | `true`                    | 是否下载 UltraVNC       |
 | `DOWNLOAD_TERMINALINJECTOR`| `true`                    | 是否下载 terminal_injector |
+| `BUILD_RIME`               | `true`                    | 是否构建 rime-plugin    |
+| `DOWNLOAD_RG`              | `true`                    | 是否下载 ripgrep        |
 
 **构建流程：**
 
-1. 复制 `src/`、`bin/`、`app.py`、`SKILL.md` 到 `pty-agent/`
-2. 清理 `__pycache__` 和 `.gitkeep`
-3. 用 cmake + Visual Studio 18 2026 x64 编译 `fastscreen.dll`
-4. 从 `sigoden/aichat` releases 下载 `aichat.exe`
-5. 下载 `UltraVNC_1824.zip`（按 x64/x86 架构）
-6. 下载 `terminal_injector_x64_v1.0.zip`
-7. 删除发布目录中的配置/日志/缓存文件
+1. 构建 rime-plugin（`web_rime/plugin`，npm run build，产物复制到 `src/web/static/vendor/rime/`）
+2. 复制 `src/`、`config/`、`bin/`、`app.py`、`SKILL.md` 到 `pty-agent/`
+3. 清理 `__pycache__` 和 `.gitkeep`
+4. 用 cmake + Visual Studio 18 2026 x64 编译 `fastscreen.dll`
+5. 用 cmake + Ninja + vcvars64 编译 `win_sandbox_native.pyd`（pybind11，复制到 `bin/win_sandbox/_native/`）
+6. 从 `sigoden/aichat` releases 下载 `aichat.exe`
+7. 从 `BurntSushi/ripgrep` releases 下载 `rg.exe`（按系统架构 x86_64/aarch64）
+8. 下载 `UltraVNC_1824.zip`（按 x64/x86 架构）
+9. 下载 `terminal_injector_x64_v1.0.zip`
+10. 删除发布目录中的配置/日志/缓存文件（rime source map、aichat config、vnc.toml/vnc.example.toml、ultravnc 日志/ini）
 
 **构建产物：** `./pty-agent/`（被 `.gitignore` 忽略）
 
@@ -1048,24 +1081,22 @@ $env:GITHUB_MIRROR="https://ghproxy.com/"; .\BUILD.ps1
 ### 9.1  Windows（PowerShell）
 
 ```powershell
-.\start.ps1 [[-Port] PORT]    # 停止已有 -> 启动 -> 验证状态
 .\stop.ps1 [-Force]           # 停止守护进程
 .\restart.ps1                 # 强制停止 -> 等待 1 秒 -> 启动
 ```
 
-`start.ps1` 流程：
+`restart.ps1` 流程：
 
 ```powershell
 python -m src stop --force
-python -m src start [--port $Port]
-python -m src status
+Start-Sleep -Seconds 1
+python -m src start
 ```
 
 ### 9.2  Unix（Bash）
 
 ```bash
-./start.sh [--port PORT]      # 同 start.ps1
-./stop.sh [--force]           # 同 stop.ps1
+./stop.sh [--force]           # 停止守护进程
 ./restart.sh                  # 同 restart.ps1
 ```
 
@@ -1116,7 +1147,7 @@ python start.py -h                       # 所有选项
 ### 10.5  terminal_injector - 终端注入工具
 
 - **路径：** `bin/terminal_injector/`
-- **用途：** 强制劫持已运行的控制台程序供 PTY-Agent 使用
+- **用途：** 强制劫持已运行的控制台程序供会话使用
 
 **用法：**
 
@@ -1124,7 +1155,7 @@ python start.py -h                       # 所有选项
 terminal_injector.exe --list-targets --json
 terminal_injector.exe --mediator --target-pid $pid
 
-# 通过 PTY-Agent 调用:
+# 通过 CLI 调用:
 app.py exec sid -c "terminal_injector.exe --mediator --target-pid $pid" \
     --default response-format svg --snapshot-mode --timeout 15
 ```
@@ -1164,8 +1195,11 @@ app.py exec sid -c "terminal_injector.exe --mediator --target-pid $pid" \
 | `GITHUB_API_MIRROR`        | GitHub API 镜像（默认 `https://api.github.com`） |
 | `DOWNLOAD_AICHAT`          | 是否下载 aichat（默认 true）                  |
 | `BUILD_FASTSCREEN`         | 是否编译 fastscreen.dll（默认 true）          |
+| `BUILD_WINSANDBOX`         | 是否编译 win_sandbox_native.pyd（默认 true）  |
 | `DOWNLOAD_ULTRAVNC`        | 是否下载 UltraVNC（默认 true）                |
 | `DOWNLOAD_TERMINALINJECTOR`| 是否下载 terminal_injector（默认 true）       |
+| `BUILD_RIME`               | 是否构建 rime-plugin（默认 true）             |
+| `DOWNLOAD_RG`              | 是否下载 ripgrep（默认 true）                 |
 
 ### 11.3  子进程环境变量
 
@@ -1352,7 +1386,7 @@ python app.py stop
 | `README.md`                       | 项目说明、命令概览、认证模式           |
 | `AGENTS.md`                       | AI Agent 工作规范                      |
 | `SKILL.md`                        | AI 技能描述（最详尽的命令参考）        |
-| `docs/desgin/ARCHITECTURE.md`     | 架构设计（模块化分层、调用链、线程模型） |
+| `docs/ARCHITECTURE.md`           | 架构设计（模块化分层、调用链、线程模型） |
 | `docs/CODEING-STANDARD.md`        | Python 编码规范                        |
 | `docs/reference/features.md`      | 功能全景图（最详尽）                   |
 | `docs/reference/output.md`        | 输出格式一览                           |
@@ -1362,15 +1396,15 @@ python app.py stop
 | `docs/net-traveral/cloudflare-tunnel.md` | Cloudflare Tunnel 内网穿透       |
 | `docs/net-traveral/cpolar.md`     | cpolar 内网穿透                        |
 | `tests/docs/FILESTREE.md`         | `tests/` 测试套件文件树                |
-| `fastscreen/docs/FILESTREE.md`    | `fastscreen/` C++ 屏幕捕获文件树       |
+| `fastscreen/README.md`     | `fastscreen/` C++ 屏幕捕获库说明   |
 | `web_rime/docs/FILESTREE.md`      | `web_rime/` Rime 输入法文件树          |
 
 **测试：**
 
 ```bash
 python -m pytest tests/ -v              # 全部测试
-python -m pytest tests/unit/ -v         # 单元测试 (851+ passed)
-python -m pytest tests/integration/ -v  # 集成测试 (11+ passed)
+python -m pytest tests/unit/ -v         # 单元测试
+python -m pytest tests/integration/ -v  # 集成测试
 python -m pytest tests/e2e/ -v          # 端到端 (VNC/TLS/pubkey/resize)
 python -m pytest tests/web/ -v          # Web (MSE/H264/WebSocket)
 ```

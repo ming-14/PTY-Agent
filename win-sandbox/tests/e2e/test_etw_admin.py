@@ -1,14 +1,14 @@
-"""test_etw_admin.py - ETW 管理员模式验证（Phase 14 pybind11 直调形态）。
+"""test_etw_admin.py - ETW 管理员模式验证（pybind11 直调形态）。
 
 以管理员权限运行时，ETW 内核 session 启动，验证：
-  T1: ETW session 启动成功（收到 behavior 事件）
-  T2: 收到 process_start 事件（含 image_path / path）
-  T3: 收到 file_create 事件（含 file_path / path）
-  T4: 收到 registry_set_key 事件（含 key_path / path）
-  T5: 收到 tcp_connect 事件
-  T6: 收到 image_load 事件（含 image_path / path）
-  T7: Shutdown 正常停止
-  T8: AccessDenied 事件含完整路径（ETW NtStatus 检测）
+  ETW session 启动成功（收到 behavior 事件）
+  收到 process_start 事件（含 image_path / path）
+  收到 file_create 事件（含 file_path / path）
+  收到 registry_set_key 事件（含 key_path / path）
+  收到 tcp_connect 事件
+  收到 image_load 事件（含 image_path / path）
+  Shutdown 正常停止
+  AccessDenied 事件含完整路径（ETW NtStatus 检测）
 
 非管理员模式下 ETW 自动降级为进程轮询，相关用例 SKIP。
 管理员下用 on_behavior_event / on_access_denied 回调收集事件。
@@ -156,8 +156,8 @@ def _collect_behavior_and_access_denied(sb, command_line, timeout_ms=15000,
 # =============================================================================
 
 def test_admin_etw_sessions():
-    """T1: ETW admin mode - session 启动成功（收到 behavior 事件）。"""
-    print("\n[T1] admin ETW sessions start", flush=True)
+    """ETW admin mode - session 启动成功（收到 behavior 事件）。"""
+    print("\nadmin ETW sessions start", flush=True)
     if not _is_admin():
         print("  [SKIP] not running as admin", flush=True)
         return "skip"
@@ -184,8 +184,8 @@ def test_admin_etw_sessions():
 
 
 def test_admin_process_start():
-    """T2: 收到 process_start 事件（含 image_path / path）。"""
-    print("\n[T2] admin process_start event", flush=True)
+    """收到 process_start 事件（含 image_path / path）。"""
+    print("\nadmin process_start event", flush=True)
     if not _is_admin():
         print("  [SKIP] not running as admin", flush=True)
         return "skip"
@@ -216,8 +216,8 @@ def test_admin_process_start():
 
 
 def test_admin_file_create():
-    """T3: 收到 file_create 事件（含 file_path / path）。"""
-    print("\n[T3] admin file_create event", flush=True)
+    """收到 file_create 事件（含 file_path / path）。"""
+    print("\nadmin file_create event", flush=True)
     if not _is_admin():
         print("  [SKIP] not running as admin", flush=True)
         return "skip"
@@ -248,8 +248,8 @@ def test_admin_file_create():
 
 
 def test_admin_registry_event():
-    """T4: 收到 registry_set_key 事件（含 key_path / path）。"""
-    print("\n[T4] admin registry event", flush=True)
+    """收到 registry_set_key 事件（含 key_path / path）。"""
+    print("\nadmin registry event", flush=True)
     if not _is_admin():
         print("  [SKIP] not running as admin", flush=True)
         return "skip"
@@ -283,8 +283,8 @@ def test_admin_registry_event():
 
 
 def test_admin_network_event():
-    """T5: 收到 tcp_connect 事件。"""
-    print("\n[T5] admin network event", flush=True)
+    """收到 tcp_connect 事件。"""
+    print("\nadmin network event", flush=True)
     if not _is_admin():
         print("  [SKIP] not running as admin", flush=True)
         return "skip"
@@ -313,8 +313,8 @@ def test_admin_network_event():
 
 
 def test_admin_image_load():
-    """T6: 收到 image_load 事件（含 image_path / path）。"""
-    print("\n[T6] admin image_load event", flush=True)
+    """收到 image_load 事件（含 image_path / path）。"""
+    print("\nadmin image_load event", flush=True)
     if not _is_admin():
         print("  [SKIP] not running as admin", flush=True)
         return "skip"
@@ -344,8 +344,8 @@ def test_admin_image_load():
 
 
 def test_admin_shutdown():
-    """T7: Shutdown 后 ETW 正常停止（无崩溃/死锁）。"""
-    print("\n[T7] admin shutdown", flush=True)
+    """Shutdown 后 ETW 正常停止（无崩溃/死锁）。"""
+    print("\nadmin shutdown", flush=True)
     if not _is_admin():
         print("  [SKIP] not running as admin", flush=True)
         return "skip"
@@ -375,11 +375,11 @@ def test_admin_shutdown():
 
 
 def test_admin_access_denied():
-    """T8: AccessDenied 事件含完整路径（ETW NtStatus 检测 + stderr 扫描）。
+    """AccessDenied 事件含完整路径（ETW NtStatus 检测 + stderr 扫描）。
 
     通过 Low IL 隔离 + 写未授权路径触发拒绝。
     """
-    print("\n[T8] admin access_denied with path", flush=True)
+    print("\nadmin access_denied with path", flush=True)
     if not _is_admin():
         print("  [SKIP] not running as admin", flush=True)
         return "skip"
@@ -408,7 +408,7 @@ def test_admin_access_denied():
             exit_code, stdout, stderr, reason, beh_events, ad_events = \
                 _collect_behavior_and_access_denied(
                     sb,
-                    'cmd.exe /c echo test > C:\\Windows\\test_denied.txt',
+                    f'cmd.exe /c echo test > "{os.environ["SYSTEMROOT"]}\\test_denied.txt"',
                     timeout_ms=15000,
                 )
             # behavior 事件中的 access_denied
@@ -448,7 +448,7 @@ _TESTS = [
 
 def main() -> int:
     print("=" * 60)
-    print("ETW Admin Mode Tests (Phase 14 pybind11)")
+    print("ETW Admin Mode Tests （pybind11）")
     print("=" * 60)
 
     if not _is_admin():

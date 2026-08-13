@@ -82,8 +82,7 @@ class SubscriptionService:
           与 ConPTY repaint 同源，显示正确
         - 后续实时输出通过 publisher 持续推送
 
-        Phase 3 改造（tmux 风格 scrollback）：
-        - 额外返回 scrollback_ansi（GridScreen 维护的历史区）
+        - 额外返回 scrollback_ansi（GridScreen 维护的历史区，tmux 风格）
         - 前端写入 xterm.js 推入 scrollback 区，F5 刷新/重开浏览器后历史不丢
         - 与 tmux 共享 grid 不同：daemon 与 browser 是 C/S 架构，必须通过 WS 传输
 
@@ -106,7 +105,7 @@ class SubscriptionService:
         # snapshot 格式由 screen.py 的 _render_with_colors 控制（每行前 CSI row+1;1H）
         replay_text = session.get_snapshot(keep_ansi=True)
 
-        # Phase 3: 捕获 scrollback 历史区（GridScreen 维护，带 SGR 颜色）
+        # 捕获 scrollback 历史区（GridScreen 维护，带 SGR 颜色）
         # 前端写入 xterm.js 时推入 scrollback 区，实现刷新后历史不丢
         try:
             scrollback_ansi = session.capture_scrollback()

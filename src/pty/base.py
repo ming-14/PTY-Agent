@@ -106,3 +106,19 @@ class PseudoTerminal:
             True 表示注入成功。
         """
         return False
+
+    # ── GUI 窗口检测（可选能力，默认空实现）──
+    # Unix 后端在终端窗口上检测（pty_impl.poll_gui_windows），
+    # Windows ConPTY 无自有窗口（headless），保持空实现。
+
+    def poll_gui_windows(self) -> list:
+        """轮询检测本轮新增的 GUI 窗口（无窗口后端返回空列表）"""
+        return []
+
+    def get_gui_windows(self) -> list:
+        """获取已检测到的 GUI 窗口列表"""
+        return []
+
+    def close_gui_window(self, hwnd: int) -> bool:
+        """关闭指定 GUI 窗口"""
+        return False
