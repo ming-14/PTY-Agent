@@ -51,17 +51,13 @@ class TestPendingEvent:
         assert dicts[1]["time"] == "1970-01-01T08:00:02.00"
 
 
-# 使用 mock PTY 避免真实依赖
+# 使用 mock PTY / mock tracker 避免真实依赖
 class _MockPty:
     """模拟 PseudoTerminal"""
 
     def __init__(self):
-        self._processes = [100, 200]
         self.drain_call_count = 0
         self.last_read_data = None
-
-    def get_process_list(self):
-        return list(self._processes)
 
     def get_exit_code(self):
         return 0
@@ -79,11 +75,39 @@ class _MockPty:
     def write(self, data):
         pass
 
+
+class _MockTracker:
+    """模拟 ProcessTreeTracker"""
+
+    def __init__(self, pids=None):
+        self._pids = pids if pids is not None else [100, 200]
+
+    def get_process_list(self):
+        return list(self._pids)
+
+    def get_process_exit_code(self, pid):
+        return None
+
+    def get_root_exit_code(self):
+        return 0
+
+    def drain_notifications(self):
+        return []
+
+    def register_root(self, pid, hprocess=None):
+        return True
+
+    def kill_tree(self, timeout=3.0):
+        pass
+
+    def close(self):
+        pass
+
     def poll_gui_windows(self):
         return []
 
-    def get_child_process_exit_code(self, pid):
-        return 0
+    def close_gui_window(self, hwnd):
+        return False
 
 
 class TestSessionEvents:
@@ -91,15 +115,16 @@ class TestSessionEvents:
 
     @pytest.fixture
     def session(self, monkeypatch):
-        """创建一个最小化 Session 实例（使用 mock PTY）"""
+        """创建一个最小化 Session 实例（使用 mock PTY + mock tracker）"""
         from src.session.session import Session
-        from src.pty.factory import create_pty
 
         # Mock create_pty 返回模拟 PTY
         def _mock_create_pty(*args, **kwargs):
             return _MockPty()
 
         monkeypatch.setattr("src.session.session.create_pty", _mock_create_pty)
+        monkeypatch.setattr("src.session.session.create_process_tracker",
+                            lambda: _MockTracker())
 
         sess = Session("test-sess", "echo hello")
         sess.start()
@@ -349,7 +374,6 @@ class TestSessionDrain:
     def drain_session(self, monkeypatch):
         """创建使用 _DataMockPty 的 Session"""
         from src.session.session import Session
-        from src.pty.factory import create_pty
 
         mock_pty = self._DataMockPty()
 
@@ -357,6 +381,8 @@ class TestSessionDrain:
             return mock_pty
 
         monkeypatch.setattr("src.session.session.create_pty", _mock_create_pty)
+        monkeypatch.setattr("src.session.session.create_process_tracker",
+                            lambda: _MockTracker())
 
         sess = Session("drain-test", "echo test")
         sess.start()

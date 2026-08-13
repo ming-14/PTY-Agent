@@ -89,7 +89,7 @@ class EventHistoryManager:
 
         return dicts
 
-    def check_existence(self, ev: dict, pty_provider: Callable) -> bool:
+    def check_existence(self, ev: dict, tracker_provider: Callable) -> bool:
         ev_type = ev.get("type", "")
 
         if ev_type in ("process_exit", "process_crash"):
@@ -99,11 +99,11 @@ class EventHistoryManager:
             pid = ev.get("pid", 0)
             if pid <= 0:
                 return False
-            pty = pty_provider()
-            if not pty:
+            tracker = tracker_provider()
+            if not tracker:
                 return False
             try:
-                pids = pty.get_process_list()
+                pids = tracker.get_process_list()
                 return pid in pids
             except Exception:
                 return False

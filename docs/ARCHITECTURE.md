@@ -10,7 +10,7 @@
 
 PTY-Agent 是一个通过伪终端（PTY）与交互式 CLI 程序双向通信的命令行代理。守护进程以独立子进程运行，首次执行命令时自动启动。支持同机 IPC（明文 + token 认证）与跨机访问（TLS + pubkey 认证）双端口架构，并提供 Web 管理界面、FastScreen 屏幕流、VNC 远程桌面等扩展能力。
 
-**子命令**：`start | stop | status | list | exec | send | read | kill | events | closewin | mouse | wait | set-default | keygen`
+**子命令**：`start | stop | status | list | exec | send | read | kill | events | closewin | mouse | wait | file <read|write|edit|grep|glob|upload|download> | set-default | keygen`
 
 ---
 
@@ -47,9 +47,11 @@ src/
 │   ├── common.py            # 共有配置加载（common.toml + IS_WINDOWS / DATA_DIR / PROJECT_ROOT）
 │   ├── daemon.py            # 守护进程配置加载（common + daemon + logging + web.toml + PORT_FILE / LOG_DIR）
 │   ├── client.py            # 客户端配置加载（common + client.toml）
+│   ├── files.py             # 文件工具配置加载（files.toml + RG_EXE 自动探测）
 │   ├── common.toml          # 共有配置（终端默认值 / DAEMON_HOST / 压缩 / 输入限制 / 认证开关 / AI 超时）
 │   ├── daemon.toml          # 守护进程配置（端口 / 缓冲 / 超时 / 命名资源 / SHM / TLS 服务端）
 │   ├── client.toml          # 客户端配置（连接超时 / TLS 客户端 / TOFU）
+│   ├── files.toml           # 文件工具配置（读/写/搜索上限、忽略目录、RG_EXE）
 │   ├── logging.toml         # 日志配置（级别 / 格式 / 轮转 / logger 分组）
 │   ├── web.toml             # Web 服务器配置（监听 / 密码认证 / VNC / fastscreen / 网页端默认值）
 │   ├── vnc.toml             # VNC 运行时配置（端口 / 密码 / 日志，由 winvnc 读取）
@@ -91,7 +93,7 @@ src/
 │
 ├── daemon/                  # ═══════ 守护进程层 ═══════
 │   ├── __main__.py          # 入口（`python -m src.daemon`），转调 lifecycle.main()
-│   ├── lifecycle.py         # 生命周期管理：start_daemon / stop_daemon / is_running / main / setup_client_logging（729 行）
+│   ├── lifecycle.py         # 生命周期管理：start_daemon / stop_daemon / is_running / main / setup_client_logging（740 行）
 │   ├── server.py            # DaemonServer（多 Listener 编排 + 认证上下文构建 + 生命周期，469 行）
 │   ├── listener.py          # Listener（单端口 accept 循环，封装明文/TLS 传输 + AuthContext）
 │   ├── single_instance.py   # 单实例互斥锁（防止多守护进程同时运行）
@@ -111,7 +113,40 @@ src/
 │       ├── mouse_handler.py # mouse 命令处理
 │       ├── status_handler.py # status 命令处理
 │       ├── wait_handler.py  # wait 命令处理
+│       ├── file_read_handler.py # file read 命令处理
+│       ├── file_write_handler.py # file write 命令处理
+│       ├── file_edit_handler.py # file edit 命令处理（create/replace/delete）
+│       ├── file_grep_handler.py # file grep 命令处理（rg 双引擎）
+│       ├── file_glob_handler.py # file glob 命令处理（rg 双引擎）
+│       ├── file_upload_handler.py # file upload 命令处理（握手→二进制帧传输）
+│       ├── file_download_handler.py # file download 命令处理（握手→二进制帧传输）
 │       └── utils.py         # 处理器工具函数（compress_screen_buffer / map_reason / build_result / attach_screen_buffer 等约 15 个）
+│
+├── files/                    # ═══════ 文件工具用例层（read/write/edit/grep/glob/upload/download） ═══════
+│   ├── __init__.py           # 聚合导出工具函数集合
+│   ├── paths.py              # 路径工具：会话 cwd 解析（resolve_session_path）/边界判定/git-bash 检测
+│   ├── state.py              # 读写状态机：FileRecordStore（readTime/writeTime）
+│   ├── diff.py               # unified diff 生成 + additions/removals 统计
+│   ├── history.py            # FileHistoryStore（SQLite 版本链，~/.pty-agent/history.db）
+│   ├── permission.py         # 权限检查器（D3：仅保留接口，直接放行）
+│   ├── errors.py             # 工具异常类型（FileToolError / FileReadRequiredError 等）
+│   ├── read/
+│   │   └── reader.py         # file read 用例：大小/行数限制、行号输出、图片检测、相似名建议
+│   ├── write/
+│   │   └── writer.py         # file write/file edit 用例：状态机→diff→权限→落盘→history
+│   ├── search/
+│   │   ├── grep.py           # file grep 用例：rg 引擎 + 纯 Python 降级
+│   │   ├── glob_.py          # file glob 用例：rg --files + 递归 glob 降级
+│   │   └── ignore.py         # SkipHidden 过滤（隐藏文件 + 忽略目录清单）
+│   └── transfer/             # ═══ file upload/download 传输业务（两端共用） ═══
+│       ├── common.py         # 帧协议常量/错误类型（TransferError/TransferTimeoutError/TransferAbortedError）
+│       ├── scan.py           # 本地/远端树扫描（清单生成）
+│       ├── map.py            # 路径映射（远端↔本地 relpath 对齐）
+│       ├── judge.py          # 覆盖判定（相同跳过/不同拒绝提示 --force）
+│       ├── client_upload.py  # CLI 侧上传驱动（握手→清单→逐文件→进度）
+│       ├── client_download.py # CLI 侧下载驱动
+│       ├── daemon_upload.py  # daemon 侧上传接收（落盘→校验→rename→history→映射）
+│       └── daemon_download.py # daemon 侧下载发送（扫描→逐文件发送）
 │
 ├── pty/                     # ═══════ 伪终端后端层 ═══════
 │   ├── pty_factory.py       # 工厂函数 create_pty + 平台检测
@@ -124,10 +159,8 @@ src/
 │       ├── win32_api.py     # Windows ctypes 类型定义 + 全部 API 函数绑定（507 行）
 │       ├── conpty.py        # WindowsPseudoTerminal（CreatePseudoConsole 路径，1001 行）
 │       ├── condrv.py        # ConDrvPseudoTerminal（NT NtOpenFile 直连路径，已禁用，1128 行）
-│       ├── job.py           # ProcessJob + JobNotification（进程树追踪 + IOCP 通知）
-│       ├── gui_monitor.py   # GuiWindowMonitor + GuiWindowInfo（EnumWindows GUI 窗口轮询）
-│       ├── shells.py        # Shell 检测函数（detect_available_shells / format_shell_info / resolve_default_shell）
-│       └── win32_error_msg.py # Windows NTSTATUS/Win32 错误码格式化
+│       ├── conpty_handle.py # ConPtyHandle（HPCON + inW/outR 句柄三件套，I/O 与 resize）
+│       └── shells.py        # Shell 检测函数（detect_available_shells / format_shell_info / resolve_default_shell）
 │
 ├── ipc/                     # ═══════ 进程间通信层 ═══════
 │   └── shm.py               # 共享内存工具（端口/PID + 认证令牌 + HMAC 密钥读写，349 行）
@@ -139,8 +172,8 @@ src/
 │
 ├── session/                 # ═══════ 会话管理层 ═══════
 │   ├── manager.py           # SessionManager（会话 CRUD + stop_all）
-│   ├── session.py           # Session 协调器（组合各子组件，委托线程管理，893 行）
-│   ├── session_threads.py   # SessionThreads + SessionComponents（后台读者/监控线程管理，403 行）
+│   ├── session.py           # Session 协调器（组合各子组件，委托线程管理，932 行）
+│   ├── session_threads.py   # SessionThreads + SessionComponents（后台读者/监控线程管理，407 行）
 │   └── publisher.py         # SessionPublisher（订阅者与结束回调管理，向 Web 层发布会话状态）
 │
 ├── encoding/                # ═══════ 编码探测层（独立子包） ═══════
@@ -153,9 +186,17 @@ src/
 │   └── events.py            # EventHistoryManager + PendingEvent（事件队列 + 历史 + 存在性检测）
 │
 ├── process/                 # ═══════ 进程处理层（独立子包） ═══════
+│   ├── base.py              # ProcessTreeTracker 抽象基类 + ProcessNotification + 进程信息实体
 │   ├── monitor.py           # ProcessMonitor（进程树 diff + IOCP 排空 + 崩溃检测）
 │   ├── info.py              # 进程查询与错误格式化（_get_process_name / _get_process_path / _format_exit_code_message / _format_pty_error / _get_process_tree 等，538 行）
-│   └── gui.py               # GuiDetector（GUI 窗口轮询检测，2s 节流）
+│   ├── gui.py               # GuiDetector（GUI 窗口轮询检测，2s 节流）
+│   ├── win32_error.py       # Windows NTSTATUS/Win32 错误码格式化（translate_windows_error / format_process_exit_code / format_create_process_error）
+│   ├── unix/                # ═══ Unix 子包 ═══
+│   │   └── pgid_tracker.py  # PgidProcessTreeTracker（进程组追踪 + waitpid 轮询崩溃检测）
+│   └── windows/             # ═══ Windows 子包 ═══
+│       ├── api.py           # Windows API 绑定（Job 相关 ctypes 声明）
+│       ├── job_tracker.py   # JobProcessTreeTracker（Job Object 追踪 + IOCP 实时通知 + KILL_ON_JOB_CLOSE）
+│       └── gui_monitor.py   # GuiWindowMonitor + GuiWindowInfo（EnumWindows GUI 窗口轮询）
 │
 ├── input/                   # ═══════ 输入处理层 ═══════
 │   ├── interceptor.py       # InputInterceptor（SGR 鼠标/键盘 VT 拦截 + 鼠标动作执行，426 行）
@@ -429,6 +470,13 @@ graph TB
 | `handlers/mouse_handler.py` | `MouseHandler` | mouse 命令处理 |
 | `handlers/status_handler.py` | `StatusHandler` | status 命令处理 |
 | `handlers/wait_handler.py` | `WaitHandler` | wait 命令处理（恒等待指定秒数） |
+| `handlers/file_read_handler.py` | `FileReadHandler` | file read 命令处理（大小/行数/图片限制，成功读后刷新状态机） |
+| `handlers/file_write_handler.py` | `FileWriteHandler` | file write 命令处理（读前写检查，成功写后落历史版本） |
+| `handlers/file_edit_handler.py` | `FileEditHandler` | file edit 命令处理（create/replace/delete 三分支） |
+| `handlers/file_grep_handler.py` | `FileGrepHandler` | file grep 命令处理（rg 双引擎 + 降级） |
+| `handlers/file_glob_handler.py` | `FileGlobHandler` | file glob 命令处理（rg 双引擎 + 降级） |
+| `handlers/file_upload_handler.py` | `FileUploadHandler` | file upload 命令处理（握手校验 → daemon_upload 二进制帧接收落盘） |
+| `handlers/file_download_handler.py` | `FileDownloadHandler` | file download 命令处理（握手校验 → daemon_download 扫描发送） |
 | `handlers/utils.py` | 处理器工具函数 | `compress_screen_buffer` / `map_reason` / `filter_snapshot_lines` / `build_hint` / `validate_field` / `attach_screen_buffer` / `build_result` / `apply_lines_grep` / `apply_client_defaults` 等约 15 个 |
 
 **设计要点**：
@@ -448,18 +496,18 @@ graph TB
 | 模块 | 类/函数 | 职责 |
 |------|---------|------|
 | `pty_factory.py` | `create_pty(command, cols, rows, cwd, env, encoding)` → `PseudoTerminal` | 工厂函数，按优先级尝试各后端 |
-| `base.py` | `PseudoTerminal` | 抽象基类：`read()` / `write()` / `drain()` / `close()` / `fileno()` / `get_child_pid()` / `get_exit_code()` / `get_child_process_exit_code()` / `get_job_notifications()` / `get_process_list()` / `get_gui_windows()` / `poll_gui_windows()` / `close_gui_window()` / `get_type()` |
+| `base.py` | `PseudoTerminal` | 抽象基类：`read()` / `write()` / `drain()` / `close()` / `fileno()` / `get_child_pid()` / `get_exit_code()` / `get_type()` / `inject_mouse_event()`。进程树管理已迁出至 `process/` 包（ProcessTreeTracker），PTY 基类不再持有 |
 | `unix/pty_impl.py` | `UnixPseudoTerminal` | `os.openpty()` + `os.fork()` + `execvpe()`，非阻塞 I/O |
 | `unix/process.py` | `UnixProcessMonitor` | Unix 进程树监控：基于 pgid 追踪进程树，waitpid 轮询崩溃检测，os.killpg 终止 |
 | `unix/process.py` | `UnixNotification` | Unix 进程通知（与 Windows `JobNotification` 接口对齐：`is_crash()` / `is_exit()` / `is_spawn()`） |
 | `unix/shells.py` | `detect_available_shells()` / `format_shell_info()` / `resolve_default_shell()` | Shell 检测函数（枚举可用 shell + 解析默认 shell） |
 | `windows/win32_api.py` | 全部 `_*` ctypes 类型 + API 绑定 | 集中管理 Windows API 声明（唯一的 API 声明文件） |
-| `windows/conpty.py` | `WindowsPseudoTerminal` | `CreatePseudoConsole` API 路径，集成 ProcessJob + GuiWindowMonitor |
+| `windows/conpty.py` | `WindowsPseudoTerminal` | `CreatePseudoConsole` API 路径（进程树追踪与 IOCP 通知经 tracker，见 `process/windows/job_tracker.py`） |
+| `windows/conpty_handle.py` | `ConPtyHandle` | HPCON + inW/outR 句柄三件套：读写 / resize / 继承句柄分发（沙箱与原生 ConPTY 共用） |
 | `windows/condrv.py` | `ConDrvPseudoTerminal` | `NtOpenFile("\\Device\\ConDrv\\Server")` 直连路径（I/O 不完整，已禁用） |
-| `windows/job.py` | `ProcessJob` + `JobNotification` | Job Object 封装：进程树追踪、IOCP 实时通知、KILL_ON_JOB_CLOSE |
-| `windows/gui_monitor.py` | `GuiWindowMonitor` + `GuiWindowInfo` | EnumWindows 轮询检测 GUI 窗口，SendMessage(WM_CLOSE) 关闭 |
 | `windows/shells.py` | `detect_available_shells()` / `format_shell_info()` / `resolve_default_shell()` | Shell 检测函数（枚举可用 shell + 解析默认 shell） |
-| `windows/win32_error_msg.py` | `translate_windows_error()` / `format_process_exit_code()` / `format_create_process_error()` | Windows NTSTATUS/Win32 错误码格式化（名称映射 + FormatMessageW） |
+
+> 注：Job Object 封装（原 `pty/windows/job.py`）、GUI 窗口检测（原 `pty/windows/gui_monitor.py`）、Windows 错误码格式化（原 `pty/windows/win32_error_msg.py`）已随进程管理重构迁入 `process/` 包（`process/windows/job_tracker.py` / `process/windows/gui_monitor.py` / `process/win32_error.py`），详见 3.3.5 等章节。
 
 **设计要点**：
 - `base.py` 定义了最小接口契约，所有具体 PTY 后端必须实现全部方法
@@ -469,8 +517,10 @@ graph TB
   - Windows ConDrv：同名管道 + `PeekNamedPipe` + 重叠 I/O 排空
 - `windows/` 子包仅在 `IS_WINDOWS` 为 True 时才被导入（在 `pty_factory.py` 中条件导入），Unix 平台零开销
 - `windows/win32_api.py` 作为唯一的 Windows API 声明文件，便于审计和维护；`_CONDRV_OK = False` 控制 ConDrv 后端禁用
-- `create_pty` 工厂：Windows 使用 ConPTY，Unix 使用 UnixPseudoTerminal，无 subprocess 回退
-  — 注意：ConDrv 直连因 I/O 不完整已禁用（`_CONDRV_OK=False`），仅保留源码供后续调试/恢复。
+- `create_pty` 工厂（Windows 优先级）：沙箱（`[sandbox] enabled=true` 且传入 `SandboxProcessTreeTracker` 时）> ConDrv 直连（`_CONDRV_OK` 控制，当前禁用）> `WindowsPseudoTerminal`（ConPTY）；Unix 使用 `UnixPseudoTerminal`，无 subprocess 回退
+  - 命令归一化：工厂入口统一处理 `command`（`str` 时按 shell 语义 `shlex.split` 拆分，后端统一消费 `List[str]`），避免逐字符展开
+  - 沙箱是安全边界：`[sandbox] enabled=true` 时**带沙箱 tracker 的会话强制走沙箱**（创建失败不回退原生）；未带 tracker（None）的裸后端调用视为非沙箱会话，回退原生后端
+  - 注意：ConDrv 直连因 I/O 不完整已禁用（`_CONDRV_OK=False`），仅保留源码供后续调试/恢复。
 - Unix 进程监控基于 process group (pgid)：子进程通过 `os.setsid()` 创建新会话，同会话内所有子/孙进程共享 pgid，利用 pgid 追踪/杀死进程树。崩溃检测采用 waitpid 轮询（与 Windows IOCP 推送不同），由 `_monitor_loop` 每 2 秒调用 `drain_notifications()`
 - 新增 PTY 后端只需：创建新文件 → 继承 `PseudoTerminal` → 在 `create_pty` 的优先级链中添加
 
@@ -481,7 +531,7 @@ graph TB
 | 模块 | 类/函数 | 职责 |
 |------|---------|------|
 | `manager.py` | `SessionManager` | `create_session(id, command, encoding, shell, cwd, env, cols, rows)` / `get_session()` / `list_sessions()` / `remove_session()` / `stop_all()` |
-| `session.py` | `Session` 类（协调器，893 行） | 属性：`id`, `uid`, `command`, `running`, `snapshot_mode`, `exit_code`, `error_message`, `encoding`, `pty_type`, `output_offset`, `gui_windows`, `processes`, `cwd` |
+| `session.py` | `Session` 类（协调器，932 行） | 属性：`id`, `uid`, `command`, `running`, `snapshot_mode`, `exit_code`, `error_message`, `encoding`, `pty_type`, `output_offset`, `gui_windows`, `processes`, `cwd` |
 | `session.py` | `Session.start()` / `stop()` | 创建 PTY + 启动读者/监控线程 + 组件重置 / 优雅关闭 |
 | `session.py` | `Session.write_input()` / `send_signal()` | 写入输入到 PTY（编码感知） / 发送信号（SIGINT/SIGTERM/SIGHUP，Windows 用 GenerateConsoleCtrlEvent） |
 | `session.py` | `Session.perform_mouse_action()` / `update_mouse_mode_from_console()` | 执行鼠标动作（委托 InputInterceptor） / 从控制台更新鼠标模式 |
@@ -494,7 +544,7 @@ graph TB
 | `session.py` | `Session.detect_encoding()` | 编码探测（委托 EncodingDetector） |
 | `session.py` | `Session.get_pty_process_list()` / `get_pty_child_pid()` | 查询 PTY 进程列表 / 子进程 PID |
 | `session_threads.py` | `SessionThreads` | 后台读者线程 + 监控线程管理（启动/停止/循环逻辑） |
-| `session_threads.py` | `SessionComponents` | 子组件引用容器数据类（pty_provider / out_buf / trig_mat / proc_mon / gui_detector / screen / session_id / on_exit） |
+| `session_threads.py` | `SessionComponents` | 子组件引用容器数据类（pty_provider / out_buf / trig_mat / proc_mon / tracker / gui_detector / screen / session_id / on_exit / session_ref） |
 | `session_threads.py` | `_capture_exit_code_retry()` | 带重试的退出码获取（retries=10） |
 | `session_threads.py` | `_extract_crash_error_from_output()` / `_clean_error_candidate()` | 从输出提取崩溃错误信息 / 清理错误候选文本 |
 | `publisher.py` | `SessionPublisher` | 订阅者与结束回调管理，向 Web 层发布会话状态变更（会话创建/结束/输出更新等） |
@@ -594,35 +644,42 @@ TOML 文件 → load_toml() → 嵌套 dict
 
 ## 4. 新增子系统
 
-### 4.1 `pty/windows/job.py` — Job Object 进程树追踪
+### 4.1 `process/windows/job_tracker.py` — Job Object 进程树追踪
+
+> 历史：Job Object 封装原位于 `pty/windows/job.py`，随进程管理重构迁入 `process/` 包（见 3.3 目录结构）。PTY 后端（`WindowsPseudoTerminal`）通过 `create_process_tracker()` 获取 tracker，不再直接持有 Job。
 
 ```python
-class ProcessJob:
-    """Windows Job Object 封装
+class JobProcessTreeTracker:
+    """Windows Job Object 进程树追踪器（ProcessTreeTracker 端口实现）
 
     追踪整个进程树（含子/孙进程），支持:
     - KILL_ON_JOB_CLOSE：关闭句柄时自动终止所有关联进程
     - 查询 Job 内所有进程 PID 列表
     - 获取单个子进程退出码（用于崩溃检测）
+    - IOCP 实时通知（spawn / exit / crash）
     """
 ```
 
 | 方法 | 功能 |
 |------|------|
-| `assign(hprocess)` | 将进程分配到 Job（子进程自动继承） |
-| `query_process_list()` | 获取 Job 内所有进程的 PID 列表 |
-| `get_process_count()` | 当前进程数 |
-| `close()` | 关闭 Job 句柄 → KILL_ON_JOB_CLOSE 终止所有进程 |
+| `register_root(hprocess)` | 将进程分配到 Job（子进程自动继承） |
+| `get_process_list()` | 获取 Job 内所有进程的 PID 列表 |
+| `get_process_exit_code(pid)` | 获取单个进程退出码（STILL_ACTIVE → None） |
+| `drain_notifications()` | 消费 IOCP 实时通知队列 |
+| `kill_tree()` / `terminate()` | KILL_ON_JOB_CLOSE 终止所有进程 |
+| `close()` | 关闭 Job 句柄 → 终止所有进程 |
 
-所有 PTY 后端（`WindowsPseudoTerminal`、`ConDrvPseudoTerminal`、`UnixPseudoTerminal`）均集成 Job Object（Unix 用 pgid 替代）。
+所有后端经 `Session.create_process_tracker()` 获得 tracker：Windows 沙箱启用时返回 `SandboxProcessTreeTracker`（win-sandbox 委派），否则 `JobProcessTreeTracker`；Unix 用 pgid 追踪（`PgidProcessTreeTracker`）。
 
-### 4.2 `pty/windows/gui_monitor.py` — GUI 窗口检测
+### 4.2 `process/windows/gui_monitor.py` — GUI 窗口检测
+
+> 历史：GUI 窗口检测原位于 `pty/windows/gui_monitor.py`，随进程管理重构迁入 `process/` 包。
 
 ```python
 class GuiWindowMonitor:
     """GUI 窗口检测器
 
-    轮询 EnumWindows，交叉比对窗口所属进程 PID 是否在 Job Object 内。
+    轮询 EnumWindows，交叉比对窗口所属进程 PID 是否在会话进程树内。
     - 基于 hwnd 去重，同一窗口只上报一次
     - 线程安全（使用锁保护内部状态）
     - 通过 SendMessage(WM_CLOSE) 关闭指定窗口
@@ -635,7 +692,7 @@ class GuiWindowMonitor:
 | `close_window(hwnd)` | 发送 WM_CLOSE 关闭窗口 |
 | `close_process_windows(pid)` | 关闭指定进程的所有窗口 |
 
-GUI 检测**默认启用**，每次 `exec/send` 等待 trigger 时自动轮询。
+GUI 检测**默认启用**，`SessionThreads` 监控线程每 2s 轮询，`exec/send` 等待 trigger 时也自动轮询。
 
 ### 4.3 事件系统（`output/events.py`）
 
@@ -663,7 +720,7 @@ Session 内部维护 **待处理事件队列** 和 **事件历史记录**，实�
 
 ### 4.4 独立监控线程
 
-每个 Session 通过 `SessionThreads` 启动一个**独立监控线程**，每 2 秒检测 GUI 窗口和补全进程列表变更：
+每个 Session 通过 `SessionThreads` 启动一个**独立监控线程**，每 2 秒检测 GUI 窗口、补全进程列表变更和自然退出：
 
 ```python
 def _monitor_loop(self):
@@ -671,6 +728,18 @@ def _monitor_loop(self):
         self._proc_mon.drain_notifications()  # IOCP 实时通知（非阻塞）
         self._gui_detector.check(pty, session_id)
         self._proc_mon.check_events()         # 轮询补充（IOCP 未覆盖的变更）
+        # 自然退出检测：进程列表为空 → 主动触发会话结束
+        # （进程列表来自 tracker：PTY 基类无 get_process_list；
+        #   沙箱后端的 Job 回调排除根进程，必须经 tracker 探测）
+        if pty and not self._stop_event.is_set():
+            try:
+                pids = comp.tracker.get_process_list()
+                if pids is not None and len(pids) == 0:
+                    session = comp.session_ref()
+                    if session and session.running:
+                        session._on_all_processes_exited()
+            except Exception:
+                pass
         self._stop_event.wait(2.0)
 ```
 
@@ -678,13 +747,15 @@ def _monitor_loop(self):
 
 进程崩溃检测通过 **I/O 完成端口（IOCP）** 实现，无需轮询：
 
-1. `ProcessJob.__init__()` 创建 IOCP + 关联 Job Object
+1. `JobProcessTreeTracker.__init__()`（`process/windows/job_tracker.py`）创建 IOCP + 关联 Job Object
 2. 后台线程 `_notification_loop()` 调用 `GetQueuedCompletionStatus` 等待通知
 3. Windows 推送消息：`_JOB_OBJECT_MSG_NEW_PROCESS(3)` / `_JOB_OBJECT_MSG_EXIT_PROCESS(4)` / `_JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS(5)`
-4. 通知存入线程安全队列，`_drain_job_notifications()` 消费
+4. 通知存入线程安全队列，`drain_notifications()` 消费（`ProcessMonitor` 每轮调取）
 5. 根据退出码判定崩溃（不依赖消息类型）：非零且非 STILL_ACTIVE → `process_crash`
 
-同时设置 `DIE_ON_UNHANDLED_EXCEPTION`（job.py）和 `SetErrorMode`/`SetThreadErrorMode`（conpty.py），崩溃时**不弹对话框**直接退出。
+同时设置 `DIE_ON_UNHANDLED_EXCEPTION`（job_tracker.py）和 `SetErrorMode`/`SetThreadErrorMode`（conpty.py），崩溃时**不弹对话框**直接退出。
+
+> 沙箱（win-sandbox）路径：`SandboxProcessTreeTracker` 经 win-sandbox 的 Job 回调提供同类通知，但**显式排除根进程**（native 端 notif.pid != process.pid 过滤），根进程退出由 `SandboxSessionManager.get_exit_code()` 经 `Process.wait(timeout_ms=0)` 探测，配合监控线程的空进程列表检测触发自然结束。
 
 ### 4.6 动态端口 + 共享内存
 
@@ -722,7 +793,9 @@ def _monitor_loop(self):
 
 > 详见 3.3.6 `auth/` 认证层 和 4.14 双端口架构。
 
-### 4.8 `pty/windows/win32_error_msg.py` — Windows 错误码格式化
+### 4.8 `process/win32_error.py` — Windows 错误码格式化
+
+> 历史：Windows 错误码格式化原位于 `pty/windows/win32_error_msg.py`，随进程管理重构迁入 `process/` 包。
 
 提供 Windows 特有错误退出码（NTSTATUS、Win32 错误码）的格式化输出：
 
@@ -1142,7 +1215,7 @@ client/formatter.py:print_response(resp)
 #### send 流程
 
 ```
-用户: pty-agent send myid "print('hello')" -t ">>>"
+用户: pty-agent send myid -i "print('hello')" -t ">>>"
 
 __main__.py → Client.cmd_send(...)
   → process_input("print('hello')")  → "print('hello')\n"

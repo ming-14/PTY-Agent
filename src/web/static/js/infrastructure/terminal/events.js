@@ -189,7 +189,15 @@ export function bindTerminalEvents(term, inst, sid) {
 
   function sendFocusVT(focused) {
     const s = state.sessions[sid];
+    const inst = state.termInstances[sid];
     if (!s || s.running === false || s.closing) return;
+    // 仅在子进程启用了 Focus Reporting（DECSET 1004，由输出流解析 appFocusReport）
+    // 时才发送 \x1b[I/\x1b[O。无条件发送会把焦点序列写入 stdin，
+    // cmd 等非 VT 程序会把它显示成垃圾字符/混入命令。
+    if (!inst || !inst.appFocusReport) {
+      debug('focus', 'sendFocusVT skipped: focus report not enabled sid=%s', sid);
+      return;
+    }
     if (!shouldTrackFocus(sid)) {
       debug('focus', 'sendFocusVT skipped: keyboard+mouse disabled sid=%s', sid);
       return;

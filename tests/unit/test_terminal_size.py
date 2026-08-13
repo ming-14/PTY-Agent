@@ -7,7 +7,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from src.client.config_manager import ConfigManager, parse_terminal_size, _DEFAULTS
-from src.config import DEFAULT_COLS, DEFAULT_ROWS
+from src.config.common import DEFAULT_COLS, DEFAULT_ROWS
 
 
 class TestParseTerminalSize:

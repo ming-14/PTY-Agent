@@ -139,11 +139,11 @@ export function switchTab(sid) {
     applyTerminalSize(sid, false);
     debug('ui', 'switchTab: frame display=%s div class=%s term rows=%s cols=%s',
           $('terminal-frame').style.display, inst.div.className, inst.term.rows, inst.term.cols);
-    inst.term.options.cursorStyle = 'bar';
-    inst.term.options.cursorBlink = !isHistory;
-    inst.term.options.cursorInactiveStyle = 'block';
-    debug('cursor', 'switchTab sid=%s history=%s cursorBlink=%s cursorStyle=%s inactiveStyle=%s',
-          sid, isHistory, inst.term.options.cursorBlink, inst.term.options.cursorStyle, inst.term.options.cursorInactiveStyle);
+    // 注意：cursorStyle/cursorBlink/cursorInactiveStyle 与构造函数默认值一致，
+    // 不在切标签时重复赋值——options 变更会触发 xterm _handleOptionsChanged →
+    // _fireOnCanvasResize（异步 rAF 视口刷新），在 renderer 已释放时抛
+    // TypeError（reading 'device'）导致终端渲染/输入链挂死。历史会话的只读
+    // 光标由 applyReadonlyState 的 \x1b[?25l 处理。
     logCursorState(sid);
     if (!isHistory) {
       restartCursorBlinkIfNeeded(sid);

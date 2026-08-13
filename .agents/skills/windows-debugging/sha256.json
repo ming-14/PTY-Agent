@@ -1,0 +1,1038 @@
+{
+  "name": "WindowsDebuggingTools",
+  "version": "10.0.19041.5609",
+  "generated": "2026-07-18",
+  "algorithm": "SHA256",
+  "baseDir": "10.0.19041.5609",
+  "fileCount": 257,
+  "files": {
+    "10.0.19041.5609/adplus_old.vbs": {
+      "sha256": "3095BF779C5E14931E8FC6843504F79022893947742A61E0BDABA907971F4DFF",
+      "size": 188720
+    },
+    "10.0.19041.5609/adplus.doc": {
+      "sha256": "25455912CFB7AC0E06B03E8AD60B0D9FAD5C990C2DC4CDA85A6590EE5AFF0035",
+      "size": 72192
+    },
+    "10.0.19041.5609/adplus.exe": {
+      "sha256": "6412FF0B69C1094890CBEEE0A5A91B04C94FB81A1142CBE3A2E85626E7EF5D22",
+      "size": 88656
+    },
+    "10.0.19041.5609/adplusext.dll": {
+      "sha256": "DCB3DB9B992DF95E5130923F7901B0A855FB5905FA814ADF3F39EBC17111639B",
+      "size": 24640
+    },
+    "10.0.19041.5609/adplusmanager.exe": {
+      "sha256": "C552106F100C037109922F10615A65217C57A67A1E5626A4D8E5699ED46D1473",
+      "size": 72248
+    },
+    "10.0.19041.5609/adplusmanager.exe.config": {
+      "sha256": "21CD8BD8D5DF860D7953788E395CA5FCCB776539FA50782A4E2D6BEF4DADB6EA",
+      "size": 2068
+    },
+    "10.0.19041.5609/agestore.exe": {
+      "sha256": "1A35D23CBB00BFF0C001E0F7E917B299781D3916695F1B6176B14095E2A2A7D9",
+      "size": 31824
+    },
+    "10.0.19041.5609/api-ms-win-downlevel-kernel32-l2-1-0.dll": {
+      "sha256": "2772DBD5916394C030818235E530859B29525F93E0E04E61E553E2F0713223C7",
+      "size": 6656
+    },
+    "10.0.19041.5609/api-ms-win-eventing-provider-l1-1-0.dll": {
+      "sha256": "0945DBBFD8B768C9FD4E555706415C44304815BAA169DA5181CCC83925C66286",
+      "size": 12840
+    },
+    "10.0.19041.5609/breakin.exe": {
+      "sha256": "F9D2F01A7B9BA362EC82896A32AD6087683634AA910EA354025727AC4E415BA5",
+      "size": 23120
+    },
+    "10.0.19041.5609/cdb.exe": {
+      "sha256": "37BE53D3A45A83629E3BF6E457E2A0FB5A7D9ABABFA479759D86CCE171D79758",
+      "size": 157248
+    },
+    "10.0.19041.5609/convertstore.exe": {
+      "sha256": "F189B12A77EAE2BE9A2C73756DB235C76915F772CD4A7F7A57E445F4E53012CF",
+      "size": 30272
+    },
+    "10.0.19041.5609/dbengprx.exe": {
+      "sha256": "D8F1E10972DC805392304BF7C58541AF94520EE0906145A0F51A817455AD4CBE",
+      "size": 128592
+    },
+    "10.0.19041.5609/dbgcore.dll": {
+      "sha256": "3D82DBAF22E910CBB6ECD0703BAA6FB0FD1F3CD5F6D64B5054135E389E2F43C8",
+      "size": 252344
+    },
+    "10.0.19041.5609/dbgeng.dll": {
+      "sha256": "65D04BA16BDD2F47C265381B2C508B964689ED8FDACF4E37C962BF0B5723BD9E",
+      "size": 7905848
+    },
+    "10.0.19041.5609/dbghelp.chm": {
+      "sha256": "D13BABD84C5BC4A3133E3498639FA2D232D6DE0A8BA64DED1FA7FBE47E1D0CE2",
+      "size": 418558
+    },
+    "10.0.19041.5609/dbghelp.dll": {
+      "sha256": "140ADB286A11FBDFB63B6D8DFF30039C50FF9C88B6909BE9CE8292680D5BE2AF",
+      "size": 2259384
+    },
+    "10.0.19041.5609/DbgModel.dll": {
+      "sha256": "878D662195AA5C75745091141F2A4375C5B2B724DC4804CF2B488A352AC81623",
+      "size": 730704
+    },
+    "10.0.19041.5609/dbgrpc.exe": {
+      "sha256": "3EB09A8C4314128488487E9AA165CA80F7A3AB5AA00C068CFF34706BE6566E55",
+      "size": 48192
+    },
+    "10.0.19041.5609/dbgsrv.exe": {
+      "sha256": "E7CF4A3506C8510B8B818341FC49D156667DBA7A397556F3B82AE0B6FDBBE47D",
+      "size": 56400
+    },
+    "10.0.19041.5609/dbh.exe": {
+      "sha256": "8C7E77A3C464BEE868489387CC99CBCF48CEDB7B5ABEFBCF2CF45E0AA883DDB5",
+      "size": 153640
+    },
+    "10.0.19041.5609/debugger.chm": {
+      "sha256": "99E9D53D7AA708DA8F6FA844405F9EBF1670D23222DFCB968E7FF693A98CF22E",
+      "size": 7499946
+    },
+    "10.0.19041.5609/dml.doc": {
+      "sha256": "3FBFD009A374F1838144E3D7432538F34DEA04AE69938A9E5D222917754FA3E3",
+      "size": 56832
+    },
+    "10.0.19041.5609/dumpchk.exe": {
+      "sha256": "50C8FCD8A5B062D085F8FC8B26E69D8ACC3031F821D53BCC8B2C12FA6D52E76A",
+      "size": 23120
+    },
+    "10.0.19041.5609/dumpexam.exe": {
+      "sha256": "0AB791300B186E43B1102688A42C40DF2FBB29423ABB5A39DC1F2B8840AB67CA",
+      "size": 22080
+    },
+    "10.0.19041.5609/gflags.exe": {
+      "sha256": "13B04206F00DFA34C5E06B83C0D5AB0675DC82CA7FE0F74A49BD33C63237BBF7",
+      "size": 86584
+    },
+    "10.0.19041.5609/gflagsui.dll": {
+      "sha256": "E1560F94B0D3BC6B6A5CE5631400EF07855016D4B5BA99DE640D890DBD3B3DF5",
+      "size": 93760
+    },
+    "10.0.19041.5609/kd.exe": {
+      "sha256": "E9B09F3518B88D7C6FF0E2B3192CB93BB843ED7EE1C1BD7D7AA8A3A9642CB5FA",
+      "size": 179264
+    },
+    "10.0.19041.5609/kdbgctrl.exe": {
+      "sha256": "4E3BC3541EA160F55EB78DFEC5EDF03EFF729ED821BAE0607AF032302C6292E0",
+      "size": 53840
+    },
+    "10.0.19041.5609/kdnet.exe": {
+      "sha256": "38735B1BB612F76FEBCD6A85AC2A1DF9FA004A66578AA2845D22AA7DCAE8D557",
+      "size": 70704
+    },
+    "10.0.19041.5609/kdnetdebugvm.ps1": {
+      "sha256": "91E9DAE43035942223D53B2956C7C80800A3A2D949281A6DA01ADCB467F0EE1C",
+      "size": 4574
+    },
+    "10.0.19041.5609/kdsrv.exe": {
+      "sha256": "C7FBC41F2D7B256F5EFC5D5B25F3999B171D8A7233D711515C804B2D23CFD2DE",
+      "size": 237096
+    },
+    "10.0.19041.5609/Kernel_Debugging_Tutorial.doc": {
+      "sha256": "5A4E442B965280C791AC0AEA9D91B001AFF620F6ECF67C87AB011C1BAC673156",
+      "size": 1196032
+    },
+    "10.0.19041.5609/KernelDumpDecrypt.exe": {
+      "sha256": "8D2FA13CA5E14DDC7998764EF8851E9E48C08A07CE1697DF5B661B51A3656315",
+      "size": 35408
+    },
+    "10.0.19041.5609/kill.exe": {
+      "sha256": "E2AB9203BA8C08F2BCF8AE6274EA2725E9BCBE24070C263DFDA1777C2EBC54EB",
+      "size": 30272
+    },
+    "10.0.19041.5609/list.exe": {
+      "sha256": "4C051DE944208B9D8795DE1584A66114606035BB96A76D60492CFE0AA182D09B",
+      "size": 72760
+    },
+    "10.0.19041.5609/logger.exe": {
+      "sha256": "55807B5EB9D32BA555C717926F71352711826F54957C7D1275DCD55877BA7846",
+      "size": 258088
+    },
+    "10.0.19041.5609/logviewer.exe": {
+      "sha256": "79C9F13E9E6745D94DEF0C63EFE290BEB5108DB5DF3106884145393C6FAFB7B4",
+      "size": 250368
+    },
+    "10.0.19041.5609/Manifest.1.xml": {
+      "sha256": "BFF3440177C98EEED04858BE615994332F51A9F28A931BA36F6239DED3513D68",
+      "size": 14512
+    },
+    "10.0.19041.5609/ManifestVersion.txt": {
+      "sha256": "FFC3B17F8FD8E42DBE6E9463C6033DBD59A25201C71AAC7996EF7AF563BD3FB4",
+      "size": 13
+    },
+    "10.0.19041.5609/Microsoft.WTT.Log.dll": {
+      "sha256": "0A352082A2809EE482BA274B13C7AD7FA48B7B76A19A405EAD1BF72D0FCD3203",
+      "size": 61440
+    },
+    "10.0.19041.5609/NOTICE.txt": {
+      "sha256": "662DBDCD2284424F0F52815A75D5C77018DD8A64CB54B7CF3F9A4D1621FCC4E5",
+      "size": 4402
+    },
+    "10.0.19041.5609/ntkd.exe": {
+      "sha256": "7C436146CCEF05E07989344E262EF3C26978F91053C43902C14FBBCCD78F1D72",
+      "size": 155712
+    },
+    "10.0.19041.5609/ntsd.exe": {
+      "sha256": "B82C5C3A2E36D2C07CCAC88F33EC8A82B3CDF3C8095E6CF9483639293A2A91CC",
+      "size": 157248
+    },
+    "10.0.19041.5609/OffDumpTool.exe": {
+      "sha256": "6CE50B8F291FDC5ED6236F96D7C7CCE5723EEE4383AFAF9EB4542ECC68B1BDE3",
+      "size": 197280
+    },
+    "10.0.19041.5609/pdbcopy.exe": {
+      "sha256": "F10D2233C4B65088E30242041B95FC7D839BFF1EF239AA722916A497CE45AA5B",
+      "size": 953504
+    },
+    "10.0.19041.5609/plmdebug.exe": {
+      "sha256": "519BBC6FF66D83AAE16ED739C60C7BE5A3DB0036D25338C4BD5189F0E2095D13",
+      "size": 176696
+    },
+    "10.0.19041.5609/remote.exe": {
+      "sha256": "172C21CC72676D3EEE2B7FE77271EB5ECDA9F180E608B132058FDD6BB9F9D5B5",
+      "size": 66128
+    },
+    "10.0.19041.5609/rtlist.exe": {
+      "sha256": "63ECF6C62A0CC00031D45E2FE57CB7D1F8147CC1C85F40774DEE24BB7BF9AB68",
+      "size": 23120
+    },
+    "10.0.19041.5609/srcsrv.dll": {
+      "sha256": "D134263F839998A1E0FF85C547FA5B715A293FF7FF12B95965393F184A741E3F",
+      "size": 272808
+    },
+    "10.0.19041.5609/SymbolCheck.dll": {
+      "sha256": "62D1616E2B38C3372B08534A351BE2F32252914B60A99A0A3C9BC476DEA6AAE4",
+      "size": 34360
+    },
+    "10.0.19041.5609/symchk.exe": {
+      "sha256": "59D3B086A652AA49DBCEC484CDCEE92B83384DFA60F77016BC2D4578928196C0",
+      "size": 76880
+    },
+    "10.0.19041.5609/symsrv.dll": {
+      "sha256": "55513D2A35CEB500FA79C4E6781A035AAEEC56C3BC97B6570E3AF7083DBE111B",
+      "size": 424400
+    },
+    "10.0.19041.5609/symsrv.yes": {
+      "sha256": "36A9E7F1C95B82FFB99743E0C5C4CE95D83C9A430AAC59F84EF3CBFAB6145068",
+      "size": 1
+    },
+    "10.0.19041.5609/symstore.exe": {
+      "sha256": "A649D14417626573C2F2268245041D384C48FFFAF474A263FF903CF1EBC298B2",
+      "size": 97872
+    },
+    "10.0.19041.5609/tlist.exe": {
+      "sha256": "E86B6EE90C52C130089A5D59698F336A860473F484F4416A29ABD1E3BE412B1A",
+      "size": 40016
+    },
+    "10.0.19041.5609/umdh.exe": {
+      "sha256": "B7210BC0902EE163216185DD40B7428072A67E383C8C32FD8C42382D4369FE05",
+      "size": 144448
+    },
+    "10.0.19041.5609/usbview.exe": {
+      "sha256": "3B5A5D75C59BB2DEFB39D6356B3AFED5A60419706F8646378F8C88B924D12AB6",
+      "size": 816184
+    },
+    "10.0.19041.5609/usbview.exe.config": {
+      "sha256": "684C6A8542383A5B5CE25E518C3492F5A83F000F1826A3A4650139B7F27623B0",
+      "size": 527
+    },
+    "10.0.19041.5609/VerifiedNICList.xml": {
+      "sha256": "E90329CCE36A5BD0A3D28727A7DD04EBED97316A718D17DCF7BD87E78F9A1DCF",
+      "size": 15109
+    },
+    "10.0.19041.5609/vmdemux.exe": {
+      "sha256": "A3083D1A4F1C4365F3D11100EB60A61CD796D6C170C7886BDFD34C0837FF1A8C",
+      "size": 76856
+    },
+    "10.0.19041.5609/windbg.exe": {
+      "sha256": "61BA16D58E568689756ED50786C7E0487EE2441A7D95E43896E7D322879FB731",
+      "size": 578128
+    },
+    "10.0.19041.5609/WTTLog.dll": {
+      "sha256": "F48A391978902F2626DAB20BE85E3194C1F16A09BD9E7A19ED866F3F76158288",
+      "size": 227840
+    },
+    "10.0.19041.5609/WTTlogcm.dll": {
+      "sha256": "48E124EE93CB19FAC906BC2572DBDC485FBE4175FFA020AF7CEA71BAF0D5CD42",
+      "size": 221184
+    },
+    "10.0.19041.5609/1394/1394dbg.cat": {
+      "sha256": "102204E4DB3C6ED6F3F1853D86515C9B2BDA4F540F9A2E20E61CCCF06F9934FE",
+      "size": 11360
+    },
+    "10.0.19041.5609/1394/1394dbg.inf": {
+      "sha256": "C5470EB06AF4F936AA7216A45F70CC33277A864D2FFEBDF6641F8287B464F792",
+      "size": 3404
+    },
+    "10.0.19041.5609/1394/1394kdbg.sys": {
+      "sha256": "C47B5CD14C6E16501B5E0585FD4F511119A54074B6321B8D289FF79ECDDE6564",
+      "size": 48720
+    },
+    "10.0.19041.5609/kdusb/kdusb.dll": {
+      "sha256": "DFD0086C8D1AC2149E86508E92D0147D2A98FB57F9CA3C74EF242A4A7D4BDA31",
+      "size": 46672
+    },
+    "10.0.19041.5609/OptionalExtensions/kdexts_GalleryManifest.xml": {
+      "sha256": "A7B25B77C0C626DE0BFCE9D9B26682387872C155E2344D8F34726352DC2C1191",
+      "size": 255900
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/dirs": {
+      "sha256": "879A70149F72B8B28C60EECEAC00702E0519A4638CD473EE399AC5E69D33A1D5",
+      "size": 53
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample.sln": {
+      "sha256": "6D9E33D694BC10CB89C3A029984DDECCE7ECF816FF6074EAC243D4CF965B363F",
+      "size": 1482
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/Readme-EXDIGdbserverSample.xml": {
+      "sha256": "A8A51AEC1297C3AAAC56D80C52B2B09321EDBAE56E2D5664CFEF4D284B88FD5A",
+      "size": 1309927
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/ArgumentHelpers.h": {
+      "sha256": "5B25FB0E9F56F677A75CA8B12A850CA74725AAC65294480559922B94DC14EE0C",
+      "size": 3267
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/BasicExdiBreakpoint.h": {
+      "sha256": "3162072F43EEF6A5D8992A87EF65E088154387D3119439F4D84B4F9A636DEEC4",
+      "size": 6134
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/ComHelpers.h": {
+      "sha256": "3269770F7F5132A634DBA549AEB9F82FC654F4D86A8B3845198F603B3675F31A",
+      "size": 797
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/commandLogger.h": {
+      "sha256": "01EA4F478BE944433614858B29B43FFA82000B3E1D2192A1DBE46AA610A2EAFD",
+      "size": 2327
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/dbgeng_exdi_io.h": {
+      "sha256": "A32A94B24C9A62E447C078213FEEEFFC5F25136101B1FC27F8A6A6E93FB4C089",
+      "size": 5009
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/dlldata.c": {
+      "sha256": "E41E8085042F4431F00382A6B7DA8E2EBBE5ACD8D00E831549C02732C84F55C4",
+      "size": 853
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/dllmain.cpp": {
+      "sha256": "52CB615760A68235ED92501EEE20F7875E934BEB5340D29101F4BF7DE91292B2",
+      "size": 364
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/dllmain.h": {
+      "sha256": "92024FCBFE2CD66273AE73C5BADA083D7D73916A2E8785A26F1E87C1B9D81302",
+      "size": 346
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/exdi3.idl": {
+      "sha256": "E5281ADBAEE12A52F72B740BE89E817C010068990FA5B2A0DF1E0E6651374F0A",
+      "size": 122651
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/ExdiGdbSrvSample.aps": {
+      "sha256": "078E307ACC55D0554AE278B70FC38D2B6DC74C95677F20E42CF744D621E7C6EE",
+      "size": 4296
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/ExdiGdbSrvSample.cpp": {
+      "sha256": "EB30208D044E942C401005C2B05A0280007E845B32EDF9F0B7AC3027C89F4A5D",
+      "size": 1599
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/ExdiGdbSrvSample.def": {
+      "sha256": "1D8819682406B472B7EB3228D4859AC7A46BDE7EC9C408C3CA4B7E08EC766CA5",
+      "size": 215
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/ExdiGdbSrvSample.idl": {
+      "sha256": "3939B34393943752FB046911DBDAF64A7E820E262F7CCDED14015DB94970BE59",
+      "size": 1148
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/ExdiGdbSrvSample.rc": {
+      "sha256": "BB07AAA52CEB6B8BFAA02972BE7C3F8645C3103CF8FE29E05D802CC7722A448E",
+      "size": 6154
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/ExdiGdbSrvSample.rgs": {
+      "sha256": "B1E3CF98C0F2D925C83B80D5386819C1F786D0E83635313F70C09501F6BC6439",
+      "size": 118
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/ExdiGdbSrvSample.vcxproj": {
+      "sha256": "DF42581BC6767FF6D45C225A306952921B94E2A1C3D92768AABCFAFE13A7CD6D",
+      "size": 15137
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/InterfaceMarshalHelper.h": {
+      "sha256": "7A04F96D3B196396016D2E1C0018907161B1DBCDE11926019451A43778A1E211",
+      "size": 2185
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/LiveExdiGdbSrvSampleServer.cpp": {
+      "sha256": "3C54CF4CBDD261789ED32B7D478D04A5EDB6BD42744DC0126FAAA1A75AA6618B",
+      "size": 73671
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/LiveExdiGdbSrvSampleServer.h": {
+      "sha256": "6AA2384AA240B832DE5335E291B55268CE7F9FC22199BA2F235F8310E855C549",
+      "size": 14317
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/LiveExdiGdbSrvSampleServer.rgs": {
+      "sha256": "1333D27C2A6A54525F4CCCBA6B58F441AD772FEB31240D909677163B76F6DFD0",
+      "size": 333
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/ReadMe.txt": {
+      "sha256": "E96F032DB87D0FF951F278720B2CCE0A48DDC8EFE229F959739916EB74B0EA88",
+      "size": 3961
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/resource.h": {
+      "sha256": "145DB000517D66751D4C405AE9FFA36DF9954FC63B4408175087F8BF70E15549",
+      "size": 1098
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/sources": {
+      "sha256": "5AFAF1701CEC0903CE1C79BC777EC06BF3B7F796824E1FD0D9753CEDEC057210",
+      "size": 2347
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/stdafx.cpp": {
+      "sha256": "560EA37CBBC2AB04EA4E70DAFF5B837513F61B20B14C0688FF3AA0B807B648E0",
+      "size": 212
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/stdafx.h": {
+      "sha256": "C95C305C3FCC67AC18B0FFF7E84525AF93923A49D07A5F0C097D9C83F1B39CC3",
+      "size": 556
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/ExdiGdbSrvSample/targetver.h": {
+      "sha256": "A2761FDBD4C8925741DDEA678EE8398DE930207E447666BC6A76D5F72684C04F",
+      "size": 314
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/AsynchronousGdbSrvController.cpp": {
+      "sha256": "0677A0B038289D0D3D2B1E726833D5E4C2032846D28A5481B5D81727DB7AEF2A",
+      "size": 21377
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/AsynchronousGdbSrvController.h": {
+      "sha256": "CC4ECFE7E0EA87B58D001CFF341C8177B7F152DA2795047044DF2E6E0B203A59",
+      "size": 3307
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/BufferWrapper.h": {
+      "sha256": "537D9E56C2647872DDA93E54E9FB3ED1C90438005EAB90F182E4252BC144C594",
+      "size": 3327
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/cfgExdiGdbSrvHelper.cpp": {
+      "sha256": "1710A9160C10BBBCBC27594B1392A0571973F192C1578520053D95FE352F711E",
+      "size": 48149
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/cfgExdiGdbSrvHelper.h": {
+      "sha256": "28F66A7AB1A0B9D48517C3D0A2FF1E38880D2FF812F18EE9A128923DF0BE4F26",
+      "size": 1918
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/ExceptionHelpers.h": {
+      "sha256": "4CFDB79798673964D3F3EF1233B89B1123FE1CE83B29A5BF89B244F5D17727BB",
+      "size": 1491
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/exdiConfigData.xml": {
+      "sha256": "9A6A9197C26351185260157026F6BB31ECF890CAC7CB8676D0C704BD03E16DE7",
+      "size": 694
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/GdbSrvControllerLib.cpp": {
+      "sha256": "74546B04191C27E01184C0DE9D6A7D409E06BDD21DCAEC8E1ADB4930E2ED2419",
+      "size": 105276
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/GdbSrvControllerLib.h": {
+      "sha256": "088892A10BA366C04A021A9F4B879CA3EB12160A018C014D0FA03B284090F0F9",
+      "size": 11754
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/GdbSrvControllerLib.vcxproj": {
+      "sha256": "5FF02F15B4715A004FC85D51504175736F6DEC01748B66C18D2115196C6E27AD",
+      "size": 8683
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/GdbSrvControllerLib.vcxproj.filters": {
+      "sha256": "DD1B17B5EDEF2FF6FB313F900448FA0EF8DEE0F317ADF6E3D11369A71DBCC740",
+      "size": 2595
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/GdbSrvRspClient.cpp": {
+      "sha256": "0E2B041366F4AB27BE37AFACB1ED0EF67410C581C0A2FC4EED99A32F0F4B9904",
+      "size": 51821
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/GdbSrvRspClient.h": {
+      "sha256": "99F39D5DC126FBF6A254904BB9BBB848D513F20FC824FD82A1243A4B723B3C6C",
+      "size": 7908
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/HandleHelpers.h": {
+      "sha256": "7C196AC7018B7165E5A369ECA85C0E842709A68D315E30C1099052189ADAF490",
+      "size": 3483
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/sources": {
+      "sha256": "D269DBFE3358F961E45A6A83BEF34020D01883207396AE5AC989B431EF20F7FD",
+      "size": 1576
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/stdafx.cpp": {
+      "sha256": "60535565C0B757B70799FDA4B5D618BF7DD6E8A1C4DD7878F176429E493889A0",
+      "size": 306
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/stdafx.h": {
+      "sha256": "C4DF8E17AF44C9DCB548A055F88D2966B6A55A025CF41F880AEE1334727AB9EE",
+      "size": 323
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/targetver.h": {
+      "sha256": "A2761FDBD4C8925741DDEA678EE8398DE930207E447666BC6A76D5F72684C04F",
+      "size": 314
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/TcpConnectorStream.cpp": {
+      "sha256": "61B39BDA8A7D8A8F13768DDCD4F8DF53755786026FB6145F8274F3A8AA74226A",
+      "size": 6300
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/TcpConnectorStream.h": {
+      "sha256": "2F38DCB4CB602E79B9857889EA32DAAC8661CD39DA3B11B91308BB9AA5A921A2",
+      "size": 11329
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiGdbSrvSample/GdbSrvControllerLib/textHelpers.h": {
+      "sha256": "CCB556A8E32ADCE381925E56C065C81BBA5BD288B3B5FA66757D0D508A90CBDA",
+      "size": 1011
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/dirs": {
+      "sha256": "FC1F36E98C5B70546932074C74FD04539838C35B61FBBD4B0E00584979217268",
+      "size": 45
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample.sln": {
+      "sha256": "1E2713D0B266E02D8A6A14BC416352E004F3F33212C7AD8DBBB32D2B7DA57C9A",
+      "size": 2987
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/readme.docx": {
+      "sha256": "D02A725B72CD91CF017E54D0FD7C4ECD1C3466B68F45A22054A6CC09540FA4BC",
+      "size": 184005
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/ArgumentHelpers.h": {
+      "sha256": "5B25FB0E9F56F677A75CA8B12A850CA74725AAC65294480559922B94DC14EE0C",
+      "size": 3267
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/BasicExdiBreakpoint.h": {
+      "sha256": "390E139FE25463F5C0408D2996AC4935B7712814E2EA026CF69416E8935DBA82",
+      "size": 2558
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/ComHelpers.h": {
+      "sha256": "3269770F7F5132A634DBA549AEB9F82FC654F4D86A8B3845198F603B3675F31A",
+      "size": 797
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/dbgeng_exdi_io.h": {
+      "sha256": "A32A94B24C9A62E447C078213FEEEFFC5F25136101B1FC27F8A6A6E93FB4C089",
+      "size": 5009
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/dllmain.cpp": {
+      "sha256": "DD0B4CC269CD71ACB5A3186AAE7A76944296B448C5ADA2C58C3ED546688B365B",
+      "size": 590
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/dllmain.h": {
+      "sha256": "92F16BB7CF912A5A3AE0FB928A47C78342CFB26E75951A1F3D9746E8282AC230",
+      "size": 574
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/exdi3.idl": {
+      "sha256": "E5281ADBAEE12A52F72B740BE89E817C010068990FA5B2A0DF1E0E6651374F0A",
+      "size": 122651
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/ExdiKdSample.cpp": {
+      "sha256": "FBF07EFA71667A9BD90D1992C2A2385BCCB83A78ADA6362BEFC375021BEF35DD",
+      "size": 1946
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/ExdiKdSample.def": {
+      "sha256": "6248114822BD5808A3D8C96F9D3942350ADC7C949E28A865B57D594A2BA002A6",
+      "size": 370
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/ExdiKdSample.idl": {
+      "sha256": "5CE461FBA560AB1CA58D9E64CE46757BDFE0BDCAA83106FFFE7BC9A44023D35F",
+      "size": 1279
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/ExdiKdSample.rc": {
+      "sha256": "E94EEF36BA5E5B9C46DBDE9652909119EBAAC04ECEDDB0491FB2520D39D94ACC",
+      "size": 6262
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/ExdiKdSample.rgs": {
+      "sha256": "B1E3CF98C0F2D925C83B80D5386819C1F786D0E83635313F70C09501F6BC6439",
+      "size": 118
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/ExdiKdSample.vcxproj": {
+      "sha256": "D8BF30C8887E665951E2CADD187789BB6B3A18BDA65A3F1C9D4AF68772569BAF",
+      "size": 14965
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/InterfaceMarshalHelper.h": {
+      "sha256": "7A04F96D3B196396016D2E1C0018907161B1DBCDE11926019451A43778A1E211",
+      "size": 2185
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/KDCommandLogger.h": {
+      "sha256": "8646435803BD1AC15524AD34E30D8CC4A4DA3A4A338DEF178F2A4D76B503522E",
+      "size": 1996
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/LiveExdiSampleServer.cpp": {
+      "sha256": "6CE37E3CD9AF4834225A6E88A086ABBA5CB8C2F61695CFAC72978A631B7B5FDF",
+      "size": 18517
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/LiveExdiSampleServer.h": {
+      "sha256": "FD7FDDC9DB36884A1918F89916C2079B87DEFCA763BA97A1E9191502FD81181E",
+      "size": 4975
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/LiveExdiSampleServer.rgs": {
+      "sha256": "1A70AC6D13A163FEAB62BC401519728EF0629869C0133F3949052EEE2AF911F8",
+      "size": 327
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/ReadMe.txt": {
+      "sha256": "F77295C7B4F2FE387C44B28819CD6D91AE39EECB3BD273ABCF2AFA11D50E082C",
+      "size": 63
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/resource.h": {
+      "sha256": "D71C43A4219C4171F01FFF1F107CA0D8DC96850F374E6D26FDD8D2D6DEDF7367",
+      "size": 1224
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/sources": {
+      "sha256": "8A301AD4FB5D7838572F9C683E53A37CDB2466E64B1D001DCF47812E2254CBC3",
+      "size": 2233
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/StaticExdiSampleServer.cpp": {
+      "sha256": "262B3D032F2055B36F5456946A25BCB8507C52CBA553897906790B18B2680113",
+      "size": 25977
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/StaticExdiSampleServer.h": {
+      "sha256": "508E7511A6FDB7520200A80D67B5C415D96FE79463A4A7079B665DC4989D6235",
+      "size": 9105
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/StaticExdiSampleServer.rgs": {
+      "sha256": "5BC18CE02B305C9C3F642787DF2E7FC733F2CFB16DBF3F7086657027757301FC",
+      "size": 640
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/stdafx.cpp": {
+      "sha256": "3DAEB2D91C9F107C1936D5126D6FD815B5EF9D67F9133846728E0B975A6068DA",
+      "size": 324
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/stdafx.h": {
+      "sha256": "3CD5827CA1151E943B8C4628A17141D93528C37B1D039B3A2AC7E3D69AAAE169",
+      "size": 729
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/ExdiKdSample/targetver.h": {
+      "sha256": "A2761FDBD4C8925741DDEA678EE8398DE930207E447666BC6A76D5F72684C04F",
+      "size": 314
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/KdControllerLib/AsynchronousKdController.cpp": {
+      "sha256": "EC7AFBC3D346A042AEC8C0FB862910E94805F7D39DD7B4F2C171F3E09BA7B1DD",
+      "size": 7436
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/KdControllerLib/AsynchronousKDController.h": {
+      "sha256": "AB17062EF10AB7A12B0C8B5E03FEE1537620D7265CB1AA5725B32F9A688D5EF5",
+      "size": 1754
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/KdControllerLib/BufferedStreamReader.cpp": {
+      "sha256": "E07D9C3BD44855E08DEC70FC448CF7342370392E58D57A6B7B8429234B21A7B9",
+      "size": 4030
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/KdControllerLib/BufferedStreamReader.h": {
+      "sha256": "BE42FFA8497286E91EC4DDC20C1FAF6E70E8CECBC79E40EAEC2E739C7A9ED987",
+      "size": 1861
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/KdControllerLib/BufferWrapper.h": {
+      "sha256": "4D96F722726CC197AEAEA34B5E1755527C827A0C5F5013597F94DBB2CD81C68A",
+      "size": 3257
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/KdControllerLib/ExceptionHelpers.h": {
+      "sha256": "B8B6B72C8100D7C3901D83F386E88CDA7D59AE2583622ED20D44D6D730B464B5",
+      "size": 842
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/KdControllerLib/HandleHelpers.h": {
+      "sha256": "36D33E23EB327B4F413DB538154DCB58692AD18C799D63D4AA280DE183862F00",
+      "size": 2329
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/KdControllerLib/KDController.cpp": {
+      "sha256": "52DA7A1B8A19F2E3470DE0AF3C248E82C332C194226996FAA9717ABF66B8B609",
+      "size": 13218
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/KdControllerLib/KDController.h": {
+      "sha256": "A3CAD1779FB231367ED3363F10945CCDC2DB411FFBD2BE70F05D5046D7EE6320",
+      "size": 2584
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/KdControllerLib/KdControllerLib.vcxproj": {
+      "sha256": "87773ECAB55D04C0B7C6A48DAB8BF2A92EE896738E77C7D24EFC48037BFDE942",
+      "size": 7720
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/KdControllerLib/KdControllerLib.vcxproj.filters": {
+      "sha256": "BFCD4FA15A2234779DC55F0E14813FDDFE6651A20AABCDEAA104151966751E00",
+      "size": 2096
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/KdControllerLib/sources": {
+      "sha256": "63624E90CC3EDBD7D4F2085A6FE6D67D071512762F3DAD6B57887130A0FC5F53",
+      "size": 946
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/KdControllerLib/stdafx.cpp": {
+      "sha256": "3DAEB2D91C9F107C1936D5126D6FD815B5EF9D67F9133846728E0B975A6068DA",
+      "size": 324
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/KdControllerLib/stdafx.h": {
+      "sha256": "CECE0CD7A1638D0B23E2D407D9C7834008F9AD70D752185F1C2DCBA53CAB37E3",
+      "size": 429
+    },
+    "10.0.19041.5609/sdk/samples/exdi/ExdiKdSample/KdControllerLib/targetver.h": {
+      "sha256": "21CCC0971CBB02AD67152597C0A87FCD3A1817C66908C501476D94BAEECC0EA2",
+      "size": 592
+    },
+    "10.0.19041.5609/srcsrv/cv2http.cmd": {
+      "sha256": "4865B5A22DC9BDD35F7CDA10C7A9EB1446B99496B01743F80B35FB357D597C28",
+      "size": 838
+    },
+    "10.0.19041.5609/srcsrv/cv2http.pl": {
+      "sha256": "B2BAE8A7D08043112547EF1221627526583102B27A5487756770F104AF17F4DD",
+      "size": 1036
+    },
+    "10.0.19041.5609/srcsrv/cvs.pm": {
+      "sha256": "C872DCE3F7A47D5B44EBDCF134020D85AEE1F5F00BC257FB3A50AC40E972D2A6",
+      "size": 19545
+    },
+    "10.0.19041.5609/srcsrv/cvsindex.cmd": {
+      "sha256": "C7DD80E1B86EA61EEFCE82309FA93E7CDDBB9757F52014F3B9BC9327DF10D287",
+      "size": 188
+    },
+    "10.0.19041.5609/srcsrv/dbgcore.dll": {
+      "sha256": "038AC034A81F477D8B2FA6B4FD33210783A4A785628FC77291D422755B8645E4",
+      "size": 204368
+    },
+    "10.0.19041.5609/srcsrv/dbghelp.dll": {
+      "sha256": "DA5B406B439A7273FAD792F346E61A013C0022799AF8B03C35A03353ACBDFA19",
+      "size": 1870376
+    },
+    "10.0.19041.5609/srcsrv/p4.pm": {
+      "sha256": "39A732F05C25AD1B9B11689C627B544E0121769C6B00065EF7792B362C5981C4",
+      "size": 14061
+    },
+    "10.0.19041.5609/srcsrv/p4index.cmd": {
+      "sha256": "80FC8069284A7F9537DB433D77CE877578E8AF549AA306B2941FE87B2D6A5941",
+      "size": 187
+    },
+    "10.0.19041.5609/srcsrv/pdbstr.exe": {
+      "sha256": "53C1D26E00CAD0FB8FF43443BB738FB3DEB953B4CFB0797E3552102C0E65D5F7",
+      "size": 997456
+    },
+    "10.0.19041.5609/srcsrv/srcsrv.dll": {
+      "sha256": "533CA41C255DAA69EF029BAD07FBF0976A1315875EC7D96512CE8B9E48DC01AA",
+      "size": 144440
+    },
+    "10.0.19041.5609/srcsrv/srcsrv.ini": {
+      "sha256": "A4E3B790F9676B99C055687C724B965151960BC7D361A838C09414F4ACB5D51F",
+      "size": 4515
+    },
+    "10.0.19041.5609/srcsrv/srctool.exe": {
+      "sha256": "416A8633AA8F8174AF7EA6BF8FE22BF13CE82D2B9F30B30FE146847B3ABE6ED8",
+      "size": 45096
+    },
+    "10.0.19041.5609/srcsrv/ssindex.cmd": {
+      "sha256": "4364C788C871FFEE45D0C63296E6478CA6AF895D503823AE153AF35329B0AAB0",
+      "size": 32964
+    },
+    "10.0.19041.5609/srcsrv/svn.pm": {
+      "sha256": "6A44E19DE60668F15B2FC7A2C2E4638054CF3D8A7D1991B145E1BF838C1B4604",
+      "size": 12509
+    },
+    "10.0.19041.5609/srcsrv/svnindex.cmd": {
+      "sha256": "7EDC4C1BF9D8B76C3D87CD1E3FA637BDF3E7AE44C8C8876AAC1A41C548F5E4E9",
+      "size": 188
+    },
+    "10.0.19041.5609/srcsrv/tfs.pm": {
+      "sha256": "EAA8AE2927EF968AB0306430AFC9CD7FF2A2776C1EB645E7851919580579EC1B",
+      "size": 19415
+    },
+    "10.0.19041.5609/srcsrv/tfsindex.cmd": {
+      "sha256": "63D8C831792344C0F9B3CD7E434FB5B501A35345A18959D8676A1D565FDDE19E",
+      "size": 188
+    },
+    "10.0.19041.5609/srcsrv/vss.pm": {
+      "sha256": "009A738D518D1CD30AA79ADACFE90E9D2202F751D94B0595D20BEEC09B4C5BF4",
+      "size": 13846
+    },
+    "10.0.19041.5609/srcsrv/vssindex.cmd": {
+      "sha256": "D4CA4877092A69AC6478B0A40C7B1D90B35C7798A510DA9A93AA675315527B45",
+      "size": 188
+    },
+    "10.0.19041.5609/srcsrv/walk.cmd": {
+      "sha256": "5CEF5D52CD6E8DA4A526E1AABD3EE5FD82A4E5DA9964CC7B337DC86BC25F6762",
+      "size": 343
+    },
+    "10.0.19041.5609/symproxy/symproxy.dll": {
+      "sha256": "BBFEB39AC362CD762E5B2C9B6735CD7FDA7D7257FFDD532B8623766A9DF8CDFB",
+      "size": 85544
+    },
+    "10.0.19041.5609/symproxy/symproxy.man": {
+      "sha256": "ADD8B51DBED267C09846FB0687CD86D4B20638FC33002E0D8081557F7F618473",
+      "size": 35555
+    },
+    "10.0.19041.5609/symproxy/symproxy.reg": {
+      "sha256": "2DE825E0ED78E94EF77C645807AF3518D176690645BCF0704E3566E1A808DB32",
+      "size": 1277
+    },
+    "10.0.19041.5609/symproxy/symsrv.dll": {
+      "sha256": "360F15AA51F7AF758329B8C1C69365780075F074AAEBAD5C4C36EC5B56A7705C",
+      "size": 258104
+    },
+    "10.0.19041.5609/themes/Multimon.reg": {
+      "sha256": "BF429A15AC83CC433BB5079A2E74E49360DA0808A6F6CE3E3CD88858C40A3061",
+      "size": 18346
+    },
+    "10.0.19041.5609/themes/Multimon.wew": {
+      "sha256": "A6E1118144DD2759BBE2FF4CEDFF092D94AF9DFA8BFC426F3FD327DA5F3B9E96",
+      "size": 2816
+    },
+    "10.0.19041.5609/themes/placehold1.c": {
+      "sha256": "CC8959C2781FE281D2E907179474A652E86906DFCB93FC5A3B4FD376D583C176",
+      "size": 397
+    },
+    "10.0.19041.5609/themes/placehold2.c": {
+      "sha256": "CC8959C2781FE281D2E907179474A652E86906DFCB93FC5A3B4FD376D583C176",
+      "size": 397
+    },
+    "10.0.19041.5609/themes/placehold3.c": {
+      "sha256": "CC8959C2781FE281D2E907179474A652E86906DFCB93FC5A3B4FD376D583C176",
+      "size": 397
+    },
+    "10.0.19041.5609/themes/placehold4.c": {
+      "sha256": "CC8959C2781FE281D2E907179474A652E86906DFCB93FC5A3B4FD376D583C176",
+      "size": 397
+    },
+    "10.0.19041.5609/themes/placehold5.c": {
+      "sha256": "CC8959C2781FE281D2E907179474A652E86906DFCB93FC5A3B4FD376D583C176",
+      "size": 397
+    },
+    "10.0.19041.5609/themes/srcdisassemble.reg": {
+      "sha256": "CB0F84249601B3BE9DDF3ECB554342F7761853E8EA1E604214D68A0D6C74B3FB",
+      "size": 21724
+    },
+    "10.0.19041.5609/themes/srcdisassemble.wew": {
+      "sha256": "1741FEDC4049C634186DB700E829DB28B1A0EBF07957B17E8684DA3EF3A102C7",
+      "size": 3344
+    },
+    "10.0.19041.5609/themes/standard.reg": {
+      "sha256": "CC0C3C65635698B6D93FF8E612241E13973A1DEA926792889ACDD1DC6D5EDD06",
+      "size": 15738
+    },
+    "10.0.19041.5609/themes/standard.wew": {
+      "sha256": "20AAD1CF1377118DC31F329445F975F0C31FC7AADD5186C251CC626948186067",
+      "size": 2408
+    },
+    "10.0.19041.5609/themes/standardvs.reg": {
+      "sha256": "8674E3005F1C8A2B0B0A4AE57F28467C5DA971CB35DD8E341D36C369784981D1",
+      "size": 16710
+    },
+    "10.0.19041.5609/themes/standardvs.wew": {
+      "sha256": "9654D2D86C2F2D1822FA355CB49B9176F7D6C5E89BD98E46422002D1726EF678",
+      "size": 2560
+    },
+    "10.0.19041.5609/triage/pooltag.txt": {
+      "sha256": "7F7B3803F12E8B0D387F4A1F3A7C7242AC41AF680345E93909A688ACE4F3F1E7",
+      "size": 245888
+    },
+    "10.0.19041.5609/triage/triage.ini": {
+      "sha256": "1E6EF70575FEA1217E5FE69A64E7E95641366F55AC4E98328692FC6A11F8E04E",
+      "size": 2092
+    },
+    "10.0.19041.5609/usb/usb2dbg.cat": {
+      "sha256": "083F578E82AC779F9762D209FA647EA5E87E691D1043BA1A04D8733D19BB1F19",
+      "size": 11233
+    },
+    "10.0.19041.5609/usb/usb2dbg.inf": {
+      "sha256": "7F88712A9127ADF9A99746EB901FB093567CD2544A9F4AF5D494784988E71E09",
+      "size": 4100
+    },
+    "10.0.19041.5609/usb/usb2dbg.sys": {
+      "sha256": "BE2453FF222598ACBE98CFF5227F02D1077B3A25763D2358EF687E8492210EC5",
+      "size": 33360
+    },
+    "10.0.19041.5609/usb/usbnet.cat": {
+      "sha256": "2C21DA9FE80D4135DE6C2B608D0DECEE0E3BEC47752C6B75CFD00FF8E160F309",
+      "size": 11435
+    },
+    "10.0.19041.5609/usb/usbnet.inf": {
+      "sha256": "CB0B5DAF0EE4229C475775D96D06540A9C3A0809040BE925952BF7183F85CB0C",
+      "size": 15172
+    },
+    "10.0.19041.5609/usb/usbnet.sys": {
+      "sha256": "3A32F5FAF4ED83A4E71D3D565AA829ED1532DE08B092112765A7BC648891EC4A",
+      "size": 55888
+    },
+    "10.0.19041.5609/Visualizers/atlmfc.natvis": {
+      "sha256": "1E97E7EEC6ECDFA8AD976463D2FD7B5535F8539ACEC909796F42D12404E41681",
+      "size": 7172
+    },
+    "10.0.19041.5609/Visualizers/concurrency.natvis": {
+      "sha256": "90B74B63AAC5699FC044BC0CB8AC0F71C3F85B84561B27A5369906F9829841B6",
+      "size": 40526
+    },
+    "10.0.19041.5609/Visualizers/cpp_rest.natvis": {
+      "sha256": "1E7E16DA48A4B6A832B1EC414A993030CDE793325A0BD7BA27E1690FB75200EB",
+      "size": 3662
+    },
+    "10.0.19041.5609/Visualizers/Kernel.natvis": {
+      "sha256": "093B94C76659B8CE6196BC08364A3926884FE3CD41CA92A3B147CB3B763B97AB",
+      "size": 54556
+    },
+    "10.0.19041.5609/Visualizers/stl.natvis": {
+      "sha256": "62193B50606FDD8D5659C34E17F1C463F49846A50BA2F81BF9705F6D6701A4E3",
+      "size": 77037
+    },
+    "10.0.19041.5609/Visualizers/Windows.Data.Json.natvis": {
+      "sha256": "126D6FA0BC5EBEDF6EFE62BA7BA23C585AF523FC615FDD583E314F323C1D7569",
+      "size": 4235
+    },
+    "10.0.19041.5609/Visualizers/Windows.Devices.Geolocation.natvis": {
+      "sha256": "D764FEF13D1668A91E27BD5287A2CB1932935D1764810C77A25FCABB01FE941D",
+      "size": 6133
+    },
+    "10.0.19041.5609/Visualizers/Windows.Devices.Sensors.natvis": {
+      "sha256": "1CBAD1B06C27AAFF05E67E92998C5E8B91E2B36DAD5FC251FE6A2CB0C792282A",
+      "size": 8623
+    },
+    "10.0.19041.5609/Visualizers/Windows.Media.natvis": {
+      "sha256": "D3007CCBCBED85957C5023A7841A2264ECB4FF4EBDD5BC1901962E07A2C12FA2",
+      "size": 20737
+    },
+    "10.0.19041.5609/Visualizers/windows.natvis": {
+      "sha256": "157085D3EA7749D9C66BBC9B0A01956C16D034A2C85484DAC471D24773BCE99B",
+      "size": 68392
+    },
+    "10.0.19041.5609/Visualizers/winrt.natvis": {
+      "sha256": "353D62F5D4982B31FE7AE994C3295003838D754E4504B0223DCC422C9F40EE85",
+      "size": 54754
+    },
+    "10.0.19041.5609/winext/bthkd.dll": {
+      "sha256": "A262F6FB409938463EF28CFB0DC68239843F029406F76DACA585FC931021F765",
+      "size": 113728
+    },
+    "10.0.19041.5609/winext/ChakraCore.dll": {
+      "sha256": "DB90540BBF77FFEFFF9DADE38A43AD7B8DADD6F4E467E2C917B6F6A9B9F124A9",
+      "size": 6645416
+    },
+    "10.0.19041.5609/winext/DbgModelApiXtn.dll": {
+      "sha256": "8BAFC3CDC7A4F92EB80EBFC97FD765F8A796412E2564DD8D2154039668DB798E",
+      "size": 1678848
+    },
+    "10.0.19041.5609/winext/ext.dll": {
+      "sha256": "F5D77B8ED86EC5B74302B65F87FE96FFCDEFD66AEADF9D2632B861BA45B5B66A",
+      "size": 6208576
+    },
+    "10.0.19041.5609/winext/gpiokd.dll": {
+      "sha256": "F83495E50B1FF521AE574647FE02FA73563CA2461EA75FE338EC415163496E0E",
+      "size": 36392
+    },
+    "10.0.19041.5609/winext/hidkd.dll": {
+      "sha256": "798DE994A55ADAC121DD9076609B5094A9E0AD6E107F76A841F587636C7781B1",
+      "size": 677456
+    },
+    "10.0.19041.5609/winext/jscript9diagdump.dll": {
+      "sha256": "E00B0376DBF5A6103E269D7183B6E82C455788D00BF6951DAC534E9321287A59",
+      "size": 51280
+    },
+    "10.0.19041.5609/winext/JsProvider.d.ts": {
+      "sha256": "CBA9E75A192DDB57B5EB3265BE63CD1585DC0184A37931239545564ECD6F78D9",
+      "size": 41033
+    },
+    "10.0.19041.5609/winext/JsProvider.dll": {
+      "sha256": "AD89FEF20D2B75CEF2530E7435D3FE676832521835507AC369179186157CB23B",
+      "size": 470528
+    },
+    "10.0.19041.5609/winext/kext.dll": {
+      "sha256": "B58E0B630FDCD28BA305BAF9AC8CB8F4A9EACCF612C308540B25EF581CD02EFB",
+      "size": 206912
+    },
+    "10.0.19041.5609/winext/logexts.dll": {
+      "sha256": "3756BF4A86BF74E7D950CD028F543CC1085A644C86E5C54655FA786DE18D192E",
+      "size": 296512
+    },
+    "10.0.19041.5609/winext/Logexts.ini": {
+      "sha256": "7B899D5E58B2707824E5B7A6AD57E79E397BB6AC7A54A1D1F8159A4049D2AB52",
+      "size": 1682
+    },
+    "10.0.19041.5609/winext/LogManifest.lgm": {
+      "sha256": "3D61162819970A59C3A0CB76D86375DB2C69B3806828A2F9A472024FC004EE0E",
+      "size": 7609278
+    },
+    "10.0.19041.5609/winext/rcdrkd.dll": {
+      "sha256": "A3295B007382F7427BFB1F5809EEE676B8273DBA6271CCD02CA407C4D7D71ACB",
+      "size": 789568
+    },
+    "10.0.19041.5609/winext/storagekd.dll": {
+      "sha256": "D6E1178E311E7D5D2DEB15CDD2F5BD2C0E051C89005F68653560E24EF20E526A",
+      "size": 103976
+    },
+    "10.0.19041.5609/winext/uext.dll": {
+      "sha256": "0B8893E9F34D590E6DDFA2BCA8F8FAD68BDF4D4F066CDBBA08A1EBAA50507600",
+      "size": 120400
+    },
+    "10.0.19041.5609/winext/usb3kd.dll": {
+      "sha256": "288F55D78D57A763046AE5798C91446C0F1EFC0AA70135DBE6607470A0711A53",
+      "size": 1274448
+    },
+    "10.0.19041.5609/winext/usbkd.dll": {
+      "sha256": "A77159FFD851EF743AA5334B8CBAC4DBB1BB33525F00D0E0DA4EB2D442ACDB42",
+      "size": 689744
+    },
+    "10.0.19041.5609/winext/wdfkd.dll": {
+      "sha256": "92590F412A1F4DB35EDFE14FEE4FF317EC0A47F6828CDD21194620213D52D5F9",
+      "size": 1115712
+    },
+    "10.0.19041.5609/winext/ApiExtension/CodeFlow.js": {
+      "sha256": "C61D9F4FFFDB2033DE3B8673C0CD2D9E9396964A0CA439A130C18976BA57E0E5",
+      "size": 24599
+    },
+    "10.0.19041.5609/winext/ApiExtension/SynTypes.js": {
+      "sha256": "A2D526FCF4EA45C940F12D866A327047719C96C09E716AAD87379DC9DDAAC20E",
+      "size": 106968
+    },
+    "10.0.19041.5609/winxp/acpikd.dll": {
+      "sha256": "D3127323C107ED672710E776264B0AC615849589B83E61DAC4EB111E741B9A15",
+      "size": 101968
+    },
+    "10.0.19041.5609/winxp/default.tmf": {
+      "sha256": "CF623B155529773C1B169F6710824FFAEC8DADB3B707D5731BDA61167BBC50F8",
+      "size": 5609
+    },
+    "10.0.19041.5609/winxp/exts.dll": {
+      "sha256": "BA016C62F87D4B907E5F7A8FF897778139F15A92F1B3C6C0CB506A3331BBA4A7",
+      "size": 635968
+    },
+    "10.0.19041.5609/winxp/fltkd.dll": {
+      "sha256": "D34CF07CEB9F691CAF7A1EF725797F181AAD5062CD1CC40A0F76861E019AD827",
+      "size": 122432
+    },
+    "10.0.19041.5609/winxp/kdexts.dll": {
+      "sha256": "E8A940316F86B976863BB19E6E1CFB334F33289EF0120F8C414452967C9F60DE",
+      "size": 2640976
+    },
+    "10.0.19041.5609/winxp/ks.dll": {
+      "sha256": "9B6446DDADB61DF9995E12D1D0A3D897CB2082167C222E39C6251AE134EFFD5F",
+      "size": 531536
+    },
+    "10.0.19041.5609/winxp/minipkd.dll": {
+      "sha256": "1E4A32738767C7194E88547D72D1ECA08D6A46D17F2AC5707A427B0EC5136C24",
+      "size": 69184
+    },
+    "10.0.19041.5609/winxp/ndiskd.dll": {
+      "sha256": "F6D5F468D80C57E5779AFCADC76B43CAAC16B81CDEB7529D64E019CB504C4B70",
+      "size": 2433104
+    },
+    "10.0.19041.5609/winxp/ntsdexts.dll": {
+      "sha256": "E8F3E65F0A80440D95FAC4B993CFE8312D235B62A7E328E8FE662B94C4407E92",
+      "size": 71760
+    },
+    "10.0.19041.5609/winxp/nvkd.dll": {
+      "sha256": "AA609815EC6C57DD3EEEE04839285F79FF985DE089A5ECE8A260E8AB25C4A53B",
+      "size": 151616
+    },
+    "10.0.19041.5609/winxp/rpcexts.dll": {
+      "sha256": "321B0F947D72E017521FC132D2ADBE17F6271F53291AA03A10FA2D09ADBBF8DC",
+      "size": 243792
+    },
+    "10.0.19041.5609/winxp/scsikd.dll": {
+      "sha256": "DE503D0C13BD69FB7A43680BA12AFA8BA45109EF7CA1F168ED763136327A6BC8",
+      "size": 73296
+    },
+    "10.0.19041.5609/winxp/system.tmf": {
+      "sha256": "B9C8B8EC256913630F9C2DC119835EFB5522FDE070DAB405CAAAF2F9C0ED5AC2",
+      "size": 40946
+    },
+    "10.0.19041.5609/winxp/wmitrace.dll": {
+      "sha256": "29A0925C57CD434D745FDE8E2EA398B80D09060B2CF5D0DA0BB368062E990CC5",
+      "size": 970832
+    },
+    "10.0.19041.5609/winxp/wow64exts.dll": {
+      "sha256": "46A394BD934049DE748F78A58E48D4CA290DD7F437B9DBE812D5ACD8A5F29ADC",
+      "size": 35904
+    },
+    "10.0.19041.5609/winxp/wudfext.dll": {
+      "sha256": "738B37EC13045242914C8F42641F5F6EAB46DE95FF9205A3A2015797B4DE5BC7",
+      "size": 145984
+    }
+  }
+}

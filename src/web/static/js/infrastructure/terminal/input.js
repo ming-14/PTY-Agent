@@ -106,42 +106,12 @@ export async function doPaste(sid) {
     if (!text) return;
     let cleaned = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     cleaned = cleaned.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, '');
+    // 直接发送 bracketed paste 序列：沙箱为真实 ConPTY（hpcon），
+    // conhost 负责回显与行编辑，与原生 ConPTY 会话完全一致。
     cleaned = '\x1b[200~' + cleaned + '\x1b[201~';
     wsSend({ type: 'input', session_id: sid, data: cleaned });
   } catch (e) {
     debug('paste', 'doPaste failed: name=%s message=%s', e && e.name, e && e.message);
     showToast('粘贴失败：请允许网站的剪贴板权限', 'error');
-  }
-}
-
-export function setLineMode(sid) {
-  const inst = state.termInstances[sid];
-  if (!inst) return;
-  inst.lineMode = false;
-  inst.lineBuffer = '';
-}
-
-export function handleLineModeInput(sid, data) {
-  const inst = state.termInstances[sid];
-  if (!inst || !inst.lineMode) return;
-  for (const ch of data) {
-    const code = ch.charCodeAt(0);
-    if (code === 13 || code === 10) {
-      const line = inst.lineBuffer;
-      inst.lineBuffer = '';
-      inst.term.write('\r\n');
-      wsSend({ type: 'input', session_id: sid, data: line + '\n' });
-    } else if (code === 127 || code === 8) {
-      if (inst.lineBuffer.length > 0) {
-        inst.lineBuffer = inst.lineBuffer.slice(0, -1);
-        inst.term.write('\b \b');
-      }
-    } else if (code === 3) {
-      wsSend({ type: 'signal', session_id: sid, signal: 'SIGINT' });
-    } else if (code === 9 || (code >= 32 && code !== 127)) {
-      // 支持非 ASCII 字符（如中文），code !== 127 排除 DEL
-      inst.lineBuffer += ch;
-      inst.term.write(ch);
-    }
   }
 }

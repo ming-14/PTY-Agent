@@ -188,7 +188,6 @@ export function handleSessionList(list) {
       const inst = state.termInstances[sid];
       if (inst) {
         inst.term.write('\r\n\x1b[90m[会话已结束]\x1b[0m\r\n');
-        inst.lineMode = false;
       }
       if (!state.closedSessionToastSet.has(sid)) {
         state.closedSessionToastSet.add(sid);
@@ -297,7 +296,6 @@ export function handleSubscribed(msg) {
   //   不设置 pendingReplay，保留 xterm.js 实例的 scrollback
   const wasSubscribed = !!(state.sessions[sid] && state.sessions[sid].subscribed);
   initSessionState(sid, msg, false);
-  ports.terminal.setLineMode(sid);
   ports.terminal.setAppMouseMode(sid, !!msg.appMouseMode);
 
   // v3 改造：从 ws_subscribed 响应恢复自适应锁状态。
@@ -382,7 +380,6 @@ export function handleSessionEnded(msg) {
   const inst = state.termInstances[sid];
   if (inst) {
     inst.term.write(note);
-    inst.lineMode = false;
   } else {
     const ses = state.sessions[sid];
     if (ses) {

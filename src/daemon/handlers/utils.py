@@ -19,6 +19,7 @@ from ...config.common import (
     GZIP_COMPRESS_LEVEL,
 )
 from ...auth.base import Authenticator
+from ...files.paths import GIT_BASH_PATH_HINT, has_git_bash_style_path
 
 _logger = logging.getLogger("pty-daemon")
 
@@ -41,23 +42,13 @@ _EVENTS_NO_ARGS_HINT = (
 
 _SESSION_ENDED_HINT = "The session has ended. You are now viewing the data that was produced earlier."
 
-_GIT_BASH_PATH_HINT = "非Git-Bash请不要使用Git-Bash风格路径(如 /c/Users/...)，请使用 Windows 风格路径(如 C:/Users/...)"
-
-_GIT_BASH_PATH_RE = re.compile(r"(?:^|\s|[=\"'])/[a-zA-Z]/")
+_GIT_BASH_PATH_HINT = GIT_BASH_PATH_HINT
 
 
 def compress_screen_buffer(buf: dict) -> str:
     raw = json.dumps(buf, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
     compressed = gzip.compress(raw, compresslevel=GZIP_COMPRESS_LEVEL)
     return base64.b64encode(compressed).decode("ascii")
-
-
-def has_git_bash_style_path(command) -> bool:
-    if isinstance(command, list):
-        command = " ".join(command)
-    if not isinstance(command, str):
-        return False
-    return bool(_GIT_BASH_PATH_RE.search(command))
 
 
 def map_reason(reason: str, exit_code=None) -> str:
@@ -332,6 +323,31 @@ def check_ended_session(manager: SessionManager, session_id: str) -> Optional[st
         return None
     tag = hs.get_session_tag(session_id)
     return tag if tag == "ended" else None
+
+
+def get_session_cwd(ctx, conn, cwd_session: str) -> Optional[str]:
+    """按 cwd_session 取会话 cwd（file 命令路径解析基准，不操作该会话）
+
+    会话不存在或无 cwd 时向 conn 发送错误并返回 None，调用方直接 return。
+    """
+    if not cwd_session:
+        Message.send(conn, Response.error("cwd_session is required"))
+        return None
+    elif ctx.manager is None:
+        Message.send(conn, Response.error("session lookup unavailable"))
+        return None
+    session = ctx.manager.get_session(cwd_session)
+    if session is None:
+        Message.send(conn, Response.error(
+            "cwd_session: session not found: %s" % cwd_session))
+        return None
+    cwd = session.cwd
+    if not cwd:
+        Message.send(conn, Response.error(
+            "cwd_session: session has no cwd: %s" % cwd_session))
+        return None
+    _logger.info("session cwd: sid=%s cwd=%r", cwd_session, cwd)
+    return cwd
 
 
 def validate_request(conn, msg: dict, fields: list) -> bool:

@@ -17,7 +17,6 @@ import { connect, wsSend, setMessageHandler } from './infrastructure/wsClient.js
 import { checkAuthStatus } from './infrastructure/auth.js';
 import {
   handleOutput,
-  setLineMode,
   replayPending,
   setMouseModeChangeCallback,
   setAppMouseMode,
@@ -186,7 +185,6 @@ initPorts({
   transport: { send: wsSend },
   terminal: {
     handleOutput,
-    setLineMode,
     replayPending,
     setAppMouseMode,
     applyTerminalFrameSize,

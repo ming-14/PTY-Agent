@@ -1,4 +1,4 @@
-"""ProcessMonitor 与 GuiDetector 单元测试
+"""ProcessMonitor 与 GuiDetector 单元测试（tracker 依赖版）
 
 测试进程监控器的状态管理、崩溃检测、PID diff，以及 GUI 检测器的节流和事件发布。
 """
@@ -12,6 +12,26 @@ from src.process.gui import GuiDetector
 from src.output.events import PendingEvent
 
 
+class _MockTracker:
+    """ProcessTreeTracker 最小 mock"""
+
+    def __init__(self, pids=None, exit_codes=None):
+        self._pids = pids or []
+        self._exit_codes = exit_codes or {}
+        self._notifications = []
+
+    def get_process_list(self):
+        return self._pids
+
+    def get_process_exit_code(self, pid):
+        return self._exit_codes.get(pid)
+
+    def drain_notifications(self):
+        items = self._notifications
+        self._notifications = []
+        return items
+
+
 class TestProcessMonitorInit:
     """ProcessMonitor 初始化测试"""
 
@@ -19,7 +39,7 @@ class TestProcessMonitorInit:
         """初始状态无崩溃"""
         events = []
         mon = ProcessMonitor(
-            pty_provider=lambda: None,
+            tracker=_MockTracker(),
             event_sink=lambda e: events.append(e),
         )
         assert not mon.crash_event.is_set()
@@ -29,7 +49,7 @@ class TestProcessMonitorInit:
         """重置状态"""
         events = []
         mon = ProcessMonitor(
-            pty_provider=lambda: None,
+            tracker=_MockTracker(),
             event_sink=lambda e: events.append(e),
         )
         mon.crash_event.set()
@@ -41,7 +61,7 @@ class TestProcessMonitorInit:
         """重置时设置初始 PID 快照"""
         events = []
         mon = ProcessMonitor(
-            pty_provider=lambda: None,
+            tracker=_MockTracker(),
             event_sink=lambda e: events.append(e),
         )
         mon.reset(initial_pids={100, 200})
@@ -51,7 +71,7 @@ class TestProcessMonitorInit:
         """清除崩溃事件"""
         events = []
         mon = ProcessMonitor(
-            pty_provider=lambda: None,
+            tracker=_MockTracker(),
             event_sink=lambda e: events.append(e),
         )
         mon.crash_event.set()
@@ -62,40 +82,11 @@ class TestProcessMonitorInit:
 class TestProcessMonitorDrainNotifications:
     """ProcessMonitor.drain_notifications 测试"""
 
-    def test_no_pty(self):
-        """无 PTY 时不产生事件"""
+    def test_empty_notifications(self):
+        """tracker 返回空通知列表"""
         events = []
         mon = ProcessMonitor(
-            pty_provider=lambda: None,
-            event_sink=lambda e: events.append(e),
-        )
-        mon.drain_notifications()
-        assert len(events) == 0
-
-    def test_pty_without_job_notifications(self):
-        """PTY 无 get_job_notifications 方法"""
-        events = []
-
-        class _MockPty:
-            pass
-
-        mon = ProcessMonitor(
-            pty_provider=lambda: _MockPty(),
-            event_sink=lambda e: events.append(e),
-        )
-        mon.drain_notifications()
-        assert len(events) == 0
-
-    def test_pty_with_empty_notifications(self):
-        """PTY 返回空通知列表"""
-        events = []
-
-        class _MockPty:
-            def get_job_notifications(self):
-                return []
-
-        mon = ProcessMonitor(
-            pty_provider=lambda: _MockPty(),
+            tracker=_MockTracker(),
             event_sink=lambda e: events.append(e),
         )
         mon.drain_notifications()
@@ -105,27 +96,11 @@ class TestProcessMonitorDrainNotifications:
 class TestProcessMonitorCheckEvents:
     """ProcessMonitor.check_events 测试"""
 
-    def test_no_pty(self):
-        """无 PTY 时跳过"""
-        events = []
-        mon = ProcessMonitor(
-            pty_provider=lambda: None,
-            event_sink=lambda e: events.append(e),
-        )
-        mon._last_process_check_ms = 0
-        mon.check_events()
-        assert len(events) == 0
-
     def test_empty_pid_snapshots(self):
         """空 PID 快照不产生事件"""
         events = []
-
-        class _MockPty:
-            def get_process_list(self):
-                return []
-
         mon = ProcessMonitor(
-            pty_provider=lambda: _MockPty(),
+            tracker=_MockTracker(pids=[]),
             event_sink=lambda e: events.append(e),
         )
         mon._last_process_check_ms = 0
@@ -135,16 +110,8 @@ class TestProcessMonitorCheckEvents:
     def test_new_process_spawn_event(self):
         """新进程产生 spawn 事件"""
         events = []
-
-        class _MockPty:
-            def get_process_list(self):
-                return [100, 200]
-
-            def get_child_process_exit_code(self, pid):
-                return 0
-
         mon = ProcessMonitor(
-            pty_provider=lambda: _MockPty(),
+            tracker=_MockTracker(pids=[100, 200]),
             event_sink=lambda e: events.append(e),
         )
         mon.reset(initial_pids={100})
@@ -155,16 +122,8 @@ class TestProcessMonitorCheckEvents:
     def test_gone_process_exit_event(self):
         """消失进程产生 exit 事件"""
         events = []
-
-        class _MockPty:
-            def get_process_list(self):
-                return [100]
-
-            def get_child_process_exit_code(self, pid):
-                return 0
-
         mon = ProcessMonitor(
-            pty_provider=lambda: _MockPty(),
+            tracker=_MockTracker(pids=[100], exit_codes={200: 0}),
             event_sink=lambda e: events.append(e),
         )
         mon.reset(initial_pids={100, 200})
@@ -201,8 +160,8 @@ class TestGuiDetectorInit:
 class TestGuiDetectorCheck:
     """GuiDetector.check 测试"""
 
-    def test_no_pty(self):
-        """无 PTY 时跳过"""
+    def test_no_tracker(self):
+        """无 tracker 时跳过"""
         events = []
         det = GuiDetector(event_sink=lambda e: events.append(e))
         det.check(None, "test")
@@ -213,7 +172,7 @@ class TestGuiDetectorCheck:
         events = []
         det = GuiDetector(event_sink=lambda e: events.append(e))
 
-        class _MockPty:
+        class _MockTracker:
             _call_count = 0
             def poll_gui_windows(self):
                 self._call_count += 1
@@ -221,10 +180,10 @@ class TestGuiDetectorCheck:
             def get_process_list(self):
                 return []
 
-        pty = _MockPty()
-        det.check(pty, "test")
-        det.check(pty, "test")
-        assert pty._call_count == 1
+        tracker = _MockTracker()
+        det.check(tracker, "test")
+        det.check(tracker, "test")
+        assert tracker._call_count == 1
 
     def test_new_window_publishes_event(self):
         """检测到新窗口发布事件"""
@@ -232,13 +191,13 @@ class TestGuiDetectorCheck:
         det = GuiDetector(event_sink=lambda e: events.append(e))
         det._last_poll_ms = 0
 
-        class _MockPty:
+        class _MockTracker:
             def poll_gui_windows(self):
                 return [{"hwnd": 0x1234, "pid": 100, "title": "Test"}]
             def get_process_list(self):
                 return [100]
 
-        det.check(_MockPty(), "test")
+        det.check(_MockTracker(), "test")
         assert len(events) == 1
         assert events[0].type == "gui_window"
         assert events[0].hwnd == 0x1234

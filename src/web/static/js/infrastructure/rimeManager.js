@@ -21,7 +21,6 @@ import { state } from '../domain/state.js';
 import { debug, info, error } from '../domain/logger.js';
 import { wsSend } from './wsClient.js';
 import { showToast } from './domUtils.js';
-import { handleLineModeInput } from './terminalAdapter.js';
 import * as settingsStore from '../application/settingsStore.js';
 
 const RIME_MODE_KEY = 'pty_ime_mode';
@@ -244,11 +243,7 @@ function sendToTerminal(text) {
   if (!s || !s.running || s.closing) return;
   const inst = state.termInstances[sid];
   if (inst && inst._readonly) return;
-  if (inst && inst.lineMode) {
-    handleLineModeInput(sid, text);
-    debug('rime', 'send → lineMode sid=%s data=%s', sid, JSON.stringify(text));
-    return;
-  }
+  // 沙箱为真实 ConPTY（hpcon），输入直接送入终端（conhost 回显/编辑）
   wsSend({ type: 'input', session_id: sid, data: text });
   debug('rime', 'send → terminal sid=%s data=%s', sid, JSON.stringify(text));
 }

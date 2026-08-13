@@ -7,6 +7,7 @@ r"""PTY-Agent — 命令行交互式程序交互代理
 """
 
 import logging
+import os
 import sys
 import argparse
 import json
@@ -82,16 +83,7 @@ class _TimeoutHintAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         parser.error(
             "read 命令不支持 --timeout（读取输出是即时操作，无需等待）\n"
-            "若需等待特定输出，请使用: pty-agent send <id> <输入> -t <正则>"
-        )
-
-
-class _InputHintAction(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string=None):
-        parser.error(
-            f"{option_string} 不是合法选项。发送的文本应作为位置参数直接给出。\n"
-            "用法: pty-agent send <会话ID> \"<输入文本>\" [选项]\n"
-            "示例: pty-agent send gomoku \"/help\" -t \"提示符>\""
+            "若需等待特定输出，请使用: pty-agent send <id> -i \"<输入>\" -t <正则>"
         )
 
 
@@ -203,9 +195,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_send = sub.add_parser("send", help="向运行中的会话发送输入")
     _add_common_args(p_send)
     p_send.add_argument("id", help="会话标识")
-    p_send.add_argument("input", help="要发送的输入文本")
-    p_send.add_argument("-i", "--input", action=_InputHintAction,
-                        help=argparse.SUPPRESS)
+    p_send.add_argument("-i", "--input", required=True,
+                        help="要发送的输入文本（最长 65536 字符）")
     p_send.add_argument("--trigger", "-t", default=None,
                         help="触发条件（正则表达式），命中后返回输出")
     p_send.add_argument("--newline", action="store_true", default=None,
@@ -386,7 +377,108 @@ def build_parser() -> argparse.ArgumentParser:
         help="公钥注释（默认 用户名@主机名）",
     )
 
+    # file 父子命令（文件工具）
+    p_file = sub.add_parser("file", help="文件工具（read/write/edit/grep/glob）")
+    file_sub = p_file.add_subparsers(dest="file_subcmd", help="文件子命令")
+    p_file_read = file_sub.add_parser("read", help="读取文件内容（带行号）")
+    _add_common_args(p_file_read)
+    p_file_read.add_argument("-s", "--cwd-session", metavar="SESSION_ID", required=True,
+                             help="取该会话 cwd 作为路径解析基准（不操作该会话）")
+    p_file_read.add_argument("path", help="文件路径（绝对或相对会话 cwd，支持 ~ 展开）")
+    p_file_read.add_argument("--offset", type=int, default=None,
+                             help="起始行号（0-based）")
+    p_file_read.add_argument("--limit", type=int, default=None,
+                             help="读取行数（默认 2000）")
+
+    p_file_write = file_sub.add_parser("write", help="覆盖写/新建文件（自动建父目录）")
+    _add_common_args(p_file_write)
+    p_file_write.add_argument("-s", "--cwd-session", metavar="SESSION_ID", required=True,
+                              help="取该会话 cwd 作为路径解析基准（不操作该会话）")
+    p_file_write.add_argument("path", help="文件路径（绝对或相对会话 cwd，支持 ~ 展开）")
+    p_file_write.add_argument("--content", default=None,
+                              help="写入内容（与 --content-file 二选一；已存在文件需先 file read）")
+    p_file_write.add_argument("--content-file", metavar="FILE", default=None,
+                              help="从文件读取写入内容（--content 与 --content-file 二选一；UTF-8）")
+
+    p_file_edit = file_sub.add_parser("edit", help="唯一匹配替换/删除/新建")
+    _add_common_args(p_file_edit)
+    p_file_edit.add_argument("-s", "--cwd-session", metavar="SESSION_ID", required=True,
+                             help="取该会话 cwd 作为路径解析基准（不操作该会话）")
+    p_file_edit.add_argument("path", help="文件路径（绝对或相对会话 cwd，支持 ~ 展开）")
+    p_file_edit.add_argument("--old", default="",
+                             help="待替换文本（留空=新建；须唯一匹配）")
+    p_file_edit.add_argument("--old-file", metavar="FILE", default=None,
+                             help="从文件读取待替换文本（与 --old 二选一；UTF-8）")
+    p_file_edit.add_argument("--new", default="",
+                             help="新文本（留空=删除）")
+    p_file_edit.add_argument("--new-file", metavar="FILE", default=None,
+                             help="从文件读取新文本（与 --new 二选一；UTF-8）")
+
+    p_file_grep = file_sub.add_parser("grep", help="内容搜索（rg 优先）")
+    _add_common_args(p_file_grep)
+    p_file_grep.add_argument("-s", "--cwd-session", metavar="SESSION_ID", required=True,
+                             help="取该会话 cwd 作为路径解析基准（不操作该会话）")
+    p_file_grep.add_argument("pattern", help="正则（--literal-text 时按字面量）")
+    p_file_grep.add_argument("path", nargs="?", default=None,
+                             help="搜索根（默认会话 cwd）")
+    p_file_grep.add_argument("--include", default=None,
+                             help="文件名 glob 过滤（如 *.py）")
+    p_file_grep.add_argument("--literal-text", action="store_true",
+                             help="按字面量匹配而非正则")
+
+    p_file_glob = file_sub.add_parser("glob", help="文件名匹配（rg 优先）")
+    _add_common_args(p_file_glob)
+    p_file_glob.add_argument("-s", "--cwd-session", metavar="SESSION_ID", required=True,
+                             help="取该会话 cwd 作为路径解析基准（不操作该会话）")
+    p_file_glob.add_argument("pattern", help="路径 glob（如 *.py、src/**/*.go）")
+    p_file_glob.add_argument("path", nargs="?", default=None,
+                             help="搜索根（默认会话 cwd）")
+
+    p_file_upload = file_sub.add_parser("upload", help="上传本地文件/目录到会话侧（scp -r 语义）")
+    _add_common_args(p_file_upload)
+    p_file_upload.add_argument("-s", "--cwd-session", metavar="SESSION_ID", required=True,
+                               help="取该会话 cwd 作为远端路径解析基准（不操作该会话）")
+    p_file_upload.add_argument("local_path", help="本地路径（文件或目录，CLI 本机解析）")
+    p_file_upload.add_argument("remote_path", help="远端路径（绝对或相对会话 cwd，支持 ~ 展开）")
+    p_file_upload.add_argument("--force", action="store_true",
+                               help="远端目标已存在且内容不同时允许覆盖")
+    p_file_upload.add_argument("--timeout", type=float, default=None,
+                               help="整个传输命令的总时限（秒，默认 120）")
+
+    p_file_download = file_sub.add_parser("download", help="下载会话侧文件/目录到本地（scp -r 语义）")
+    _add_common_args(p_file_download)
+    p_file_download.add_argument("-s", "--cwd-session", metavar="SESSION_ID", required=True,
+                                 help="取该会话 cwd 作为远端路径解析基准（不操作该会话）")
+    p_file_download.add_argument("remote_path", help="远端路径（绝对或相对会话 cwd，支持 ~ 展开）")
+    p_file_download.add_argument("local_path", help="本地路径（文件或目录，CLI 本机解析）")
+    p_file_download.add_argument("--force", action="store_true",
+                                 help="本地目标已存在且内容不同时允许覆盖")
+    p_file_download.add_argument("--timeout", type=float, default=None,
+                                 help="整个传输命令的总时限（秒，默认 120）")
+
     return parser
+
+
+def _resolve_cli_content(inline: Optional[str], content_file: Optional[str],
+                         inline_opt: str, file_opt: str) -> Optional[str]:
+    """file write/edit 内容解析：inline 与 --*-file 二选一
+
+    空串视为未提供（--old "" --old-file f 时取文件）；file 侧按 UTF-8 读取，
+    非法 UTF-8 / 不存在时抛 ValueError 由 main() 统一输出。
+    """
+    if inline and content_file is not None:
+        raise ValueError("%s and %s are mutually exclusive" % (inline_opt, file_opt))
+    if content_file is not None:
+        with open(content_file, "rb") as f:
+            try:
+                content = f.read().decode("utf-8")
+            except UnicodeDecodeError as e:
+                raise ValueError(
+                    "content file is not valid UTF-8: %s (%s)" % (content_file, e))
+        # CRLF 规范化为 LF：对齐 daemon 读文件的 universal newlines 视图
+        # （file read 显示/edit 匹配均不含 \r），避免 --old-file 匹配失败
+        return content.replace("\r\n", "\n")
+    return inline
 
 
 def _handle_config_ops(args) -> Optional[dict]:
@@ -903,6 +995,65 @@ def main():
                 )
         elif args.subcmd == "wait":
             client.cmd_wait(timeout=args.timeout)
+        elif args.subcmd == "file":
+            if args.file_subcmd == "read":
+                client.cmd_file_read(
+                    path=args.path,
+                    cwd_session=args.cwd_session,
+                    offset=args.offset,
+                    limit=args.limit,
+                )
+            elif args.file_subcmd == "write":
+                content = _resolve_cli_content(
+                    args.content, args.content_file, "--content", "--content-file")
+                client.cmd_file_write(
+                    path=args.path,
+                    cwd_session=args.cwd_session,
+                    content=content,
+                )
+            elif args.file_subcmd == "edit":
+                old = _resolve_cli_content(
+                    args.old, args.old_file, "--old", "--old-file")
+                new = _resolve_cli_content(
+                    args.new, args.new_file, "--new", "--new-file")
+                client.cmd_file_edit(
+                    path=args.path,
+                    cwd_session=args.cwd_session,
+                    old=old,
+                    new=new,
+                )
+            elif args.file_subcmd == "grep":
+                client.cmd_file_grep(
+                    pattern=args.pattern,
+                    cwd_session=args.cwd_session,
+                    path=args.path,
+                    include=args.include,
+                    literal_text=args.literal_text,
+                )
+            elif args.file_subcmd == "glob":
+                client.cmd_file_glob(
+                    pattern=args.pattern,
+                    cwd_session=args.cwd_session,
+                    path=args.path,
+                )
+            elif args.file_subcmd == "upload":
+                client.cmd_file_upload(
+                    local_path=os.path.abspath(os.path.expanduser(args.local_path)),
+                    remote_path=args.remote_path,
+                    cwd_session=args.cwd_session,
+                    force=args.force,
+                    timeout=args.timeout,
+                )
+            elif args.file_subcmd == "download":
+                client.cmd_file_download(
+                    remote_path=args.remote_path,
+                    local_path=os.path.abspath(os.path.expanduser(args.local_path)),
+                    cwd_session=args.cwd_session,
+                    force=args.force,
+                    timeout=args.timeout,
+                )
+            else:
+                parser.print_help()
 
     except KeyboardInterrupt:
         from .client.formatter import print_response

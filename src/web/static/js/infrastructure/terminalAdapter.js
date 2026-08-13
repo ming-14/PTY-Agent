@@ -12,15 +12,11 @@ export {
   applyReadonlyState,
   handleOutput,
   replayPending,
-  setLineMode,
   applyTheme,
   updateTerminalSnapshot,
   queuePendingOutput,
   restoreScrollbackAndSnapshot,
 } from './terminal/lifecycle.js';
-
-// 行模式输入处理
-export { handleLineModeInput } from './terminal/input.js';
 
 // 终端框尺寸与字号缩放（v9.2：按会话 frameRatio，Ctrl+滚轮调比例不改 cols/rows）
 export {

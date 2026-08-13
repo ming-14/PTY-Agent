@@ -5,7 +5,7 @@
 
 import pytest
 
-from src.session.shm_utils import (
+from src.ipc.shm import (
     generate_auth_token,
     read_port_from_shm,
     read_daemon_info_from_shm,
@@ -15,7 +15,8 @@ from src.session.shm_utils import (
     cleanup_auth_shm,
     cleanup_port_shm,
 )
-from src.config import IS_WINDOWS, DEFAULT_DAEMON_PORT, MMAP_NAME, MMAP_SIZE
+from src.config.common import IS_WINDOWS
+from src.config.daemon import DEFAULT_DAEMON_PORT, MMAP_NAME, MMAP_SIZE
 
 
 class TestGenerateAuthToken:

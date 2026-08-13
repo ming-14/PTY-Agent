@@ -4,7 +4,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
-from src.session.encoding import detect_decode, decode_strip_tail
+from src.encoding import detect_decode, decode_strip_tail
 
 
 def test_decode_empty():

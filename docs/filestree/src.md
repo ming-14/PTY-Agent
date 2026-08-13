@@ -17,9 +17,11 @@ src/
 │   ├── common.py            # 共有配置加载（common.toml + IS_WINDOWS / DATA_DIR / PROJECT_ROOT）
 │   ├── daemon.py            # 守护进程配置加载（common + daemon + logging + web.toml）
 │   ├── client.py            # 客户端配置加载（common + client.toml）
+│   ├── files.py             # 文件工具配置加载（files.toml + RG_EXE 自动探测）
 │   ├── common.toml          # 共有配置（终端默认值 / DAEMON_HOST / 压缩 / 输入限制 / 认证开关）
 │   ├── daemon.toml          # 守护进程配置（端口 / 缓冲 / 超时 / SHM / TLS 服务端）
 │   ├── client.toml          # 客户端配置（连接超时 / TLS 客户端 / TOFU）
+│   ├── files.toml           # 文件工具配置（读/写/搜索上限、忽略目录、RG_EXE）
 │   ├── logging.toml         # 日志配置（级别 / 格式 / 轮转 / logger 分组）
 │   ├── web.toml             # Web 服务器配置（监听 / VNC / fastscreen / 网页端默认值）
 │   ├── vnc.toml             # VNC 配置
@@ -84,7 +86,44 @@ src/
 │       ├── mouse_handler.py # mouse 命令处理
 │       ├── status_handler.py # status 命令处理
 │       ├── wait_handler.py  # wait 命令处理
+│       ├── file_read_handler.py  # file read 命令处理
+│       ├── file_write_handler.py # file write 命令处理
+│       ├── file_edit_handler.py  # file edit 命令处理（create/replace/delete）
+│       ├── file_grep_handler.py  # file grep 命令处理（rg 双引擎）
+│       ├── file_glob_handler.py  # file glob 命令处理（rg 双引擎）
+│       ├── file_upload_handler.py  # file upload 命令处理（握手校验 → 二进制帧接收落盘）
+│       ├── file_download_handler.py # file download 命令处理（握手校验 → 扫描发送）
 │       └── utils.py         # 处理器工具函数
+
+├── files/                   # ═══════ 文件工具用例层（按工具域分组） ═══════
+│   ├── __init__.py          # 聚合导出（errors / state / paths / 四个用例函数）
+│   ├── paths.py             # 路径工具：会话 cwd 解析（resolve_session_path）/边界判定/git-bash 检测
+│   ├── state.py             # 读写状态机：FileRecordStore（readTime/writeTime）
+│   ├── diff.py              # unified diff 生成 + additions/removals 统计
+│   ├── history.py           # FileHistoryStore（SQLite 版本链）
+│   ├── permission.py        # 权限检查器（D3：仅保留接口，直接放行）
+│   ├── errors.py            # 工具异常类型（FileToolError / FileReadRequiredError 等）
+│   ├── read/                # ═══ file read 用例 ═══
+│   │   ├── __init__.py      # 导出 read_file / ReadResult
+│   │   └── reader.py        # file read 用例：大小/行数限制、行号输出、图片检测、相似名建议
+│   ├── write/               # ═══ file write / edit 用例 ═══
+│   │   ├── __init__.py      # 导出 write_file / edit_file / WriteResult
+│   │   └── writer.py        # file write/file edit 用例：状态机→diff→权限→落盘→history
+│   ├── search/              # ═══ file grep / glob 用例 ═══
+│   │   ├── __init__.py      # 导出 grep_files / glob_files / is_ignored
+│   │   ├── grep.py          # file grep 用例：rg 引擎 + 纯 Python 降级
+│   │   ├── glob_.py         # file glob 用例：rg --files + 递归 glob 降级
+│   │   └── ignore.py        # SkipHidden 过滤（隐藏文件 + 忽略目录清单）
+│   └── transfer/            # ═══ file upload / download 传输业务（两端共用） ═══
+│       ├── __init__.py      # 导出 upload / download / 错误类型
+│       ├── common.py        # 帧协议常量/错误类型（TransferError/TransferTimeoutError/TransferAbortedError）
+│       ├── scan.py          # 本地/远端树扫描（清单生成）
+│       ├── map.py           # 路径映射（远端↔本地 relpath 对齐）
+│       ├── judge.py         # 覆盖判定（相同跳过/不同拒绝提示 --force）
+│       ├── client_upload.py # CLI 侧上传驱动（握手→清单→逐文件→进度）
+│       ├── client_download.py # CLI 侧下载驱动
+│       ├── daemon_upload.py # daemon 侧上传接收（落盘→校验→rename→history→映射）
+│       └── daemon_download.py # daemon 侧下载发送（扫描→逐文件发送）
 
 ├── pty/                     # ═══════ 伪终端后端层 ═══════
 │   ├── __init__.py
@@ -100,10 +139,8 @@ src/
 │       ├── win32_api.py     # Windows ctypes 类型定义 + 全部 API 函数绑定
 │       ├── conpty.py        # WindowsConPTY（CreatePseudoConsole 路径）
 │       ├── condrv.py        # ConDrvPseudoTerminal（NT NtOpenFile 直连路径，已禁用）
-│       ├── job.py           # ProcessJob + JobNotification（进程树追踪 + IOCP 通知）
-│       ├── gui_monitor.py   # GuiWindowMonitor + GuiWindowInfo（EnumWindows GUI 窗口轮询）
-│       ├── shells.py        # Shell 检测函数（detect_available_shells / format_shell_info）
-│       └── win32_error_msg.py # Windows NTSTATUS/Win32 错误码格式化
+│       ├── conpty_handle.py # ConPtyHandle（HPCON + inW/outR 句柄三件套，I/O 与 resize）
+│       └── shells.py        # Shell 检测函数（detect_available_shells / format_shell_info）
 
 ├── ipc/                     # ═══════ 进程间通信层 ═══════
 │   ├── __init__.py
@@ -135,9 +172,19 @@ src/
 
 ├── process/                 # ═══════ 进程处理层 ═══════
 │   ├── __init__.py
+│   ├── base.py              # ProcessTreeTracker 抽象基类 + ProcessNotification
 │   ├── monitor.py           # ProcessMonitor（进程树 diff + IOCP 排空 + 崩溃检测）
 │   ├── info.py              # 进程查询与错误格式化
-│   └── gui.py               # GuiDetector（GUI 窗口轮询检测，2s 节流）
+│   ├── gui.py               # GuiDetector（GUI 窗口轮询检测，2s 节流）
+│   ├── win32_error.py       # Windows NTSTATUS/Win32 错误码格式化
+│   ├── unix/                # ═══ Unix 子包 ═══
+│   │   ├── __init__.py
+│   │   └── pgid_tracker.py  # PgidProcessTreeTracker（进程组追踪 + waitpid 轮询崩溃检测）
+│   └── windows/             # ═══ Windows 子包 ═══
+│       ├── __init__.py
+│       ├── api.py           # Windows API 绑定（Job 相关 ctypes 声明）
+│       ├── job_tracker.py   # JobProcessTreeTracker（Job Object 追踪 + IOCP 通知 + KILL_ON_JOB_CLOSE）
+│       └── gui_monitor.py   # GuiWindowMonitor + GuiWindowInfo（EnumWindows GUI 窗口轮询）
 
 ├── input/                   # ═══════ 输入处理层 ═══════
 │   ├── __init__.py

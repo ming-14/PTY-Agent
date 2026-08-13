@@ -39,7 +39,6 @@ from .win32_api import (
     _ReadFile,
     _WriteFile,
     _CloseHandle,
-    _GetExitCodeProcess,
     _PeekNamedPipe,
     _InitAttrList,
     _UpdateAttr,
@@ -89,9 +88,9 @@ from .win32_api import (
     _KEY_EVENT_RECORD,
     _CreateFileW,
 )
-from .win32_error_msg import STILL_ACTIVE
-from .job import ProcessJob
-from .gui_monitor import GuiWindowMonitor, GuiWindowInfo
+from ...process.windows.api import _GetExitCodeProcess
+from ...process.win32_error import STILL_ACTIVE
+from ...process.base import ProcessTreeTracker
 
 _logger = logging.getLogger("pty-condrv")
 
@@ -248,7 +247,7 @@ class ConDrvPseudoTerminal(PseudoTerminal):
     """
 
     def __init__(self, command, cols: int = DEFAULT_COLS, rows: int = DEFAULT_ROWS, env=None, cwd=None,
-                 encoding: Optional[str] = None):
+                 encoding: Optional[str] = None, tracker: Optional["ProcessTreeTracker"] = None):
         if not _CONDRV_OK:
             raise OSError("ConDrv 驱动不可用（需要管理员权限或系统不支持）")
 
@@ -262,8 +261,8 @@ class ConDrvPseudoTerminal(PseudoTerminal):
         self._signal = None
         self._ref_h = None
         self._conhost_proc = None
-        self._job = ProcessJob(name=f"pty-con-{id(self)}")
-        self._gui_monitor = GuiWindowMonitor(job=self._job)
+        # Session 注入的进程树追踪器（spawn 成功后同一路径内 register_root）
+        self._tracker = tracker
 
         if encoding:
             _logger.debug("ConDrvPseudoTerminal: encoding=%s (ConPTY output is always UTF-8)", encoding)
@@ -480,7 +479,10 @@ class ConDrvPseudoTerminal(PseudoTerminal):
         self._child_pid = pi.dwProcessId
         self._ph = pi.hProcess
         _CloseHandle(pi.hThread)
-        self._job.assign(pi.hProcess)
+        # 同一代码路径内登记 root 到 tracker（AssignProcessToJobObject，
+        # 子进程自动继承 Job 归属）
+        if self._tracker:
+            self._tracker.register_root(self._child_pid, pi.hProcess)
         _logger.info("子进程启动成功 pid=%d", self._child_pid)
 
     def read(self, n: int = 65536) -> bytes:
@@ -565,25 +567,23 @@ class ConDrvPseudoTerminal(PseudoTerminal):
             _logger.warning("resize failed: %s", e)
 
     def _cleanup(self, caller: str = ""):
-        """统一清理：CancelIoEx → Job.close → 关闭管道 → 关闭进程句柄 → GUI
+        """统一清理：CancelIoEx → 关闭管道 → 关闭进程句柄
 
         关闭顺序很关键（避免死锁）：
         1. CancelIoEx(_outR) → 取消 reader 线程挂起的 ReadFile
-        2. 关闭 Job (KILL_ON_JOB_CLOSE) → 立即终止所有子进程
-        3. 关闭 conhost 进程句柄 → conhost 退出
-        4. 关闭管道句柄 → reader 后续 read 也立即失败
-        5. 关闭信号管道 + 引用句柄 + GUI 监控
+        2. 关闭 conhost 进程句柄 → conhost 退出（进程树已由 Session 在
+           kill_tree 阶段终止）
+        3. 关闭管道句柄 → reader 后续 read 也立即失败
+        4. 关闭信号管道 + 引用句柄
+
+        注意：进程树终止（kill_tree）与 tracker 关闭由 Session 编排，
+        顺序为 kill_tree → pty.close → tracker.close。
         """
         if self._outR:
             try:
                 _CancelIoEx(self._outR, None)
             except Exception:
                 pass
-        if self._job:
-            try:
-                self._job.close()
-            except Exception as e:
-                _logger.warning("%s: job.close failed: %s", caller, e)
         if self._outR:
             try:
                 _CloseHandle(self._outR)
@@ -606,15 +606,9 @@ class ConDrvPseudoTerminal(PseudoTerminal):
         self._ref_h = None
         self._conhost_proc = None
         self._ph = None
-        self._gui_monitor.close()
 
-    def kill_tree(self):
-        """强杀整个进程树"""
-        import time as _time
-        _t0 = _time.monotonic()
-        _logger.info("kill_tree: pid=%d", self._child_pid)
-        self._cleanup("kill_tree")
-        _logger.info("kill_tree: done pid=%d total %.3fs", self._child_pid, _time.monotonic() - _t0)
+    def resize(self, cols: int, rows: int):
+        _logger.info("resize: %dx%d", cols, rows)
 
     def close(self):
         """关闭伪终端并清理资源"""
@@ -1101,28 +1095,4 @@ class ConDrvPseudoTerminal(PseudoTerminal):
         except Exception:
             return None
 
-    def get_process_list(self) -> List[int]:
-        """获取进程树所有进程的 PID 列表"""
-        return self._job.query_process_list()
-
-    def get_child_process_exit_code(self, pid: int) -> Optional[int]:
-        """查询 Job 进程中某个 PID 的退出码"""
-        return self._job.query_process_exit_code(pid)
-
-    def get_job_notifications(self) -> list:
-        """获取 Job Object 实时通知"""
-        if not self._job:
-            return []
-        return self._job.drain_notifications()
-
-    def get_gui_windows(self) -> List[dict]:
-        """获取已检测到的 GUI 窗口列表"""
-        return [w.to_dict() for w in self._gui_monitor.windows]
-
-    def poll_gui_windows(self) -> List[dict]:
-        """轮询检测新增 GUI 窗口"""
-        return [w.to_dict() for w in self._gui_monitor.poll()]
-
-    def close_gui_window(self, hwnd: int) -> bool:
-        """关闭指定 GUI 窗口"""
-        return self._gui_monitor.close_window(hwnd)
+    # ---- 进程树追踪已迁出到 process/tracker（register_root 时注入）----

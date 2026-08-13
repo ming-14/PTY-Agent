@@ -208,7 +208,7 @@ class TestClientCmdExecEnv:
         client.cmd_exec(session_id="test", command="echo", env=["NOEQUALSSIGN"])
         assert len(responses) == 1
         assert responses[0]["type"] == "error"
-        assert "Invalid --env" in responses[0]["error"]
+        assert "Invalid --env" in responses[0]["message"]
 
     def test_valid_env(self, monkeypatch):
         sent_msgs = []

@@ -48,7 +48,7 @@ class TestPrintResponse:
         captured = capsys.readouterr()
         data = json.loads(captured.out)
         assert data["type"] == "error"
-        assert "not responding" in data["error"]
+        assert "not responding" in data["message"]
 
     def test_normal_response(self, capsys, monkeypatch):
         monkeypatch.setattr("src.client.formatter._SHOW_DEBUG", True)

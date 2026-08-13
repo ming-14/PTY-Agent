@@ -109,7 +109,7 @@ def _format_exit_code_message(exit_code: int) -> Optional[str]:
 
     if IS_WINDOWS:
         try:
-            from ..pty.windows.win32_error_msg import format_process_exit_code
+            from .win32_error import format_process_exit_code
             return format_process_exit_code(exit_code)
         except ImportError:
             pass
@@ -150,7 +150,7 @@ def _format_pty_error(exception: Exception) -> str:
         try:
             # OSError 格式：(error_code, message)
             if len(exception.args) >= 2 and isinstance(exception.args[0], int):
-                from ..pty.windows.win32_error_msg import format_create_process_error
+                from .win32_error import format_create_process_error
                 return format_create_process_error(exception.args[0])
         except ImportError:
             pass
@@ -454,7 +454,7 @@ def _get_process_tree(pids: List[int], root_pid: int = 0) -> tuple:
     使树具有完整的层级结构。
 
     Args:
-        pids: 进程 ID 列表（通常来自 PTY.get_process_list()）。
+        pids: 进程 ID 列表（通常来自 ProcessTreeTracker.get_process_list()）。
         root_pid: 会话主进程 PID，向上追溯祖先时到此为止。
 
     Returns:

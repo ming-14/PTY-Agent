@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.session.shm_utils import generate_auth_token
+from src.ipc.shm import generate_auth_token
 
 
 class TestGenerateAuthToken:

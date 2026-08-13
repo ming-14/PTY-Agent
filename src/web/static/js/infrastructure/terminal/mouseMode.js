@@ -88,6 +88,12 @@ export function detectAppMouseModeFromOutput(term, inst, data) {
       } else if (ps === 1007) {
         inst.appAlternateScroll = enable;
         debug('mouse', 'alternate scroll %s', enable ? 'ON' : 'OFF');
+      } else if (ps === 1004) {
+        // Focus Reporting（DECSET 1004）：仅当子进程主动请求时才向前端
+        // 发送焦点报告；未启用时发送 \x1b[I/\x1b[O 会污染 stdin
+        // （cmd 等非 VT 程序会把序列当垃圾字符显示）。
+        inst.appFocusReport = enable;
+        debug('mouse', 'focus report %s', enable ? 'ON' : 'OFF');
       } else if (ps === 47 || ps === 1047 || ps === 1049) {
         inst.appAlternateBuffer = enable;
         debug('mouse', 'alternate buffer %s', enable ? 'ON' : 'OFF');

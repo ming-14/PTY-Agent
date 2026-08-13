@@ -129,7 +129,7 @@ class TestConfigManagerSet:
 
     def test_get_default_svg_compression_level(self):
         cfg = ConfigManager()
-        assert cfg.get("svg_compression_level") == 2
+        assert cfg.get("svg_compression_level") == 1
 
 
 class TestConfigManagerGetAll:

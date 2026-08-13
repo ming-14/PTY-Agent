@@ -12,8 +12,7 @@ import { applyTerminalSizeFromSession } from './shared.js';
 import { trackAppMouseMode, getInitialMouseOverride } from './mouseMode.js';
 import { shouldTrackFocus } from '../rimeManager.js';
 import { trackCursorSequences } from './cursorDebug.js';
-import { attachCustomKeyEventHandler, setLineMode, handleLineModeInput } from './input.js';
-export { setLineMode };
+import { attachCustomKeyEventHandler } from './input.js';
 import { applyTerminalFrameSize } from './scale.js';
 import { isTermAtBottom, scrollTermToBottom, scrollTermToTop } from './scroll.js';
 import { bindTerminalEvents } from './events.js';
@@ -86,9 +85,10 @@ export function ensureTerminal(sid) {
   term.open(div);
 
   const inst = {
-    term, div, lineMode: false, lineBuffer: '',
+    term, div,
     appMouseMode: false, appMouseModeDecset: false, appMouseModeDaemon: false,
     appMouseModePs: null, appMouseEncoding: 'sgr',
+    appFocusReport: false,
     appAlternateScroll: false, appAlternateBuffer: false,
     mouseInputOverride: getInitialMouseOverride(s && s.uid),
     _pressedMouseButton: null, _focused: false, _touchAnchor: null,
@@ -165,11 +165,9 @@ export function ensureTerminal(sid) {
       debug('terminal', 'onData ignored: sid=%s readonly (history)', sid);
       return;
     }
-    if (inst && inst.lineMode && data) {
-      handleLineModeInput(sid, data);
-    } else {
-      wsSend({ type: 'input', session_id: sid, data: data });
-    }
+    // 沙箱会话为真实 ConPTY（hpcon），输入直接透传给 conhost：
+    // 回显/行编辑/方向键历史由 conhost 处理，与原生 ConPTY 会话一致。
+    wsSend({ type: 'input', session_id: sid, data: data });
   });
 
   term.onResize(({ cols, rows }) => {
@@ -223,7 +221,6 @@ export function ensureTerminal(sid) {
   });
 
   state.termInstances[sid] = inst;
-  setLineMode(sid);
 
   // 历史会话设为只读，禁止焦点/输入反馈
   applyReadonlyState(sid, !!(s && s.history));
@@ -240,10 +237,11 @@ export function applyReadonlyState(sid, readonly) {
   inst.term.options.disableStdin = readonly;
   inst.div.classList.toggle('readonly', readonly);
   inst.div.tabIndex = readonly ? -1 : 0;
-  // 历史会话隐藏光标：透明颜色 + ANSI DECTCEM 关闭
-  const theme = { ...inst.term.options.theme };
-  theme.cursor = readonly ? 'transparent' : (currentTheme().cursor || '#cccccc');
-  inst.term.options.theme = theme;
+  // 注意：不能通过运行时修改 options.theme 隐藏光标——
+  // theme 变更触发 xterm _handleOptionsChanged → _fireOnCanvasResize，
+  // 其异步 rAF 视口刷新在 renderer 已释放（切标签/隐藏）时会读
+  // renderService.dimensions.device 抛 TypeError，导致终端渲染/输入链挂死。
+  // 只读光标由下方 \x1b[?25l（DECTCEM 隐藏）实现。
   if (readonly) {
     inst._focused = false;
     try {

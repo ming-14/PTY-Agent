@@ -113,11 +113,22 @@ class SessionManager:
             ]
 
     def _on_session_ended(self, session):
-        """会话自然结束时的回调：从活跃列表移除、归档、广播事件"""
+        """会话自然结束时的回调：移除活跃列表、释放资源、归档、广播事件
+
+        注意：此回调在读者线程（notify_end 同步广播）内执行，
+        session.stop 已支持由当前线程调用（见 SessionThreads.stop）。
+        """
         with self._lock:
             if session.id not in self._sessions:
                 return  # 已被 remove_session 处理
             self._sessions.pop(session.id, None)
+
+        # 释放会话资源（含沙箱进程），避免自然结束的会话泄漏
+        try:
+            session.stop()
+            _logger.info("会话 '%s' 自然结束，资源已释放", session.id)
+        except Exception as e:
+            _logger.warning("会话 '%s' 自然结束释放资源时异常: %s", session.id, e)
 
         if self._history_store:
             try:

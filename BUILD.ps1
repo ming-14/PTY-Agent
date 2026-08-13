@@ -6,16 +6,20 @@
 #   GITHUB_API_MIRROR          - GitHub API 镜像（如：https://api.github.com）
 #   DOWNLOAD_AICHAT            - 是否下载 aichat（true/false，默认 true）
 #   BUILD_FASTSCREEN           - 是否构建 fastscreen.dll（true/false，默认 true）
+#   BUILD_WINSANDBOX           - 是否构建 win_sandbox_native.pyd（true/false，默认 true）
 #   DOWNLOAD_ULTRAVNC          - 是否下载 UltraVNC（true/false，默认 true）
 #   DOWNLOAD_TERMINALINJECTOR  - 是否下载 terminal_injector（true/false，默认 true）
 #   BUILD_RIME                 - 是否构建 rime-plugin（true/false，默认 true）
+#   DOWNLOAD_RG                - 是否下载 ripgrep（true/false，默认 true）
 #
 # 命令行参数：
 #   -NoAichat             - 跳过 aichat 下载
 #   -NoFastscreen         - 跳过 fastscreen 编译
+#   -NoWinsandbox         - 跳过 win-sandbox 编译
 #   -NoUltravnc           - 跳过 UltraVNC 下载
 #   -NoTerminalInjector   - 跳过 terminal_injector 下载
 #   -NoRime               - 跳过 rime-plugin 构建
+#   -NoRg                 - 跳过 ripgrep 下载
 #   -Mirror <url>         - 指定 GitHub 下载镜像（对应 GITHUB_MIRROR）
 #   -ApiMirror <url>      - 指定 GitHub API 镜像（对应 GITHUB_API_MIRROR）
 #
@@ -30,9 +34,11 @@ $ErrorActionPreference = "Stop"
 # 解析命令行参数
 $noAichat = $args -contains "-NoAichat"
 $noFastscreen = $args -contains "-NoFastscreen"
+$noWinsandbox = $args -contains "-NoWinsandbox"
 $noUltravnc = $args -contains "-NoUltravnc"
 $noTerminalInjector = $args -contains "-NoTerminalInjector"
 $noRime = $args -contains "-NoRime"
+$noRg = $args -contains "-NoRg"
 
 # 解析 -Mirror 参数
 $mirrorArg = $args | ForEach-Object { if ($_ -eq "-Mirror" -or $_ -eq "-m") { $true } }
@@ -62,9 +68,11 @@ $githubMirror = $env:GITHUB_MIRROR ?? ""
 $githubApiMirror = $env:GITHUB_API_MIRROR ?? "https://api.github.com"
 $downloadAichat = if ($noAichat) { $false } else { ($env:DOWNLOAD_AICHAT ?? "true") -eq "true" }
 $buildFastscreen = if ($noFastscreen) { $false } else { ($env:BUILD_FASTSCREEN ?? "true") -eq "true" }
+$buildWinsandbox = if ($noWinsandbox) { $false } else { ($env:BUILD_WINSANDBOX ?? "true") -eq "true" }
 $downloadUltravnc = if ($noUltravnc) { $false } else { ($env:DOWNLOAD_ULTRAVNC ?? "true") -eq "true" }
 $downloadTerminalInjector = if ($noTerminalInjector) { $false } else { ($env:DOWNLOAD_TERMINALINJECTOR ?? "true") -eq "true" }
 $buildRime = if ($noRime) { $false } else { ($env:BUILD_RIME ?? "true") -eq "true" }
+$downloadRg = if ($noRg) { $false } else { ($env:DOWNLOAD_RG ?? "true") -eq "true" }
 
 # ============================================================
 # 构建 pty-agent 发布目录
@@ -185,6 +193,75 @@ if ($buildFastscreen) {
 }
 
 # ============================================================
+# 编译 win_sandbox_native.pyd（Windows 沙箱原生引擎，pybind11）
+# 产物复制到 bin\win_sandbox\_native\（vendored 包，与 fastscreen 同模式）
+# 依赖：VS 2019+ (vcvars64.bat)、CMake 3.20+、Ninja
+# ============================================================
+if ($buildWinsandbox) {
+    Write-Host "[win-sandbox] 编译 win_sandbox_native.pyd..."
+    $wsSource = Join-Path $scriptDir "win-sandbox"
+    $wsBuild = Join-Path $wsSource "build"
+    $cmake = Get-Command cmake -ErrorAction SilentlyContinue
+    if (-not $cmake) {
+        Write-Warning "[win-sandbox] cmake 未找到，跳过编译"
+    } else {
+        # 定位 vcvars64.bat（VS 2022/2026 Community/BuildTools 探测）
+        $vcvarsCandidates = @(
+            "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat",
+            "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat",
+            "${env:ProgramFiles}\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat",
+            "${env:ProgramFiles}\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+        )
+        $vcvars = $vcvarsCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if (-not $vcvars) {
+            Write-Warning "[win-sandbox] 未找到 vcvars64.bat，跳过编译"
+        } else {
+            # 清理旧构建缓存（源目录可能已移动，CMakeCache 内嵌旧路径会导致重建失败）；
+            # 发布构建每次全新生成，耗时可接受
+            if (Test-Path $wsBuild) {
+                Remove-Item -Path $wsBuild -Recurse -Force
+            }
+            # Ninja 生成 + Release 构建。
+            # vcvars 环境注入经临时 .cmd 包装（cmd 引号转义在 PowerShell 中不可靠），
+            # 流程：call vcvars → cmake -B 配置 → cmake --build
+            $wsCmdFile = Join-Path $env:TEMP "build_win_sandbox.cmd"
+            $wsCmdContent = @"
+@echo off
+call "$vcvars" >nul 2>&1
+cmake -S "$wsSource" -B "$wsBuild" -G Ninja -DCMAKE_BUILD_TYPE=Release
+if errorlevel 1 exit /b 1
+cmake --build "$wsBuild"
+exit /b %errorlevel%
+"@
+            Set-Content -Path $wsCmdFile -Value $wsCmdContent -Encoding ascii
+            cmd /c $wsCmdFile
+            Remove-Item -Path $wsCmdFile -Force -ErrorAction SilentlyContinue
+            if ($LASTEXITCODE -eq 0) {
+                $wsPydSrc = Get-ChildItem -Path $wsBuild -Recurse -Filter "win_sandbox_native*.pyd" -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($wsPydSrc) {
+                    $wsPydDstDir = Join-Path $outputDir "bin\win_sandbox\_native"
+                    New-Item -ItemType Directory -Path $wsPydDstDir -Force | Out-Null
+                    Copy-Item -Path $wsPydSrc.FullName -Destination $wsPydDstDir -Force
+                    # vendored python 包装（exceptions/helpers/__init__）随 bin 复制，
+                    # 但构建产物目录优先：用 win-sandbox/python 源覆盖，保证与 pyd 版本一致
+                    $wsPySrc = Join-Path $wsSource "python\win_sandbox"
+                    if (Test-Path $wsPySrc) {
+                        Copy-Item -Path "$wsPySrc\*.py" -Destination (Join-Path $outputDir "bin\win_sandbox") -Force
+                    }
+                    Write-Host "[win-sandbox] 编译完成: $($wsPydSrc.Name)"
+                } else {
+                    Write-Warning "[win-sandbox] 未找到编译产物 .pyd"
+                }
+            } else {
+                Write-Warning "[win-sandbox] 编译失败（exit=$LASTEXITCODE）"
+            }
+        }
+    }
+} else {
+    Write-Host "[win-sandbox] 跳过编译（BUILD_WINSANDBOX=false）"
+}
+
+# ============================================================
 # 下载 aichat.exe（AI 分析工具）
 # ============================================================
 if ($downloadAichat) {
@@ -224,6 +301,52 @@ if ($downloadAichat) {
     }
 } else {
     Write-Host "[aichat] 跳过下载（DOWNLOAD_AICHAT=false）"
+}
+
+# ============================================================
+# 下载 ripgrep（rg.exe，代码搜索工具）
+# ============================================================
+if ($downloadRg) {
+    Write-Host "[rg] 下载最新版 ripgrep..."
+    $rgDir = Join-Path $scriptDir "bin\rg"
+    $rgExe = Join-Path $rgDir "rg.exe"
+    $null = New-Item -ItemType Directory -Path $rgDir -Force
+
+    try {
+        # 按系统架构选择 Windows 构建包：ARM64 用 aarch64，其余用 x86_64
+        $isArm64 = ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") -or ($env:PROCESSOR_ARCHITEW6432 -eq "ARM64")
+        $rgTarget = if ($isArm64) { "aarch64-pc-windows-msvc" } else { "x86_64-pc-windows-msvc" }
+
+        $apiUrl = "$githubApiMirror/repos/BurntSushi/ripgrep/releases/latest"
+        $release = Invoke-RestMethod -Uri $apiUrl -Headers @{ Accept = "application/json" }
+        $version = $release.tag_name
+        $originalZipUrl = "https://github.com/BurntSushi/ripgrep/releases/download/$version/ripgrep-$version-$rgTarget.zip"
+        $zipUrl = "$githubMirror$originalZipUrl"
+        $zipPath = Join-Path $env:TEMP "ripgrep-$version-$rgTarget.zip"
+
+        Write-Host "[rg] 下载 $version ($rgTarget) from $zipUrl ..."
+        Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+
+        Write-Host "[rg] 解压 ..."
+        $tempExtract = Join-Path $env:TEMP "ripgrep-extract"
+        $null = New-Item -ItemType Directory -Path $tempExtract -Force
+        Expand-Archive -Path $zipPath -DestinationPath $tempExtract -Force
+
+        $extractedExe = Get-ChildItem -Path $tempExtract -Recurse -Filter "rg.exe" | Select-Object -First 1
+        if ($extractedExe) {
+            Copy-Item -Path $extractedExe.FullName -Destination $rgExe -Force
+            Write-Host "[rg] 已下载: $rgExe"
+        } else {
+            Write-Warning "[rg] 未在压缩包中找到 rg.exe"
+        }
+
+        Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Warning "[rg] 下载失败: $_"
+    }
+} else {
+    Write-Host "[rg] 跳过下载（DOWNLOAD_RG=false 或 -NoRg）"
 }
 
 # ============================================================

@@ -6,22 +6,15 @@
 import os
 import pytest
 
-from src.config import (
-    DAEMON_HOST,
-    DEFAULT_DAEMON_PORT,
-    MMAP_NAME,
-    MMAP_SIZE,
-    DATA_DIR,
-    PORT_FILE,
-    IS_WINDOWS,
-)
+from src.config.common import DAEMON_HOST, DATA_DIR, IS_WINDOWS
+from src.config.daemon import DEFAULT_DAEMON_PORT, MMAP_NAME, MMAP_SIZE, PORT_FILE
 
 
 class TestDaemonConfig:
     """守护进程配置测试"""
 
     def test_daemon_host(self):
-        assert DAEMON_HOST == "0.0.0.0"
+        assert DAEMON_HOST == "127.0.0.1"
 
     def test_default_port(self):
         assert DEFAULT_DAEMON_PORT == 18765
