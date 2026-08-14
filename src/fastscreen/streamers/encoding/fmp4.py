@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import struct
 import logging
+import struct
 from typing import Optional
 
 logger = logging.getLogger("fastscreen.fmp4")
@@ -25,7 +25,9 @@ def _mvhd(timescale: int, duration: int) -> bytes:
     data += struct.pack(">I", 0x00010000)
     data += struct.pack(">H", 0x0100)
     data += b"\x00" * 10
-    data += struct.pack(">IIIIIIIII", 0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000)
+    data += struct.pack(
+        ">IIIIIIIII", 0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000
+    )
     data += b"\x00" * 24
     data += struct.pack(">I", 2)
     return _fullbox(b"mvhd", 0, 0, data)
@@ -40,7 +42,9 @@ def _tkhd(track_id: int, width: int, height: int, duration: int) -> bytes:
     data += struct.pack(">HH", 0, 0)
     data += struct.pack(">H", 0)
     data += struct.pack(">H", 0)
-    data += struct.pack(">IIIIIIIII", 0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000)
+    data += struct.pack(
+        ">IIIIIIIII", 0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000
+    )
     data += struct.pack(">II", width << 16, height << 16)
     return _fullbox(b"tkhd", 0, 3, data)
 
@@ -142,34 +146,38 @@ def _mvex(track_id: int) -> bytes:
 
 
 def _stbl(width: int, height: int, sps: bytes, pps: bytes) -> bytes:
-    return _box(b"stbl",
-                _stsd(width, height, sps, pps) +
-                _stts() + _stsc() + _stsz() + _stco())
+    return _box(
+        b"stbl", _stsd(width, height, sps, pps) + _stts() + _stsc() + _stsz() + _stco()
+    )
 
 
 def _minf(width: int, height: int, sps: bytes, pps: bytes) -> bytes:
-    return _box(b"minf",
-                _vmhd() + _dinf() + _stbl(width, height, sps, pps))
+    return _box(b"minf", _vmhd() + _dinf() + _stbl(width, height, sps, pps))
 
 
-def _mdia(width: int, height: int, sps: bytes, pps: bytes, timescale: int, duration: int) -> bytes:
-    return _box(b"mdia",
-                _mdhd(timescale, duration) +
-                _hdlr() +
-                _minf(width, height, sps, pps))
+def _mdia(
+    width: int, height: int, sps: bytes, pps: bytes, timescale: int, duration: int
+) -> bytes:
+    return _box(
+        b"mdia", _mdhd(timescale, duration) + _hdlr() + _minf(width, height, sps, pps)
+    )
 
 
-def _trak(width: int, height: int, sps: bytes, pps: bytes, timescale: int, duration: int) -> bytes:
-    return _box(b"trak",
-                _tkhd(1, width, height, duration) +
-                _mdia(width, height, sps, pps, timescale, duration))
+def _trak(
+    width: int, height: int, sps: bytes, pps: bytes, timescale: int, duration: int
+) -> bytes:
+    return _box(
+        b"trak",
+        _tkhd(1, width, height, duration)
+        + _mdia(width, height, sps, pps, timescale, duration),
+    )
 
 
 def _moov(width: int, height: int, sps: bytes, pps: bytes, timescale: int) -> bytes:
-    return _box(b"moov",
-                _mvhd(timescale, 0) +
-                _trak(width, height, sps, pps, timescale, 0) +
-                _mvex(1))
+    return _box(
+        b"moov",
+        _mvhd(timescale, 0) + _trak(width, height, sps, pps, timescale, 0) + _mvex(1),
+    )
 
 
 def _mfhd(sequence_number: int) -> bytes:
@@ -185,12 +193,18 @@ def _tfdt(base_media_decode_time: int) -> bytes:
     return _fullbox(b"tfdt", 1, 0, struct.pack(">Q", base_media_decode_time))
 
 
-def _traf(track_id: int, base_media_decode_time: int,
-          samples: list[tuple[int, int, bool]], data_offset: int) -> bytes:
-    return _box(b"traf",
-                _tfhd(track_id) +
-                _tfdt(base_media_decode_time) +
-                _trun_with_offset(samples, data_offset))
+def _traf(
+    track_id: int,
+    base_media_decode_time: int,
+    samples: list[tuple[int, int, bool]],
+    data_offset: int,
+) -> bytes:
+    return _box(
+        b"traf",
+        _tfhd(track_id)
+        + _tfdt(base_media_decode_time)
+        + _trun_with_offset(samples, data_offset),
+    )
 
 
 def _trun_with_offset(samples: list[tuple[int, int, bool]], data_offset: int) -> bytes:
@@ -216,9 +230,17 @@ def annex_b_to_avcc(data: bytes) -> list[bytes]:
     i = 0
     while i < len(data):
         start_code_len = 0
-        if i + 3 < len(data) and data[i] == 0 and data[i + 1] == 0 and data[i + 2] == 0 and data[i + 3] == 1:
+        if (
+            i + 3 < len(data)
+            and data[i] == 0
+            and data[i + 1] == 0
+            and data[i + 2] == 0
+            and data[i + 3] == 1
+        ):
             start_code_len = 4
-        elif i + 2 < len(data) and data[i] == 0 and data[i + 1] == 0 and data[i + 2] == 1:
+        elif (
+            i + 2 < len(data) and data[i] == 0 and data[i + 1] == 0 and data[i + 2] == 1
+        ):
             start_code_len = 3
         else:
             i += 1
@@ -230,7 +252,11 @@ def annex_b_to_avcc(data: bytes) -> list[bytes]:
             if data[next_start] == 0 and data[next_start + 1] == 0:
                 if data[next_start + 2] == 1:
                     break
-                if next_start < len(data) - 4 and data[next_start + 2] == 0 and data[next_start + 3] == 1:
+                if (
+                    next_start < len(data) - 4
+                    and data[next_start + 2] == 0
+                    and data[next_start + 3] == 1
+                ):
                     break
             next_start += 1
         else:
@@ -300,11 +326,22 @@ class FMP4Muxer:
     def create_init_segment(self, first_frame_data: bytes) -> Optional[bytes]:
         result = extract_sps_pps(first_frame_data)
         if result is None:
-            logger.warning("create_init_segment: no SPS/PPS found in frame data (%d bytes)", len(first_frame_data))
+            logger.warning(
+                "create_init_segment: no SPS/PPS found in frame data (%d bytes)",
+                len(first_frame_data),
+            )
             return None
         sps, pps = result
-        logger.info("create_init_segment: SPS=%d bytes (profile=%d, compat=%d, level=%d), PPS=%d bytes, %dx%d",
-                     len(sps), sps[1], sps[2], sps[3], len(pps), self.width, self.height)
+        logger.info(
+            "create_init_segment: SPS=%d bytes (profile=%d, compat=%d, level=%d), PPS=%d bytes, %dx%d",
+            len(sps),
+            sps[1],
+            sps[2],
+            sps[3],
+            len(pps),
+            self.width,
+            self.height,
+        )
         return self._ensure_init_segment(sps, pps)
 
     def create_media_segment(
@@ -322,22 +359,31 @@ class FMP4Muxer:
             samples.append((duration_ms, len(avcc_data), is_key))
             mdat_data += avcc_data
 
-        moof = _box(b"moof",
-                     _mfhd(self._sequence_number) +
-                     _traf(1, self._base_media_decode_time, samples, 0))
+        moof = _box(
+            b"moof",
+            _mfhd(self._sequence_number)
+            + _traf(1, self._base_media_decode_time, samples, 0),
+        )
 
         data_offset = len(moof) + 8
-        moof = _box(b"moof",
-                     _mfhd(self._sequence_number) +
-                     _traf(1, self._base_media_decode_time, samples, data_offset))
+        moof = _box(
+            b"moof",
+            _mfhd(self._sequence_number)
+            + _traf(1, self._base_media_decode_time, samples, data_offset),
+        )
 
         mdat = _mdat(bytes(mdat_data))
 
         total_duration = sum(d for _, d in frames)
         self._base_media_decode_time += total_duration
 
-        logger.debug("media_segment: seq=%d, samples=%d, moof=%d, mdat=%d, bmdt=%d",
-                      self._sequence_number, len(samples), len(moof), len(mdat),
-                      self._base_media_decode_time - total_duration)
+        logger.debug(
+            "media_segment: seq=%d, samples=%d, moof=%d, mdat=%d, bmdt=%d",
+            self._sequence_number,
+            len(samples),
+            len(moof),
+            len(mdat),
+            self._base_media_decode_time - total_duration,
+        )
 
         return moof + mdat

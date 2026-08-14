@@ -5,17 +5,21 @@ cursorlocator 是单例模块（_instance 全局唯一），本适配器保证�
 """
 
 import logging
-import sys
 import os
+import sys
 
 from ..application.ports import CursorLocatorServicePort
 
 _logger = logging.getLogger("pty-web")
 
-_BIN_DIR = os.path.normpath(os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
-    "bin",
-))
+_BIN_DIR = os.path.normpath(
+    os.path.join(
+        os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        ),
+        "bin",
+    )
+)
 
 
 class CursorLocatorAdapter(CursorLocatorServicePort):
@@ -35,9 +39,11 @@ class CursorLocatorAdapter(CursorLocatorServicePort):
             if _BIN_DIR not in sys.path:
                 sys.path.insert(0, _BIN_DIR)
             import cursorlocator as _mod
+
             self._module = _mod
             self._available = True
             from cursorlocator.config import Config as _Cfg
+
             self._config = _Cfg()
             _logger.info("CursorLocator: module loaded from %s", _BIN_DIR)
         except Exception as e:
@@ -49,7 +55,10 @@ class CursorLocatorAdapter(CursorLocatorServicePort):
 
     def start(self) -> dict:
         if not self._available:
-            return {"running": False, "error": self._import_error or "cursorlocator 不可用"}
+            return {
+                "running": False,
+                "error": self._import_error or "cursorlocator 不可用",
+            }
         if self._running:
             return {"running": True}
         try:
@@ -63,7 +72,10 @@ class CursorLocatorAdapter(CursorLocatorServicePort):
 
     def stop(self) -> dict:
         if not self._available:
-            return {"running": False, "error": self._import_error or "cursorlocator 不可用"}
+            return {
+                "running": False,
+                "error": self._import_error or "cursorlocator 不可用",
+            }
         if not self._running:
             return {"running": False}
         try:

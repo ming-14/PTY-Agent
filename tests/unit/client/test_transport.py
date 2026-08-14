@@ -1,16 +1,17 @@
-"""client/transport.py 单元测试
+"""Client 传输层单元测试
 
-测试 Client 类的配置应用、shell 操作符检测、snapshot-mode 逻辑、
-连接路由（明文/TLS 分流）等。
+测试 Client 类的配置应用、shell 操作符检测、命令构建等。
+使用 mock 替代 TCP 连接。
 """
 
 import pytest
-from unittest.mock import patch, MagicMock
 
 from src.client.transport import Client, _has_shell_operators, _parse_iso_time
 
 
 class TestHasShellOperators:
+    """_has_shell_operators 测试"""
+
     def test_pipe(self):
         assert _has_shell_operators("cat file | grep x") is True
 
@@ -21,7 +22,8 @@ class TestHasShellOperators:
         assert _has_shell_operators("cmd1 || cmd2") is True
 
     def test_semicolon(self):
-        assert _has_shell_operators("cmd1 ; cmd2") is True
+        tokens = _has_shell_operators("cmd1 ; cmd2")
+        assert tokens is True
 
     def test_redirect_out(self):
         assert _has_shell_operators("echo hi > file") is True
@@ -39,6 +41,7 @@ class TestHasShellOperators:
         assert _has_shell_operators("python -c print(1)") is False
 
     def test_operators_in_quotes(self):
+        """引号内的操作符不计"""
         assert _has_shell_operators('echo "a | b"') is False
 
     def test_empty_string(self):
@@ -46,30 +49,40 @@ class TestHasShellOperators:
 
 
 class TestParseIsoTime:
+    """_parse_iso_time 测试"""
+
     def test_full_iso(self):
+        """完整 ISO 8601"""
         ts = _parse_iso_time("2026-06-07T18:00:00+08:00")
         assert isinstance(ts, float)
         assert ts > 0
 
     def test_utc_z_suffix(self):
+        """Z 后缀"""
         ts = _parse_iso_time("2026-06-07T18:00:00Z")
         assert isinstance(ts, float)
 
     def test_invalid_raises(self):
+        """无效格式抛出 ValueError"""
         with pytest.raises(ValueError):
             _parse_iso_time("not-a-date")
 
 
 class TestClientApplyConfigDefaults:
+    """Client._apply_config_defaults 测试"""
+
     def test_defaults(self):
+        """未传参数时使用配置默认值"""
         client = Client()
         timeout, keep_ansi, encoding, newline, send_eol = client._apply_config_defaults()
         assert timeout == 120.0
         assert keep_ansi is False
         assert encoding is None
         assert newline is False
+        assert send_eol == "\r"
 
     def test_explicit_values(self):
+        """显式传参覆盖默认值"""
         client = Client()
         timeout, keep_ansi, encoding, newline, send_eol = client._apply_config_defaults(
             timeout=30, keep_ansi=True, encoding="gbk", newline=True,
@@ -80,217 +93,134 @@ class TestClientApplyConfigDefaults:
         assert newline is True
 
     def test_partial_override(self):
+        """部分参数覆盖"""
         client = Client()
         timeout, _, _, _, _ = client._apply_config_defaults(timeout=60)
         assert timeout == 60
 
 
-class TestClientShellOperators:
-    def test_pty_shell_operator_warning(self, monkeypatch):
-        responses = []
-        monkeypatch.setattr(
-            "src.client.transport.print_response",
-            lambda r: responses.append(r),
-        )
-        client = Client()
-        client.cmd_exec(session_id="test", command="echo hello | grep x")
-        assert len(responses) == 1
-        assert responses[0]["type"] == "error"
-
-    def test_pty_force_ignores_warning(self, monkeypatch):
-        responses = []
-        monkeypatch.setattr(
-            "src.client.transport.print_response",
-            lambda r: responses.append(r),
-        )
-        monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
-            lambda self, msg: {"type": "result", "sessionId": "test"},
-        )
-        client = Client()
-        client.cmd_exec(session_id="test", command="echo hello | grep x", force=True)
-        assert len(responses) == 1
-        assert responses[0]["type"] == "result"
-
-    def test_always_return_snapshot_enables_snapshot_mode(self, monkeypatch):
-        sent_msgs = []
-        monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
-            lambda self, msg: (sent_msgs.append(msg), {"type": "result", "sessionId": "test"})[1],
-        )
-        monkeypatch.setattr("src.client.transport.print_response", lambda r: None)
-        client = Client()
-        client._config.set("always_return_snapshot", "on")
-        client.cmd_exec(session_id="test", command=["echo", "hello"])
-        assert sent_msgs[-1].get("snapshot_mode") is True
-
-
 class TestClientMaybeSaveEncoding:
+    """Client._maybe_save_encoding 测试"""
+
     def test_save_when_different(self):
+        """编码不同时自动保存"""
         client = Client()
         client._maybe_save_encoding("gbk")
         assert client._config.get("encoding") == "gbk"
 
     def test_no_save_when_same(self):
+        """编码相同时不重复保存"""
         client = Client()
         client._config.set("encoding", "utf-8")
         client._maybe_save_encoding("utf-8")
         assert client._config.get("encoding") == "utf-8"
 
 
-class TestClientCmdSend:
-    def test_send_with_snapshot(self, monkeypatch):
-        sent_msgs = []
-        monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
-            lambda self, msg: (sent_msgs.append(msg), {"type": "result", "sessionId": "test"})[1],
-        )
-        monkeypatch.setattr("src.client.transport.print_response", lambda r: None)
-        client = Client()
-        client.cmd_send(session_id="test", input_text="hello", snapshot=True)
-        assert sent_msgs[-1].get("snapshot") is True
+class TestClientShellOperators:
+    """Client shell 操作符检测"""
 
-    def test_send_eol_resolution(self, monkeypatch):
-        sent_msgs = []
-        monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
-            lambda self, msg: (sent_msgs.append(msg), {"type": "result", "sessionId": "test"})[1],
-        )
-        monkeypatch.setattr("src.client.transport.print_response", lambda r: None)
-        client = Client()
-        client.cmd_send(session_id="test", input_text="hello", send_eol="cr")
-        assert sent_msgs[-1]["input"].endswith("\r")
-
-
-class TestClientCmdRead:
-    def test_read_with_snapshot(self, monkeypatch):
-        sent_msgs = []
-        monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
-            lambda self, msg: (sent_msgs.append(msg), {"type": "result", "sessionId": "test"})[1],
-        )
-        monkeypatch.setattr("src.client.transport.print_response", lambda r: None)
-        client = Client()
-        client.cmd_read(session_id="test", snapshot=True)
-        assert sent_msgs[-1].get("snapshot") is True
-
-    def test_read_with_lines(self, monkeypatch):
-        sent_msgs = []
-        monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
-            lambda self, msg: (sent_msgs.append(msg), {"type": "result", "sessionId": "test"})[1],
-        )
-        monkeypatch.setattr("src.client.transport.print_response", lambda r: None)
-        client = Client()
-        client.cmd_read(session_id="test", lines="10")
-        assert sent_msgs[-1].get("lines") == "10"
-
-    def test_read_with_grep(self, monkeypatch):
-        sent_msgs = []
-        monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
-            lambda self, msg: (sent_msgs.append(msg), {"type": "result", "sessionId": "test"})[1],
-        )
-        monkeypatch.setattr("src.client.transport.print_response", lambda r: None)
-        client = Client()
-        client.cmd_read(session_id="test", grep="error")
-        assert sent_msgs[-1].get("grep") == "error"
-
-
-class TestClientCmdExecEnv:
-    def test_invalid_env_format(self, monkeypatch):
+    def test_pty_shell_operator_warning(self, monkeypatch):
+        """命令包含 shell 操作符时返回错误"""
         responses = []
         monkeypatch.setattr(
             "src.client.transport.print_response",
             lambda r: responses.append(r),
         )
         client = Client()
-        client.cmd_exec(session_id="test", command="echo", env=["NOEQUALSSIGN"])
+        client.cmd_exec(
+            session_id="test",
+            command="echo hello | grep x",
+        )
         assert len(responses) == 1
         assert responses[0]["type"] == "error"
-        assert "Invalid --env" in responses[0]["message"]
+        assert "shell 操作符" in responses[0]["message"] or "shell operators" in responses[0]["message"]
 
-    def test_valid_env(self, monkeypatch):
-        sent_msgs = []
+    def test_pty_force_ignores_warning(self, monkeypatch):
+        """--force-pty-mode 忽略 shell 操作符检测"""
+        responses = []
+        monkeypatch.setattr(
+            "src.client.transport.print_response",
+            lambda r: responses.append(r),
+        )
         monkeypatch.setattr(
             "src.client.transport.Client._send_recv",
-            lambda self, msg: (sent_msgs.append(msg), {"type": "result", "sessionId": "test"})[1],
+            lambda self, msg: {"type": "result", "session_id": "test"},
         )
-        monkeypatch.setattr("src.client.transport.print_response", lambda r: None)
         client = Client()
-        client.cmd_exec(session_id="test", command="echo", env=["KEY=VALUE"])
-        assert sent_msgs[-1].get("env") == {"KEY": "VALUE"}
+        client.cmd_exec(
+            session_id="test",
+            command='{"data":"echo hello | grep x"}',
+            force=True,
+        )
+        assert len(responses) == 1
+        assert responses[0]["type"] == "result"
 
 
-class TestClientConnectRouting:
-    """_connect() 明文/TLS 路由测试（Phase 5）
+class TestProcessInput:
+    def test_raw_mode_preserves_backslash(self):
+        """raw 模式（默认）保留反斜杠"""
+        from src.client.input import process_input
 
-    路由规则：
-    - pubkey + remote（DAEMON_REMOTE_HOST 非空或 CLI --host）→ _connect_tls
-    - 其他（token/none 或同机 pubkey）→ _connect_plain
-    """
+        result = process_input("cd C:\\Users")
+        assert "C:\\Users" in result
+        assert result.endswith("\r")
 
-    def test_pubkey_remote_routes_to_tls(self, monkeypatch):
-        """CLIENT_AUTH_METHOD=pubkey + DAEMON_REMOTE_HOST 非空 → _connect_tls"""
-        monkeypatch.setattr("src.client.transport.CLIENT_AUTH_METHOD", "pubkey")
-        monkeypatch.setattr("src.client.transport.DAEMON_REMOTE_HOST", "192.168.1.100")
+    def test_json_escaping_mode(self):
+        """json_escaping 模式解码转义"""
+        from src.client.input import process_input
 
+        result = process_input("line1\\nline2", json_escaping=True)
+        assert result == "line1\nline2\r"
+
+
+class TestClientCmdMouse:
+    def test_cmd_mouse_click(self, monkeypatch):
+        """cmd_mouse 构造 mouse click 消息"""
+        sent = []
+        monkeypatch.setattr(
+            "src.client.transport.Client._send_recv",
+            lambda self, msg: sent.append(msg) or {"commandType": "mouse", "performed": True},
+        )
         client = Client()
-        mock_tls = MagicMock(return_value=MagicMock())
-        monkeypatch.setattr(client, "_connect_tls", mock_tls)
+        client.cmd_mouse("test-id", {"action": "click", "coords": {"col": 10, "row": 5}, "button": "left"})
+        assert len(sent) == 1
+        assert sent[0]["type"] == "mouse"
+        assert sent[0]["id"] == "test-id"
+        assert sent[0]["action"] == "click"
+        assert sent[0]["coords"] == {"col": 10, "row": 5}
 
-        client._connect()
-
-        mock_tls.assert_called_once()
-
-    def test_token_routes_to_plain(self, monkeypatch):
-        """CLIENT_AUTH_METHOD=token → _connect_plain"""
-        monkeypatch.setattr("src.client.transport.CLIENT_AUTH_METHOD", "token")
-        monkeypatch.setattr("src.client.transport.DAEMON_REMOTE_HOST", "")
-
+    def test_cmd_mouse_drag(self, monkeypatch):
+        """cmd_mouse 构造 mouse drag 消息"""
+        sent = []
+        monkeypatch.setattr(
+            "src.client.transport.Client._send_recv",
+            lambda self, msg: sent.append(msg) or {"commandType": "mouse", "performed": True},
+        )
         client = Client()
-        mock_plain = MagicMock(return_value=MagicMock())
-        monkeypatch.setattr(client, "_connect_plain", mock_plain)
+        client.cmd_mouse("test-id", {
+            "action": "drag",
+            "coords": {"col": 1, "row": 1},
+            "to": {"col": 3, "row": 3},
+            "modifiers": ["ctrl"],
+        })
+        assert sent[0]["action"] == "drag"
+        assert sent[0]["to"] == {"col": 3, "row": 3}
+        assert sent[0]["modifiers"] == ["ctrl"]
 
-        client._connect(autostart=False)
-
-        mock_plain.assert_called_once_with(False)
-
-    def test_pubkey_no_remote_routes_to_plain(self, monkeypatch):
-        """CLIENT_AUTH_METHOD=pubkey + DAEMON_REMOTE_HOST 空 → _connect_plain（同机）"""
-        monkeypatch.setattr("src.client.transport.CLIENT_AUTH_METHOD", "pubkey")
-        monkeypatch.setattr("src.client.transport.DAEMON_REMOTE_HOST", "")
-
+    def test_cmd_mouse_with_output_options(self, monkeypatch):
+        """cmd_mouse 传递输出控制参数"""
+        sent = []
+        monkeypatch.setattr(
+            "src.client.transport.Client._send_recv",
+            lambda self, msg: sent.append(msg) or {"commandType": "mouse", "performed": True},
+        )
         client = Client()
-        mock_plain = MagicMock(return_value=MagicMock())
-        monkeypatch.setattr(client, "_connect_plain", mock_plain)
-
-        client._connect()
-
-        mock_plain.assert_called_once()
-
-    def test_cli_host_override_routes_to_tls(self, monkeypatch):
-        """CLI --host 覆盖 → 即使配置无 DAEMON_REMOTE_HOST 也走 TLS"""
-        monkeypatch.setattr("src.client.transport.CLIENT_AUTH_METHOD", "pubkey")
-        monkeypatch.setattr("src.client.transport.DAEMON_REMOTE_HOST", "")
-
-        client = Client(host="10.0.0.5", port=9999)
-        mock_tls = MagicMock(return_value=MagicMock())
-        monkeypatch.setattr(client, "_connect_tls", mock_tls)
-
-        client._connect()
-
-        mock_tls.assert_called_once()
-
-    def test_none_auth_routes_to_plain(self, monkeypatch):
-        """CLIENT_AUTH_METHOD=none → _connect_plain"""
-        monkeypatch.setattr("src.client.transport.CLIENT_AUTH_METHOD", "none")
-        monkeypatch.setattr("src.client.transport.DAEMON_REMOTE_HOST", "192.168.1.100")
-
-        client = Client()
-        mock_plain = MagicMock(return_value=MagicMock())
-        monkeypatch.setattr(client, "_connect_plain", mock_plain)
-
-        client._connect()
-
-        mock_plain.assert_called_once()
+        client.cmd_mouse(
+            "test-id", {"action": "click", "coords": {"col": 1, "row": 1}},
+            trigger=">>>", timeout=5, snapshot_diff=True,
+            output_path="out.svg", response_format="svg",
+        )
+        assert sent[0]["trigger"] == ">>>"
+        assert sent[0]["timeout"] == 5
+        assert sent[0]["snapshot_diff"] is True
+        assert sent[0]["include_screen_buffer"] is True

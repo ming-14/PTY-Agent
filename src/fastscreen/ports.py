@@ -10,7 +10,6 @@ from abc import ABC, abstractmethod
 
 
 class FastScreenServicePort(ABC):
-
     @abstractmethod
     def is_available(self) -> bool:
         """FastScreen 功能是否可用（配置启用 + fastscreen.dll 加载成功）。"""

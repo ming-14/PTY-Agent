@@ -8,7 +8,7 @@ import sqlite3
 import threading
 from typing import Optional
 
-from ....config.common import DATA_DIR, GZIP_COMPRESS_LEVEL, DEFAULT_COLS, DEFAULT_ROWS
+from ....config.common import DATA_DIR, DEFAULT_COLS, DEFAULT_ROWS, GZIP_COMPRESS_LEVEL
 
 _logger = logging.getLogger("pty-web")
 
@@ -57,14 +57,16 @@ class HistoryStore:
                 );
             """)
             try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN encoding TEXT DEFAULT 'utf-8'")
+                conn.execute(
+                    "ALTER TABLE sessions ADD COLUMN encoding TEXT DEFAULT 'utf-8'"
+                )
             except sqlite3.OperationalError:
                 pass
             try:
                 conn.execute("ALTER TABLE sessions ADD COLUMN tag TEXT DEFAULT 'ended'")
             except sqlite3.OperationalError:
                 pass
-            # v9.2: 添加 uid 列，持久化会话 uid 供历史会话恢复 frameRatio
+            # 添加 uid 列，持久化会话 uid 供历史会话恢复 frameRatio
             try:
                 conn.execute("ALTER TABLE sessions ADD COLUMN uid TEXT DEFAULT ''")
             except sqlite3.OperationalError:
@@ -86,7 +88,11 @@ class HistoryStore:
 
     def _archive_session_locked(self, session, tag: str = "ended") -> bool:
         sid = session.id
-        command = session.command if isinstance(session.command, str) else " ".join(session.command)
+        command = (
+            session.command
+            if isinstance(session.command, str)
+            else " ".join(session.command)
+        )
         pty_type = session.pty_type
         cols = session.cols
         rows = session.rows
@@ -101,7 +107,20 @@ class HistoryStore:
             conn.execute(
                 "INSERT INTO sessions (id,command,pty_type,cols,rows,encoding,start_time,end_time,exit_code,error_message,tag,uid) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                (sid, command, pty_type, cols, rows, encoding, start_time, end_time, exit_code, error_message, tag, getattr(session, "uid", "") or ""),
+                (
+                    sid,
+                    command,
+                    pty_type,
+                    cols,
+                    rows,
+                    encoding,
+                    start_time,
+                    end_time,
+                    exit_code,
+                    error_message,
+                    tag,
+                    getattr(session, "uid", "") or "",
+                ),
             )
 
             output_data = session.output_buffer.get_slice(0)
@@ -118,7 +137,9 @@ class HistoryStore:
                 snapshot = session.get_snapshot(keep_ansi=True)
                 buf_gz = None
                 if screen_buf:
-                    raw = json.dumps(screen_buf, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+                    raw = json.dumps(
+                        screen_buf, ensure_ascii=True, separators=(",", ":")
+                    ).encode("utf-8")
                     buf_gz = gzip.compress(raw, compresslevel=GZIP_COMPRESS_LEVEL)
                 conn.execute(
                     "INSERT INTO session_screen (session_id,buffer_json_gz,snapshot_text) VALUES (?,?,?)",
@@ -130,7 +151,9 @@ class HistoryStore:
             try:
                 events = session.get_all_events()
                 if events:
-                    events_json = json.dumps(events, ensure_ascii=True, separators=(",", ":"))
+                    events_json = json.dumps(
+                        events, ensure_ascii=True, separators=(",", ":")
+                    )
                     conn.execute(
                         "INSERT INTO session_events (session_id,events_json) VALUES (?,?)",
                         (sid, events_json),
@@ -151,18 +174,20 @@ class HistoryStore:
                 ).fetchall()
         result = []
         for r in rows:
-            result.append({
-                "id": r[0],
-                "command": r[1],
-                "ptyType": r[2],
-                "encoding": r[3],
-                "startTime": r[4],
-                "endTime": r[5],
-                "exitCode": r[6],
-                "errorMessage": r[7],
-                "uid": r[8] or "",
-                "running": False,
-            })
+            result.append(
+                {
+                    "id": r[0],
+                    "command": r[1],
+                    "ptyType": r[2],
+                    "encoding": r[3],
+                    "startTime": r[4],
+                    "endTime": r[5],
+                    "exitCode": r[6],
+                    "errorMessage": r[7],
+                    "uid": r[8] or "",
+                    "running": False,
+                }
+            )
         return result
 
     def get_session_detail(self, session_id: str) -> Optional[dict]:
@@ -170,7 +195,8 @@ class HistoryStore:
             with self._connect() as conn:
                 row = conn.execute(
                     "SELECT id,command,pty_type,cols,rows,encoding,start_time,end_time,exit_code,error_message,uid "
-                    "FROM sessions WHERE id = ?", (session_id,)
+                    "FROM sessions WHERE id = ?",
+                    (session_id,),
                 ).fetchone()
                 if not row:
                     return None
@@ -197,7 +223,10 @@ class HistoryStore:
                     detail["snapshot"] = screen_row[0] or ""
                     if screen_row[1]:
                         detail["screenBufferZ"] = base64_encode(screen_row[1])
-                        detail["screenBufferMeta"] = {"compressed": True, "sparse": True}
+                        detail["screenBufferMeta"] = {
+                            "compressed": True,
+                            "sparse": True,
+                        }
 
                 output_rows = conn.execute(
                     "SELECT stream,data_gz,original_length FROM session_output WHERE session_id = ?",
@@ -232,19 +261,17 @@ class HistoryStore:
                 return detail
 
     def delete_session(self, session_id: str) -> bool:
-        with self._lock:
-            with self._connect() as conn:
-                conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-                conn.commit()
-                return conn.total_changes > 0
+        with self._lock, self._connect() as conn:
+            conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            conn.commit()
+            return conn.total_changes > 0
 
     def get_session_tag(self, session_id: str) -> Optional[str]:
-        with self._lock:
-            with self._connect() as conn:
-                row = conn.execute(
-                    "SELECT tag FROM sessions WHERE id = ?", (session_id,)
-                ).fetchone()
-                return row[0] if row else None
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT tag FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            return row[0] if row else None
 
     def list_ended_sessions(self) -> list:
         with self._lock:
@@ -255,38 +282,41 @@ class HistoryStore:
                 ).fetchall()
         result = []
         for r in rows:
-            result.append({
-                "id": r[0],
-                "command": r[1],
-                "ptyType": r[2],
-                "encoding": r[3],
-                "startTime": r[4],
-                "endTime": r[5],
-                "exitCode": r[6],
-                "errorMessage": r[7],
-                "running": False,
-            })
+            result.append(
+                {
+                    "id": r[0],
+                    "command": r[1],
+                    "ptyType": r[2],
+                    "encoding": r[3],
+                    "startTime": r[4],
+                    "endTime": r[5],
+                    "exitCode": r[6],
+                    "errorMessage": r[7],
+                    "running": False,
+                }
+            )
         return result
 
     def mark_all_ended_as_history(self) -> int:
         with self._lock:
             with self._connect() as conn:
-                cur = conn.execute("UPDATE sessions SET tag = 'history' WHERE tag = 'ended'")
+                cur = conn.execute(
+                    "UPDATE sessions SET tag = 'history' WHERE tag = 'ended'"
+                )
                 conn.commit()
                 return cur.rowcount
 
     def get_ended_events(self, session_id: str) -> Optional[list]:
-        with self._lock:
-            with self._connect() as conn:
-                row = conn.execute(
-                    "SELECT tag FROM sessions WHERE id = ?", (session_id,)
-                ).fetchone()
-                if not row or row[0] != "ended":
-                    return None
-                events_row = conn.execute(
-                    "SELECT events_json FROM session_events WHERE session_id = ?",
-                    (session_id,),
-                ).fetchone()
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT tag FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            if not row or row[0] != "ended":
+                return None
+            events_row = conn.execute(
+                "SELECT events_json FROM session_events WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
         if events_row and events_row[0]:
             return json.loads(events_row[0])
         return []
@@ -296,7 +326,8 @@ class HistoryStore:
             with self._connect() as conn:
                 row = conn.execute(
                     "SELECT tag,command,pty_type,encoding,start_time,end_time,exit_code,error_message "
-                    "FROM sessions WHERE id = ?", (session_id,)
+                    "FROM sessions WHERE id = ?",
+                    (session_id,),
                 ).fetchone()
                 if not row or row[0] != "ended":
                     return None
@@ -333,9 +364,11 @@ class HistoryStore:
 
 def _now() -> float:
     import time
+
     return time.time()
 
 
 def base64_encode(data: bytes) -> str:
     import base64
+
     return base64.b64encode(data).decode("ascii")

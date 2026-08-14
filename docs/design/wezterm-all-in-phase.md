@@ -222,6 +222,7 @@ class Input:
   1. 新增后端选择：`pywezterm` 可用 → 用库；否则回退 pyte（临时兜底，最终删除）。
   2. 对齐接口：`feed`/`snapshot(keep_ansi, include_cursor)`/`capture_scrollback`/`get_cursor_location`/`line_text`/`resize`/`export_buffer`。
   3. 实现 Cell → SGR/纯文本渲染（对齐原 `_render_with_colors` 语义：每行 CUP 定位、保留中间空行、光标序列）。
+  4. `pywezterm.Terminal` 创建后必须 `enable_conpty_quirks()`：使 wezterm-term 的 resize 采用"内容锚顶、光标绑定文本行"（保留 scrollback）语义，与 Windows ConPTY 的实际 resize 行为一致；否则 grow 时模型光标移到新视口底部，与 ConPTY 实测光标不一致，导致 resize 后按键回显在显示内容中间（见 tests/e2e/test_resize_cursor_sync.py）。
 - 验证：现有 grep/scrollback/光标相关用例回归。
 - 退出条件：web 上 grep 定位、scrollback 恢复、光标查询与 pyte 时代行为一致或更准。
 

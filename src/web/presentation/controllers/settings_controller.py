@@ -63,14 +63,18 @@ def create_settings_router(
             defaults = get_defaults()
             _logger.info(
                 "GET /api/settings from %s: %d keys (web.toml defaults)",
-                client, len(defaults),
+                client,
+                len(defaults),
             )
             return JSONResponse(defaults)
         except Exception:
             _logger.exception("GET /api/settings failed")
             return JSONResponse(
                 status_code=500,
-                content={"error": "internal_error", "message": "Failed to load settings"},
+                content={
+                    "error": "internal_error",
+                    "message": "Failed to load settings",
+                },
             )
 
     @router.post("", response_class=JSONResponse)
@@ -85,7 +89,9 @@ def create_settings_router(
         if auth_validator is not None and not auth_validator(request):
             return JSONResponse(status_code=401, content={"error": "unauthorized"})
         client = request.client.host if request.client else "-"
-        _logger.info("POST /api/settings from %s: noop (localStorage-only mode)", client)
+        _logger.info(
+            "POST /api/settings from %s: noop (localStorage-only mode)", client
+        )
         return JSONResponse({"ok": True})
 
     @router.get("/schema", response_class=JSONResponse)
@@ -101,9 +107,11 @@ def create_settings_router(
             return JSONResponse(status_code=401, content={"error": "unauthorized"})
         client = request.client.host if request.client else "-"
         _logger.info("GET /api/settings/schema from %s", client)
-        return JSONResponse({
-            "valid_keys": sorted(VALID_KEYS),
-            "defaults": get_defaults(),
-        })
+        return JSONResponse(
+            {
+                "valid_keys": sorted(VALID_KEYS),
+                "defaults": get_defaults(),
+            }
+        )
 
     return router

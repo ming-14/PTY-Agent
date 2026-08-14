@@ -72,9 +72,13 @@ import {
 } from './presentation/views/fastscreen.js';
 import { initSettingsView } from './presentation/views/settings.js';
 import { refreshSizeSelectorIfOpen } from './presentation/views/sizeSelector.js';
-import { initDevConsole, setVisible as setDevConsoleVisible } from './presentation/views/devConsole.js';
+import { LogPanel } from '../vendor/logpanel/index.js';
+import { loggerSource } from './infrastructure/logPanelAdapter.js';
 import { init as rimeInit, onThemeChange as rimeOnThemeChange, applyImeSetting as rimeApplyImeSetting } from './infrastructure/rimeManager.js';
 import { ensureMapleMonoLoaded, applyTerminalFontAll } from './infrastructure/fontLoader.js';
+
+// ── 日志视窗（通用 LogPanel 插件实例） ──
+let _logPanel = null;
 
 // ── rikkajs 桌宠管理 ──
 const _RIKKA_COUNT_LS_KEY = 'pty_rikka_count';
@@ -269,7 +273,7 @@ async function init() {
     console.warn('settingsStore load failed, using defaults:', e);
   }
 
-  // 应用主题（从 settingsStore 读取，替代旧的 pty_theme localStorage）
+  // 应用主题（从 settingsStore 读取）
   setBodyTheme(settingsStore.get('basic.theme') || 'dark');
 
   // 预加载 MapleMono 字体（若用户之前已选择 maple-mono，页面刷新后需后台加载）
@@ -352,11 +356,16 @@ async function init() {
     } else if (key.startsWith('ime.')) {
       rimeApplyImeSetting(key, value);
     } else if (key === 'developer.logPanelEnabled') {
-      setDevConsoleVisible(value);
+      if (value) _logPanel && _logPanel.show();
+      else _logPanel && _logPanel.hide();
     } else if (key === 'developer.logLevel') {
       setLogLevel(_levelNameToNum(value));
     } else if (key === 'developer.bufferSize') {
       setBufferSize(value);
+    } else if (key === 'developer.windowSize') {
+      _logPanel && _logPanel.setOption('windowSize', value);
+    } else if (key === 'developer.windowOpacity') {
+      _logPanel && _logPanel.setOption('windowOpacity', value);
     } else if (key === 'rikka.enabled') {
       _onRikkaEnabled(value);
     }
@@ -380,7 +389,23 @@ async function init() {
   initVncView();
   initFastScreenView();
   initSettingsView();
-  initDevConsole();
+  // 创建日志视窗（通用 LogPanel 插件，source 由 loggerAdapter 注入）
+  _logPanel = new LogPanel({
+    source: loggerSource,
+    storageKeyPrefix: 'pty_logpanel_',
+    theme: 'auto',
+    initialVisible: !!settingsStore.get('developer.logPanelEnabled'),
+    windowSize: settingsStore.get('developer.windowSize'),
+    windowOpacity: settingsStore.get('developer.windowOpacity'),
+  });
+
+  // 视窗可见性写回设置项：视窗关闭按钮 → settingsStore → 设置面板开关同步
+  // settingsStore.set 内部有相等跳过保护，panel.show/hide 有状态守卫，不会循环
+  _logPanel.on('visibleChange', (visible) => {
+    if (settingsStore.get('developer.logPanelEnabled') !== visible) {
+      settingsStore.set('developer.logPanelEnabled', visible);
+    }
+  });
 
   // 初始化 Web RIME 输入法管理器（按 localStorage 恢复模式，懒加载 panel）
   rimeInit();

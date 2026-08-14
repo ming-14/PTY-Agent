@@ -72,5 +72,5 @@ web/static/
     ├── novnc/             # noVNC 前端（含 core/ app/ vendor/pako）
     ├── rime/              # Rime WASM 输入法（wasm / dict）
     └── rikkajs/           # 桌面宠物 shimeji（img / shimeji.js / shimeji.css）
-                        # 注：字体不在此目录；位于 src/assets/fonts/，Rime 字体随 vendor/rime/dict 提供
+                        # 注：字体不在此目录；前端字体由 fontLoader.js 从 CDN 加载，Rime 字体随 vendor/rime/dict 提供
 ```

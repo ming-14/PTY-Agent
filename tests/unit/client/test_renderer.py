@@ -1,4 +1,4 @@
-"""client/renderer.py SVG 渲染与压缩单元测试"""
+"""client/renderer 包 SVG 渲染与压缩单元测试"""
 
 import pytest
 

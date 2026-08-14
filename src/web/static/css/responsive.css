@@ -109,9 +109,8 @@ body.touch-device .win-btn {
 body.touch-device .terminal-stage {
   padding: 8px;
 }
-/* v8: 移动端 frame 不再撑满/限制尺寸，与桌面端一致跟随 .xterm-screen 实际渲染区。
-     旧方案 width:100%/height:100% + max-width/max-height 非等比压缩 frame，
-     导致框宽高比改变。v9: 由 applySessionFrameRatio 按会话 frameRatio 反算字号保持比例。 */
+/* 移动端 frame 不撑满/限制尺寸，与桌面端一致跟随 .xterm-screen 实际渲染区；
+     由 applySessionFrameRatio 按会话 frameRatio 反算字号保持比例。 */
 body.touch-device .terminal-frame {
   /* 不设置 width/height/max-width/max-height，由 JS applyTerminalFrameSize 设置 */
 }

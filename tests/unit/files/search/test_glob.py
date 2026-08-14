@@ -4,14 +4,14 @@ import os
 
 import pytest
 
-from src.files.search import glob_
-from src.files.search.glob_ import glob_files
+from config.plugins.files.search import glob_
+from config.plugins.files.search.glob_ import glob_files
 
 
 class TestGlobFallbackEngine:
     @pytest.fixture(autouse=True)
     def force_fallback(self, monkeypatch):
-        monkeypatch.setattr("src.files.search.glob_.RG_EXE", None)
+        monkeypatch.setattr("config.plugins.files.search.glob_.RG_EXE", None)
 
     def _make_tree(self, tmp_path):
         (tmp_path / "top.py").write_text("", encoding="utf-8")
@@ -74,7 +74,7 @@ class TestGlobFallbackEngine:
 class TestGlobRgEngine:
     @pytest.fixture
     def mock_rg(self, monkeypatch):
-        monkeypatch.setattr("src.files.search.glob_.RG_EXE", "rg.exe")
+        monkeypatch.setattr("config.plugins.files.search.glob_.RG_EXE", "rg.exe")
 
         def _run(cmd, cwd=None, capture_output=None, encoding=None, errors=None):
             class _P:
@@ -95,7 +95,7 @@ class TestGlobRgEngine:
         }
 
     def test_rg_command_contains_glob(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("src.files.search.glob_.RG_EXE", "rg.exe")
+        monkeypatch.setattr("config.plugins.files.search.glob_.RG_EXE", "rg.exe")
         captured = {}
 
         def _run(cmd, cwd=None, capture_output=None, encoding=None, errors=None):
@@ -112,7 +112,7 @@ class TestGlobRgEngine:
         assert captured["cwd"] == str(tmp_path)
 
     def test_rg_error_falls_back(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("src.files.search.glob_.RG_EXE", "rg.exe")
+        monkeypatch.setattr("config.plugins.files.search.glob_.RG_EXE", "rg.exe")
 
         def _run(cmd, cwd=None, capture_output=None, encoding=None, errors=None):
             class _P:
@@ -127,7 +127,7 @@ class TestGlobRgEngine:
         assert result.files == [str(tmp_path / "a.py")]
 
     def test_rg_missing_falls_back(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("src.files.search.glob_.RG_EXE", None)
+        monkeypatch.setattr("config.plugins.files.search.glob_.RG_EXE", None)
         (tmp_path / "a.py").write_text("", encoding="utf-8")
         result = glob_files("*.py", str(tmp_path))
         assert result.engine == "fallback"

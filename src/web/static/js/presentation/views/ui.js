@@ -116,7 +116,7 @@ export function switchTab(sid) {
     return;
   }
 
-  // 终端会话路径（原逻辑保留）
+  // 终端会话路径
   // 从 VNC/FastScreen/Settings tab 切走时隐藏对应 frame（handler.switchTo 已互斥显示，这里仅兜底）
   $('vnc-frame').style.display = 'none';
   $('fastscreen-frame').style.display = 'none';
@@ -163,13 +163,12 @@ export function switchTab(sid) {
       if (isHistory) {
         scrollTermToTop(inst.term);
       }
-      // v5: 用 rAF 替代 50ms setTimeout（参考 ttyd 的 rAF + 立即 fit）
-      // rAF 在下一帧渲染前触发，比 setTimeout 更稳定
+      // 用 rAF 在下一帧渲染前触发尺寸更新（比 setTimeout 更稳定）
       // 再等一帧确保 xterm 内部 dimensions 刷新后再算 frame
       requestAnimationFrame(() => {
         applyTerminalFrameSize(sid);
         applyTerminalSize(sid, false);
-        // v9.2：切换标签后按该会话保存的 frameRatio + 当前 stage 尺寸恢复框大小。
+        // 切换标签后按该会话保存的 frameRatio + 当前 stage 尺寸恢复框大小。
         // - adaptive 模式：按 ratio 设 frame 尺寸 + fit() 算 cols/rows（cols/rows 变）
         // - 非 adaptive 模式：按 ratio 反算字号（cols/rows 不变）
         // 不同会话 cols/rows 不同，ratio 不同，切换后需重新应用。
@@ -261,21 +260,21 @@ export function openSessionInTab(sid) {
     return;
   }
 
-  // C2 改造（模拟 WT）：已订阅的活跃会话切回时不再重新 subscribe
+  // 已订阅的活跃会话切回时不再重新 subscribe
   // 后端支持多订阅，订阅状态保留，xterm.js 实例持续接收输出累积 scrollback
   // 只有"首次打开"（未订阅）的会话才需要 subscribe
   if (state.sessions[sid].subscribed && !state.sessions[sid].history) {
-    debug('session', 'openSessionInTab: sid=%s already subscribed, switch only (C2)', sid);
+    debug('session', 'openSessionInTab: sid=%s already subscribed, switch only', sid);
     switchTab(sid);
     state.pendingSwitch = null;
     return;
   }
 
   // 4. 立即切换标签（创建终端如有需要，给用户即时高亮/标签反馈）
-  //    重构后不再 dispose 旧终端：xterm.js 隐藏后的渲染问题通过 switchTab 中的
+  //    不再 dispose 旧终端：xterm.js 隐藏后的渲染问题通过 switchTab 中的
   //    refresh + requestAnimationFrame 解决。保留终端实例可避免 dispose/recreate
   //    造成的画面闪烁与"切回后终端不切换"问题。
-  //    C2 改造：已订阅会话不再 term.clear()+write()，scrollback 完整保留；
+  // 已订阅会话不再 term.clear()+write()，scrollback 完整保留；
   //    只有首次订阅的 replayPending 会 write(snapshot) 初始化 xterm。
   state.pendingSwitch = sid;
   switchTab(sid);

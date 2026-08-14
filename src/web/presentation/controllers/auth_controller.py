@@ -22,7 +22,7 @@ import hashlib
 import logging
 import os
 
-from fastapi import APIRouter, Request, Response, WebSocket
+from fastapi import APIRouter, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 
 from ...infrastructure.auth.session_store import SessionStore
@@ -33,7 +33,9 @@ _COOKIE_NAME = "pty_session"
 _TOKEN_HEADER = "x-auth-token"
 _TOKEN_QUERY_PARAM = "authToken"
 _COOKIE_MAX_AGE = 86400  # 24h
-_LOGIN_HTML_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "static")
+_LOGIN_HTML_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "static"
+)
 
 
 def hash_password(password: str) -> str:
@@ -144,7 +146,10 @@ def create_auth_router(session_store: SessionStore, password_hash: str) -> APIRo
         try:
             body = await request.json()
         except Exception:
-            _logger.warning("login: invalid body from %s", request.client.host if request.client else "-")
+            _logger.warning(
+                "login: invalid body from %s",
+                request.client.host if request.client else "-",
+            )
             return JSONResponse(status_code=400, content={"error": "invalid_body"})
 
         submitted = body.get("password", "")
@@ -156,7 +161,9 @@ def create_auth_router(session_store: SessionStore, password_hash: str) -> APIRo
                 if submitted_hash != password_hash:
                     remote = request.client.host if request.client else "-"
                     _logger.warning("login: wrong password from %s", remote)
-                    return JSONResponse(status_code=401, content={"error": "unauthorized"})
+                    return JSONResponse(
+                        status_code=401, content={"error": "unauthorized"}
+                    )
             # 空密码直接放行
         # 无密码哈希时，任何密码都放行（免密模式）
 
@@ -200,10 +207,12 @@ def create_auth_router(session_store: SessionStore, password_hash: str) -> APIRo
         """
         token = _extract_token_from_request(request)
         authenticated = session_store.validate(token) if token else False
-        return JSONResponse({
-            "enabled": bool(password_hash),
-            "authenticated": authenticated,
-        })
+        return JSONResponse(
+            {
+                "enabled": bool(password_hash),
+                "authenticated": authenticated,
+            }
+        )
 
     @router.get("/login", response_class=FileResponse)
     async def login_page() -> FileResponse:

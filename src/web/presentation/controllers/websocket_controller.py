@@ -5,10 +5,12 @@ import json
 import logging
 from typing import Any, Optional
 
+from ....fastscreen.ports import FastScreenServicePort
+from ....protocol.response import Response
+from ....vnc.ports import VncServicePort
+from ...application.adaptive_lock import AdaptiveLockService
 from ...application.dispatcher import MessageDispatcher
 from ...application.handlers import HandlerContext
-from ....vnc.ports import VncServicePort
-from ....fastscreen.ports import FastScreenServicePort
 from ...application.ports import (
     ConnectionContext,
     CursorLocatorServicePort,
@@ -20,10 +22,8 @@ from ...application.ports import (
     SystemStatsProvider,
     ThreadExecutor,
 )
-from ...application.adaptive_lock import AdaptiveLockService
 from ...application.services import MessageEncoderService, SubscriptionService
 from ...infrastructure.web.fastapi_transport import WSMsgType
-from ....protocol.response import Response
 
 _logger = logging.getLogger("pty-web")
 
@@ -64,7 +64,7 @@ class WebSocketController:
         self._fastscreen_service = fastscreen_service
         self._cursor_locator_service = cursor_locator_service
         self._dispatcher = dispatcher or MessageDispatcher()
-        # v3: 引用 server.py 的 connections 字典，_cleanup 据此检查同 client_uid
+        # 引用 server.py 的 connections 字典，_cleanup 据此检查同 client_uid
         # 是否还有其他活跃连接订阅了该 sid（多标签页/刷新场景锁继承）
         self._connections = connections
 
@@ -83,7 +83,9 @@ class WebSocketController:
             try:
                 queue.put_nowait(message)
             except asyncio.QueueFull:
-                _logger.warning("ws queue full, dropping message type=%s", message.get("type"))
+                _logger.warning(
+                    "ws queue full, dropping message type=%s", message.get("type")
+                )
 
         def _enqueue(message: dict) -> None:
             try:
@@ -111,7 +113,9 @@ class WebSocketController:
             cursor_locator_service=self._cursor_locator_service,
         )
 
-        consumer = asyncio.ensure_future(self._consume(transport, handler_ctx, _enqueue))
+        consumer = asyncio.ensure_future(
+            self._consume(transport, handler_ctx, _enqueue)
+        )
         producer = asyncio.ensure_future(self._produce(transport, queue))
         try:
             done, pending = await asyncio.wait(
@@ -126,7 +130,11 @@ class WebSocketController:
         except Exception:
             _logger.exception("ws handle error conn_id=0x%x", sid)
         finally:
-            _logger.info("ws handle cleanup conn_id=0x%x subscribed=%s", sid, context.subscribed_session_id)
+            _logger.info(
+                "ws handle cleanup conn_id=0x%x subscribed=%s",
+                sid,
+                context.subscribed_session_ids,
+            )
             await self._cleanup(context, handler_ctx)
             try:
                 if not transport.closed:
@@ -149,7 +157,11 @@ class WebSocketController:
                     try:
                         data = json.loads(msg.data)
                     except json.JSONDecodeError:
-                        _logger.warning("ws recv invalid json from conn_id=0x%x: %r", sid, msg.data[:200])
+                        _logger.warning(
+                            "ws recv invalid json from conn_id=0x%x: %r",
+                            sid,
+                            msg.data[:200],
+                        )
                         enqueue(Response.error("invalid json"))
                         continue
                     msg_count += 1
@@ -157,27 +169,49 @@ class WebSocketController:
                     recv_sid = data.get("session_id", "")
                     if t == "input":
                         preview = repr(data.get("data", ""))[:80]
-                        _logger.debug("ws recv #%d type=input sid=%r data=%s len=%d",
-                                      msg_count, recv_sid, preview, len(data.get("data", "")))
+                        _logger.debug(
+                            "ws recv #%d type=input sid=%r data=%s len=%d",
+                            msg_count,
+                            recv_sid,
+                            preview,
+                            len(data.get("data", "")),
+                        )
                     elif t == "resize":
-                        _logger.debug("ws recv #%d type=resize sid=%r cols=%s rows=%s",
-                                      msg_count, recv_sid, data.get("cols"), data.get("rows"))
+                        _logger.debug(
+                            "ws recv #%d type=resize sid=%r cols=%s rows=%s",
+                            msg_count,
+                            recv_sid,
+                            data.get("cols"),
+                            data.get("rows"),
+                        )
                     else:
-                        _logger.debug("ws recv #%d type=%s sid=%r", msg_count, t, recv_sid)
+                        _logger.debug(
+                            "ws recv #%d type=%s sid=%r", msg_count, t, recv_sid
+                        )
 
                     responses = await self._dispatcher.dispatch(ctx, data)
                     for resp in responses:
                         enqueue(resp)
                 elif msg.type in (WSMsgType.ERROR, WSMsgType.CLOSE):
-                    _logger.info("ws consumer close/error msg type=%s conn_id=0x%x after %d msgs",
-                                 msg.type, sid, msg_count)
+                    _logger.info(
+                        "ws consumer close/error msg type=%s conn_id=0x%x after %d msgs",
+                        msg.type,
+                        sid,
+                        msg_count,
+                    )
                     break
         except asyncio.CancelledError:
-            _logger.info("ws consumer cancelled conn_id=0x%x after %d msgs", sid, msg_count)
+            _logger.info(
+                "ws consumer cancelled conn_id=0x%x after %d msgs", sid, msg_count
+            )
         except Exception:
-            _logger.exception("ws consumer error conn_id=0x%x after %d msgs", sid, msg_count)
+            _logger.exception(
+                "ws consumer error conn_id=0x%x after %d msgs", sid, msg_count
+            )
         finally:
-            _logger.info("ws consumer finished conn_id=0x%x total_msgs=%d", sid, msg_count)
+            _logger.info(
+                "ws consumer finished conn_id=0x%x total_msgs=%d", sid, msg_count
+            )
 
     async def _produce(
         self,
@@ -194,26 +228,34 @@ class WebSocketController:
                     sent_count += 1
                     msg_type = msg.get("type", "")
                     if msg_type == "output":
-                        _logger.debug("ws send #%d type=output sid=%r data_len=%d",
-                                      sent_count, msg.get("sessionId"), len(msg.get("data", "")))
+                        _logger.debug(
+                            "ws send #%d type=output sid=%r data_len=%d",
+                            sent_count,
+                            msg.get("sessionId"),
+                            len(msg.get("data", "")),
+                        )
                     elif sent_count % 50 == 0:
                         _logger.debug("ws producer sent %d messages", sent_count)
                 except Exception as e:
                     _logger.info("ws producer send error: %s (sent=%d)", e, sent_count)
                     break
         except asyncio.CancelledError:
-            _logger.info("ws producer cancelled conn_id=0x%x (sent=%d)", sid, sent_count)
+            _logger.info(
+                "ws producer cancelled conn_id=0x%x (sent=%d)", sid, sent_count
+            )
         finally:
-            _logger.info("ws producer finished conn_id=0x%x total_sent=%d", sid, sent_count)
+            _logger.info(
+                "ws producer finished conn_id=0x%x total_sent=%d", sid, sent_count
+            )
 
     async def _cleanup(self, context: ConnectionContext, ctx: HandlerContext) -> None:
         """清理当前连接的订阅与回调。
 
-        问题2补充：连接断开时若该连接是某会话的自适应锁持有者，
+        连接断开时若该连接是某会话的自适应锁持有者，
         必须释放锁并广播 size_mode_changed（adaptive_owner_active=False），
         通知其他订阅客户端解锁尺寸调整 UI。
 
-        v3 改造：锁持有者从 conn_id 改为 client_uid。同一 client_uid 可能有多个
+        锁持有者以 client_uid 标识。同一 client_uid 可能有多个
         连接（多标签页），仅当该 client_uid 没有其他活跃连接订阅该 sid 时才释放锁，
         否则锁由其他连接继承（不广播）。这保证：
         - A 端持锁 + A 端刷新：旧连接 _cleanup 时新连接可能已订阅（同 uid），锁保留
@@ -234,19 +276,21 @@ class WebSocketController:
             for sid in subscribed_sids:
                 if not ctx.adaptive_lock.is_owner(sid, client_uid):
                     continue
-                # v3: 检查该 client_uid 是否还有其他活跃连接订阅了该 sid
+                # 检查该 client_uid 是否还有其他活跃连接订阅了该 sid
                 # 若有 → 锁由其他连接继承，不释放（同用户多标签页场景）
                 # 若无 → 释放锁并广播（所有连接已关闭）
                 if self._has_other_active_subscriber(sid, client_uid):
                     _logger.info(
                         "cleanup: keep adaptive lock sid=%s uid=%s (other conn active)",
-                        sid, client_uid,
+                        sid,
+                        client_uid,
                     )
                     continue
                 if ctx.adaptive_lock.release(sid, client_uid):
                     _logger.info(
                         "cleanup: release adaptive lock sid=%s uid=%s (no other conn)",
-                        sid, client_uid,
+                        sid,
+                        client_uid,
                     )
                     try:
                         ctx.publisher.publish_size_mode_changed(
@@ -255,13 +299,17 @@ class WebSocketController:
                         )
                     except Exception as e:
                         _logger.exception(
-                            "cleanup: publish_size_mode_changed failed sid=%s: %s", sid, e,
+                            "cleanup: publish_size_mode_changed failed sid=%s: %s",
+                            sid,
+                            e,
                         )
 
-    def _has_other_active_subscriber(self, session_id: str, client_uid: Optional[str]) -> bool:
+    def _has_other_active_subscriber(
+        self, session_id: str, client_uid: Optional[str]
+    ) -> bool:
         """检查指定 client_uid 是否还有其他活跃连接订阅了该 session。
 
-        v3 新增：_cleanup 时判断锁是否应由同 uid 的其他连接继承。
+        _cleanup 时判断锁是否应由同 uid 的其他连接继承。
         遍历 connections 字典，找 uid 相同且订阅了该 sid 的其他连接。
         注意：调用时本连接的订阅已被 unsub.handle 清空，不会误匹配自己。
         """

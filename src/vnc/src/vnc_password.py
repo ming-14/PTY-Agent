@@ -5,9 +5,8 @@ from pathlib import Path
 kernel32 = ctypes.windll.kernel32
 
 
-_BIT_REVERSE_TABLE = bytes(
-    int(f'{b:08b}'[::-1], 2) for b in range(256)
-)
+_BIT_REVERSE_TABLE = bytes(int(f"{b:08b}"[::-1], 2) for b in range(256))
+
 
 def _reverse_bits(byte: int) -> int:
     return _BIT_REVERSE_TABLE[byte]
@@ -20,6 +19,7 @@ VNC_DES_KEY = bytes(_reverse_bits(b) for b in VNC_FIXED_KEY)
 def _des_encrypt(key: bytes, data: bytes) -> bytes:
     from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES
     from cryptography.hazmat.primitives.ciphers import Cipher, modes
+
     cipher = Cipher(TripleDES(key * 3), modes.ECB())
     enc = cipher.encryptor()
     return enc.update(data) + enc.finalize()
@@ -41,7 +41,12 @@ def _write_profile_struct(section: str, key: str, data: bytes, filepath: str):
     kernel32.WritePrivateProfileStructW(section, key, buf, len(data), filepath)
 
 
-def write_ultravnc_ini(ultravnc_dir: Path, password: str = "", port: int = 5900, remove_wallpaper: bool = False):
+def write_ultravnc_ini(
+    ultravnc_dir: Path,
+    password: str = "",
+    port: int = 5900,
+    remove_wallpaper: bool = False,
+):
     ini_path = ultravnc_dir / "ultravnc.ini"
     ini_str = str(ini_path)
 
@@ -61,7 +66,9 @@ def write_ultravnc_ini(ultravnc_dir: Path, password: str = "", port: int = 5900,
     _write_profile_string("admin", "AcceptHTTP", "0", ini_str)
     _write_profile_string("admin", "AuthRequired", "1", ini_str)
     _write_profile_string("admin", "ConnectPriority", "0", ini_str)
-    _write_profile_string("admin", "RemoveWallpaper", "1" if remove_wallpaper else "0", ini_str)
+    _write_profile_string(
+        "admin", "RemoveWallpaper", "1" if remove_wallpaper else "0", ini_str
+    )
     _write_profile_string("admin", "PortNumber", str(port), ini_str)
     _write_profile_string("admin", "HTTPPortNumber", "0", ini_str)
     _write_profile_string("admin", "AutoPortSelect", "0", ini_str)
@@ -82,6 +89,7 @@ def write_ultravnc_ini(ultravnc_dir: Path, password: str = "", port: int = 5900,
 
 if __name__ == "__main__":
     import sys
+
     pw = sys.argv[1] if len(sys.argv) > 1 else "123456"
     result = encrypt_vnc_password(pw)
     print(f"Password '{pw}' -> {result.hex().upper()}")

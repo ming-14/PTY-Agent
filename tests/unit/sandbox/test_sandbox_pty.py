@@ -1,9 +1,11 @@
-"""src/sandbox/pty.py 单元测试（mock manager / ConPtyHandle）"""
+"""src/sandbox/pty.py 单元测试（mock manager / wezterm Pty）"""
 
 import pytest
 
 import src.sandbox.pty as pty_mod
 from src.sandbox.pty import SandboxPty
+
+pytestmark = pytest.mark.skipif(not pty_mod._HAS_WEZTERM, reason="wezterm-py 不可用")
 
 
 class _FakeTracker:
@@ -41,37 +43,27 @@ class _FakeManager:
         return 5
 
 
-class _FakeConPtyHandle:
-    """ConPtyHandle 端口替身"""
+class _FakePty:
+    """pywezterm.Pty 端口替身（沙箱场景：不 spawn，仅 ConPTY 创建/IO/尺寸控制）"""
 
-    def __init__(self, cols, rows):
+    def __init__(self, cols=80, rows=24):
         self.cols = cols
         self.rows = rows
         self.writes = []
         self.closed = False
         self.resizes = []
-        self.discarded = False
 
-    @property
-    def hpcon_value(self):
+    def hpcon(self):
         return 99
 
+    def read(self, n=65536, timeout=None):
+        return b"drained" if timeout == 0.0 else b"hello"
+
     def write(self, data):
-        if isinstance(data, str):
-            data = data.encode()
         self.writes.append(data)
-
-    def read(self, n=65536):
-        return b"hello"
-
-    def drain(self, max_bytes=65536):
-        return b"drained"
 
     def resize(self, cols, rows):
         self.resizes.append((cols, rows))
-
-    def discard_inherited_ends(self):
-        self.discarded = True
 
     def close(self):
         self.closed = True
@@ -79,9 +71,10 @@ class _FakeConPtyHandle:
 
 @pytest.fixture
 def fake_conpty(monkeypatch):
-    fake = _FakeConPtyHandle(80, 24)
-    monkeypatch.setattr(pty_mod, "ConPtyHandle",
-                        lambda cols, rows: fake)
+    fake = _FakePty(80, 24)
+    fake_module = type("FakePyWezterm", (),
+                       {"Pty": lambda *a, **k: fake})()
+    monkeypatch.setattr(pty_mod, "pywezterm", fake_module)
     return fake
 
 
@@ -122,7 +115,6 @@ class TestSandboxPtyInit:
         assert mgr.started
         assert mgr.command == "cmd.exe /c echo hi"
         assert mgr.hpcon == 99  # ConPTY 句柄值透传 start_process
-        assert fake_conpty.discarded  # spawn 后关闭可继承句柄副本
         assert tracker.root == 4242  # spawn 后立即登记根进程
         assert pty.get_child_pid() == 4242
 

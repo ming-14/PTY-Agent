@@ -40,14 +40,12 @@ class Listener:
         transport: str,
         auth_context: AuthContext,
         ssl_context: Optional[ssl.SSLContext] = None,
-        publish_shm: bool = False,
     ):
         self._host = host
         self._port = port
         self._transport = transport  # "plain" or "tls"
         self._auth_context = auth_context
         self._ssl_context = ssl_context
-        self._publish_shm = publish_shm
         self._sock: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
         self._handler = None
@@ -59,15 +57,10 @@ class Listener:
 
     @property
     def port(self) -> int:
-        """实际监听端口（bind 后可用，用于 SHM 发布）"""
+        """实际监听端口（bind 后可用，port=0 时由内核分配）"""
         if self._sock is not None:
             return self._sock.getsockname()[1]
         return self._port
-
-    @property
-    def publish_shm(self) -> bool:
-        """是否需要将端口发布到共享内存（同机发现）"""
-        return self._publish_shm
 
     def bind(self) -> int:
         """创建 socket 并绑定端口，返回实际端口
@@ -79,7 +72,10 @@ class Listener:
         self._sock.bind((self._host, self._port))
         actual_port = self._sock.getsockname()[1]
         _logger.debug(
-            "Listener [%s] 绑定 %s:%d", self._transport, self._host, actual_port,
+            "Listener [%s] 绑定 %s:%d",
+            self._transport,
+            self._host,
+            actual_port,
         )
         return actual_port
 
@@ -94,12 +90,16 @@ class Listener:
         self._handler = handler_factory(self._auth_context)
         self._running = True
         self._thread = threading.Thread(
-            target=self._accept_loop, daemon=True,
+            target=self._accept_loop,
+            daemon=True,
             name=f"listener-{self._transport}",
         )
         self._thread.start()
         _logger.info(
-            "Listener [%s] 监听 %s:%d", self._transport, self._host, self.port,
+            "Listener [%s] 监听 %s:%d",
+            self._transport,
+            self._host,
+            self.port,
         )
 
     def _accept_loop(self):
@@ -112,8 +112,9 @@ class Listener:
                 conn, addr = self._sock.accept()
             except OSError:
                 if self._running:
-                    _logger.warning("Listener [%s] accept 异常", self._transport,
-                                    exc_info=True)
+                    _logger.warning(
+                        "Listener [%s] accept 异常", self._transport, exc_info=True
+                    )
                 break
 
             _logger.debug("Listener [%s] 接受连接: %s", self._transport, addr)
@@ -124,7 +125,9 @@ class Listener:
                     conn = self._ssl_context.wrap_socket(conn, server_side=True)
                 except Exception:
                     _logger.warning(
-                        "Listener [%s] TLS 握手失败: %s", self._transport, addr,
+                        "Listener [%s] TLS 握手失败: %s",
+                        self._transport,
+                        addr,
                         exc_info=True,
                     )
                     conn.close()

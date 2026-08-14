@@ -3,9 +3,9 @@
 提供输入文本的转义处理（自动追加换行）和安全打印（适配控制台编码）功能。
 """
 
+import json
 import logging
 import sys
-import json
 from typing import Optional
 
 _logger = logging.getLogger("pty-client")
@@ -146,7 +146,7 @@ def expand_control_characters(text: str) -> str:
                 out.append("{")
                 i += 1
                 continue
-            body = text[i + 1:j]
+            body = text[i + 1 : j]
             expanded = _expand_control_token(body)
             if expanded is None:
                 raise ValueError(
@@ -167,21 +167,21 @@ def expand_control_characters(text: str) -> str:
 def process_input(text: str, json_escaping: bool = False, send_eol: str = "\r") -> str:
     """处理输入文本：可选 JSON/控制字符转义解码 + 自动追加行尾符
 
-    默认 raw 模式（json_escaping=False）：原样发送，不做任何转义处理。
-    Windows 路径中的反斜杠不会被误转换。
+     默认 raw 模式（json_escaping=False）：原样发送，不做任何转义处理。
+     Windows 路径中的反斜杠不会被误转换。
 
-    启用 json_escaping 时：先使用完整 JSON 反转移处理所有标准转义序列
-   （\\n、\\t、\\r、\\uXXXX、\\"、\\\\ 等），再展开控制字符转义
-    （{ctrl+a}、{enter}、{up}、{f1} 等），适用于需要发送多行代码或按键场景。
+     启用 json_escaping 时：先使用完整 JSON 反转移处理所有标准转义序列
+    （\\n、\\t、\\r、\\uXXXX、\\"、\\\\ 等），再展开控制字符转义
+     （{ctrl+a}、{enter}、{up}、{f1} 等），适用于需要发送多行代码或按键场景。
 
-    Args:
-        text: 原始输入文本。
-        json_escaping: 是否启用 JSON/控制字符转义解码（默认 False，raw 模式）。
-        send_eol: 末尾追加的行尾符。默认 "\\r"（模拟终端 Enter）。可选 "\\n"、"\\r\\n"、"\\r"、""（不追加）。
-                  当输入已以 \\n 或 \\r 结尾时不重复追加。
+     Args:
+         text: 原始输入文本。
+         json_escaping: 是否启用 JSON/控制字符转义解码（默认 False，raw 模式）。
+         send_eol: 末尾追加的行尾符。默认 "\\r"（模拟终端 Enter）。可选 "\\n"、"\\r\\n"、"\\r"、""（不追加）。
+                   当输入已以 \\n 或 \\r 结尾时不重复追加。
 
-    Returns:
-        处理后的文本。
+     Returns:
+         处理后的文本。
     """
     if json_escaping:
         text = unescape_json_string(text)
@@ -189,8 +189,13 @@ def process_input(text: str, json_escaping: bool = False, send_eol: str = "\r") 
     if send_eol:
         if not text.endswith("\n") and not text.endswith("\r"):
             text += send_eol
-    _logger.debug("process_input: len=%d json_escaping=%s send_eol=%r ends_with_newline=%s",
-                  len(text), json_escaping, send_eol, text.endswith("\n"))
+    _logger.debug(
+        "process_input: len=%d json_escaping=%s send_eol=%r ends_with_newline=%s",
+        len(text),
+        json_escaping,
+        send_eol,
+        text.endswith("\n"),
+    )
     return text
 
 

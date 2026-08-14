@@ -16,7 +16,6 @@ import logging
 from typing import Dict, Optional
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from ...protocol.signing import MessageSigner
 from ..keys import PrivateKey, PublicKey

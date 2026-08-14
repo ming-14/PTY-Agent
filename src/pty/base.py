@@ -29,7 +29,7 @@ class PseudoTerminal:
         """返回 PTY 后端类型标识
 
         Returns:
-            字符串标识，如 "win-condrv"、"win-conpty"、"unix-pty"、"subprocess"。
+            字符串标识，如 "win-wezterm"、"unix-pty"、"subprocess"。
         """
         return "unknown"
 
@@ -63,7 +63,6 @@ class PseudoTerminal:
             cols: 新的列数。
             rows: 新的行数。
         """
-        pass
 
     def close(self):
         """关闭 PTY 并清理资源"""
@@ -71,11 +70,11 @@ class PseudoTerminal:
 
     def fileno(self):
         """返回 PTY 的文件描述符（如适用）"""
-        return None
+        return
 
     def get_child_pid(self):
         """返回子进程 PID（如适用）"""
-        return None
+        return
 
     def get_exit_code(self) -> Optional[int]:
         """获取子进程退出码
@@ -88,7 +87,9 @@ class PseudoTerminal:
         """
         return None
 
-    def inject_mouse_event(self, x: int, y: int, button: int, is_release: bool, control_key_state: int = 0) -> bool:
+    def inject_mouse_event(
+        self, x: int, y: int, button: int, is_release: bool, control_key_state: int = 0
+    ) -> bool:
         """向子进程控制台直接注入鼠标事件（Windows ConPTY 专用）
 
         ConPTY 输入管道不会把 SGR 鼠标序列转换为子进程的 MOUSE_EVENT_RECORD，
@@ -105,20 +106,4 @@ class PseudoTerminal:
         Returns:
             True 表示注入成功。
         """
-        return False
-
-    # ── GUI 窗口检测（可选能力，默认空实现）──
-    # Unix 后端在终端窗口上检测（pty_impl.poll_gui_windows），
-    # Windows ConPTY 无自有窗口（headless），保持空实现。
-
-    def poll_gui_windows(self) -> list:
-        """轮询检测本轮新增的 GUI 窗口（无窗口后端返回空列表）"""
-        return []
-
-    def get_gui_windows(self) -> list:
-        """获取已检测到的 GUI 窗口列表"""
-        return []
-
-    def close_gui_window(self, hwnd: int) -> bool:
-        """关闭指定 GUI 窗口"""
         return False

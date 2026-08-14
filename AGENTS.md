@@ -1,5 +1,5 @@
 # Base
-PTY-Agent 核心包体在 `src`，`web_rime`、`fastscreen`、`win-sandbox`是相对独立的外部引擎依赖，各自有自己的规则规范，但都是 PTY-Agent 项目的一部分
+PTY-Agent 核心包体在 `src`，`web_rime`、`fastscreen`、`win-sandbox`、`wezterm-py`是相对独立的外部引擎依赖，各自有自己的规则规范，但都是 PTY-Agent 项目的一部分
 
 # 总规范
 - Python兼容Python3.8，遵循 PEP8 语言规范
@@ -84,6 +84,9 @@ PTY-Agent 核心包体在 `src`，`web_rime`、`fastscreen`、`win-sandbox`是�
 - 见`win-sandbox\AGENTS.md`
 - 采用**洋葱架构**
 
+## wezterm-py 规范
+- 见`wezterm-py\AGENTS.md`
+
 # 工具/Skill：
 - `.agents\skills\download-by-mirror` **下载文件，尤其从Github下载请使用镜像**
 - `.agents\skills\python-win32api`
@@ -97,7 +100,7 @@ PTY-Agent 核心包体在 `src`，`web_rime`、`fastscreen`、`win-sandbox`是�
 
 ## Debug方法
 - **查日志，千万注意大日志，大输出需要使用子代理分析，防止上下文爆炸**
-- **使用工具附加调试（cdb/pdb/...）**，请先下载对应符号SRV*C:\Symbol*http://msdl.blackint3.com:88/download/symbols （微软符号服务器解析）
+- **使用工具附加调试（cdb/pdb/...）**，请先下载对应符号SRV*C:\Symbol*http://msdl.blackint3.com:88/download/symbols （微软符号服务器镜像）
 - **最小代码复现**
 - 等方式
 

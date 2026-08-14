@@ -24,19 +24,17 @@ class TestListenerConstruction:
         listener = Listener(
             host="127.0.0.1", port=12345,
             transport="plain", auth_context=ctx,
-            publish_shm=True,
         )
         assert listener.transport == "plain"
-        assert listener.publish_shm is True
 
     def test_construction_defaults(self):
-        """默认值：ssl_context=None, publish_shm=False"""
+        """默认值：ssl_context=None"""
         ctx = AuthContext()
         listener = Listener(
             host="127.0.0.1", port=0,
             transport="plain", auth_context=ctx,
         )
-        assert listener.publish_shm is False
+        assert listener._ssl_context is None
 
     def test_transport_property(self):
         """transport 属性返回构造时指定的值"""

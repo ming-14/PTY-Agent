@@ -11,8 +11,8 @@ import logging
 import os
 from typing import Optional
 
-from ..config.common import IS_WINDOWS, DATA_DIR
-from ..config.daemon import SINGLE_INSTANCE_MUTEX_NAME
+from ..config.common import DATA_DIR, IS_WINDOWS
+from ..config.shared import SINGLE_INSTANCE_MUTEX_NAME
 
 _logger = logging.getLogger("pty-ipc")
 
@@ -99,6 +99,7 @@ class SingleInstanceLock:
 
         try:
             import fcntl
+
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except (BlockingIOError, OSError) as e:
             _logger.debug("锁文件已被占用，获取锁失败: %s", e)
@@ -143,6 +144,7 @@ class SingleInstanceLock:
             return
         try:
             import fcntl
+
             fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
         except OSError:
             pass
@@ -190,6 +192,7 @@ class SingleInstanceLock:
 
         try:
             import fcntl
+
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             fcntl.flock(fd, fcntl.LOCK_UN)
             return False
@@ -226,8 +229,8 @@ class SingleInstanceLock:
     @staticmethod
     def _find_owner_pid_windows() -> Optional[int]:
         import ctypes
-        import struct
         import os
+        import struct
 
         kernel32 = ctypes.windll.kernel32
         ntdll = ctypes.windll.ntdll
@@ -238,7 +241,9 @@ class SingleInstanceLock:
         SystemExtendedHandleInformation = 64
 
         ntdll.NtQuerySystemInformation.argtypes = [
-            ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong,
+            ctypes.c_ulong,
+            ctypes.c_void_p,
+            ctypes.c_ulong,
             ctypes.POINTER(ctypes.c_ulong),
         ]
         ntdll.NtQuerySystemInformation.restype = ctypes.c_long
@@ -260,7 +265,9 @@ class SingleInstanceLock:
                 ret_len = ctypes.c_ulong(0)
                 status = ntdll.NtQuerySystemInformation(
                     SystemExtendedHandleInformation,
-                    _buf, buf_size, ctypes.byref(ret_len),
+                    _buf,
+                    buf_size,
+                    ctypes.byref(ret_len),
                 )
                 if status == STATUS_INFO_LENGTH_MISMATCH:
                     buf_size = ret_len.value + 0x100000

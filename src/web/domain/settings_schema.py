@@ -72,6 +72,7 @@ def get_defaults() -> Dict[str, Any]:
         else:
             _logger.warning(
                 "settings_schema: config 常量 %s 未找到 (key=%s)，跳过",
-                config_name, settings_key,
+                config_name,
+                settings_key,
             )
     return defaults

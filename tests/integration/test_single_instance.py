@@ -1,127 +1,67 @@
 """单实例检查集成测试
 
-验证共享内存单实例检查在真实场景下的行为：
-- 守护进程启动后共享内存包含 PID+端口
-- 守护进程停止后共享内存被清理
-- 僵死守护进程被正确检测和清理
+固定端口模式验证：
+- 无运行中守护进程时 is_running=False、端口/PID 发现返回 None
+- 认证凭据共享内存与单实例锁相互独立
 - 不写磁盘文件
 """
 
 import os
-import sys
-import time
-import socket
-import threading
 import pytest
 
 from src.ipc.shm import (
-    read_daemon_info_from_shm,
-    read_port_from_shm,
-    write_daemon_info_to_shm,
+    generate_auth_token,
+    write_auth_token,
 )
-from src.process.info import pid_exists
-from src.client.lifecycle import (
-    _ping_daemon,
+from src.daemonctl import (
     _find_daemon_port,
+    _find_daemon_pid,
     is_running,
 )
 from src.config.common import DATA_DIR, IS_WINDOWS
 
 
-@pytest.mark.skipif(not IS_WINDOWS, reason="Windows 共享内存集成测试")
+@pytest.mark.skipif(not IS_WINDOWS, reason="Windows 单实例锁集成测试")
 class TestSingleInstanceIntegration:
     """单实例检查集成测试（Windows）"""
 
-    def test_shm_contains_pid_and_port_after_write(self):
-        shm = write_daemon_info_to_shm(os.getpid(), 54321)
+    @pytest.fixture(autouse=True)
+    def _no_running_daemon(self):
+        """本类测试前提是"无运行中的守护进程"（互斥体未持有）；
+        环境中有 daemon 运行时先停止，结束后再恢复启动。"""
+        from src.daemonctl import is_running, start_daemon, stop_daemon
+        was_running = is_running()
+        if was_running:
+            stop_daemon(force=True)
+        yield
+        if was_running:
+            start_daemon()
+
+    def test_not_running_by_default(self):
+        assert is_running() is False
+
+    def test_find_daemon_port_none_when_not_running(self):
+        assert _find_daemon_port() is None
+
+    def test_find_daemon_pid_none_when_not_running(self):
+        assert _find_daemon_pid() is None
+
+    def test_credentials_shm_independent_of_lock(self):
+        """写入认证凭据共享内存不影响单实例锁状态"""
+        shm = write_auth_token(generate_auth_token())
         try:
-            info = read_daemon_info_from_shm()
-            assert info is not None
-            pid, port = info
-            assert pid == os.getpid()
-            assert port == 54321
+            assert is_running() is False
         finally:
             if shm:
                 shm.close()
-
-    def test_find_daemon_port_detects_zombie(self):
-        shm = write_daemon_info_to_shm(99999999, 12345)
-        try:
-            result = _find_daemon_port()
-            assert result is None
-        finally:
-            if shm:
-                shm.close()
-
-    def test_find_daemon_port_detects_alive_but_pingless(self):
-        shm = write_daemon_info_to_shm(os.getpid(), 19999)
-        try:
-            result = _find_daemon_port()
-            assert result is None
-        finally:
-            if shm:
-                shm.close()
-
-    def test_find_daemon_port_succeeds_with_real_server(self):
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        srv.bind(("127.0.0.1", 0))
-        srv.listen(1)
-        port = srv.getsockname()[1]
-
-        from src.protocol.message import Message
-
-        def handle():
-            conn, _ = srv.accept()
-            msg = Message.recv(conn)
-            if msg and msg.get("type") == "ping":
-                Message.send(conn, {"type": "pong"})
-            conn.close()
-
-        t = threading.Thread(target=handle, daemon=True)
-        t.start()
-
-        shm = write_daemon_info_to_shm(os.getpid(), port)
-        try:
-            result = _find_daemon_port()
-            assert result == port
-        finally:
-            if shm:
-                shm.close()
-            srv.close()
-            t.join(timeout=3)
 
     def test_no_pid_file_created(self):
         pid_file = os.path.join(DATA_DIR, "daemon.pid")
         assert not os.path.exists(pid_file)
 
     def test_no_data_dir_created(self):
-        # 单实例检查（shm 读写）不应创建数据目录：
-        # 运行前后目录存在性不变（环境可能已有历史目录，仅验证不新增）
-        if IS_WINDOWS:
-            existed_before = os.path.exists(DATA_DIR)
-            shm = write_daemon_info_to_shm(11111, 22222)
-            shm.close()
-            is_running()
-            assert os.path.exists(DATA_DIR) == existed_before
-
-    def test_overwrite_shm_with_new_daemon(self):
-        shm1 = write_daemon_info_to_shm(11111, 22222)
-        shm1.close()
-        shm2 = write_daemon_info_to_shm(33333, 44444)
-        try:
-            info = read_daemon_info_from_shm()
-            assert info is not None
-            pid, port = info
-            assert pid == 33333
-            assert port == 44444
-        finally:
-            if shm2:
-                shm2.close()
-
-    def test_is_running_false_when_no_daemon(self):
-        shm = write_daemon_info_to_shm(99999999, 12345)
-        try:
-            assert is_running() is False
-        finally:
-            if shm:
-                shm.close()
+        """单实例检查不应创建数据目录（运行前后目录存在性不变）"""
+        existed_before = os.path.exists(DATA_DIR)
+        is_running()
+        _find_daemon_pid()
+        assert os.path.exists(DATA_DIR) == existed_before

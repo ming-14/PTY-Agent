@@ -9,6 +9,8 @@
 - WS 成功响应保留 "type" 字段
 """
 
+from typing import Optional
+
 
 class Response:
     """统一响应构造器 — 只负责构造 dict，不负责发送"""
@@ -145,7 +147,7 @@ class Response:
         return {"commandType": "stop", "code": code, "msg": msg}
 
     @staticmethod
-    def closewin_result(closed: bool, hwnd: int, message: str = None) -> dict:
+    def closewin_result(closed: bool, hwnd: int, message: Optional[str] = None) -> dict:
         """Closewin 命令响应
 
         Args:
@@ -256,7 +258,12 @@ class Response:
 
     @staticmethod
     def ws_session_detail_refresh(session_id: str, tab: str, **fields) -> dict:
-        return {"type": "session_detail_refresh", "id": session_id, "tab": tab, **fields}
+        return {
+            "type": "session_detail_refresh",
+            "id": session_id,
+            "tab": tab,
+            **fields,
+        }
 
     # ════════════════════════════════════════════════════════════
     #  WebSocket 响应 — VNC 远程桌面

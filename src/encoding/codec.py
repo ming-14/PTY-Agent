@@ -4,10 +4,10 @@
 Session 类内部不再直接实现这些逻辑，通过本模块的纯函数完成。
 """
 
-import logging
-import locale
-import sys
 import ctypes
+import locale
+import logging
+import sys
 from typing import Optional, Tuple
 
 _logger = logging.getLogger("pty-session")
@@ -48,7 +48,7 @@ def _utf8_trim_tail(data: bytes) -> bytes:
         have = i - start
         if have < expected:
             return data[:start]
-        return data[:i + 1]
+        return data[: i + 1]
     elif b >= 0xC0:
         # 孤立起始字节
         expected = 1 if b < 0xE0 else (2 if b < 0xF0 else 3)
@@ -111,7 +111,9 @@ def decode_strip_tail(data: bytes, encoding: str) -> str:
     # 快速路径：严格解码成功直接返回
     try:
         decoded = data.decode(encoding)
-        _logger.debug("decode_strip_tail: fast path OK len=%d enc=%s", len(data), encoding)
+        _logger.debug(
+            "decode_strip_tail: fast path OK len=%d enc=%s", len(data), encoding
+        )
         return decoded
     except UnicodeDecodeError:
         pass
@@ -119,8 +121,11 @@ def decode_strip_tail(data: bytes, encoding: str) -> str:
     # 智能裁剪：根据编码规则直接定位不完整序列
     trimmed = _smart_trim(data, encoding)
     if trimmed != data:
-        _logger.debug("decode_strip_tail: smart trim removed %d bytes (enc=%s)",
-                      len(data) - len(trimmed), encoding)
+        _logger.debug(
+            "decode_strip_tail: smart trim removed %d bytes (enc=%s)",
+            len(data) - len(trimmed),
+            encoding,
+        )
         try:
             return trimmed.decode(encoding)
         except UnicodeDecodeError:
@@ -131,12 +136,14 @@ def decode_strip_tail(data: bytes, encoding: str) -> str:
     while len(data) > 0 and tries < _MAX_STRIP_TRIES:
         result = data.decode(encoding, errors="replace")
         i = len(result) - 1
-        while i >= 0 and result[i] in ('\ufffd', '\r', '\n', '\t', ' '):
-            if result[i] == '\ufffd':
+        while i >= 0 and result[i] in ("\ufffd", "\r", "\n", "\t", " "):
+            if result[i] == "\ufffd":
                 break
             i -= 1
         else:
-            _logger.debug("decode_strip_tail: fallback path tries=%d len=%d", tries, len(data))
+            _logger.debug(
+                "decode_strip_tail: fallback path tries=%d len=%d", tries, len(data)
+            )
             return result
         data = data[:-1]
         tries += 1
@@ -193,8 +200,9 @@ def auto_detect(data: bytes) -> Tuple[str, str]:
     Returns:
         (decoded_text, detected_encoding) 元组。
     """
-    _logger.debug("auto_detect: input len=%d head=%r tail=%r",
-                  len(data), data[:40], data[-20:])
+    _logger.debug(
+        "auto_detect: input len=%d head=%r tail=%r", len(data), data[:40], data[-20:]
+    )
     # 先裁剪可能的不完整 UTF-8 尾部，避免跨读周期拆分导致误判
     trimmed = _utf8_trim_tail(data)
     try:

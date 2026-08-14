@@ -471,7 +471,7 @@ export function initSettingsView() {
   _bindServerAddrDialogEvents();
 
   // 订阅外部设置变更：当 developer.logPanelEnabled / basic.theme 被其他模块
-  // （如 devConsole 关闭按钮、状态栏主题按钮）修改时，即时刷新设置面板中的 UI。
+  // （如日志视窗关闭按钮、状态栏主题按钮）修改时，即时刷新设置面板中的 UI。
   store.subscribe((key, value) => {
     if (key === 'developer.logPanelEnabled') {
       const toggle = document.querySelector('.settings-toggle[data-key="developer.logPanelEnabled"]');

@@ -6,22 +6,21 @@
 src/
 ├── __main__.py              # CLI 入口（argparse 参数解析 + 命令派发）
 
-├── assets/                  # ═══════ 静态资源 ═══════
-│   └── fonts/
-│       ├── config.json      # 字体配置
-│       └── LICENSE.txt      # 字体许可证
-
 ├── config/                  # ═══════ 配置中心（TOML 加载器，数据文件在 <项目根>/config/） ═══════
 │   ├── __init__.py          # 包导出 + 配置域归档说明
-│   ├── _loader.py           # TOML 加载/展平/合并工具（load_toml / flatten / merge）
+│   ├── _loader.py           # TOML 加载/展平/合并工具（load_toml(filename, domain) / flatten / merge）
 │   ├── common.py            # 共有配置加载（common.toml + IS_WINDOWS / DATA_DIR / PROJECT_ROOT）
-│   ├── daemon.py            # 守护进程配置加载（common + daemon + logging + web.toml）
-│   ├── client.py            # 客户端配置加载（common + client.toml）
-│   ├── files.py             # 文件工具配置加载（files.toml + RG_EXE 自动探测）
-│   └── sandbox.py           # 沙箱配置加载（sandbox.toml）
+│   ├── shared.py            # 跨侧共享配置加载（common + shared.toml + PORT_FILE / LOG_DIR）
+│   ├── daemon.py            # 守护进程配置加载（common + shared + daemon/ + logging/ + web/）
+│   ├── client.py            # 客户端配置加载（common + shared + client/ + PORT_FILE / LOG_DIR）
+│   ├── transfer.py          # 传输协议配置加载（transfer.toml）
+│   └── sandbox.py           # 沙箱配置加载（daemon/sandbox.toml）
 │
-│   # TOML 数据文件（common/daemon/client/files/sandbox/logging/web/vnc/vnc.example）
-│   # 位于项目根 config/（vnc*.toml 为 winvnc.exe 外部配置，Python 不加载），
+│   # TOML 数据文件（config/ 根：common/shared/transfer；
+│   # config/daemon/：daemon/logging/web/sandbox/vnc/vnc.example；
+│   # config/client/：client；
+│   # config/plugins/plugins.json 为 daemon 侧插件注册；
+│   # vnc*.toml 为 winvnc.exe 外部配置，Python 不加载），
 │   # 清单见 <项目根>/config/README.md
 
 ├── protocol/                # ═══════ 通信协议层 ═══════
@@ -36,8 +35,6 @@ src/
 │   ├── base.py              # 抽象接口（Authenticator / CredentialProvider）
 │   ├── keys.py              # Ed25519 密钥实体（PublicKey / PrivateKey / 生成/加载/指纹）
 │   ├── context.py           # AuthContext（连接级认证上下文，绑定出站签名器/入站验证器/认证器）
-│   ├── composite.py         # CompositeAuthenticator（OR/AND 组合认证器）
-│   ├── or_verifier.py       # OrVerifier（入站多认证方式 OR 分发验签）
 │   ├── token/               # ═══ Token + HMAC 认证（同机，对称双向） ═══
 │   │   ├── __init__.py
 │   │   ├── authenticator.py # TokenAuthenticator + TokenCredentialProvider
@@ -51,11 +48,20 @@ src/
 │       ├── cert_manager.py  # CertificateManager（自签证书生成/加载/指纹计算）
 │       └── known_hosts.py   # KnownHosts（TOFU 信任存储，类似 SSH known_hosts）
 
+├── common/                  # ═══════ 跨侧共享工具层（Client 与 Daemon 均依赖，纯 OS 级工具） ═══════
+│   ├── __init__.py
+│   ├── process.py           # pid_exists（进程存在性探测，跨侧共享）
+│   └── shells.py            # Shell 探测（detect_available_shells / format_shell_info，跨侧共享）
+
+├── daemonctl/               # ═══════ daemon 控制包（client 侧守护进程生命周期控制与 TLS 连接） ═══════
+│   ├── __init__.py          # 导出 start/stop/is_running/端口发现/TLSClient
+│   ├── lifecycle.py         # 守护进程启动/停止/探测/强制清理（Popen python -m src.daemon）
+│   └── tls.py               # TLSClient（TLS 连接 + TOFU 证书验证，CONNECT_MODE=tls 跨机模式）
+
 ├── client/                  # ═══════ 前端客户端层 ═══════
 │   ├── __init__.py
-│   ├── lifecycle.py         # 守护进程生命周期控制（start/stop/探测/端口发现/客户端日志）
-│   ├── transport.py         # TCP/TLS 连接管理 + Client 类（自动启动守护进程，自动路由明文/TLS）
-│   ├── tls_transport.py     # TLSClient（TLS 连接 + TOFU 证书验证，pubkey 跨机模式）
+│   ├── lifecycle.py         # 客户端日志配置（setup_client_logging；daemon 控制见 daemonctl 包）
+│   ├── transport.py         # TCP/TLS 连接管理 + Client 类（自动启动守护进程，按 CONNECT_MODE 三路路由）
 │   ├── formatter.py         # 响应格式化输出（JSON 模式）
 │   ├── renderer.py          # 终端快照渲染器（GDI+BuiltinGlyphs / SVG / Pillow 回退 / 纯文本）
 │   ├── config_manager.py    # 纯内存客户端配置管理（--default 临时覆盖）
@@ -67,12 +73,12 @@ src/
 │   ├── __main__.py          # 入口（python -m src.daemon），转调 lifecycle.main()
 │   ├── lifecycle.py         # 守护进程入口（main + 日志/控制台处理 + 单实例获取）
 │   ├── server.py            # DaemonServer（多 Listener 编排 + 认证上下文构建 + 生命周期）
-│   ├── listener.py          # Listener（单端口 accept 循环，封装明文/TLS 传输 + AuthContext）
+│   ├── listener.py          # Listener（单端口 accept 循环，封装 plain/tls 传输 + AuthContext）
 │   ├── handler.py           # RequestHandler（委托 handlers/ 子包）
 │   └── handlers/            # ═══ 命令处理器子包（每命令一文件 + 派发器） ═══
 │       ├── __init__.py
 │       ├── base.py          # DaemonHandler 基类 + HandlerContext
-│       ├── dispatcher.py    # DaemonDispatcher（消息派发到各 handler）
+│       ├── dispatcher.py    # DaemonDispatcher（内置 handler 派发 + 进程级插件消息路由）
 │       ├── exec_handler.py  # exec 命令处理
 │       ├── send_handler.py  # send 命令处理
 │       ├── read_handler.py  # read 命令处理
@@ -84,44 +90,24 @@ src/
 │       ├── mouse_handler.py # mouse 命令处理
 │       ├── status_handler.py # status 命令处理
 │       ├── wait_handler.py  # wait 命令处理
-│       ├── file_read_handler.py  # file read 命令处理
-│       ├── file_write_handler.py # file write 命令处理
-│       ├── file_edit_handler.py  # file edit 命令处理（create/replace/delete）
-│       ├── file_grep_handler.py  # file grep 命令处理（rg 双引擎）
-│       ├── file_glob_handler.py  # file glob 命令处理（rg 双引擎）
-│       ├── file_upload_handler.py  # file upload 命令处理（握手校验 → 二进制帧接收落盘）
-│       ├── file_download_handler.py # file download 命令处理（握手校验 → 扫描发送）
-│       └── utils.py         # 处理器工具函数
+│       └── utils.py         # 处理器工具函数（含 Git-Bash 路径提示）
 
-├── files/                   # ═══════ 文件工具用例层（按工具域分组） ═══════
-│   ├── __init__.py          # 聚合导出（errors / state / paths / 用例函数）
-│   ├── paths.py             # 路径工具：会话 cwd 解析（resolve_session_path）/边界判定/git-bash 检测
-│   ├── state.py             # 读写状态机：FileRecordStore（readTime/writeTime）
-│   ├── diff.py              # unified diff 生成 + additions/removals 统计
-│   ├── history.py           # FileHistoryStore（SQLite 版本链）
-│   ├── permission.py        # 权限检查器（当前一律放行）
-│   ├── errors.py            # 工具异常类型（FileToolError / FileReadRequiredError 等）
-│   ├── read/                # ═══ file read 用例 ═══
-│   │   ├── __init__.py      # 导出 read_file / ReadResult
-│   │   └── reader.py        # file read 用例：大小/行数限制、行号输出、图片检测、相似名建议
-│   ├── write/               # ═══ file write / edit 用例 ═══
-│   │   ├── __init__.py      # 导出 write_file / edit_file / WriteResult
-│   │   └── writer.py        # file write/file edit 用例：状态机→diff→权限→落盘→history
-│   ├── search/              # ═══ file grep / glob 用例 ═══
-│   │   ├── __init__.py      # 导出 grep_files / glob_files / is_ignored
-│   │   ├── grep.py          # file grep 用例：rg 引擎 + 纯 Python 降级
-│   │   ├── glob_.py         # file glob 用例：rg --files + 递归 glob 降级
-│   │   └── ignore.py        # SkipHidden 过滤（隐藏文件 + 忽略目录清单）
-│   └── transfer/            # ═══ file upload / download 传输业务（两端共用） ═══
-│       ├── __init__.py      # 导出 upload / download / 错误类型
-│       ├── common.py        # 帧协议常量/错误类型（TransferError/TransferTimeoutError/TransferAbortedError）
-│       ├── scan.py          # 本地/远端树扫描（清单生成）
-│       ├── map.py           # 路径映射（远端↔本地 relpath 对齐）
-│       ├── judge.py         # 覆盖判定（相同跳过/不同拒绝提示 --force）
-│       ├── client_upload.py # CLI 侧上传驱动（握手→清单→逐文件→进度）
-│       ├── client_download.py # CLI 侧下载驱动
-│       ├── daemon_upload.py # daemon 侧上传接收（落盘→校验→rename→history→映射）
-│       └── daemon_download.py # daemon 侧下载发送（扫描→逐文件发送）
+├── transfer/                # ═══════ 文件传输核心层（客户端驱动 + 双端共享） ═══════
+│   ├── __init__.py
+│   ├── common.py            # 帧协议常量/错误类型（TransferError/TransferTimeoutError/TransferAbortedError）
+│   ├── scan.py              # 本地/远端树扫描（清单生成）
+│   ├── client_upload.py     # CLI 侧上传驱动（握手→清单→逐文件→进度）
+│   └── client_download.py   # CLI 侧下载驱动
+│   # 注：daemon 侧传输业务（judge/map/daemon_upload/daemon_download）位于
+│   #     config/plugins/files/ 插件；帧编解码在 protocol/transfer.py
+
+├── plugins/                 # ═══════ 插件系统 ═══════
+│   ├── __init__.py
+│   ├── base.py              # Plugin 基类 + PluginContext/ProcessPluginContext + HANDLED 哨兵
+│   ├── loader.py            # 插件目录扫描与声明校验（triggers/message_types/needs_io）
+│   ├── registry.py          # PluginRegistry（进程级插件单例实例化 + auto_load 匹配）
+│   ├── host.py              # PluginHost（会话级挂载链、钩子调度、返回控制）
+│   └── io.py                # PluginIO（进程级插件连接收发端口：消息 + 传输帧）
 
 ├── pty/                     # ═══════ 伪终端后端层 ═══════
 │   ├── __init__.py
@@ -130,15 +116,12 @@ src/
 │   ├── unix/                # ═══ Unix 子包 ═══
 │   │   ├── __init__.py
 │   │   ├── pty_impl.py      # UnixPseudoTerminal（os.openpty + fork + termios）
-│   │   ├── process.py       # Unix 进程管理
-│   │   └── shells.py        # Shell 检测函数（detect_available_shells / format_shell_info）
+│   │   └── process.py       # Unix 进程管理
+│   │   # Shell 探测见 common/shells.py（跨侧共享）
 │   └── windows/             # ═══ Windows 子包（仅 Win32 加载） ═══
 │       ├── __init__.py
-│       ├── win32_api.py     # Windows ctypes 类型定义 + 全部 API 函数绑定
-│   ├── conpty.py            # WindowsPseudoTerminal（CreatePseudoConsole 路径）
-│       ├── condrv.py        # ConDrvPseudoTerminal（NT NtOpenFile 直连路径，已禁用）
-│       ├── conpty_handle.py # ConPtyHandle（HPCON + inW/outR 句柄三件套，I/O 与 resize）
-│       └── shells.py        # Shell 检测函数（detect_available_shells / format_shell_info）
+│       └── wezterm_pty.py   # WeztermPseudoTerminal（wezterm-py Pty，OpenConsole 宿主）
+│       # Shell 探测见 common/shells.py（跨侧共享）
 
 ├── ipc/                     # ═══════ 进程间通信层 ═══════
 │   ├── __init__.py
@@ -149,9 +132,8 @@ src/
 
 ├── terminal/                # ═══════ 终端屏幕层 ═══════
 │   ├── __init__.py
-│   ├── grid.py              # 字符网格数据结构
-│   ├── grid_screen.py       # 网格屏幕（pyte Screen 适配层）
-│   └── screen.py            # TerminalScreen（pyte VT 序列解析 → 字符网格 → 屏幕快照）
+│   ├── backends.py          # WeztermBackend（wezterm-py Terminal）+ ScreenCell/渲染函数
+│   └── screen.py            # TerminalScreen（VT 序列解析 → 字符网格 → 屏幕快照）
 
 ├── session/                 # ═══════ 会话管理层 ═══════
 │   ├── __init__.py
@@ -175,7 +157,7 @@ src/
 │   ├── __init__.py
 │   ├── base.py              # ProcessTreeTracker 抽象基类 + ProcessNotification
 │   ├── monitor.py           # ProcessMonitor（进程树 diff + IOCP 排空 + 崩溃检测）
-│   ├── info.py              # 进程查询与错误格式化
+│   ├── info.py              # 进程查询与错误格式化（pid_exists 见 common/process.py）
 │   ├── gui.py               # GuiDetector（GUI 窗口轮询检测，2s 节流）
 │   ├── win32_error.py       # Windows NTSTATUS/Win32 错误码格式化
 │   ├── unix/                # ═══ Unix 子包 ═══
@@ -189,8 +171,9 @@ src/
 
 ├── input/                   # ═══════ 输入处理层 ═══════
 │   ├── __init__.py
-│   ├── interceptor.py       # 输入拦截器（SGR 鼠标拦截 + 键盘 VT 拦截）
-│   └── mouse.py             # 鼠标输入处理
+│   ├── interceptor.py       # 输入处理辅助（编码转换 + 鼠标动作执行）
+│   ├── mouse.py             # 鼠标动作编码与坐标解析
+│   └── wezterm_input.py     # wezterm 模式感知输入编码器
 
 ├── web/                     # ═══════ Web 服务器层（洋葱架构） ═══════
 │   ├── __init__.py

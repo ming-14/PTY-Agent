@@ -1,9 +1,9 @@
-"""src/files/search/ignore.py 单元测试 — 搜索忽略过滤"""
+"""config/plugins/files/ignore.py 单元测试 — 搜索忽略过滤"""
 
 import os
 import pytest
 
-from src.files.search.ignore import is_ignored
+from config.plugins.files.search.ignore import is_ignored
 
 
 class TestIsIgnored:
@@ -39,8 +39,8 @@ class TestIsIgnored:
         assert is_ignored("/a/b/node_modules/c/d/e.txt") is True
 
     def test_configured_list_applies(self):
-        # config/files.toml 的忽略清单应被加载
-        from src.config.files import IGNORED_DIRS
+        # 插件 files.toml 的忽略清单应被加载
+        from config.plugins.files.config import IGNORED_DIRS
 
         assert "node_modules" in IGNORED_DIRS
         assert ".git" in IGNORED_DIRS

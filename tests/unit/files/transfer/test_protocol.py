@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from src.config.files import TRANSFER_CHUNK_SIZE, TRANSFER_MAX_CONTROL
+from src.config.transfer import TRANSFER_CHUNK_SIZE, TRANSFER_MAX_CONTROL
 from src.protocol.message import Message
 from src.protocol import transfer as tf
 

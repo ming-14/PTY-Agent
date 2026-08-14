@@ -1,47 +1,79 @@
 import json
-import socket
+import logging
 import time
 import traceback
-import logging
 
+from ...auth.context import AuthContext
+from ...plugins.base import HANDLED, ProcessPluginContext
+from ...plugins.io import PluginIO
 from ...protocol.message import Message
 from ...protocol.response import Response
-from ...auth.context import AuthContext
 from ...session.manager import SessionManager
 from .base import DaemonHandler, HandlerContext
-from .utils import get_detail
-from .exec_handler import ExecHandler
-from .send_handler import SendHandler
-from .read_handler import ReadHandler
-from .kill_handler import KillHandler
-from .mouse_handler import MouseHandler
-from .events_handler import EventsHandler
 from .closewin_handler import CloseWinHandler
-from .status_handler import StatusHandler
+from .events_handler import EventsHandler
+from .exec_handler import ExecHandler
+from .kill_handler import KillHandler
 from .list_handler import ListHandler
+from .mouse_handler import MouseHandler
+from .plugin_handler import PluginHandler
+from .read_handler import ReadHandler
+from .send_handler import SendHandler
+from .status_handler import StatusHandler
 from .stop_handler import StopHandler
+from .utils import get_detail
 from .wait_handler import WaitHandler
-from .file_read_handler import FileReadHandler
-from .file_write_handler import FileWriteHandler
-from .file_edit_handler import FileEditHandler
-from .file_grep_handler import FileGrepHandler
-from .file_glob_handler import FileGlobHandler
-from .file_upload_handler import FileUploadHandler
-from .file_download_handler import FileDownloadHandler
 
 _logger = logging.getLogger("pty-daemon")
 
 
+class PluginMessageHandler(DaemonHandler):
+    """进程级插件消息路由适配器
+
+    将插件声明的 message_types 路由到其 handle_message：
+    - 构造 ProcessPluginContext（manager + io 通道，needs_io 时注入）
+    - 返回 dict 原样作为响应发送（响应签名由 Message.send 完成）
+    - 返回 None / 抛异常 → 统一回 error，异常隔离不中断 daemon
+    """
+
+    def __init__(self, plugin):
+        self._plugin = plugin
+
+    def handle(self, ctx: HandlerContext, conn, msg: dict):
+        io = PluginIO(conn) if self._plugin.needs_io else None
+        pctx = ProcessPluginContext(ctx.manager, self._plugin, io)
+        try:
+            result = self._plugin.handle_message(pctx, msg)
+        except Exception:
+            _logger.exception(
+                "进程级插件 %s 处理消息 %s 异常 (id=%s)",
+                self._plugin.name,
+                msg.get("type"),
+                msg.get("id"),
+            )
+            result = None
+        if result is HANDLED:
+            return
+        if result is None:
+            Message.send(
+                conn,
+                Response.error(
+                    "插件 %s 未处理消息: %s" % (self._plugin.name, msg.get("type"))
+                ),
+            )
+            return
+        Message.send(conn, result)
+
+
 class DaemonDispatcher:
-    def __init__(self, manager: SessionManager, auth_context: AuthContext,
-                 server=None):
+    def __init__(self, manager: SessionManager, auth_context: AuthContext, server=None):
         # AuthContext 持有签名器与认证器，认证器解包给 HandlerContext 供业务层使用
         self._auth_context = auth_context
         self._ctx = HandlerContext(manager, auth_context.authenticator, server)
         self._registry: dict[str, DaemonHandler] = self._build_registry()
 
     def _build_registry(self) -> dict[str, DaemonHandler]:
-        return {
+        registry: dict[str, DaemonHandler] = {
             "exec": ExecHandler(),
             "send": SendHandler(),
             "read": ReadHandler(),
@@ -53,14 +85,28 @@ class DaemonDispatcher:
             "list": ListHandler(),
             "stop": StopHandler(),
             "wait": WaitHandler(),
-            "file_read": FileReadHandler(),
-            "file_write": FileWriteHandler(),
-            "file_edit": FileEditHandler(),
-            "file_grep": FileGrepHandler(),
-            "file_glob": FileGlobHandler(),
-            "file_upload": FileUploadHandler(),
-            "file_download": FileDownloadHandler(),
+            "plugin": PluginHandler(),
         }
+        # 进程级插件路由：插件声明的 message_types 注册到派发表；
+        # 与内置 handler 冲突时内置优先（核心命令权威），记录警告
+        plugin_registry = (
+            getattr(self._ctx.manager, "plugin_registry", None)
+            if self._ctx.manager
+            else None
+        )
+        if plugin_registry is not None:
+            for name, inst in plugin_registry.process_instances().items():
+                for mtype in inst.message_types:
+                    if mtype in registry:
+                        _logger.warning(
+                            "消息类型 %s 已被内置 handler 占用，插件 %s 的声明跳过",
+                            mtype,
+                            name,
+                        )
+                        continue
+                    registry[mtype] = PluginMessageHandler(inst)
+                    _logger.debug("消息类型 %s 由进程级插件 %s 接管", mtype, name)
+        return registry
 
     def dispatch(self, conn, msg: dict):
         msg_type = msg.get("type", "")

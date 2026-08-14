@@ -15,21 +15,22 @@
 不感知具体实现（Job / pgid / 未来 sandbox 委派）。
 """
 
-import time
 import logging
+import time
 from threading import Event
-from typing import Callable, Dict, List, Optional, Set
+from typing import Callable, Dict, Optional, Set
 
 from ..config.common import IS_WINDOWS
-from .info import _get_process_name, _get_process_detail
-from .base import ProcessTreeTracker
 from ..output.events import PendingEvent
+from .base import ProcessTreeTracker
+from .info import _get_process_detail, _get_process_name
 
 _logger = logging.getLogger("pty-session")
 
 if IS_WINDOWS:
     from .win32_error import (
-        STILL_ACTIVE, translate_windows_error,
+        STILL_ACTIVE,
+        translate_windows_error,
     )
 
 
@@ -88,21 +89,28 @@ class ProcessMonitor:
                     name = detail.get("name") or _get_process_name(n.pid)
                     path = detail.get("path", "")
                 self._process_names[n.pid] = name
-                self._event_sink(PendingEvent(
-                    timestamp=now, type="process_spawn", pid=n.pid,
-                    info=name,
-                    detail={"name": name, "path": path} if name else None,
-                ))
+                self._event_sink(
+                    PendingEvent(
+                        timestamp=now,
+                        type="process_spawn",
+                        pid=n.pid,
+                        info=name,
+                        detail={"name": name, "path": path} if name else None,
+                    )
+                )
             elif n.is_exit() or n.is_crash():
-                name = self._process_names.pop(
-                    n.pid, _get_process_name(n.pid))
+                name = self._process_names.pop(n.pid, _get_process_name(n.pid))
                 self._iocp_exited_pids.add(n.pid)
                 rc = n.exit_code
                 if rc is not None and rc != 0 and rc != STILL_ACTIVE:
                     crash_desc = translate_windows_error(rc)
                     _logger.info(
                         "IOCP crash pid=%d rc=%d (0x%08X) desc=%s",
-                        n.pid, rc, rc & 0xFFFFFFFF, crash_desc)
+                        n.pid,
+                        rc,
+                        rc & 0xFFFFFFFF,
+                        crash_desc,
+                    )
                     detail = {"exitCode": rc}
                     if crash_desc:
                         detail["errorMessage"] = crash_desc
@@ -113,26 +121,37 @@ class ProcessMonitor:
                         )
                     else:
                         info_msg = (
-                            f"{name} crashed!"
-                            f" exit={rc} (0x{rc & 0xFFFFFFFF:08X})"
+                            f"{name} crashed! exit={rc} (0x{rc & 0xFFFFFFFF:08X})"
                         )
-                    self._event_sink(PendingEvent(
-                        timestamp=now, type="process_crash", pid=n.pid,
-                        info=info_msg,
-                        detail=detail,
-                    ))
+                    self._event_sink(
+                        PendingEvent(
+                            timestamp=now,
+                            type="process_crash",
+                            pid=n.pid,
+                            info=info_msg,
+                            detail=detail,
+                        )
+                    )
                     self._crash_event.set()
                 elif rc is not None:
-                    self._event_sink(PendingEvent(
-                        timestamp=now, type="process_exit", pid=n.pid,
-                        info=f"{name} exited (exit={rc})",
-                        detail={"exitCode": rc},
-                    ))
+                    self._event_sink(
+                        PendingEvent(
+                            timestamp=now,
+                            type="process_exit",
+                            pid=n.pid,
+                            info=f"{name} exited (exit={rc})",
+                            detail={"exitCode": rc},
+                        )
+                    )
                 else:
-                    self._event_sink(PendingEvent(
-                        timestamp=now, type="process_exit", pid=n.pid,
-                        info=f"{name} exited (unknown)",
-                    ))
+                    self._event_sink(
+                        PendingEvent(
+                            timestamp=now,
+                            type="process_exit",
+                            pid=n.pid,
+                            info=f"{name} exited (unknown)",
+                        )
+                    )
 
     def check_events(self, force=False):
         """比较进程列表快照，检测新增/退出的进程
@@ -161,8 +180,9 @@ class ProcessMonitor:
         gone_pids = old_pids - current_pids
 
         if new_pids or gone_pids:
-            _logger.debug("ProcessMonitor: process change new=%s gone=%s",
-                          new_pids, gone_pids)
+            _logger.debug(
+                "ProcessMonitor: process change new=%s gone=%s", new_pids, gone_pids
+            )
 
         now = time.time()
         for pid in new_pids:
@@ -171,11 +191,15 @@ class ProcessMonitor:
             self._process_names[pid] = name
             if detail:
                 self._process_details[pid] = detail
-            self._event_sink(PendingEvent(
-                timestamp=now, type="process_spawn", pid=pid,
-                info=name,
-                detail=detail or None,
-            ))
+            self._event_sink(
+                PendingEvent(
+                    timestamp=now,
+                    type="process_spawn",
+                    pid=pid,
+                    info=name,
+                    detail=detail or None,
+                )
+            )
 
         for pid in gone_pids:
             if pid in self._iocp_exited_pids:
@@ -188,13 +212,15 @@ class ProcessMonitor:
                 exit_code = self._tracker.get_process_exit_code(pid)
             except Exception:
                 pass
-            if (exit_code is not None and exit_code != 0
-                    and exit_code != STILL_ACTIVE):
+            if exit_code is not None and exit_code != 0 and exit_code != STILL_ACTIVE:
                 crash_desc = translate_windows_error(exit_code)
                 _logger.info(
-                    "ProcessMonitor: crash pid=%d exit_code=%d (0x%08X) "
-                    "desc=%s",
-                    pid, exit_code, exit_code & 0xFFFFFFFF, crash_desc)
+                    "ProcessMonitor: crash pid=%d exit_code=%d (0x%08X) desc=%s",
+                    pid,
+                    exit_code,
+                    exit_code & 0xFFFFFFFF,
+                    crash_desc,
+                )
                 detail = {"exitCode": exit_code}
                 if crash_desc:
                     detail["errorMessage"] = crash_desc
@@ -210,11 +236,15 @@ class ProcessMonitor:
                         f" exit={exit_code}"
                         f" (0x{exit_code & 0xFFFFFFFF:08X})"
                     )
-                self._event_sink(PendingEvent(
-                    timestamp=now, type="process_crash", pid=pid,
-                    info=info_msg,
-                    detail=detail,
-                ))
+                self._event_sink(
+                    PendingEvent(
+                        timestamp=now,
+                        type="process_crash",
+                        pid=pid,
+                        info=info_msg,
+                        detail=detail,
+                    )
+                )
                 self._crash_event.set()
             else:
                 exit_str = (
@@ -222,11 +252,17 @@ class ProcessMonitor:
                     if exit_code is not None
                     else "exited (unknown)"
                 )
-                self._event_sink(PendingEvent(
-                    timestamp=now, type="process_exit", pid=pid,
-                    info=f"{name} {exit_str}",
-                    detail={"exitCode": exit_code} if exit_code is not None else None,
-                ))
+                self._event_sink(
+                    PendingEvent(
+                        timestamp=now,
+                        type="process_exit",
+                        pid=pid,
+                        info=f"{name} {exit_str}",
+                        detail={"exitCode": exit_code}
+                        if exit_code is not None
+                        else None,
+                    )
+                )
 
         self._last_pid_snapshot = current_pids
 

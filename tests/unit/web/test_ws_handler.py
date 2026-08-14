@@ -147,16 +147,8 @@ class _MockExecutor:
 
 class _MockConnection:
     def __init__(self):
-        self._subscribed = None
         self._decoders = {}
         self._callbacks = {}
-
-    @property
-    def subscribed_session_id(self):
-        return self._subscribed
-
-    def set_subscribed_session_id(self, sid):
-        self._subscribed = sid
 
     def get_decoder(self, sid):
         return self._decoders.get(sid)

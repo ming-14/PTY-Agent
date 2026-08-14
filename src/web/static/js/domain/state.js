@@ -14,10 +14,10 @@ import { warn } from './logger.js';
 // - 'fixed':    使用预设固定尺寸（fixedCols / fixedRows）
 // - 'custom':   使用用户自定义尺寸（customCols / customRows）
 //
-// 自 v2 起改为按会话 uid 独立存储：每个会话维护自己的尺寸模式与自定义值，
+// 尺寸配置按会话 uid 独立存储：每个会话维护自己的尺寸模式与自定义值，
 // 不再全局共享。配置 Map 持久化到 localStorage，键为 uid。
 //
-// v9 起：每个会话（含 adaptive）额外保存 frameRatio（框/stage 占比，取宽高较小值），
+// 每个会话（含 adaptive）额外保存 frameRatio（框/stage 占比，取宽高较小值），
 // 用户 Ctrl+滚轮调整的是 frameRatio，字号由 frameRatio + 当前 stage 尺寸反算得到，
 // 不再持久化字号本身（字号是运行时计算的派生值）。
 // adaptive 模式同样保存 frameRatio：按 ratio 设 frame 尺寸再 fit() 算 cols/rows，
@@ -36,14 +36,14 @@ const DEFAULT_SIZE_CONFIG = {
   customRows: 30,             // 自定义行
   daemonCols: null,           // 该会话首次订阅时守护进程上报的列（"默认"模式回退用）
   daemonRows: null,           // 该会话首次订阅时守护进程上报的行
-  frameRatio: DEFAULT_FRAME_RATIO, // v9: 框/stage 占比（取宽高较小值），null=未设置
+  frameRatio: DEFAULT_FRAME_RATIO, // 框/stage 占比（取宽高较小值），null=未设置
   lastUsed: 0,                // 最近一次写入时间戳，用于 LRU 淘汰
 };
 
 // localStorage 中保存的会话数量上限，避免无限增长
 const MAX_STORED_SESSIONS = 50;
 
-// v3: 生成或读取 web 客户端 uid（localStorage 持久化，刷新不变）。
+// 生成或读取 web 客户端 uid（localStorage 持久化，刷新不变）。
 // 用于自适应锁的持有者标识：同一 client_uid 的多个标签页共享锁，
 // 后端 _cleanup 时若同 uid 还有其他活跃连接则保留锁（继承）。
 // 注意：与 session.uid（会话标识）是不同概念，勿混淆。
@@ -70,16 +70,16 @@ function getOrCreateClientUid() {
   }
 }
 
-// 一次性清理旧版本（v1）的全局尺寸配置键，避免遗留脏数据
+// 一次性清理旧版本的全局尺寸配置键，避免遗留脏数据
 try {
   ['pty_size_mode', 'pty_fixed_cols', 'pty_fixed_rows', 'pty_custom_cols', 'pty_custom_rows']
     .forEach(k => localStorage.removeItem(k));
 } catch (_) {}
 
-// v9: 清理旧版本（v3~v8）的全局字号持久化键。
-// 旧版本字号全局共享存 pty_terminal_font_size（更早还有 pty_terminal_scale）；
-// v9 改为按会话存 frameRatio，字号由 frameRatio + stage 实时反算，不再持久化。
-// 迁移策略：直接清除旧键（无法从全局字号反推每个会话的 ratio，因为 ratio 依赖 stage 尺寸）。
+// 清理旧版本全局字号持久化键。
+// 字号原为全局共享（存于 pty_terminal_font_size 与更早的 pty_terminal_scale）；
+// 现按会话存 frameRatio，字号由 frameRatio + stage 实时反算，不再持久化。
+// 直接清除旧键（无法从全局字号反推每个会话的 ratio，因为 ratio 依赖 stage 尺寸）。
 try {
   localStorage.removeItem('pty_terminal_font_size');
   localStorage.removeItem('pty_terminal_scale');
@@ -105,18 +105,18 @@ export const state = {
   termInstances: {},
   pendingCreates: new Set(),
   pendingSwitch: null,
-  // v3: 本 web 客户端的 uid（localStorage 持久化，刷新不变）。
+  // 本 web 客户端的 uid（localStorage 持久化，刷新不变）。
   // WS 连接 URL 携带此 uid，后端自适应锁以 client_uid 为持有者标识。
   // 同一 client_uid 的多个标签页共享锁，刷新后锁可恢复/继承。
   clientUid: getOrCreateClientUid(),
-  // 问题2/v3：本 client_uid 持有的自适应锁会话 sid 集合。
+  // 本 client_uid 持有的自适应锁会话 sid 集合。
   // 后端 AdaptiveLockService 按 client_uid 排他持有（localStorage 持久化，刷新不变）。
   // 前端通过 size_mode_ack(mode=adaptive) 确认自己已持锁，记录于此；
   // 收到 size_mode_changed adaptiveOwnerUid !== clientUid 或 adaptiveOwnerActive=false 时移除。
   // 刷新后从 ws_subscribed 响应的 adaptiveOwnerUid 恢复（若 === clientUid）。
   // 用途：区分"自己持有"与"他人持有"，前者 UI 正常，后者尺寸 UI 灰显 + 显示接管按钮。
   localAdaptiveOwnerSids: new Set(),
-  // v9: 按会话 sid 存储运行时字号（不持久化）。
+  // 按会话 sid 存储运行时字号（不持久化）。
   // 字号由 frameRatio + 当前 stage 尺寸反算得到，会话切换/打开时计算并写入此 Map。
   // 用 sid 而非 uid：termInstances 也是按 sid 索引，关闭会话时一并清理。
   sessionFontSizes: {},
@@ -294,7 +294,7 @@ export function setCustomSize(cols, rows) {
   setSessionSizeConfig(s.uid, { customCols: cols, customRows: rows });
 }
 
-// ── v9: 按会话的运行时字号 & 持久化 frameRatio 访问 ──
+// ── 按会话的运行时字号 & 持久化 frameRatio 访问 ──
 
 /**
  * 获取指定会话的运行时字号。
@@ -335,7 +335,7 @@ export function clearSessionFontSize(sid) {
 
 /**
  * 获取指定 uid 的 frameRatio（框/stage 占比，取宽高较小值）。
- * v9: 所有模式（含 adaptive）都参与 ratio 记忆。未设置时返回 null。
+ * 所有模式（含 adaptive）都参与 ratio 记忆。未设置时返回 null。
  * @param {string} uid 会话 uid
  * @returns {number|null} ratio (0, 1.0]，null 表示未设置
  */
@@ -358,7 +358,7 @@ export function getActiveSessionFrameRatio() {
 
 /**
  * 设置当前活动会话的 frameRatio 并持久化。
- * v9: 所有模式（含 adaptive）都保存 ratio。
+ * 所有模式（含 adaptive）都保存 ratio。
  * @param {number} ratio (0, 1.0]
  */
 export function setActiveSessionFrameRatio(ratio) {
@@ -392,11 +392,11 @@ export function loadTabState() {
   }
 }
 
-// ── 问题2/v3：自适应锁本地持有者状态 ──
+// ── 自适应锁本地持有者状态 ──
 
 /**
  * 判断本 client_uid 是否持有指定会话的自适应锁。
- * v3 改造：优先检查 localAdaptiveOwnerSids（本端发起 set_size_mode 后的乐观标记），
+ * 优先检查 localAdaptiveOwnerSids（本端发起 set_size_mode 后的乐观标记），
  * 其次检查 s.adaptiveOwnerUid === state.clientUid（后端权威状态，刷新后从 ws_subscribed 恢复）。
  * @param {string} sid 会话 id
  * @returns {boolean}
@@ -404,7 +404,7 @@ export function loadTabState() {
 export function isLocalAdaptiveOwner(sid) {
   if (!sid) return false;
   if (state.localAdaptiveOwnerSids.has(sid)) return true;
-  // v3: 刷新后 localAdaptiveOwnerSids 为空，但后端锁仍属于本 client_uid，
+  // 刷新后 localAdaptiveOwnerSids 为空，但后端锁仍属于本 client_uid，
   // 从 ws_subscribed / size_mode_changed 同步的 adaptiveOwnerUid 判断
   const s = state.sessions[sid];
   return !!(s && s.adaptiveOwnerUid && s.adaptiveOwnerUid === state.clientUid);

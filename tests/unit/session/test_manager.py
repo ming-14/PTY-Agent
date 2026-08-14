@@ -1,5 +1,6 @@
 """session/manager.py 单元测试"""
 
+import sys
 import time
 import pytest
 
@@ -94,6 +95,24 @@ class TestSessionManagerList:
         mgr.create_session("s1", "cmd /c echo 1")
         sessions = mgr.list_sessions()
         assert isinstance(sessions[0]["startTime"], float)
+
+    def test_list_removes_naturally_ended(self):
+        """自然结束的会话会被归档移除（Web 前端通过历史列表查看）"""
+        mgr = SessionManager()
+        s = mgr.create_session("ended-1", [sys.executable, "-c", "import sys; sys.exit(0)"])
+        for _ in range(100):
+            if not s.running:
+                break
+            time.sleep(0.05)
+        if s.running:
+            s.stop()
+        for _ in range(50):
+            sessions = mgr.list_sessions()
+            if not any(s_["id"] == "ended-1" for s_ in sessions):
+                break
+            time.sleep(0.1)
+        sessions = mgr.list_sessions()
+        assert not any(s_["id"] == "ended-1" for s_ in sessions)
 
 
 class TestSessionManagerRemove:

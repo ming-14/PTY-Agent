@@ -7,7 +7,7 @@
 """
 
 import logging
-from typing import Optional, Any
+from typing import Any, Optional
 
 _logger = logging.getLogger("pty-client")
 
@@ -93,8 +93,7 @@ class ConfigManager:
         if key == "response_format":
             if isinstance(value, str) and value not in ("stream", "svg"):
                 raise ValueError(
-                    f"Invalid response-format value: {value!r}, "
-                    f"available: stream, svg",
+                    f"Invalid response-format value: {value!r}, available: stream, svg",
                 )
 
         if key == "svg_compression_level":
@@ -223,5 +222,7 @@ def parse_terminal_size(size_str: str) -> tuple:
         raise ValueError(f"Invalid terminal-size format: {size_str!r}, expected WxH")
     c, r = int(parts[0]), int(parts[1])
     if not (20 <= c <= 500 and 5 <= r <= 200):
-        raise ValueError(f"terminal-size out of range: {size_str!r}, cols 20-500, rows 5-200")
+        raise ValueError(
+            f"terminal-size out of range: {size_str!r}, cols 20-500, rows 5-200"
+        )
     return c, r

@@ -12,9 +12,9 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from .ports import VncServicePort
 from ..config.common import PROJECT_ROOT
 from ..config.daemon import ENABLE_VNC, VNC_WINVNC_PATH
+from .ports import VncServicePort
 from .process_manager import VncProcessConfig, VncProcessManager
 
 _logger = logging.getLogger("pty-vnc")
@@ -84,7 +84,8 @@ class VncAdapter(VncServicePort):
         if ENABLE_VNC:
             _logger.info(
                 "VNC service initialized: winvnc=%s available=%s",
-                self._winvnc_exe, self.is_winvnc_available(),
+                self._winvnc_exe,
+                self.is_winvnc_available(),
             )
         else:
             _logger.info("VNC service disabled by config (ENABLE_VNC=False)")

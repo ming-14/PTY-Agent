@@ -10,11 +10,11 @@ daemon 首次启动自动生成自签证书，后续启动加载已有证书。
 - 私钥文件权限限制为仅所有者可读写
 """
 
+import datetime
+import logging
 import os
 import ssl
-import logging
-import datetime
-from typing import Tuple, Optional
+from typing import Tuple
 
 _logger = logging.getLogger("pty-auth-tls")
 
@@ -63,7 +63,8 @@ class CertificateManager:
             fingerprint = self.compute_fingerprint(self.cert_file)
             _logger.info(
                 "加载已有 TLS 证书: %s (指纹: %s...)",
-                self.cert_file, fingerprint[:32],
+                self.cert_file,
+                fingerprint[:32],
             )
             return (self.cert_file, self.key_file, fingerprint)
 
@@ -76,9 +77,9 @@ class CertificateManager:
         写入 PEM 格式的证书文件和 PKCS8 私钥文件。
         """
         from cryptography import x509
-        from cryptography.x509.oid import NameOID
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
 
         _logger.info("生成新的自签 TLS 证书: %s", self.cert_file)
 
@@ -89,12 +90,14 @@ class CertificateManager:
         )
 
         # 构建自签证书
-        subject = issuer = x509.Name([
-            x509.NameAttribute(NameOID.COMMON_NAME, self.subject_cn),
-            x509.NameAttribute(NameOID.ORGANIZATION_NAME, self.subject_o),
-        ])
+        subject = issuer = x509.Name(
+            [
+                x509.NameAttribute(NameOID.COMMON_NAME, self.subject_cn),
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, self.subject_o),
+            ]
+        )
 
-        not_before = datetime.datetime.utcnow()
+        not_before = datetime.datetime.now(tz=datetime.timezone.utc)
         cert = (
             x509.CertificateBuilder()
             .subject_name(subject)
@@ -201,4 +204,5 @@ class CertificateManager:
             指纹字符串，格式为 "sha256:<hex>"。
         """
         import hashlib
+
         return "sha256:" + hashlib.sha256(der_cert).hexdigest()

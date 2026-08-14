@@ -66,6 +66,5 @@ class MessageSigner(ABC):
 
         用于接收端判断消息是否携带签名（区分"有签名需验证"与"无签名"）。
         例如 HmacMessageSigner 返回 ("_sig",)，Ed25519MessageSigner 返回 ("_sig_ed25519",)。
-        OrVerifier 聚合所有子验证器的字段。
         """
         ...

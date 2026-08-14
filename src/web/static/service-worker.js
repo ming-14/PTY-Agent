@@ -7,7 +7,7 @@
  * - API 请求（/ws, /api/*）直接走网络，不缓存
  */
 
-const CACHE_NAME = 'pty-agent-v1';
+const CACHE_NAME = 'pty-agent-v2';
 
 // 安装时预缓存的资源列表
 const PRECACHE_URLS = [
@@ -26,7 +26,6 @@ const PRECACHE_URLS = [
   '/css/dialogs.css',
   '/css/responsive.css',
   '/css/settings.css',
-  '/css/devconsole.css',
   '/vendor/xterm/xterm.css',
   '/vendor/xterm/xterm.js',
   '/vendor/xterm/xterm-addon-fit.js',
@@ -61,6 +60,7 @@ const PRECACHE_URLS = [
   '/js/infrastructure/auth.js',
   '/js/infrastructure/domUtils.js',
   '/js/infrastructure/fontLoader.js',
+  '/js/infrastructure/logPanelAdapter.js',
   '/js/infrastructure/rimeManager.js',
   '/js/infrastructure/settingsStorage.js',
   '/js/infrastructure/storage.js',
@@ -77,13 +77,17 @@ const PRECACHE_URLS = [
   '/js/presentation/controllers/events.js',
   '/js/presentation/views/autohide.js',
   '/js/presentation/views/detail.js',
-  '/js/presentation/views/devConsole.js',
   '/js/presentation/views/fastscreen.js',
   '/js/presentation/views/sessionHandlers.js',
   '/js/presentation/views/settings.js',
   '/js/presentation/views/sizeSelector.js',
   '/js/presentation/views/ui.js',
   '/js/presentation/views/vnc.js',
+  '/vendor/logpanel/index.js',
+  '/vendor/logpanel/LogPanel.js',
+  '/vendor/logpanel/styles.js',
+  '/vendor/logpanel/defaultRules.js',
+  '/vendor/logpanel/icons.js',
 ];
 
 // 安装：预缓存所有静态资源

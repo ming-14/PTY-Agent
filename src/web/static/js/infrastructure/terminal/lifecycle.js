@@ -52,7 +52,7 @@ export function ensureTerminal(sid) {
   const term = new Terminal({
     theme: currentTheme(),
     fontFamily: getTerminalFontFamily(),
-    // v9: 字号按会话独立维护（state.sessionFontSizes[sid]）。
+    // 字号按会话独立维护（state.sessionFontSizes[sid]）。
     // 新会话首次打开时未设置 → getSessionFontSize 返回 DEFAULT_FONT_SIZE，
     // 随后 ensureTerminal 末尾的 applySessionFrameRatio 会用渲染后的 cell 尺寸
     // 反算 frameRatio 并保存；再次打开该会话时按保存的 ratio 反算字号恢复框大小。
@@ -94,7 +94,7 @@ export function ensureTerminal(sid) {
     _pressedMouseButton: null, _focused: false, _touchAnchor: null,
     _wheelAccum: 0, _vtWheelAccum: 0,
     fitAddon,
-    // 方案 G: resize 期间缓冲 ConPTY output，避免 partial repaint 污染 xterm.js
+    // resize 期间缓冲 ConPTY output，避免 partial repaint 污染 xterm.js
     // _resizePending=true 时 handleOutput 将 output 推入 _resizeBuffer 而非直接写入
     // resize_complete 重建 buffer 后丢弃缓冲（snapshot 已含 resize 期间的有效输出）
     // _resizeStartedAt 用于超时保护：2 秒未收到匹配 resize_complete 则强制清除
@@ -171,9 +171,8 @@ export function ensureTerminal(sid) {
   });
 
   term.onResize(({ cols, rows }) => {
-    // v5 单路径同步（与 ttyd 一致）：
+    // 单路径同步（与 ttyd 一致）：
     //   所有 resize 都通过此回调统一发送给守护进程
-    //   不再有 _skipResizeSend 标志位（旧的双路径是光标错位根因之一）
     //   FitAddon.fit() / 用户切模式 / 窗口 resize 都会触发此回调
     debug('terminal', 'onResize sid=%s cols=%s rows=%s', sid, cols, rows);
     // 外部 resize（session_resized / resize_complete 已含完整 snapshot，
@@ -192,7 +191,7 @@ export function ensureTerminal(sid) {
     const s2 = state.sessions[sid];
     if (!s2 || !s2.running || s2.history || s2.closing) return;
 
-    // 问题2：本端未持自适应锁时，禁止向后端发送 resize。
+    // 本端未持自适应锁时，禁止向后端发送 resize。
     // 被锁期间 onResize 仍可能由 FitAddon.fit() / ResizeObserver / 窗口 resize 触发，
     // 若放行会导致后端 ResizeHandler 拒绝并回弹"另一端正在自适应控制尺寸，请先接管"错误提示。
     // 直接 return：不设 _resizePending、不更新 s2.cols/rows、不发 wsSend，
@@ -202,7 +201,7 @@ export function ensureTerminal(sid) {
       return;
     }
 
-    // 方案 G: 标记 resize 进行中，缓冲后续 ConPTY output。
+    // 标记 resize 进行中，缓冲后续 ConPTY output。
     // rapid adaptive resize 场景：多次 onResize 连续触发时，前一次 resize 期间缓冲的
     // output 对应旧尺寸，已被新 resize 取代 → 丢弃旧缓冲，重新开始收集。
     if (inst._resizePending && inst._resizeBuffer.length > 0) {
@@ -329,13 +328,13 @@ export function replayPending(sid) {
   if (!s || !inst) return;
   const isHistory = s.history || false;
 
-  // 首次订阅时守护进程返回 scrollback（GridScreen 历史区）+ replay（visible snapshot）
+  // 首次订阅时守护进程返回 scrollback（wezterm 终端模型历史区）+ replay（visible snapshot）
   // 写入流程：
   //   1. \x1b[3J\x1b[2J\x1b[1;1H 清空 scrollback + 可见屏幕 + 光标定位到 (0, 0)
   //   2. 写入 scrollback 行 + (R-1) 个 \r\n 推入 scrollback 区
   //   3. \x1b[2J + replay 清空可见屏幕 + 写入 snapshot（含每行 CSI row;col H 定位 + 末尾光标序列）
   //
-  // C2 改造（已订阅会话切回）：
+  // 已订阅会话切回：
   // - pendingScrollback + pendingReplay 均为空（handlers.py 已订阅时返回 ""）
   // - 不 clear()，保留 xterm.js 实例的 scrollback
   if (s.pendingScrollback && s.pendingReplay) {
@@ -361,7 +360,7 @@ export function replayPending(sid) {
     s.pendingReplay = null;
     // scroll 已由 restoreScrollbackAndSnapshot 内部 callback 处理，无需重复调用
   } else if (s.pendingReplay) {
-    // C2: 首次订阅但无 scrollback（旧守护进程兼容或 scrollback 为空）
+    // 首次订阅但无 scrollback（scrollback 为空）
     try { inst.term.clear(); } catch (e) {}
     inst.term.write(s.pendingReplay);
     s.pendingReplay = null;
@@ -398,11 +397,11 @@ export function handleOutput(msg) {
   debug('terminal', 'handleOutput sid=%s inst=%s activeTab=%s len=%d',
         sid, !!inst, state.activeTab, text.length);
   if (inst) {
-    // 方案 G: resize 进行中时缓冲 output，不直接写入 xterm.js。
+    // resize 进行中时缓冲 output，不直接写入 xterm.js。
     // 原因：ConPTY 在 resize 期间会发出针对旧/中间尺寸的 partial repaint
     // （如 \e[24;34H\e[J...），直接写入会污染 xterm.js 内部状态，导致
     // resize_complete 重建后仍出现错位/吞输出。
-    // 缓冲的 output 会在 resize_complete 重建后被丢弃 —— 因为后端 pyte.Screen
+    // 缓冲的 output 会在 resize_complete 重建后被丢弃 —— 因为后端 wezterm 终端模型
     // 持续 feed ConPTY output，resize 期间的有效输出已包含在 snapshot 中，
     // 缓冲的只是冗余的 partial repaint。
     if (inst._resizePending) {
@@ -425,7 +424,7 @@ export function handleOutput(msg) {
     }
     const s = state.sessions[sid];
     const isHistory = s && s.history;
-    // C2 改造（模拟 WT）：不再排队，直接写入对应 xterm 实例
+    // 不再排队，直接写入对应 xterm 实例
     // xterm.js 在 display:none 时 write 仍正常累积 scrollback（已验证）
     // 这样切回会话时 scrollback 完整，无需 replay
     const wasAtBottom = isTermAtBottom(inst.term);
@@ -472,6 +471,6 @@ export function disposeTerminal(sid) {
     inst.div.remove();
     delete state.termInstances[sid];
   }
-  // v9: 清理运行时字号（frameRatio 已持久化在 sessionSizeConfigs，不受影响）
+  // 清理运行时字号（frameRatio 已持久化在 sessionSizeConfigs，不受影响）
   clearSessionFontSize(sid);
 }

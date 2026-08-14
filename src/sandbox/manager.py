@@ -17,7 +17,7 @@
 接口形态（进程内直调，无管道）：
   - 无 exe_path/pipe_name/connect_timeout/sbx_config：进程内直调
   - 无 read_output/drain_output/read/write_stdin：ConPTY 模式下 stdio 由
-    SandboxPty 持有的 ConPtyHandle 直驱（hpcon 外部传入）
+    SandboxPty 持有的 wezterm Pty 直驱（hpcon 外部传入）
   - signal/write_stdin 命令走 Process 对象直调
 """
 
@@ -28,11 +28,11 @@ import sys
 import threading
 from typing import List, Optional
 
-from ..process.base import ProcessNotification, NOTIF_SPAWN, NOTIF_EXIT, NOTIF_CRASH
+from ..process.base import NOTIF_CRASH, NOTIF_EXIT, NOTIF_SPAWN, ProcessNotification
 
 _logger = logging.getLogger("sandbox-manager")
 
-# 把 bin/ 加入 sys.path（win_sandbox 为 vendored 包，与 fastscreen 同模式）
+# 把 bin/ 加入 sys.path（win_sandbox 为 vendored 包）
 _BIN_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "bin",
@@ -41,8 +41,8 @@ if _BIN_DIR not in sys.path:
     sys.path.insert(0, _BIN_DIR)
 
 # win_sandbox 仅 Windows 可用（pybind11 扩展加载）；非 Windows 平台不应导入
-import win_sandbox  # noqa: E402
-from win_sandbox import SandboxTimeoutError  # noqa: E402
+import win_sandbox
+from win_sandbox import SandboxTimeoutError
 
 
 class SandboxError(Exception):
@@ -81,7 +81,7 @@ class SandboxSessionManager:
         self._exit_event = threading.Event()
 
         # 通知队列（回调线程入队，tracker 消费）
-        self._notif_queue: "queue.Queue[ProcessNotification]" = queue.Queue()
+        self._notif_queue: queue.Queue[ProcessNotification] = queue.Queue()
 
         self._closed = False
 
@@ -91,8 +91,12 @@ class SandboxSessionManager:
         """创建原生沙箱实例（幂等）"""
         if self._instance is not None:
             return
-        self._instance = win_sandbox.SandboxInstance(config=None, log_level=self._log_level)
-        _logger.info("sandbox 原生实例已创建: process_count=%s", self._instance.process_count)
+        self._instance = win_sandbox.SandboxInstance(
+            config=None, log_level=self._log_level
+        )
+        _logger.info(
+            "sandbox 原生实例已创建: process_count=%s", self._instance.process_count
+        )
 
     def start_process(
         self,
@@ -105,7 +109,7 @@ class SandboxSessionManager:
         """启动沙箱内进程（hpcon 传入外部 ConPTY 句柄时进入 ConPTY 模式）
 
         Args:
-            hpcon: 外部创建的 HPCON 指针整数值（ConPtyHandle.hpcon_value）。
+            hpcon: 外部创建的 HPCON 指针整数值（wezterm Pty.hpcon()）。
                    ConPTY 模式下 stdio 由伪控制台驱动，Process 的
                    stdin/stdout/stderr 句柄为 None，I/O 走外部 ConPTY。
 
@@ -130,7 +134,9 @@ class SandboxSessionManager:
         proc.on_job_process_exited = self._on_job_process_exited
         _logger.info(
             "sandbox 进程已启动: command=%r process_id=%s os_pid=%s hpcon=%s",
-            command_line[:120], self._process_id, self._root_pid,
+            command_line[:120],
+            self._process_id,
+            self._root_pid,
             hpcon if hpcon else None,
         )
         return self._process_id, self._root_pid
@@ -212,8 +218,12 @@ class SandboxSessionManager:
             return None
         self._exit_code = int(result[0])
         self._exit_event.set()
-        _logger.info("sandbox 根进程退出: pid=%s exit_code=%s reason=%s",
-                     self._root_pid, self._exit_code, result[1])
+        _logger.info(
+            "sandbox 根进程退出: pid=%s exit_code=%s reason=%s",
+            self._root_pid,
+            self._exit_code,
+            result[1],
+        )
         return self._exit_code
 
     def is_root_alive(self) -> bool:
@@ -224,14 +234,19 @@ class SandboxSessionManager:
     def _on_job_process_started(self, info: dict) -> None:
         """Job 内子进程创建回调 → 通知队列"""
         try:
-            self._notif_queue.put(ProcessNotification(
-                NOTIF_SPAWN,
-                pid=info.get("pid"),
-                process_name=info.get("process_name", ""),
-                process_path=info.get("process_path", ""),
-            ))
-            _logger.debug("sandbox job started: pid=%s name=%s",
-                          info.get("pid"), info.get("process_name"))
+            self._notif_queue.put(
+                ProcessNotification(
+                    NOTIF_SPAWN,
+                    pid=info.get("pid"),
+                    process_name=info.get("process_name", ""),
+                    process_path=info.get("process_path", ""),
+                )
+            )
+            _logger.debug(
+                "sandbox job started: pid=%s name=%s",
+                info.get("pid"),
+                info.get("process_name"),
+            )
         except Exception as e:
             _logger.error("job_process_started 回调处理异常: %s", e)
 
@@ -246,11 +261,16 @@ class SandboxSessionManager:
             exit_code = info.get("exit_code")
             kind = info.get("exit_kind", "unknown")
             notif_type = NOTIF_CRASH if kind == "abnormal" else NOTIF_EXIT
-            self._notif_queue.put(ProcessNotification(
-                notif_type, pid=pid, exit_code=exit_code,
-            ))
-            _logger.debug("sandbox job exited: pid=%s exit_code=%s kind=%s",
-                          pid, exit_code, kind)
+            self._notif_queue.put(
+                ProcessNotification(
+                    notif_type,
+                    pid=pid,
+                    exit_code=exit_code,
+                )
+            )
+            _logger.debug(
+                "sandbox job exited: pid=%s exit_code=%s kind=%s", pid, exit_code, kind
+            )
         except Exception as e:
             _logger.error("job_process_exited 回调处理异常: %s", e)
 

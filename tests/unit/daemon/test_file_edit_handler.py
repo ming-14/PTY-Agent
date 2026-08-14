@@ -1,13 +1,12 @@
-"""file_edit handler 单元测试 — file edit 命令链路"""
+"""files 插件 file_edit 命令单元测试 — FilesPlugin.handle_message 链路"""
 
-import json
-
-import pytest
 import os
 
-from src.daemon.handlers.base import HandlerContext
-from src.daemon.handlers.file_edit_handler import FileEditHandler
-from src.files import get_default_store
+import pytest
+
+from src.plugins.base import ProcessPluginContext
+from config.plugins.files.files_plugin import FilesPlugin
+from config.plugins.files.state import get_default_store
 
 
 class _FakeSession:
@@ -19,63 +18,38 @@ class _FakeManager:
         return _FakeSession() if session_id == "sid" else None
 
 
-class _CollectConn:
-    def __init__(self):
-        self.sent = []
-        self._closed = False
-
-    def sendall(self, data):
-        self.sent.append(data)
-
-    def close(self):
-        self._closed = True
-
-    def fileno(self):
-        return -1
-
-    def settimeout(self, t):
-        pass
-
-
 @pytest.fixture
-def handler():
-    return FileEditHandler()
+def plugin():
+    return FilesPlugin()
 
 
 @pytest.fixture
 def ctx():
-    return HandlerContext(manager=_FakeManager())
+    return ProcessPluginContext(manager=_FakeManager(), plugin=None, io=None)
 
 
-def _last_response(conn: _CollectConn) -> dict:
-    assert conn.sent, "handler 未发送响应"
-    return json.loads(conn.sent[-1].decode("utf-8"))
+def _call(plugin, ctx, **kw):
+    msg = {"type": "file_edit", "cwd_session": "sid"}
+    msg.update(kw)
+    return plugin.handle_message(ctx, msg)
 
 
 class TestFileEditHandler:
-    def test_create_branch(self, handler, ctx, tmp_path):
+    def test_create_branch(self, plugin, ctx, tmp_path):
         get_default_store().reset()
         target = tmp_path / "new.txt"
-        conn = _CollectConn()
-        handler.handle(ctx, conn, {"type": "file_edit", "cwd_session": "sid", "path": str(target), "old": "", "new": "hello"})
-        resp = _last_response(conn)
+        resp = _call(plugin, ctx, path=str(target), old="", new="hello")
         assert resp["commandType"] == "file_edit"
         assert target.read_text(encoding="utf-8") == "hello"
 
-    def test_missing_old_new(self, handler, ctx, tmp_path):
-        conn = _CollectConn()
-        handler.handle(ctx, conn, {"type": "file_edit", "cwd_session": "sid", "path": str(tmp_path / "x.txt"), "old": "a"})
-        resp = _last_response(conn)
+    def test_missing_old_new(self, plugin, ctx, tmp_path):
+        resp = _call(plugin, ctx, path=str(tmp_path / "x.txt"), old="a")
         assert resp["type"] == "error"
 
-    def test_edit_requires_content_type(self, handler, ctx, tmp_path):
-        conn = _CollectConn()
-        handler.handle(ctx, conn, {"type": "file_edit", "cwd_session": "sid", "path": str(tmp_path / "x.txt"), "old": 5, "new": ""})
-        resp = _last_response(conn)
+    def test_edit_requires_content_type(self, plugin, ctx, tmp_path):
+        resp = _call(plugin, ctx, path=str(tmp_path / "x.txt"), old=5, new="")
         assert resp["type"] == "error"
 
-    def test_missing_path(self, handler, ctx):
-        conn = _CollectConn()
-        handler.handle(ctx, conn, {"type": "file_edit", "cwd_session": "sid", "path": "", "old": "a", "new": "b"})
-        resp = _last_response(conn)
+    def test_missing_path(self, plugin, ctx):
+        resp = _call(plugin, ctx, path="", old="a", new="b")
         assert resp["type"] == "error"

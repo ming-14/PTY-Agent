@@ -16,7 +16,6 @@
   <link rel="stylesheet" href="/css/dialogs.css">
   <link rel="stylesheet" href="/css/responsive.css">
   <link rel="stylesheet" href="/css/settings.css">
-  <link rel="stylesheet" href="/css/devconsole.css">
   <link rel="stylesheet" href="/vendor/xterm/xterm.css">
 </head>
 <body>
@@ -318,9 +317,6 @@
   <div id="terminal-snapshot" aria-hidden="true" style="position:absolute;left:-99999px;top:0;width:1px;height:1px;overflow:hidden"></div>
   <!-- Terminal Mouse Debug (隐藏，记录最近鼠标事件供调试) -->
   <div id="terminal-mouse-debug" aria-hidden="true" style="position:absolute;left:-99999px;top:0;width:1px;height:1px;overflow:hidden"></div>
-
-  <!-- 悬浮日志视窗挂载点（DOM 由 devConsole.js 动态注入） -->
-  <div id="devconsole-root"></div>
 
   <script src="/vendor/xterm/xterm.js"></script>
   <script src="/vendor/xterm/xterm-addon-fit.js"></script>

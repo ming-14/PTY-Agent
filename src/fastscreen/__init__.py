@@ -5,7 +5,7 @@
 - FastScreenAdapter: FastScreen 服务实现（CaptureEngine + StreamManager）
 """
 
-from .ports import FastScreenServicePort
 from .adapter import FastScreenAdapter
+from .ports import FastScreenServicePort
 
-__all__ = ["FastScreenServicePort", "FastScreenAdapter"]
+__all__ = ["FastScreenAdapter", "FastScreenServicePort"]

@@ -6,7 +6,6 @@
 
 import logging
 import threading
-from contextlib import contextmanager
 from typing import Optional
 
 from ..config.daemon import MAX_OUTPUT_BUFFER
@@ -55,13 +54,20 @@ class OutputBuffer:
                 self._dropped_bytes += drop
                 self._read_cycle += 1
                 self._first_output_event.set()
-                _logger.warning("OutputBuffer: overflow, trimmed %d bytes (total dropped: %d)",
-                                drop, self._dropped_bytes)
+                _logger.warning(
+                    "OutputBuffer: overflow, trimmed %d bytes (total dropped: %d)",
+                    drop,
+                    self._dropped_bytes,
+                )
             else:
                 self._read_cycle += 1
                 self._first_output_event.set()
             if self._read_cycle % 100 == 0:
-                _logger.debug("OutputBuffer: size=%d cycle=%d", len(self._buffer), self._read_cycle)
+                _logger.debug(
+                    "OutputBuffer: size=%d cycle=%d",
+                    len(self._buffer),
+                    self._read_cycle,
+                )
             return True
 
     def get_slice(self, start: int = 0, end: Optional[int] = None) -> bytes:
@@ -77,8 +83,7 @@ class OutputBuffer:
         with self._lock:
             if end is None:
                 end = len(self._buffer)
-            if start < 0:
-                start = 0
+            start = max(start, 0)
             if start >= len(self._buffer):
                 return b""
             return bytes(memoryview(self._buffer)[start:end])
@@ -106,8 +111,7 @@ class OutputBuffer:
         """
         with self._lock:
             length = len(self._buffer)
-            if start < 0:
-                start = 0
+            start = max(start, 0)
             if start >= length:
                 return b"", length
             return bytes(memoryview(self._buffer)[start:]), length

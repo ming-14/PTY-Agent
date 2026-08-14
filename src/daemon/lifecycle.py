@@ -2,35 +2,34 @@
 
 只负责 daemon 进程的入口与进程上下文（日志配置 / 控制台处理 / 单实例获取）。
 守护进程的启动/停止/探测（start_daemon / stop_daemon / is_running / 端口发现）
-属客户端控制能力，位于 src/client/lifecycle.py。
+属客户端控制能力，位于 src/daemonctl。
 """
 
+import logging
 import os
 import sys
-import subprocess
-import logging
 
-from ..config.common import IS_WINDOWS
 from ..config.daemon import (
-    DEFAULT_DAEMON_PORT,
-    LOG_DIR,
-    DAEMON_LOG_LEVEL,
-    WEB_LOG_LEVEL,
-    LOG_FORMAT,
-    LOG_DATE_FORMAT,
-    LOG_ARCHIVE_INTERVAL,
-    DAEMON_LOGGERS,
-    SESSION_LOGGERS,
-    PTY_LOGGERS,
-    PROTOCOL_LOGGERS,
+    SINGLE_INSTANCE,
+    TOKEN_ENABLED,
     AUTH_LOGGERS,
-    SANDBOX_LOGGERS,
-    WEB_LOGGERS,
+    DAEMON_LOG_LEVEL,
+    DAEMON_LOGGERS,
     FASTSCREEN_LOGGERS,
+    LOG_ARCHIVE_INTERVAL,
+    LOG_DATE_FORMAT,
+    LOG_DIR,
+    LOG_FORMAT,
+    PROTOCOL_LOGGERS,
+    PTY_LOGGERS,
+    SANDBOX_LOGGERS,
+    SESSION_LOGGERS,
+    WEB_LOG_LEVEL,
+    WEB_LOGGERS,
 )
-from ..logging_setup import configure_log_files, start_log_archiver
 from ..ipc.shm import cleanup_all_shm
 from ..ipc.single_instance import SingleInstanceLock
+from ..logging_setup import configure_log_files, start_log_archiver
 
 _logger = logging.getLogger("pty-daemon")
 
@@ -38,6 +37,7 @@ _logger = logging.getLogger("pty-daemon")
 def _safe_print(text: str):
     """安全打印：始终输出 JSON 格式到 stdout"""
     import json
+
     try:
         msg = json.dumps({"type": "info", "message": text}, ensure_ascii=False)
         sys.stdout.buffer.write(msg.encode("utf-8") + b"\n")
@@ -62,6 +62,7 @@ def _hide_console_window():
         return
     try:
         import ctypes
+
         ctypes.windll.kernel32.FreeConsole()
     except Exception:
         pass
@@ -78,6 +79,7 @@ def _ignore_console_ctrl():
     try:
         import ctypes
         from ctypes import wintypes as W
+
         HANDLER_ROUTINE = ctypes.WINFUNCTYPE(W.BOOL, W.DWORD)
         _ctrl_handler = HANDLER_ROUTINE(lambda ctrl_type: True)
         kernel32 = ctypes.windll.kernel32
@@ -96,8 +98,16 @@ def _setup_logging():
     同时启动后台线程将前一日（本地 0 点前）的日志自动 gzip 归档。
     DAEMON_LOG_LEVEL / WEB_LOG_LEVEL 设为 None 则对应侧不落盘。
     """
-    daemon_level = getattr(logging, DAEMON_LOG_LEVEL.upper(), logging.DEBUG) if DAEMON_LOG_LEVEL else None
-    web_level = getattr(logging, WEB_LOG_LEVEL.upper(), logging.DEBUG) if WEB_LOG_LEVEL else None
+    daemon_level = (
+        getattr(logging, DAEMON_LOG_LEVEL.upper(), logging.DEBUG)
+        if DAEMON_LOG_LEVEL
+        else None
+    )
+    web_level = (
+        getattr(logging, WEB_LOG_LEVEL.upper(), logging.DEBUG)
+        if WEB_LOG_LEVEL
+        else None
+    )
 
     groups = {
         "daemon": DAEMON_LOGGERS,
@@ -109,7 +119,10 @@ def _setup_logging():
         "web": WEB_LOGGERS,
         "fastscreen": FASTSCREEN_LOGGERS,
     }
-    levels = {g: daemon_level for g in ("daemon", "session", "pty", "protocol", "auth", "sandbox")}
+    levels = {
+        g: daemon_level
+        for g in ("daemon", "session", "pty", "protocol", "auth", "sandbox")
+    }
     levels.update({g: web_level for g in ("web", "fastscreen")})
 
     formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
@@ -129,44 +142,55 @@ def _setup_logging():
 def main():
     """守护进程入口
 
-    支持 --port <N> 参数指定监听端口（由 client.lifecycle.start_daemon 传入）。
-    通过共享内存发布 PID+端口号，启动 TCP 服务器。
+    监听位置完全由 daemon.toml [listener] 段控制。
     入口处获取 Windows 命名互斥 / Unix flock 单实例锁，失败则直接退出。
     """
     _hide_console_window()
     _setup_logging()
     _ignore_console_ctrl()
     _logger.info("=== 守护进程启动 ===")
-    _logger.info("PID=%s, Python=%s, platform=%s", os.getpid(), sys.version.split()[0], sys.platform)
-    _logger.info("LOG_DIR=%s, DAEMON_LOG_LEVEL=%s, WEB_LOG_LEVEL=%s", LOG_DIR, DAEMON_LOG_LEVEL, WEB_LOG_LEVEL)
+    _logger.info(
+        "PID=%s, Python=%s, platform=%s",
+        os.getpid(),
+        sys.version.split()[0],
+        sys.platform,
+    )
+    _logger.info(
+        "LOG_DIR=%s, DAEMON_LOG_LEVEL=%s, WEB_LOG_LEVEL=%s",
+        LOG_DIR,
+        DAEMON_LOG_LEVEL,
+        WEB_LOG_LEVEL,
+    )
 
     single_lock = SingleInstanceLock()
-    if not single_lock.try_acquire():
-        _logger.warning("守护进程已在运行，当前实例退出")
-        _safe_print("[pty-agent] Daemon already running")
-        sys.exit(0)
-    _logger.info("已获取单实例锁")
-
-    port = DEFAULT_DAEMON_PORT
-    if "--port" in sys.argv:
-        idx = sys.argv.index("--port")
-        if idx + 1 < len(sys.argv):
-            try:
-                port = int(sys.argv[idx + 1])
-            except ValueError:
-                pass
-
-    _logger.info("监听端口: %s", port)
+    # 单实例锁强制保留条件：token 监听器启用时 CLI 依赖互斥锁做存活发现与自动启动
+    if SINGLE_INSTANCE or TOKEN_ENABLED:
+        if not SINGLE_INSTANCE:
+            _logger.warning(
+                "SINGLE_INSTANCE=false 但 token 监听器启用（CLI 依赖互斥锁做发现），"
+                "强制保留单实例互斥锁"
+            )
+        if not single_lock.try_acquire():
+            _logger.warning("守护进程已在运行，当前实例退出")
+            _safe_print("[pty-agent] Daemon already running")
+            sys.exit(0)
+        _logger.info("已获取单实例锁")
+    else:
+        # 仅 plain/tls 监听器：跳过单实例锁，允许同机多实例并存（各实例独立端口配置）
+        _logger.warning(
+            "SINGLE_INSTANCE=false 且无 token 监听器，跳过单实例互斥锁（允许多实例并存）"
+        )
 
     try:
-        from ..pty import format_shell_info
+        from ..common.shells import format_shell_info
+
         _logger.info("Shell info: %s", format_shell_info())
     except Exception:
         _logger.debug("无法获取 shell 信息", exc_info=True)
 
     from .server import DaemonServer
 
-    server = DaemonServer(port=port)
+    server = DaemonServer()
     _logger.info("DaemonServer 实例已创建，准备运行")
     try:
         server.run()

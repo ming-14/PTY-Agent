@@ -15,7 +15,7 @@
 | 类名 | PascalCase | `class PseudoTerminal:`, `class WindowsPseudoTerminal:` |
 | 函数/方法 | snake_case | `def create_pty():`, `def strip_ansi():` |
 | 变量 | snake_case | `output_buffer`, `trigger_pattern`, `session_id` |
-| 常量 | SCREAMING_SNAKE_CASE | `MAX_OUTPUT_BUFFER`, `DAEMON_PORT`, `IS_WINDOWS` |
+| 常量 | SCREAMING_SNAKE_CASE | `MAX_OUTPUT_BUFFER`, `TOKEN_PORT`, `IS_WINDOWS` |
 | 私有 (模块内) | 前导下划线 | `_ANSI_RE`, `_ensure_condrv()`, `_CONDRV_OK` |
 | 伪私有 (类内) | 前导下划线 | `self._lock`, `self._reader_loop()` |
 | 类型变量 | PascalCase | `T = TypeVar('T')` |
@@ -65,8 +65,8 @@ from typing import Optional
 import third_party   # 第三方库（当前项目无）
 
 from .daemon import (  # 本地包，使用相对导入
-    DAEMON_HOST,
-    DAEMON_PORT,
+    CONNECT_MODE,
+    TOKEN_PORT,
     is_running,
     start_daemon,
     stop_daemon,
@@ -394,7 +394,7 @@ class SomeManager:
 from ..config import IS_WINDOWS
 
 if IS_WINDOWS:
-    from .windows import ConDrvPseudoTerminal, WindowsPseudoTerminal
+    from .windows.wezterm_pty import WeztermPseudoTerminal
 ```
 
 **Unix 平台** 永远不会导入 `pty/windows/` 中的任何代码。
@@ -434,5 +434,5 @@ _CreateFileW = _api("CreateFileW", W.HANDLE, [...])
 - `config/` 包不导入任何其他项目业务模块
 - 常量名全大写 `SCREAMING_SNAKE_CASE`
 - 所有模块从 `config/` 包导入所需常量，不要重复定义
-- 配置文件：`common.toml` / `daemon.toml` / `client.toml` / `sandbox.toml` / `files.toml` / `logging.toml` / `web.toml`（项目根 `config/`，加载器在 `src/config/`）；`vnc.toml` / `vnc.example.toml` 为 winvnc.exe 外部配置，Python 不加载
+- 配置文件：`common.toml` / `shared.toml` / `transfer.toml`（根）、`daemon/daemon.toml` / `daemon/logging.toml` / `daemon/web.toml` / `daemon/sandbox.toml`、`client/client.toml`（项目根 `config/`，加载器在 `src/config/`）；`daemon/vnc.toml` / `daemon/vnc.example.toml` 为 winvnc.exe 外部配置，Python 不加载。插件业务参数由插件自包含配置（如 `config/plugins/files/files.toml`）提供
 - 加载机制：`_loader.py` 提供 `load_toml()` / `flatten()` / `merge()` 工具函数

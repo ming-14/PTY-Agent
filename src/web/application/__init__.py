@@ -4,29 +4,29 @@
 该层只依赖领域层，不依赖具体的基础设施或框架实现。
 """
 
-from .ports import (
-    SessionRepository,
-    HistoryRepository,
-    OutboundMessageChannel,
-    SystemStatsProvider,
-    ShellProvider,
-    EventPublisher,
-    ConnectionContext,
-)
-from .services import MessageEncoderService, SubscriptionService
 from .dispatcher import MessageDispatcher
 from .handlers import build_handler_registry
+from .ports import (
+    ConnectionContext,
+    EventPublisher,
+    HistoryRepository,
+    OutboundMessageChannel,
+    SessionRepository,
+    ShellProvider,
+    SystemStatsProvider,
+)
+from .services import MessageEncoderService, SubscriptionService
 
 __all__ = [
-    "SessionRepository",
-    "HistoryRepository",
-    "OutboundMessageChannel",
-    "SystemStatsProvider",
-    "ShellProvider",
-    "EventPublisher",
     "ConnectionContext",
-    "MessageEncoderService",
-    "SubscriptionService",
+    "EventPublisher",
+    "HistoryRepository",
     "MessageDispatcher",
+    "MessageEncoderService",
+    "OutboundMessageChannel",
+    "SessionRepository",
+    "ShellProvider",
+    "SubscriptionService",
+    "SystemStatsProvider",
     "build_handler_registry",
 ]

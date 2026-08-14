@@ -1,0 +1,17 @@
+[package]
+name = "pywezterm"
+version = "0.1.0"
+edition = "2018"
+description = "wezterm pty + terminal emulator Python bindings (pyo3/abi3)"
+license = "MIT"
+
+[lib]
+name = "pywezterm"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3.workspace = true
+portable-pty.workspace = true
+wezterm-term.workspace = true
+wezterm-surface.workspace = true
+winapi = { workspace = true, features = ["winbase", "winnt", "ioapiset", "handleapi", "processthreadsapi"] }

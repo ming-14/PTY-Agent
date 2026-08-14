@@ -23,8 +23,8 @@ _logger = logging.getLogger("pty-protocol")
 #   - 删除/插入: P, X, L, M
 #   - 模式设置: h, l
 _ANSI_RE = re.compile(
-    r'\x1b\[[\d;]*m'                      # CSI SGR: 仅颜色/样式
-    r'|\x1b\].*?(?:\x07|\x1b\\)'          # OSC: 窗口标题/超链接
+    r"\x1b\[[\d;]*m"  # CSI SGR: 仅颜色/样式
+    r"|\x1b\].*?(?:\x07|\x1b\\)"  # OSC: 窗口标题/超链接
 )
 
 
@@ -40,6 +40,10 @@ def strip_ansi(text: str) -> str:
     """
     stripped = _ANSI_RE.sub("", text)
     if text != stripped:
-        _logger.debug("strip_ansi: removed %d chars from %d to %d",
-                      len(text) - len(stripped), len(text), len(stripped))
+        _logger.debug(
+            "strip_ansi: removed %d chars from %d to %d",
+            len(text) - len(stripped),
+            len(text),
+            len(stripped),
+        )
     return stripped

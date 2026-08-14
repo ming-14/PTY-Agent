@@ -2,7 +2,7 @@
 
 import codecs
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from .ports import ConnectionContext, ThreadExecutor
 
@@ -39,7 +39,8 @@ class MessageEncoderService:
         except Exception:
             _logger.warning(
                 "decoder reset for session %s encoding %s due to decode error",
-                session_id, session_encoding,
+                session_id,
+                session_encoding,
             )
             text = data.decode(session_encoding, errors="replace")
             self._context.set_decoder(
@@ -75,14 +76,12 @@ class SubscriptionService:
     async def prepare_subscription(self, session_id: str, session: Any) -> dict:
         """准备订阅：返回 scrollback + visible snapshot。
 
-        C2 改造（模拟 WT）：
-        - 旧实现返回原始输出缓冲区（output_buffer.get_slice(0)），
-          包含 ConPTY 增量光标序列（CSI row;col H），在 term.clear() 后重放会错位
-        - 新实现返回 pyte snapshot（带 VT 颜色序列 + 每行前 CSI row+1;1H），
+        - 返回终端模型 snapshot（带 VT 颜色序列 + 每行前 CSI row+1;1H），
           与 ConPTY repaint 同源，显示正确
+          （原始输出缓冲区含 ConPTY 增量光标序列，在 term.clear() 后重放会错位，不作为 replay）
         - 后续实时输出通过 publisher 持续推送
 
-        - 额外返回 scrollback_ansi（GridScreen 维护的历史区，tmux 风格）
+        - 额外返回 scrollback_ansi（wezterm 终端模型维护的历史区）
         - 前端写入 xterm.js 推入 scrollback 区，F5 刷新/重开浏览器后历史不丢
         - 与 tmux 共享 grid 不同：daemon 与 browser 是 C/S 架构，必须通过 WS 传输
 
@@ -100,25 +99,22 @@ class SubscriptionService:
         enc = session.encoding or "utf-8"
         self._encoder.reset_decoder(session_id, enc)
 
-        # C2: 用 pyte snapshot 作为 replay，而非原始输出缓冲区
-        # pyte 已经解析了所有 VT 序列，snapshot 是当前屏幕的"真相"
-        # snapshot 格式由 screen.py 的 _render_with_colors 控制（每行前 CSI row+1;1H）
+        # 用终端模型 snapshot 作为 replay（而非原始输出缓冲区）
+        # 终端模型已解析所有 VT 序列，snapshot 是当前屏幕的"真相"
+        # snapshot 格式由 backends.py 的 render_ansi 控制（每行前 CSI row+1;1H）
         replay_text = session.get_snapshot(keep_ansi=True)
 
-        # 捕获 scrollback 历史区（GridScreen 维护，带 SGR 颜色）
+        # 捕获 scrollback 历史区（wezterm 终端模型维护，带 SGR 颜色）
         # 前端写入 xterm.js 时推入 scrollback 区，实现刷新后历史不丢
         try:
             scrollback_ansi = session.capture_scrollback()
         except Exception as e:
-            _logger.warning("prepare_subscription: capture_scrollback failed sid=%s: %s",
-                            session_id, e)
+            _logger.warning(
+                "prepare_subscription: capture_scrollback failed sid=%s: %s",
+                session_id,
+                e,
+            )
             scrollback_ansi = ""
-
-        # 立即刷新一次鼠标模式检测
-        try:
-            await self._executor.run(session.update_mouse_mode_from_console)
-        except Exception:
-            pass
 
         return {"replay": replay_text, "scrollback": scrollback_ansi}
 

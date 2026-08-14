@@ -10,10 +10,10 @@
  * 选择后通过 setSizeMode / setFixedSize / setCustomSize 更新领域状态，
  * 并调用 applyTerminalSize 重新计算终端尺寸与守护进程同步。
  *
- * 自 v2 起，尺寸配置按会话 uid 独立存储：下拉菜单读取/写入当前活动会话的配置，
+ * 尺寸配置按会话 uid 独立存储：下拉菜单读取/写入当前活动会话的配置，
  * 切换标签页时自动反映该会话自身的模式。
  *
- * 问题2：自适应排他锁。
+ * 自适应排他锁。
  * - 当其他连接持有自适应锁时（isSizeUILocked=true），下拉内选项灰显禁用，
  *   底部显示"接管"按钮，点击后发 takeover_size_control，等后端清锁后用户再选模式。
  * - selectMode/selectFixedPreset/selectCustomSize 切换模式时同步发 set_size_mode 到后端，
@@ -42,7 +42,7 @@ import {
  * 渲染尺寸选择器下拉内容。
  * 每次打开时重新渲染，以反映当前活动会话的模式与守护进程默认尺寸。
  *
- * 问题2：当 isSizeUILocked(sid)=true（其他连接持有自适应锁）时：
+ * 当 isSizeUILocked(sid)=true（其他连接持有自适应锁）时：
  * - 所有尺寸选项灰显禁用，点击不响应
  * - 自定义输入区只读
  * - 底部追加"接管尺寸控制"按钮，点击发 takeover_size_control
@@ -56,7 +56,7 @@ export function renderSizeDropdown() {
   const s = sid ? state.sessions[sid] : null;
   // 当前活动会话的尺寸配置（按 uid 查询）
   const cfg = getSessionSizeConfigBySid(sid);
-  // 问题2：是否被其他连接持有自适应锁（UI 灰显 + 接管按钮）
+  // 是否被其他连接持有自适应锁（UI 灰显 + 接管按钮）
   const locked = isSizeUILocked(sid);
   if (locked) {
     info('size', 'renderSizeDropdown: sid=%s is locked by another connection', sid);
@@ -193,7 +193,7 @@ export function renderSizeDropdown() {
     });
   }
 
-  // 问题2：被其他连接持锁时，底部显示"接管尺寸控制"按钮
+  // 被其他连接持锁时，底部显示"接管尺寸控制"按钮
   if (locked) {
     const takeoverBtn = document.createElement('button');
     takeoverBtn.id = 'size-takeover-btn';
@@ -261,11 +261,11 @@ export function refreshSizeSelectorIfOpen() {
  * fixed 模式请用 selectFixedPreset。
  * 操作目标为当前活动会话。
  *
- * v9.2: 所有模式切换后都调用 applySessionFrameRatio 初始化/恢复该会话的 frameRatio。
+ * 所有模式切换后都调用 applySessionFrameRatio 初始化/恢复该会话的 frameRatio。
  * - adaptive 模式：按 ratio 设 frame 尺寸 + fit() 算 cols/rows（自适应 stage 宽高比，cols/rows 变）
  * - 非 adaptive 模式：按 ratio 反算字号（cols/rows 不变）
  *
- * 问题2：先发 set_size_mode 给后端（让 AdaptiveLockService 同步锁状态），
+ * 先发 set_size_mode 给后端（让 AdaptiveLockService 同步锁状态），
  * 后端按 FIFO 顺序处理 set_size_mode → 后续触发的 resize（持锁者允许）。
  * 然后本地乐观更新模式 + reapplyAllTerminalSizes 触发 resize 同步守护进程。
  */
@@ -274,7 +274,7 @@ function selectMode(mode) {
   const prevCfg = getSessionSizeConfigBySid(sid);
   info('size', 'selectMode → %s (was %s) sid=%s', mode, prevCfg.mode, sid);
 
-  // 问题2：先发 set_size_mode，后端 acquire/release 锁后再发 resize
+  // 先发 set_size_mode，后端 acquire/release 锁后再发 resize
   sendSetSizeMode(sid, mode);
 
   setSizeMode(mode);
@@ -290,7 +290,7 @@ function selectMode(mode) {
   renderSizeDropdown();
   positionSizeDropdown();
 
-  // v9.2: 所有模式都等一帧让 xterm 尺寸刷新后，初始化/应用该会话的 frameRatio。
+  // 所有模式都等一帧让 xterm 尺寸刷新后，初始化/应用该会话的 frameRatio。
   // - adaptive 模式：按 ratio 设 frame 尺寸 + fit() 算 cols/rows（cols/rows 变）
   // - 非 adaptive 模式：按 ratio 反算字号（cols/rows 不变）
   requestAnimationFrame(() => {
@@ -307,7 +307,7 @@ function selectMode(mode) {
  */
 function selectFixedPreset(cols, rows) {
   info('size', 'selectFixedPreset → %dx%d sid=%s', cols, rows, state.activeTab);
-  // 问题2：先发 set_size_mode(fixed, cols, rows)，后端释放锁并 resize
+  // 先发 set_size_mode(fixed, cols, rows)，后端释放锁并 resize
   sendSetSizeMode(state.activeTab, 'fixed', cols, rows);
 
   setFixedSize(cols, rows);
@@ -319,7 +319,7 @@ function selectFixedPreset(cols, rows) {
   renderSizeDropdown();
   positionSizeDropdown();
 
-  // v9.2: 等一帧后初始化/应用 frameRatio（非 adaptive 模式按 ratio 反算字号）
+  // 等一帧后初始化/应用 frameRatio（非 adaptive 模式按 ratio 反算字号）
   requestAnimationFrame(() => { applySessionFrameRatio(state.activeTab); });
 
   showToast('已切换到 ' + cols + 'x' + rows, 'info');
@@ -331,7 +331,7 @@ function selectFixedPreset(cols, rows) {
  */
 function selectCustomSize(cols, rows) {
   info('size', 'selectCustomSize → %dx%d sid=%s', cols, rows, state.activeTab);
-  // 问题2：先发 set_size_mode(custom, cols, rows)，后端释放锁并 resize
+  // 先发 set_size_mode(custom, cols, rows)，后端释放锁并 resize
   sendSetSizeMode(state.activeTab, 'custom', cols, rows);
 
   setCustomSize(cols, rows);
@@ -343,13 +343,13 @@ function selectCustomSize(cols, rows) {
   renderSizeDropdown();
   positionSizeDropdown();
 
-  // v9.2: 等一帧后初始化/应用 frameRatio（非 adaptive 模式按 ratio 反算字号）
+  // 等一帧后初始化/应用 frameRatio（非 adaptive 模式按 ratio 反算字号）
   requestAnimationFrame(() => { applySessionFrameRatio(state.activeTab); });
 
   showToast('已切换到 ' + cols + 'x' + rows, 'info');
 }
 
-// ── 问题2：自适应排他锁通信辅助 ──
+// ── 自适应排他锁通信辅助 ──
 
 /**
  * 发送 set_size_mode 到后端。
@@ -387,7 +387,7 @@ function requestTakeover(sid) {
  * 这样在任何"被动跟随"场景下状态栏都与 term 实际尺寸同步：
  * - session_resized（其他端 resize 广播）：s.cols/s.rows 已更新，状态栏跟随
  * - 本端主动 resize：onResize 已更新 s.cols/s.rows，状态栏跟随
- * 未被被动跟随时 s.cols == cfg.fixedCols/customCols，显示与旧逻辑一致。
+ * 未被被动跟随时 s.cols == cfg.fixedCols/customCols，即显示模式设定值。
  *
  * @param {object} s 会话对象（state.sessions[sid]）
  */
@@ -395,7 +395,7 @@ export function getSizeStatusText(s) {
   if (!s) return '';
   const sid = s.id;
   const cfg = getSessionSizeConfigBySid(sid);
-  // v9.2: 历史会话固定显示生前最后尺寸（不带模式标签，因为已禁用模式切换）
+  // 历史会话固定显示生前最后尺寸（不带模式标签，因为已禁用模式切换）
   if (s.history) {
     return (s.cols || '?') + 'x' + (s.rows || '?');
   }

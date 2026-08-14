@@ -1,15 +1,15 @@
-"""src/files/read/reader.py 单元测试 — file read 读取用例"""
+"""config/plugins/files/read.py 单元测试 — file read 读取用例"""
 
 import os
 import pytest
 
-from src.files.read.reader import (
+from config.plugins.files.read.reader import (
     read_file,
     is_image_file,
     suggest_similar,
     ReadResult,
 )
-from src.files.errors import FileToolError
+from config.plugins.files.errors import FileToolError
 
 
 @pytest.fixture
@@ -73,7 +73,7 @@ class TestReadFile:
             read_file(str(p))
 
     def test_too_large(self, tmp_path):
-        from src.config.files import MAX_READ_SIZE
+        from config.plugins.files.config import MAX_READ_SIZE
         p = tmp_path / "big.txt"
         p.write_bytes(b"x" * (MAX_READ_SIZE + 1))
         with pytest.raises(FileToolError):
@@ -119,3 +119,10 @@ class TestSuggestSimilar:
 
     def test_missing_dir(self, tmp_path):
         assert suggest_similar(str(tmp_path / "no" / "such" / "dir")) == []
+
+    def test_typo_suggestion(self, tmp_path):
+        # 形近但非互为子串（hello_wrld vs hello_world）：
+        # difflib 相似度匹配应触发建议（子串包含判定不触发）
+        (tmp_path / "hello_world.py").write_text("", encoding="utf-8")
+        suggestions = suggest_similar(str(tmp_path / "hello_wrld.py"))
+        assert any("hello_world.py" in s for s in suggestions)

@@ -72,7 +72,9 @@ def _build_session_args(uid):
     return []
 
 
-def analyse_response(resp: dict, mode: str, prompt: str, output_file, timeout: int) -> dict:
+def analyse_response(
+    resp: dict, mode: str, prompt: str, output_file, timeout: int
+) -> dict:
     """对 PTY response 做 AI 分析，返回替换后的 response
 
     根据 mode 决定是否调用 aichat 以及如何喂数据：
@@ -108,12 +110,18 @@ def analyse_response(resp: dict, mode: str, prompt: str, output_file, timeout: i
     tmp_file = None
     if mode == "fileOutput":
         if not output_file:
-            _logger.warning("ai_analyser: fileOutput 模式缺少 -o 输出文件，回退原始 response")
+            _logger.warning(
+                "ai_analyser: fileOutput 模式缺少 -o 输出文件，回退原始 response"
+            )
             resp["warning"] = "AI analysis skipped: fileOutput requires -o/--output"
             return resp
         if not os.path.exists(output_file):
-            _logger.warning("ai_analyser: 输出文件不存在 %s，回退原始 response", output_file)
-            resp["warning"] = f"AI analysis skipped: output file not found: {output_file}"
+            _logger.warning(
+                "ai_analyser: 输出文件不存在 %s，回退原始 response", output_file
+            )
+            resp["warning"] = (
+                f"AI analysis skipped: output file not found: {output_file}"
+            )
             return resp
         # 用 -f 读输出文件，避免命令行参数编码问题
         aichat_args = session_args + ["-f", output_file, prompt]
@@ -126,7 +134,9 @@ def analyse_response(resp: dict, mode: str, prompt: str, output_file, timeout: i
             return resp
         # 写入临时文件，避免 Windows 命令行参数 UTF-8 编码问题
         full_prompt = f"{prompt}\n\n=== 待分析内容 ===\n{text}"
-        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8")
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        )
         tmp.write(full_prompt)
         tmp_path = tmp.name
         tmp.close()
@@ -138,11 +148,17 @@ def analyse_response(resp: dict, mode: str, prompt: str, output_file, timeout: i
         resp["warning"] = f"AI analysis skipped: unknown mode {mode!r}"
         return resp
 
-    _logger.info("ai_analyser: 调用 aichat（mode=%s, uid=%s, timeout=%ss）",
-                 mode_desc, uid, timeout)
+    _logger.info(
+        "ai_analyser: 调用 aichat（mode=%s, uid=%s, timeout=%ss）",
+        mode_desc,
+        uid,
+        timeout,
+    )
     try:
         code, output = aichat.run_aichat_capture(
-            aichat_args, config=aichat.DEFAULT_CONFIG, timeout=timeout,
+            aichat_args,
+            config=aichat.DEFAULT_CONFIG,
+            timeout=timeout,
         )
     except Exception as e:
         _logger.exception("ai_analyser: aichat 调用异常")
@@ -156,8 +172,11 @@ def analyse_response(resp: dict, mode: str, prompt: str, output_file, timeout: i
                 pass
 
     if code != 0 or not output.strip():
-        _logger.warning("ai_analyser: aichat 返回 code=%s output_len=%d，回退原始 response",
-                        code, len(output))
+        _logger.warning(
+            "ai_analyser: aichat 返回 code=%s output_len=%d，回退原始 response",
+            code,
+            len(output),
+        )
         resp["warning"] = (
             f"AI analysis failed (aichat exit={code}, "
             f"output_empty={not output.strip()}), fallback to original response"

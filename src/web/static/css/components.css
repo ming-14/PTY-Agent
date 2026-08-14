@@ -223,7 +223,7 @@
   cursor: not-allowed;
 }
 
-/* 问题2：自适应排他锁 —— 被其他连接持锁时尺寸选项灰显 */
+/* 自适应排他锁 —— 被其他连接持锁时尺寸选项灰显 */
 .size-dropdown-item.disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -234,7 +234,7 @@
   pointer-events: none;
 }
 
-/* 问题2：接管尺寸控制按钮 */
+/* 接管尺寸控制按钮 */
 .size-takeover-btn {
   display: block;
   width: calc(100% - 16px);

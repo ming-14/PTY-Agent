@@ -1,6 +1,6 @@
 """diff 用例单元测试 —— generate_diff 文本与 +/- 统计"""
 
-from src.files.diff import generate_diff
+from config.plugins.files.diff import generate_diff
 
 
 class TestGenerateDiff:

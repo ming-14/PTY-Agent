@@ -15,14 +15,17 @@ import asyncio
 import json
 import logging
 import time
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
-from fastapi import APIRouter, Request, WebSocket, Query
+from fastapi import APIRouter, Query, Request, WebSocket
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from ....fastscreen.ports import FastScreenServicePort
 from ....config.common import IS_WINDOWS
+from ....fastscreen.ports import FastScreenServicePort
 from ...presentation.controllers.auth_controller import validate_ws_auth
+
+if TYPE_CHECKING:
+    from ...infrastructure.auth.session_store import SessionStore
 
 _logger = logging.getLogger("pty-web-fastscreen")
 
@@ -36,6 +39,7 @@ def _is_window_valid(hwnd: int) -> bool:
         return True
     try:
         import ctypes
+
         return ctypes.windll.user32.IsWindow(hwnd) != 0
     except Exception:
         return True  # 检查失败时不阻断，避免误判
@@ -44,14 +48,15 @@ def _is_window_valid(hwnd: int) -> bool:
 def _is_window_minimized(hwnd: int) -> bool:
     """主动检查窗口是否已最小化（IsIconic）。
 
-    用于替代旧的"超时计数"stall 检测：窗口最小化时 WGC 不产生帧，
-    与其等超时累积，不如每次循环主动查 IsIconic，立即得到准确状态。
+    主动 IsIconic 检查：窗口最小化时 WGC 不产生帧，
+    每次循环主动查 IsIconic 可立即得到准确状态，避免等超时累积。
     仅 Windows 平台可用。非 Windows 或 hwnd 为 0 时返回 False（不阻断）。
     """
     if not IS_WINDOWS or hwnd == 0:
         return False
     try:
         import ctypes
+
         return ctypes.windll.user32.IsIconic(hwnd) != 0
     except Exception:
         return False
@@ -75,16 +80,24 @@ def _load_streamer_modules():
     依赖 FastScreenAdapter 已将 bin/ 加入 sys.path（fastscreencore）。
     streamer 模块用相对导入（....fastscreen.streamers.*）避免 src/ 在 sys.path 时的包边界问题。
     """
-    global _TargetType, _CaptureMethod, _MjpegStreamer, _H264Streamer, _H264MSEStreamer, \
-        _modules_loaded, _STALL_JPEG_BYTES
+    global \
+        _TargetType, \
+        _CaptureMethod, \
+        _MjpegStreamer, \
+        _H264Streamer, \
+        _H264MSEStreamer, \
+        _modules_loaded, \
+        _STALL_JPEG_BYTES
     if _modules_loaded:
         return
     try:
-        from fastscreencore import TargetType, CaptureMethod
-        from ....fastscreen.streamers.mjpeg import MjpegStreamer
+        from fastscreencore import CaptureMethod, TargetType
+
+        from ....fastscreen.streamers.encoding.mjpeg import encode_bgra_to_jpeg
         from ....fastscreen.streamers.h264 import H264Streamer
         from ....fastscreen.streamers.h264_mse import H264MSEStreamer
-        from ....fastscreen.streamers.encoding.mjpeg import encode_bgra_to_jpeg
+        from ....fastscreen.streamers.mjpeg import MjpegStreamer
+
         _TargetType = TargetType
         _CaptureMethod = CaptureMethod
         _MjpegStreamer = MjpegStreamer
@@ -93,10 +106,12 @@ def _load_streamer_modules():
         # 预生成 1x1 纯红 JPEG（BGRA: B=0,G=0,R=255,A=255）作为 stall 信号帧
         # 前端 MJPEG 通过 naturalWidth===1 + 红色像素校验识别
         try:
-            _STALL_JPEG_BYTES = encode_bgra_to_jpeg(b'\x00\x00\xFF\xFF', 1, 1, 4, quality=0.9)
+            _STALL_JPEG_BYTES = encode_bgra_to_jpeg(
+                b"\x00\x00\xff\xff", 1, 1, 4, quality=0.9
+            )
         except Exception as e:
             _logger.warning("stall JPEG pre-generation failed: %s", e)
-            _STALL_JPEG_BYTES = b''
+            _STALL_JPEG_BYTES = b""
         _modules_loaded = True
     except Exception as e:
         _logger.exception("FastScreen streamer modules load failed: %s", e)
@@ -182,28 +197,40 @@ def create_fastscreen_router(
             return JSONResponse(status_code=401, content={"error": "unauthorized"})
         if not service.is_available():
             return StreamingResponse(
-                iter([b"--frame\r\nContent-Type: text/plain\r\n\r\nFastScreen unavailable\r\n"]),
+                iter(
+                    [
+                        b"--frame\r\nContent-Type: text/plain\r\n\r\nFastScreen unavailable\r\n"
+                    ]
+                ),
                 media_type="multipart/x-mixed-replace; boundary=frame",
             )
 
         _load_streamer_modules()
         if _MjpegStreamer is None:
             return StreamingResponse(
-                iter([b"--frame\r\nContent-Type: text/plain\r\n\r\nStreamer module load failed\r\n"]),
+                iter(
+                    [
+                        b"--frame\r\nContent-Type: text/plain\r\n\r\nStreamer module load failed\r\n"
+                    ]
+                ),
                 media_type="multipart/x-mixed-replace; boundary=frame",
             )
 
         tt = _parse_target_type(target_type)
         tid = int(target_id) if target_id.isdigit() else 0
         m = _parse_method(method)
-        # window 模式：记录句柄用于主动 IsIconic 检查（替代旧的超时计数 stall 检测）
-        is_window_target = (target_type.lower() == "window")
+        # window 模式：记录句柄用于主动 IsIconic 检查（窗口最小化时 WGC 不产生帧）
+        is_window_target = target_type.lower() == "window"
         window_hwnd = tid if is_window_target else 0
 
         streamer = _MjpegStreamer(
-            target_type=tt, target_id=tid, method=m,
-            fps=fps, quality=quality,
-            scale_width=width, scale_height=height,
+            target_type=tt,
+            target_id=tid,
+            method=m,
+            fps=fps,
+            quality=quality,
+            scale_width=width,
+            scale_height=height,
         )
 
         async def generate():
@@ -215,8 +242,12 @@ def create_fastscreen_router(
             was_minimized = False
             # 调试：流启动参数 + 循环计数（排查 IsIconic 检查是否生效）
             loop_tick = 0
-            _logger.info("[MJPEG] generate started, is_window_target=%s, window_hwnd=%d, _STALL_JPEG_BYTES_len=%d",
-                         is_window_target, window_hwnd, len(_STALL_JPEG_BYTES or b''))
+            _logger.info(
+                "[MJPEG] generate started, is_window_target=%s, window_hwnd=%d, _STALL_JPEG_BYTES_len=%d",
+                is_window_target,
+                window_hwnd,
+                len(_STALL_JPEG_BYTES or b""),
+            )
             try:
                 while streamer.is_running:
                     loop_tick += 1
@@ -226,21 +257,36 @@ def create_fastscreen_router(
                         minimized_now = _is_window_minimized(window_hwnd)
                         # 每 ~5s（10 次 ×0.5s）记录一次窗口状态，避免刷屏
                         if loop_tick % 10 == 1:
-                            _logger.info("[MJPEG] tick=%d hwnd=%d IsIconic=%s was_minimized=%s streamer_running=%s",
-                                         loop_tick, window_hwnd, minimized_now, was_minimized, streamer.is_running)
+                            _logger.info(
+                                "[MJPEG] tick=%d hwnd=%d IsIconic=%s was_minimized=%s streamer_running=%s",
+                                loop_tick,
+                                window_hwnd,
+                                minimized_now,
+                                was_minimized,
+                                streamer.is_running,
+                            )
                         if minimized_now:
                             if not was_minimized:
-                                _logger.info("[MJPEG] window minimized (IsIconic=true), sending stall signal, hwnd=%d",
-                                             window_hwnd)
+                                _logger.info(
+                                    "[MJPEG] window minimized (IsIconic=true), sending stall signal, hwnd=%d",
+                                    window_hwnd,
+                                )
                                 was_minimized = True
                             # 发 1x1 纯红 JPEG 作为 stall 信号帧，前端通过 naturalWidth===1 + 红色像素校验识别
                             if _STALL_JPEG_BYTES:
-                                yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + _STALL_JPEG_BYTES + b"\r\n"
+                                yield (
+                                    b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                                    + _STALL_JPEG_BYTES
+                                    + b"\r\n"
+                                )
                             # 短暂 sleep 避免 busy loop（最小化期间无需高频发帧）
                             await asyncio.sleep(0.5)
                             continue
                         elif was_minimized:
-                            _logger.info("[MJPEG] window restored from minimized, hwnd=%d", window_hwnd)
+                            _logger.info(
+                                "[MJPEG] window restored from minimized, hwnd=%d",
+                                window_hwnd,
+                            )
                             was_minimized = False
                     # 窗口未最小化（或 monitor 模式）：正常获取帧
                     # timeout 降低到 0.5s，让 IsIconic 检查更及时
@@ -250,7 +296,11 @@ def create_fastscreen_router(
                             break
                         # 无帧但窗口未最小化：可能是 C++ 正在初始化或性能抖动，继续循环
                         continue
-                    yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg_data + b"\r\n"
+                    yield (
+                        b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                        + jpeg_data
+                        + b"\r\n"
+                    )
             except (ConnectionResetError, ConnectionError):
                 pass
             finally:
@@ -311,27 +361,42 @@ def create_fastscreen_router(
             f = _clamp(params.get("fps", 30), 1, 60, 30)
             sw = _clamp(params.get("width", 0), 0, 7680, 0)
             sh = _clamp(params.get("height", 0), 0, 4320, 0)
-            br = _clamp(params.get("bitrate", 2_000_000), 100_000, 50_000_000, 2_000_000)
+            br = _clamp(
+                params.get("bitrate", 2_000_000), 100_000, 50_000_000, 2_000_000
+            )
             gop = _clamp(params.get("gop_size", 30), 1, 300, 30)
             q = _clampf(params.get("quality", 0.8), 0.1, 1.0, 0.8)
 
             # 窗口目标：记录句柄用于检测窗口关闭
-            is_window_target = (params.get("target_type", "monitor").lower() == "window")
+            is_window_target = params.get("target_type", "monitor").lower() == "window"
             window_hwnd = tid if is_window_target else 0
 
             streamer = _H264MSEStreamer(
-                target_type=tt, target_id=tid, method=m,
-                fps=f, scale_width=sw, scale_height=sh,
-                bitrate=br, gop_size=gop, quality=q,
+                target_type=tt,
+                target_id=tid,
+                method=m,
+                fps=f,
+                scale_width=sw,
+                scale_height=sh,
+                bitrate=br,
+                gop_size=gop,
+                quality=q,
             )
             ok = await streamer.start()
             if not ok:
                 await ws.send_text(json.dumps({"error": "failed to start capture"}))
                 return
 
-            await ws.send_text(json.dumps({
-                "status": "streaming", "fps": f, "width": sw, "height": sh,
-            }))
+            await ws.send_text(
+                json.dumps(
+                    {
+                        "status": "streaming",
+                        "fps": f,
+                        "width": sw,
+                        "height": sh,
+                    }
+                )
+            )
 
             loop = asyncio.get_event_loop()
             # 窗口最小化状态跟踪：仅在状态变化时发送 stall 消息，避免刷屏
@@ -342,8 +407,14 @@ def create_fastscreen_router(
             seg_count = 0
             # 调试：循环计数（排查 IsIconic 检查是否生效）
             loop_tick = 0
-            _logger.info("[MSE-WS] send loop started, fps=%d, sw=%d, sh=%d, is_window_target=%s, window_hwnd=%d",
-                         f, sw, sh, is_window_target, window_hwnd)
+            _logger.info(
+                "[MSE-WS] send loop started, fps=%d, sw=%d, sh=%d, is_window_target=%s, window_hwnd=%d",
+                f,
+                sw,
+                sh,
+                is_window_target,
+                window_hwnd,
+            )
             while streamer.is_running:
                 loop_tick += 1
                 # window 模式：主动检查窗口状态（IsIconic + IsWindow），不依赖帧超时判断
@@ -351,10 +422,14 @@ def create_fastscreen_router(
                 if is_window_target:
                     # 优先检查窗口是否已关闭（句柄失效）
                     if not _is_window_valid(window_hwnd):
-                        _logger.info("[MSE-WS] window closed (hwnd=%d invalid), sending closed notify",
-                                     window_hwnd)
+                        _logger.info(
+                            "[MSE-WS] window closed (hwnd=%d invalid), sending closed notify",
+                            window_hwnd,
+                        )
                         try:
-                            await ws.send_text(json.dumps({"closed": True, "message": "窗口已关闭"}))
+                            await ws.send_text(
+                                json.dumps({"closed": True, "message": "窗口已关闭"})
+                            )
                         except Exception:
                             pass
                         break
@@ -362,26 +437,45 @@ def create_fastscreen_router(
                     minimized_now = _is_window_minimized(window_hwnd)
                     # 每 ~5s（10 次 ×0.5s 或 50 次 ×0.1s）记录一次窗口状态
                     if loop_tick % 50 == 1:
-                        _logger.info("[MSE-WS] tick=%d hwnd=%d IsIconic=%s was_minimized=%s streamer_running=%s",
-                                     loop_tick, window_hwnd, minimized_now, was_minimized, streamer.is_running)
+                        _logger.info(
+                            "[MSE-WS] tick=%d hwnd=%d IsIconic=%s was_minimized=%s streamer_running=%s",
+                            loop_tick,
+                            window_hwnd,
+                            minimized_now,
+                            was_minimized,
+                            streamer.is_running,
+                        )
                     if minimized_now:
                         if not was_minimized:
-                            _logger.info("[MSE-WS] window minimized (IsIconic=true), sending stall notify, hwnd=%d",
-                                         window_hwnd)
+                            _logger.info(
+                                "[MSE-WS] window minimized (IsIconic=true), sending stall notify, hwnd=%d",
+                                window_hwnd,
+                            )
                             was_minimized = True
                             try:
-                                await ws.send_text(json.dumps({"stall": True, "message": "窗口可能已最小化，等待恢复…"}))
+                                await ws.send_text(
+                                    json.dumps(
+                                        {
+                                            "stall": True,
+                                            "message": "窗口可能已最小化，等待恢复…",
+                                        }
+                                    )
+                                )
                             except Exception:
                                 pass
                         # 短暂 sleep 避免 busy loop（最小化期间无需获取 segment）
                         await asyncio.sleep(0.5)
                         continue
                     elif was_minimized:
-                        _logger.info("[MSE-WS] window restored from minimized, sending recovery notify, hwnd=%d",
-                                     window_hwnd)
+                        _logger.info(
+                            "[MSE-WS] window restored from minimized, sending recovery notify, hwnd=%d",
+                            window_hwnd,
+                        )
                         was_minimized = False
                         try:
-                            await ws.send_text(json.dumps({"stall": False, "message": "画面已恢复"}))
+                            await ws.send_text(
+                                json.dumps({"stall": False, "message": "画面已恢复"})
+                            )
                         except Exception:
                             pass
                 # 窗口未最小化（或 monitor 模式）：正常获取 segment
@@ -398,13 +492,28 @@ def create_fastscreen_router(
                 t_last_seg = now
                 # 关键事件详细记录：init segment（resize 后首个 segment）、前3帧、间隔>1s
                 if seg_type == "init":
-                    _logger.info("[MSE-WS] seg#%d type=init %d bytes, gap=%.0fms, elapsed=%.1fs",
-                                 seg_count, len(seg_data), gap_ms, now - t_loop_start)
+                    _logger.info(
+                        "[MSE-WS] seg#%d type=init %d bytes, gap=%.0fms, elapsed=%.1fs",
+                        seg_count,
+                        len(seg_data),
+                        gap_ms,
+                        now - t_loop_start,
+                    )
                 elif seg_count <= 3:
-                    _logger.info("[MSE-WS] seg#%d type=%s %d bytes, gap=%.0fms",
-                                 seg_count, seg_type, len(seg_data), gap_ms)
+                    _logger.info(
+                        "[MSE-WS] seg#%d type=%s %d bytes, gap=%.0fms",
+                        seg_count,
+                        seg_type,
+                        len(seg_data),
+                        gap_ms,
+                    )
                 elif gap_ms > 1000:
-                    _logger.info("[MSE-WS] seg#%d type=%s slow gap=%.0fms", seg_count, seg_type, gap_ms)
+                    _logger.info(
+                        "[MSE-WS] seg#%d type=%s slow gap=%.0fms",
+                        seg_count,
+                        seg_type,
+                        gap_ms,
+                    )
                 try:
                     if seg_type == "init":
                         await ws.send_bytes(b"\x00\x00\x00\x01init" + seg_data)
@@ -471,35 +580,53 @@ def create_fastscreen_router(
             f = _clamp(params.get("fps", 30), 1, 60, 30)
             sw = _clamp(params.get("width", 0), 0, 7680, 0)
             sh = _clamp(params.get("height", 0), 0, 4320, 0)
-            br = _clamp(params.get("bitrate", 2_000_000), 100_000, 50_000_000, 2_000_000)
+            br = _clamp(
+                params.get("bitrate", 2_000_000), 100_000, 50_000_000, 2_000_000
+            )
             gop = _clamp(params.get("gop_size", 30), 1, 300, 30)
             q = _clampf(params.get("quality", 0.8), 0.1, 1.0, 0.8)
 
             # 窗口目标：记录句柄用于检测窗口关闭
-            is_window_target = (params.get("target_type", "monitor").lower() == "window")
+            is_window_target = params.get("target_type", "monitor").lower() == "window"
             window_hwnd = tid if is_window_target else 0
 
             streamer = _H264Streamer(
-                target_type=tt, target_id=tid, method=m,
-                fps=f, scale_width=sw, scale_height=sh,
-                bitrate=br, gop_size=gop, quality=q,
+                target_type=tt,
+                target_id=tid,
+                method=m,
+                fps=f,
+                scale_width=sw,
+                scale_height=sh,
+                bitrate=br,
+                gop_size=gop,
+                quality=q,
             )
             ok = await streamer.start()
             if not ok:
                 await ws.send_text(json.dumps({"error": "failed to start capture"}))
                 return
 
-            await ws.send_text(json.dumps({
-                "status": "streaming", "fps": f, "width": sw, "height": sh,
-            }))
+            await ws.send_text(
+                json.dumps(
+                    {
+                        "status": "streaming",
+                        "fps": f,
+                        "width": sw,
+                        "height": sh,
+                    }
+                )
+            )
 
             loop = asyncio.get_event_loop()
             # 窗口最小化状态跟踪：仅在状态变化时发送 stall 消息，避免刷屏
             was_minimized = False
             # 调试：循环计数（排查 IsIconic 检查是否生效）
             loop_tick = 0
-            _logger.info("[WebCodecs-WS] send loop started, is_window_target=%s, window_hwnd=%d",
-                         is_window_target, window_hwnd)
+            _logger.info(
+                "[WebCodecs-WS] send loop started, is_window_target=%s, window_hwnd=%d",
+                is_window_target,
+                window_hwnd,
+            )
             while streamer.is_running:
                 loop_tick += 1
                 # window 模式：主动检查窗口状态（IsIconic + IsWindow），不依赖帧超时判断
@@ -507,10 +634,14 @@ def create_fastscreen_router(
                 if is_window_target:
                     # 优先检查窗口是否已关闭（句柄失效）
                     if not _is_window_valid(window_hwnd):
-                        _logger.info("[WebCodecs-WS] window closed (hwnd=%d invalid), sending closed notify",
-                                     window_hwnd)
+                        _logger.info(
+                            "[WebCodecs-WS] window closed (hwnd=%d invalid), sending closed notify",
+                            window_hwnd,
+                        )
                         try:
-                            await ws.send_text(json.dumps({"closed": True, "message": "窗口已关闭"}))
+                            await ws.send_text(
+                                json.dumps({"closed": True, "message": "窗口已关闭"})
+                            )
                         except Exception:
                             pass
                         break
@@ -518,26 +649,45 @@ def create_fastscreen_router(
                     minimized_now = _is_window_minimized(window_hwnd)
                     # 每 ~5s（50 次 ×0.1s）记录一次窗口状态
                     if loop_tick % 50 == 1:
-                        _logger.info("[WebCodecs-WS] tick=%d hwnd=%d IsIconic=%s was_minimized=%s streamer_running=%s",
-                                     loop_tick, window_hwnd, minimized_now, was_minimized, streamer.is_running)
+                        _logger.info(
+                            "[WebCodecs-WS] tick=%d hwnd=%d IsIconic=%s was_minimized=%s streamer_running=%s",
+                            loop_tick,
+                            window_hwnd,
+                            minimized_now,
+                            was_minimized,
+                            streamer.is_running,
+                        )
                     if minimized_now:
                         if not was_minimized:
-                            _logger.info("[WebCodecs-WS] window minimized (IsIconic=true), sending stall notify, hwnd=%d",
-                                         window_hwnd)
+                            _logger.info(
+                                "[WebCodecs-WS] window minimized (IsIconic=true), sending stall notify, hwnd=%d",
+                                window_hwnd,
+                            )
                             was_minimized = True
                             try:
-                                await ws.send_text(json.dumps({"stall": True, "message": "窗口可能已最小化，等待恢复…"}))
+                                await ws.send_text(
+                                    json.dumps(
+                                        {
+                                            "stall": True,
+                                            "message": "窗口可能已最小化，等待恢复…",
+                                        }
+                                    )
+                                )
                             except Exception:
                                 pass
                         # 短暂 sleep 避免 busy loop（最小化期间无需获取 NAL）
                         await asyncio.sleep(0.5)
                         continue
                     elif was_minimized:
-                        _logger.info("[WebCodecs-WS] window restored from minimized, sending recovery notify, hwnd=%d",
-                                     window_hwnd)
+                        _logger.info(
+                            "[WebCodecs-WS] window restored from minimized, sending recovery notify, hwnd=%d",
+                            window_hwnd,
+                        )
                         was_minimized = False
                         try:
-                            await ws.send_text(json.dumps({"stall": False, "message": "画面已恢复"}))
+                            await ws.send_text(
+                                json.dumps({"stall": False, "message": "画面已恢复"})
+                            )
                         except Exception:
                             pass
                 # 窗口未最小化（或 monitor 模式）：正常获取 NAL

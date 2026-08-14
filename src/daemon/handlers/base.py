@@ -1,18 +1,15 @@
-import socket
-import time
 import logging
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from ...session.manager import SessionManager
 from ...auth.base import Authenticator
-from .utils import check_ended_session
+from ...session.manager import SessionManager
 
 _logger = logging.getLogger("pty-daemon")
 
 
 class HandlerContext:
-    __slots__ = ("manager", "authenticator", "server")
+    __slots__ = ("authenticator", "manager", "server")
 
     def __init__(
         self,
@@ -27,5 +24,4 @@ class HandlerContext:
 
 class DaemonHandler(ABC):
     @abstractmethod
-    def handle(self, ctx: HandlerContext, conn, msg: dict):
-        ...
+    def handle(self, ctx: HandlerContext, conn, msg: dict): ...

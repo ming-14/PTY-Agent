@@ -10,8 +10,8 @@
   0xC0000005 — STATUS_ACCESS_VIOLATION
 """
 
-import sys
 import logging
+import sys
 
 _logger = logging.getLogger("process-win32-error")
 
@@ -24,13 +24,19 @@ _W = None
 if _IS_WINDOWS:
     import ctypes as _ctypes
     from ctypes import wintypes as _W
+
     try:
         _KERNEL32 = _ctypes.WinDLL("kernel32", use_last_error=True)
         _FormatMessageW = _KERNEL32.FormatMessageW
         _FormatMessageW.restype = _W.DWORD
         _FormatMessageW.argtypes = [
-            _W.DWORD, _ctypes.c_void_p, _W.DWORD, _W.DWORD,
-            _ctypes.c_void_p, _W.DWORD, _ctypes.c_void_p,
+            _W.DWORD,
+            _ctypes.c_void_p,
+            _W.DWORD,
+            _W.DWORD,
+            _ctypes.c_void_p,
+            _W.DWORD,
+            _ctypes.c_void_p,
         ]
         _FORMAT_MSG_OK = True
     except Exception:
@@ -60,15 +66,15 @@ _NTSTATUS_NAMES = {
 
 # ── 常见 Win32 错误码名称 ──
 _WIN32_NAMES = {
-    2:    "ERROR_FILE_NOT_FOUND",
-    3:    "ERROR_PATH_NOT_FOUND",
-    5:    "ERROR_ACCESS_DENIED",
-    87:   "ERROR_INVALID_PARAMETER",
-    126:  "ERROR_MOD_NOT_FOUND",
-    193:  "ERROR_BAD_EXE_FORMAT",
-    267:  "ERROR_DIRECTORY",
-    740:  "ERROR_ELEVATION_REQUIRED",
-    998:  "ERROR_NOACCESS",
+    2: "ERROR_FILE_NOT_FOUND",
+    3: "ERROR_PATH_NOT_FOUND",
+    5: "ERROR_ACCESS_DENIED",
+    87: "ERROR_INVALID_PARAMETER",
+    126: "ERROR_MOD_NOT_FOUND",
+    193: "ERROR_BAD_EXE_FORMAT",
+    267: "ERROR_DIRECTORY",
+    740: "ERROR_ELEVATION_REQUIRED",
+    998: "ERROR_NOACCESS",
     14001: "ERROR_SXS_CANT_GEN_ACTCTX",
     1450: "ERROR_NO_SYSTEM_RESOURCES",
 }
@@ -95,10 +101,15 @@ def _try_format_message(error_code: int) -> str:
     try:
         buf = _ctypes.c_void_p()
         n = _FormatMessageW(
-            FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM
+            FORMAT_MESSAGE_ALLOCATE_BUFFER
+            | FORMAT_MESSAGE_FROM_SYSTEM
             | FORMAT_MESSAGE_IGNORE_INSERTS,
-            None, error_code, 0,
-            _ctypes.byref(buf), 0, None,
+            None,
+            error_code,
+            0,
+            _ctypes.byref(buf),
+            0,
+            None,
         )
         if n:
             ptr = _ctypes.cast(buf, _ctypes.POINTER(_W.WCHAR))

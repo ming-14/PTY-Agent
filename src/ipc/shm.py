@@ -3,21 +3,19 @@
 提供守护进程与客户端之间的共享内存读写操作。
 Windows 使用命名 mmap，Unix 回退文件。
 
-三类共享数据：
-- 端口/PID：守护进程启动后写入，客户端读取以发现守护进程
+两类共享数据（仅认证令牌与 HMAC 密钥；daemon 端口为固定端口配置，
+不再经共享内存发现）：
 - 认证令牌：守护进程生成并轮换，客户端读取用于 TCP 认证
 - HMAC 密钥：守护进程生成，客户端加载用于消息签名验证
 """
 
 import logging
-import os
 import mmap
+import os
 from typing import Optional
 
 from ..config.common import IS_WINDOWS
-from ..config.daemon import (
-    MMAP_NAME,
-    MMAP_SIZE,
+from ..config.shared import (
     AUTH_TOKEN_NAME,
     AUTH_TOKEN_SIZE,
     HMAC_KEY_NAME,
@@ -38,114 +36,9 @@ def _create_restricted_mmap(size: int, tagname: str) -> mmap.mmap:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  端口 / PID
-# ═══════════════════════════════════════════════════════════════
-
-def read_daemon_info_from_shm() -> Optional[tuple]:
-    """从共享内存读取守护进程 PID 和端口号
-
-    Returns:
-        (pid, port) 元组，读取失败返回 None。
-    """
-    if IS_WINDOWS:
-        try:
-            shm = _create_restricted_mmap(MMAP_SIZE, MMAP_NAME)
-            data = shm.read(MMAP_SIZE)
-            shm.close()
-            text = data.rstrip(b"\x00").decode("ascii")
-            if not text:
-                return None
-            parts = text.split(":")
-            if len(parts) != 2:
-                return None
-            pid = int(parts[0])
-            port = int(parts[1])
-            _logger.debug("read_daemon_info_from_shm: pid=%d port=%d", pid, port)
-            return (pid, port)
-        except (FileNotFoundError, ValueError, OSError) as e:
-            _logger.debug("read_daemon_info_from_shm: failed %s", e)
-            return None
-    else:
-        from ..config.daemon import PORT_FILE
-        try:
-            with open(PORT_FILE, "r") as f:
-                content = f.read().strip()
-                if not content:
-                    return None
-                parts = content.split(":")
-                if len(parts) != 2:
-                    return None
-                pid = int(parts[0])
-                port = int(parts[1])
-                _logger.debug("read_daemon_info_from_shm (file): pid=%d port=%d", pid, port)
-                return (pid, port)
-        except (FileNotFoundError, ValueError, OSError) as e:
-            _logger.debug("read_daemon_info_from_shm (file): failed %s", e)
-            return None
-
-
-def read_port_from_shm() -> Optional[int]:
-    """从共享内存读取守护进程端口号（便捷方法）
-
-    Returns:
-        端口号。读取失败返回 None。
-    """
-    info = read_daemon_info_from_shm()
-    if info is None:
-        return None
-    return info[1]
-
-
-def write_daemon_info_to_shm(pid: int, port: int) -> Optional[mmap.mmap]:
-    """将守护进程 PID 和端口号写入命名共享内存
-
-    格式: "PID:PORT"（如 "5488:53670"）
-
-    Args:
-        pid: 守护进程 PID。
-        port: 端口号。
-
-    Returns:
-        mmap 对象（Windows，调用方必须保持引用，否则共享内存被销毁），
-        Unix 返回 None。
-    """
-    text = f"{pid}:{port}"
-    data = text.encode("ascii").ljust(MMAP_SIZE, b"\x00")
-    _logger.info("write_daemon_info_to_shm: pid=%d port=%d", pid, port)
-    if IS_WINDOWS:
-        shm = _create_restricted_mmap(MMAP_SIZE, MMAP_NAME)
-        shm.write(data)
-        return shm
-    else:
-        from ..config.common import DATA_DIR
-        from ..config.daemon import PORT_FILE
-        os.makedirs(DATA_DIR, exist_ok=True)
-        with open(PORT_FILE, "w") as f:
-            f.write(text)
-        return None
-
-
-def cleanup_port_shm():
-    """清理端口共享内存残留"""
-    if IS_WINDOWS:
-        try:
-            shm = _create_restricted_mmap(MMAP_SIZE, MMAP_NAME)
-            shm.write(b"\x00" * MMAP_SIZE)
-            shm.close()
-        except (FileNotFoundError, OSError):
-            pass
-    else:
-        from ..config.daemon import PORT_FILE
-        try:
-            if os.path.exists(PORT_FILE):
-                os.remove(PORT_FILE)
-        except OSError:
-            pass
-
-
-# ═══════════════════════════════════════════════════════════════
 #  认证令牌
 # ═══════════════════════════════════════════════════════════════
+
 
 def generate_auth_token() -> str:
     """生成 32 字节随机认证令牌（hex 编码）"""
@@ -173,11 +66,14 @@ def read_auth_token() -> Optional[str]:
             return None
     else:
         from ..config.common import DATA_DIR
+
         token_file = os.path.join(DATA_DIR, "daemon.auth")
         try:
             with open(token_file, "r") as f:
                 token = f.read().strip() or None
-                _logger.debug("read_auth_token (file): %s...", token[:8] if token else "None")
+                _logger.debug(
+                    "read_auth_token (file): %s...", token[:8] if token else "None"
+                )
                 return token
         except (FileNotFoundError, OSError) as e:
             _logger.debug("read_auth_token (file): failed %s", e)
@@ -201,6 +97,7 @@ def write_auth_token(token: str) -> Optional[mmap.mmap]:
         return shm
     else:
         from ..config.common import DATA_DIR
+
         os.makedirs(DATA_DIR, exist_ok=True)
         token_file = os.path.join(DATA_DIR, "daemon.auth")
         fd = os.open(token_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -222,6 +119,7 @@ def cleanup_auth_shm():
             pass
     else:
         from ..config.common import DATA_DIR
+
         token_file = os.path.join(DATA_DIR, "daemon.auth")
         try:
             if os.path.exists(token_file):
@@ -233,6 +131,7 @@ def cleanup_auth_shm():
 # ═══════════════════════════════════════════════════════════════
 #  HMAC 密钥
 # ═══════════════════════════════════════════════════════════════
+
 
 def read_hmac_key() -> Optional[bytes]:
     """从共享内存读取 HMAC 密钥
@@ -257,6 +156,7 @@ def read_hmac_key() -> Optional[bytes]:
             return None
     else:
         from ..config.common import DATA_DIR
+
         hmac_file = os.path.join(DATA_DIR, "daemon.hmac")
         try:
             with open(hmac_file, "r") as f:
@@ -289,6 +189,7 @@ def write_hmac_key(key: bytes) -> Optional[mmap.mmap]:
         return shm
     else:
         from ..config.common import DATA_DIR
+
         os.makedirs(DATA_DIR, exist_ok=True)
         hmac_file = os.path.join(DATA_DIR, "daemon.hmac")
         fd = os.open(hmac_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -311,6 +212,7 @@ def cleanup_hmac_shm():
             pass
     else:
         from ..config.common import DATA_DIR
+
         hmac_file = os.path.join(DATA_DIR, "daemon.hmac")
         try:
             if os.path.exists(hmac_file):
@@ -323,8 +225,8 @@ def cleanup_hmac_shm():
 #  批量清理
 # ═══════════════════════════════════════════════════════════════
 
+
 def cleanup_all_shm():
-    """清理所有共享内存残留（端口 + 认证令牌 + HMAC 密钥）"""
-    cleanup_port_shm()
+    """清理所有共享内存残留（认证令牌 + HMAC 密钥）"""
     cleanup_auth_shm()
     cleanup_hmac_shm()

@@ -1,7 +1,6 @@
 """PgidProcessTreeTracker — Unix 进程树追踪实现（基于 process group）
 
-迁移自 `pty/unix/process.py` 的 UnixProcessMonitor，实现
-`ProcessTreeTracker` 抽象端口（见 design/process-manager-refactor.md §3.2）。
+实现 `ProcessTreeTracker` 抽象端口（见 design/process-manager-refactor.md §3.2）。
 
 - register_root：fork/setsid 后登记 root，捕获 pgid（子/孙进程共享）
 - kill_tree：killpg SIGTERM → 超时 SIGKILL
@@ -11,14 +10,20 @@
 仅 POSIX 平台被导入。
 """
 
+import logging
 import os
 import signal
-import logging
 import threading
 import time
-from typing import Optional, List
+from typing import List, Optional
 
-from ..base import ProcessTreeTracker, ProcessNotification, NOTIF_SPAWN, NOTIF_EXIT, NOTIF_CRASH
+from ..base import (
+    NOTIF_CRASH,
+    NOTIF_EXIT,
+    NOTIF_SPAWN,
+    ProcessNotification,
+    ProcessTreeTracker,
+)
 
 _logger = logging.getLogger("process-pgid-tracker")
 
@@ -188,13 +193,9 @@ class PgidProcessTreeTracker(ProcessTreeTracker):
         gone_pids = previous - current
         with self._lock:
             for pid in new_pids:
-                self._notifications.append(
-                    ProcessNotification(NOTIF_SPAWN, pid=pid)
-                )
+                self._notifications.append(ProcessNotification(NOTIF_SPAWN, pid=pid))
             for pid in gone_pids:
-                self._notifications.append(
-                    ProcessNotification(NOTIF_EXIT, pid=pid)
-                )
+                self._notifications.append(ProcessNotification(NOTIF_EXIT, pid=pid))
             self._last_pids = list(current)
 
     def _check_crash_internal(self):
@@ -208,12 +209,16 @@ class PgidProcessTreeTracker(ProcessTreeTracker):
             _logger.info("root crash: pid=%d exit=%s", self._root_pid, exit_code)
             with self._lock:
                 self._notifications.append(
-                    ProcessNotification(NOTIF_CRASH, pid=self._root_pid, exit_code=exit_code)
+                    ProcessNotification(
+                        NOTIF_CRASH, pid=self._root_pid, exit_code=exit_code
+                    )
                 )
         else:
             with self._lock:
                 self._notifications.append(
-                    ProcessNotification(NOTIF_EXIT, pid=self._root_pid, exit_code=exit_code)
+                    ProcessNotification(
+                        NOTIF_EXIT, pid=self._root_pid, exit_code=exit_code
+                    )
                 )
 
     # ── 进程列表来源 ──
@@ -234,7 +239,7 @@ class PgidProcessTreeTracker(ProcessTreeTracker):
                     rparen = content.rfind(")")
                     if rparen == -1:
                         continue
-                    rest = content[rparen + 1:].split()
+                    rest = content[rparen + 1 :].split()
                     if len(rest) >= 3:
                         pgrp = int(rest[2])
                         if pgrp == self._pgid:
@@ -249,9 +254,13 @@ class PgidProcessTreeTracker(ProcessTreeTracker):
     def _get_pids_ps(self) -> Optional[List[int]]:
         try:
             import subprocess
+
             result = subprocess.run(
                 ["ps", "-o", "pid=", "-g", str(self._pgid)],
-                capture_output=True, text=True, timeout=2,
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
             )
             pids = []
             for line in result.stdout.strip().split("\n"):
