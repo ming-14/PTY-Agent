@@ -12,18 +12,17 @@ Session 等消费方只依赖此工厂与 ProcessTreeTracker 抽象，不接触�
 
 import uuid
 
+from ..config.common import IS_WINDOWS
+from .base import ProcessNotification, ProcessTreeTracker
+from .gui import GuiDetector
 from .info import (
+    _format_exit_code_message,
+    _format_pty_error,
     _get_process_name,
     _get_process_path,
-    _format_exit_code_message,
     _signal_name,
-    _format_pty_error,
 )
-from .base import ProcessNotification, ProcessTreeTracker
 from .monitor import ProcessMonitor
-from .gui import GuiDetector
-
-from ..config.common import IS_WINDOWS
 
 
 def create_process_tree_tracker() -> ProcessTreeTracker:
@@ -38,8 +37,10 @@ def create_process_tree_tracker() -> ProcessTreeTracker:
     """
     if IS_WINDOWS:
         from ..config import sandbox as _sbx_cfg
+
         if _sbx_cfg.ENABLED:
             from ..sandbox import SandboxProcessTreeTracker, SandboxSessionManager
+
             manager = SandboxSessionManager(
                 quota=_sbx_cfg.QUOTA,
                 isolation=_sbx_cfg.ISOLATION,
@@ -47,6 +48,8 @@ def create_process_tree_tracker() -> ProcessTreeTracker:
             )
             return SandboxProcessTreeTracker(manager)
         from .windows import JobProcessTreeTracker
+
         return JobProcessTreeTracker(name=f"session-{uuid.uuid4().hex[:8]}")
     from .unix import PgidProcessTreeTracker
+
     return PgidProcessTreeTracker()

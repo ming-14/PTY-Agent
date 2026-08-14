@@ -5,7 +5,7 @@
 
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List
 
 from ..config.common import DEFAULT_COLS, DEFAULT_ROWS
 from ..terminal.screen import TerminalScreen
@@ -60,9 +60,9 @@ def _encode_button(
     仅通过 M/m 标记区分，不使用旧 X10 协议的 button=3 表示 release。
     """
     if button == "scroll_up":
-        value = 64          # 0x40, SGR wheel up
+        value = 64  # 0x40, SGR wheel up
     elif button == "scroll_down":
-        value = 65          # 0x41, SGR wheel down
+        value = 65  # 0x41, SGR wheel down
     else:
         value = _BUTTON_MAP[button]
     for m in modifiers:
@@ -77,7 +77,7 @@ def _encode_button(
 def _sgr_sequence(col: int, row: int, button_value: int, is_release: bool) -> bytes:
     """生成单条 SGR 鼠标序列（坐标 1-based）"""
     marker = "m" if is_release else "M"
-    return f"\x1b[<{button_value};{col};{row}{marker}".encode("utf-8")
+    return f"\x1b[<{button_value};{col};{row}{marker}".encode()
 
 
 def _bresenham_line(start: Coord, end: Coord) -> List[Coord]:
@@ -126,15 +126,11 @@ class MouseActionEncoder:
     ) -> List[dict]:
         """生成单击/双击/三击操作序列
 
-        关键：每次 click 的 press+release 必须作为单次 write 发送，这样
-        _intercept_sgr_mouse 才能把它们批量注入到同一次 inject_mouse_events
-        调用中。如果 press 和 release 分别 write，会触发两次独立的
-        AttachConsole + VT_INPUT 切换周期，tcell 可能在 VT_INPUT 恢复后才
-        读取部分事件，导致 tview 的 fireMouseActions 无法识别 click 序列。
+        每次 click 的 press+release 合并为单次 write 原子发送，
+        避免程序读到拆散的半截序列。
 
-        双击/三击时，第二次及后续的 press 事件标记 double_click=True，
-        inject_mouse_events 会据此在 dwEventFlags 中设置 DOUBLE_CLICK 位。
-        Windows TUI 程序（tcell/tview/gdu）依赖此标志识别双击。
+        双击/三击时，第二次及后续的 press 事件标记 double_click=True。
+        Windows TUI 程序（tcell/tview/gdu）依赖 press 间隔识别双击。
         """
         self._validate(coord)
         if button not in _BUTTON_MAP:
@@ -144,12 +140,13 @@ class MouseActionEncoder:
         ops: List[dict] = []
         btn_value = _encode_button(button, modifiers)
         for i in range(count):
-            sgr_data = (
-                _sgr_sequence(coord.col, coord.row, btn_value, False)
-                + _sgr_sequence(coord.col, coord.row, btn_value, True)
-            )
+            sgr_data = _sgr_sequence(
+                coord.col, coord.row, btn_value, False
+            ) + _sgr_sequence(coord.col, coord.row, btn_value, True)
             double_click = i >= 1
-            ops.append({"type": "write", "data": sgr_data, "double_click": double_click})
+            ops.append(
+                {"type": "write", "data": sgr_data, "double_click": double_click}
+            )
             if i < count - 1:
                 ops.append({"type": "sleep", "duration": 0.05})
         return ops
@@ -166,7 +163,9 @@ class MouseActionEncoder:
             flag = _MODIFIER_MAP.get(m)
             if flag is not None:
                 value |= flag
-        return [{"type": "write", "data": _sgr_sequence(coord.col, coord.row, value, False)}]
+        return [
+            {"type": "write", "data": _sgr_sequence(coord.col, coord.row, value, False)}
+        ]
 
     def scroll(
         self,
@@ -203,8 +202,8 @@ class MouseActionEncoder:
     ) -> List[dict]:
         """生成拖拽操作序列（逐格移动）
 
-        同 click，press + 所有 motion + release 合并为单次 write 以确保
-        批量注入到同一 AttachConsole 周期。
+        press + 所有 motion + release 合并为单次 write 原子发送，
+        保证程序按顺序收到完整拖拽序列。
         """
         self._validate(from_coord)
         self._validate(to_coord)
@@ -236,9 +235,7 @@ class MouseActionEncoder:
     ) -> List[dict]:
         """生成长按操作序列
 
-        注意：press+release 之间有 sleep（duration），无法合并为单次 write。
-        tcell 在 VT_INPUT 恢复后读取事件可能导致部分丢失，但长按场景较少，
-        且 duration 通常 > 100ms 远超 VT_INPUT 恢复时间，影响可忽略。
+        press+release 之间有 sleep（duration），无法合并为单次 write。
         """
         self._validate(coord)
         if button not in _BUTTON_MAP:
@@ -247,9 +244,15 @@ class MouseActionEncoder:
             raise MouseError(f"duration must be > 0, got {duration}")
         btn_value = _encode_button(button, modifiers)
         return [
-            {"type": "write", "data": _sgr_sequence(coord.col, coord.row, btn_value, False)},
+            {
+                "type": "write",
+                "data": _sgr_sequence(coord.col, coord.row, btn_value, False),
+            },
             {"type": "sleep", "duration": duration},
-            {"type": "write", "data": _sgr_sequence(coord.col, coord.row, btn_value, True)},
+            {
+                "type": "write",
+                "data": _sgr_sequence(coord.col, coord.row, btn_value, True),
+            },
         ]
 
 
@@ -272,8 +275,10 @@ def grep_screen(screen: TerminalScreen, pattern: str) -> List[MatchRegion]:
             # m.start() / m.end() 是 0-based 字符偏移；end 为开区间
             start_col = m.start() + 1
             end_col = m.end()
-            matches.append(MatchRegion(
-                start=Coord(col=start_col, row=row_idx + 1),
-                end=Coord(col=end_col, row=row_idx + 1),
-            ))
+            matches.append(
+                MatchRegion(
+                    start=Coord(col=start_col, row=row_idx + 1),
+                    end=Coord(col=end_col, row=row_idx + 1),
+                )
+            )
     return matches

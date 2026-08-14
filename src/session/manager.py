@@ -5,10 +5,10 @@
 
 import logging
 import threading
-from typing import Optional, Callable
+from typing import Callable, Optional
 
-from .session import Session
 from ..config.daemon import MAX_SESSIONS
+from .session import Session
 
 _logger = logging.getLogger("pty-session")
 
@@ -19,17 +19,22 @@ class SessionManager:
     负责会话 CRUD 操作和生命周期管理，线程安全。
     """
 
-    def __init__(self, history_store=None):
+    def __init__(self, history_store=None, plugin_registry=None):
         self._sessions: dict = {}
         self._lock = threading.Lock()
         self._history_store = history_store
+        self.plugin_registry = plugin_registry
         self._on_session_created: Optional[Callable[[str], None]] = None
-        self._on_session_removed: Optional[Callable[[str, Optional[int], Optional[str]], None]] = None
+        self._on_session_removed: Optional[
+            Callable[[str, Optional[int], Optional[str]], None]
+        ] = None
 
     def set_on_session_created(self, cb: Optional[Callable[[str], None]]):
         self._on_session_created = cb
 
-    def set_on_session_removed(self, cb: Optional[Callable[[str, Optional[int], Optional[str]], None]]):
+    def set_on_session_removed(
+        self, cb: Optional[Callable[[str, Optional[int], Optional[str]], None]]
+    ):
         self._on_session_removed = cb
 
     def create_session(
@@ -42,27 +47,53 @@ class SessionManager:
         snapshot_mode: bool = False,
         cols: Optional[int] = None,
         rows: Optional[int] = None,
+        plugins: Optional[list] = None,
     ) -> Session:
         if not session_id or not isinstance(session_id, str):
             raise ValueError("会话 ID 必须为非空字符串")
-        _logger.debug("create_session: sid=%r cmd=%r cwd=%r cols=%s rows=%s", session_id, command, cwd, cols, rows)
+        _logger.debug(
+            "create_session: sid=%r cmd=%r cwd=%r cols=%s rows=%s plugins=%s",
+            session_id,
+            command,
+            cwd,
+            cols,
+            rows,
+            plugins,
+        )
         with self._lock:
             if session_id in self._sessions:
-                _logger.warning("create_session: session already exists sid=%r", session_id)
+                _logger.warning(
+                    "create_session: session already exists sid=%r", session_id
+                )
                 raise KeyError(f"会话 '{session_id}' 已存在")
             if len(self._sessions) >= MAX_SESSIONS:
-                _logger.warning("create_session: max sessions reached (%d)", MAX_SESSIONS)
-                raise ValueError(f"会话数已达上限 ({MAX_SESSIONS})，请先 kill 不需要的会话")
-            s = Session(session_id, command, encoding=encoding,
-                        cwd=cwd, env=env, snapshot_mode=snapshot_mode,
-                        cols=cols, rows=rows)
+                _logger.warning(
+                    "create_session: max sessions reached (%d)", MAX_SESSIONS
+                )
+                raise ValueError(
+                    f"会话数已达上限 ({MAX_SESSIONS})，请先 kill 不需要的会话"
+                )
+            s = Session(
+                session_id,
+                command,
+                encoding=encoding,
+                cwd=cwd,
+                env=env,
+                snapshot_mode=snapshot_mode,
+                cols=cols,
+                rows=rows,
+            )
             self._sessions[session_id] = s
+        if plugins:
+            self._attach_plugins(s, plugins)
         s._publisher.add_on_end_callback(lambda sess: self._on_session_ended(sess))
         _logger.info("create_session: starting sid=%r cmd=%r", session_id, command)
         try:
             s.start()
         except Exception:
-            _logger.warning("create_session: start failed sid=%r, removing tombstone", session_id)
+            _logger.warning(
+                "create_session: start failed sid=%r, removing tombstone", session_id
+            )
             with self._lock:
                 self._sessions.pop(session_id, None)
             try:
@@ -77,6 +108,27 @@ class SessionManager:
             except Exception:
                 _logger.exception("on_session_created callback error")
         return s
+
+    def _attach_plugins(self, session: Session, plugins: list) -> None:
+        """按名解析并挂载插件到会话（未知插件名跳过并记日志，不影响会话）"""
+        if self.plugin_registry is None:
+            _logger.warning("插件系统未启用，忽略插件: %s", plugins)
+            return
+        instances = []
+        for name in plugins:
+            inst = self.plugin_registry.instantiate(name)
+            if inst is None:
+                _logger.warning("插件未加载，跳过: %s", name)
+                continue
+            instances.append(inst)
+        if instances:
+            session.plugin_host.attach_many(instances)
+
+    def match_auto_load(self, command, cwd, env) -> list:
+        """按 exec 请求字段匹配自动加载条件，返回命中插件名列表"""
+        if self.plugin_registry is None:
+            return []
+        return self.plugin_registry.match_auto_load(command, cwd, env)
 
     def get_session(self, session_id: str) -> Optional[Session]:
         """获取指定会话
@@ -102,9 +154,7 @@ class SessionManager:
                     "id": s.id,
                     "uid": s.uid,
                     "command": (
-                        s.command
-                        if isinstance(s.command, str)
-                        else " ".join(s.command)
+                        s.command if isinstance(s.command, str) else " ".join(s.command)
                     ),
                     "running": s.running,
                     "startTime": s.start_time,
@@ -138,7 +188,9 @@ class SessionManager:
 
         if self._on_session_removed:
             try:
-                self._on_session_removed(session.id, session.exit_code, session.error_message)
+                self._on_session_removed(
+                    session.id, session.exit_code, session.error_message
+                )
             except Exception:
                 _logger.exception("on_session_removed callback error")
 
@@ -149,6 +201,7 @@ class SessionManager:
             session_id: 会话标识符。
         """
         import time as _time
+
         _t0 = _time.monotonic()
         _logger.info("remove_session: sid=%r", session_id)
         with self._lock:
@@ -157,15 +210,21 @@ class SessionManager:
             if self._history_store:
                 try:
                     self._history_store.archive_session(s, tag="history")
-                    _logger.debug("remove_session: archived sid=%r took %.3fs",
-                                  session_id, _time.monotonic() - _t0)
+                    _logger.debug(
+                        "remove_session: archived sid=%r took %.3fs",
+                        session_id,
+                        _time.monotonic() - _t0,
+                    )
                 except Exception as e:
                     _logger.warning("持久化会话 '%s' 时异常: %s", session_id, e)
             _t1 = _time.monotonic()
             try:
                 s.stop()
-                _logger.info("remove_session: stopped sid=%r stop took %.3fs",
-                             session_id, _time.monotonic() - _t1)
+                _logger.info(
+                    "remove_session: stopped sid=%r stop took %.3fs",
+                    session_id,
+                    _time.monotonic() - _t1,
+                )
             except Exception as e:
                 _logger.warning("移除会话 '%s' 时异常: %s", session_id, e)
             _t2 = _time.monotonic()
@@ -174,8 +233,12 @@ class SessionManager:
                     self._on_session_removed(session_id, s.exit_code, s.error_message)
                 except Exception:
                     _logger.exception("on_session_removed callback error")
-            _logger.info("remove_session: done sid=%r total %.3fs on_removed %.3fs",
-                         session_id, _time.monotonic() - _t0, _time.monotonic() - _t2)
+            _logger.info(
+                "remove_session: done sid=%r total %.3fs on_removed %.3fs",
+                session_id,
+                _time.monotonic() - _t0,
+                _time.monotonic() - _t2,
+            )
 
     def stop_all(self):
         """停止所有会话"""

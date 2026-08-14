@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from fractions import Fraction
 import logging
+from fractions import Fraction
 
 import av
 import numpy as np
@@ -71,9 +71,17 @@ class H264Encoder:
         # 仅 rewrite_to_idr=True 时使用
         self._pending_kf_rewrite = False
 
-    def encode_bgra(self, bgra_data: bytes, stride: int, width: int, height: int, target_width: int = 0, target_height: int = 0) -> list[bytes]:
+    def encode_bgra(
+        self,
+        bgra_data: bytes,
+        stride: int,
+        width: int,
+        height: int,
+        target_width: int = 0,
+        target_height: int = 0,
+    ) -> list[bytes]:
         arr = np.frombuffer(bgra_data, dtype=np.uint8).reshape((height, stride))
-        arr = arr[:, :width * 4].reshape((height, width, 4))
+        arr = arr[:, : width * 4].reshape((height, width, 4))
         bgra = np.ascontiguousarray(arr)
 
         frame = av.VideoFrame.from_ndarray(bgra, format="bgra")
@@ -106,8 +114,13 @@ class H264Encoder:
             # 诊断日志：解析 annexb NAL 类型
             if _logger.isEnabledFor(logging.DEBUG):
                 nal_types = self._parse_nal_types(data)
-                _logger.debug("encoded NAL types=%s, size=%d, pending_kf_rewrite=%s, rewrite_to_idr=%s",
-                              nal_types, len(data), self._pending_kf_rewrite, self.rewrite_to_idr)
+                _logger.debug(
+                    "encoded NAL types=%s, size=%d, pending_kf_rewrite=%s, rewrite_to_idr=%s",
+                    nal_types,
+                    len(data),
+                    self._pending_kf_rewrite,
+                    self.rewrite_to_idr,
+                )
         return result
 
     @staticmethod
@@ -149,10 +162,16 @@ class H264Encoder:
         last_nal_data = data[last_nal_start:]
 
         # 诊断日志：hex dump 前 64 字节
-        hex_dump = last_nal_data[:64].hex(' ')
-        _logger.debug("normalize_to_annexb: types=%s, start_positions=%s, "
-                      "last_nal_start=%d, last_nal_data_len=%d, hex=%s",
-                      types, start_positions, last_nal_start, len(last_nal_data), hex_dump)
+        hex_dump = last_nal_data[:64].hex(" ")
+        _logger.debug(
+            "normalize_to_annexb: types=%s, start_positions=%s, "
+            "last_nal_start=%d, last_nal_data_len=%d, hex=%s",
+            types,
+            start_positions,
+            last_nal_start,
+            len(last_nal_data),
+            hex_dump,
+        )
 
         # SPS/PPS 数据通常 < 100 bytes；若 last_nal_data 很长，可能内嵌 AVCC slice
         if len(last_nal_data) > 100:
@@ -162,10 +181,12 @@ class H264Encoder:
             for sps_pps_len in range(2, search_end):
                 if len(last_nal_data) < sps_pps_len + 5:
                     break
-                avcc_len = (last_nal_data[sps_pps_len] << 24) | \
-                           (last_nal_data[sps_pps_len + 1] << 16) | \
-                           (last_nal_data[sps_pps_len + 2] << 8) | \
-                           last_nal_data[sps_pps_len + 3]
+                avcc_len = (
+                    (last_nal_data[sps_pps_len] << 24)
+                    | (last_nal_data[sps_pps_len + 1] << 16)
+                    | (last_nal_data[sps_pps_len + 2] << 8)
+                    | last_nal_data[sps_pps_len + 3]
+                )
                 if 0 < avcc_len <= len(last_nal_data) - sps_pps_len - 4:
                     nal_header = last_nal_data[sps_pps_len + 4]
                     nal_type = nal_header & 0x1F
@@ -173,17 +194,28 @@ class H264Encoder:
                         # 找到 AVCC slice，构建纯 annexb 数据
                         result = bytearray()
                         # annexb 部分（到 SPS/PPS 数据结束）
-                        result += data[:last_nal_start + sps_pps_len]
+                        result += data[: last_nal_start + sps_pps_len]
                         # AVCC slice 转换为 annexb 起始码
-                        result += b'\x00\x00\x00\x01'
-                        result += last_nal_data[sps_pps_len + 4:sps_pps_len + 4 + avcc_len]
-                        _logger.debug("normalize_to_annexb: FOUND AVCC slice at pos=%d, "
-                                      "type=%d, avcc_len=%d, result_size=%d",
-                                      sps_pps_len, nal_type, avcc_len, len(result))
+                        result += b"\x00\x00\x00\x01"
+                        result += last_nal_data[
+                            sps_pps_len + 4 : sps_pps_len + 4 + avcc_len
+                        ]
+                        _logger.debug(
+                            "normalize_to_annexb: FOUND AVCC slice at pos=%d, "
+                            "type=%d, avcc_len=%d, result_size=%d",
+                            sps_pps_len,
+                            nal_type,
+                            avcc_len,
+                            len(result),
+                        )
                         return bytes(result)
 
-            _logger.debug("normalize_to_annexb: AVCC search FAILED (no valid slice in pos 2-%d), "
-                          "last_nal_data_len=%d", search_end - 1, len(last_nal_data))
+            _logger.debug(
+                "normalize_to_annexb: AVCC search FAILED (no valid slice in pos 2-%d), "
+                "last_nal_data_len=%d",
+                search_end - 1,
+                len(last_nal_data),
+            )
 
         # 无法识别为 AVCC/混合格式，返回原始数据
         return data
@@ -194,16 +226,21 @@ class H264Encoder:
         result = bytearray()
         i = 0
         while i + 4 <= len(data):
-            length = (data[i] << 24) | (data[i + 1] << 16) | (data[i + 2] << 8) | data[i + 3]
+            length = (
+                (data[i] << 24) | (data[i + 1] << 16) | (data[i + 2] << 8) | data[i + 3]
+            )
             if length <= 0 or length > len(data) - i - 4:
                 break
-            result += b'\x00\x00\x00\x01'
-            result += data[i + 4:i + 4 + length]
+            result += b"\x00\x00\x00\x01"
+            result += data[i + 4 : i + 4 + length]
             i += 4 + length
         # 只有完整解析（到达数据末尾）才返回转换结果
         if i == len(data) and len(result) > 0:
-            _logger.debug("avcc_to_annexb: converted %d bytes AVCC -> %d bytes annexb",
-                          len(data), len(result))
+            _logger.debug(
+                "avcc_to_annexb: converted %d bytes AVCC -> %d bytes annexb",
+                len(data),
+                len(result),
+            )
             return bytes(result)
         return data
 
@@ -219,9 +256,9 @@ class H264Encoder:
         types = []
         i = 0
         while i < len(data) - 2:
-            if data[i] == 0 and data[i+1] == 0 and data[i+2] == 1:
+            if data[i] == 0 and data[i + 1] == 0 and data[i + 2] == 1:
                 if i + 3 < len(data):
-                    types.append(data[i+3] & 0x1F)
+                    types.append(data[i + 3] & 0x1F)
                 i += 3
             else:
                 i += 1
@@ -243,12 +280,12 @@ class H264Encoder:
         had_slice = False
         i = 0
         while i < len(result) - 2:
-            if result[i] == 0 and result[i+1] == 0 and result[i+2] == 1:
+            if result[i] == 0 and result[i + 1] == 0 and result[i + 2] == 1:
                 # NAL header 在 i+3
                 if i + 3 < len(result):
-                    nal_type = result[i+3] & 0x1F
+                    nal_type = result[i + 3] & 0x1F
                     if nal_type == 1:  # non-IDR slice → IDR
-                        result[i+3] = (result[i+3] & 0xE0) | 0x05
+                        result[i + 3] = (result[i + 3] & 0xE0) | 0x05
                         had_slice = True
                         _logger.debug("rewrite NAL type 1→5 (forced keyframe)")
                     elif nal_type == 5:  # 已经是 IDR

@@ -1,39 +1,39 @@
 """伪终端后端层 — 工厂函数与平台检测
 
 提供 create_pty() 工厂函数，按优先级尝试各 PTY 后端实现。
-Windows 特有代码存放在 windows/ 子包下，Unix 平台零加载。
 
 后端优先级（Windows）:
-  沙箱（winsandbox，sandbox.toml enabled=true 时）> ConDrv 直连 > kernel32.CreatePseudoConsole
+  wezterm-py（OpenConsole 宿主，唯一后端）> 沙箱（winsandbox，sandbox.toml
+  enabled=true 时）
+Unix 统一使用 wezterm-py（portable-pty openpty）。
 工厂入口统一归一化命令：str 按 shell 语义拆分（shlex.split），后端统一消费 List[str]。
 """
 
 import logging
 import shlex
-from typing import Optional, List
-from ..config.common import IS_WINDOWS, DEFAULT_COLS, DEFAULT_ROWS
+from typing import List, Optional
+
+from ..config.common import DEFAULT_COLS, DEFAULT_ROWS, IS_WINDOWS
 from ..process.base import ProcessTreeTracker
 from .base import PseudoTerminal
-from .unix import UnixPseudoTerminal
+from .wezterm_pty import _HAS_WEZTERM, WeztermPseudoTerminal
 
 _logger = logging.getLogger("pty-factory")
 
-if IS_WINDOWS:
-    from .windows.conpty import WindowsPseudoTerminal
-    from .windows.condrv import ConDrvPseudoTerminal
-    from .windows.win32_api import _CONDRV_OK
 
-
-def create_pty(command: List[str], cols: int = DEFAULT_COLS, rows: int = DEFAULT_ROWS,
-               cwd: Optional[str] = None, env: Optional[dict] = None,
-               encoding: Optional[str] = None,
-               tracker: Optional[ProcessTreeTracker] = None) -> PseudoTerminal:
+def create_pty(
+    command: List[str],
+    cols: int = DEFAULT_COLS,
+    rows: int = DEFAULT_ROWS,
+    cwd: Optional[str] = None,
+    env: Optional[dict] = None,
+    encoding: Optional[str] = None,
+    tracker: Optional[ProcessTreeTracker] = None,
+) -> PseudoTerminal:
     """创建最优可用的 PTY 后端实例
 
-    优先级:
-      Windows: 沙箱（winsandbox，sandbox.toml enabled=true）> ConDrv 直连 >
-               kernel32.CreatePseudoConsole
-      Unix:    UnixPseudoTerminal
+    所有平台统一优先 wezterm-py（Windows: OpenConsole 宿主；
+    Unix: portable-pty openpty）；Windows 沙箱启用时走沙箱后端。
 
     Args:
         command:  命令（List[str] 或 str；str 时按 shell 语义拆分）。
@@ -41,7 +41,7 @@ def create_pty(command: List[str], cols: int = DEFAULT_COLS, rows: int = DEFAULT
         rows:     终端高度（行数），默认 {DEFAULT_ROWS}。
         cwd:      子进程工作目录（默认守护进程当前目录）。
         env:      子进程额外环境变量（dict，合并到 os.environ）。
-        encoding: 终端输出编码（影响 Windows ConPTY 代码页设置）。
+        encoding: 终端输出编码（Windows 影响 ConPTY 代码页设置）。
         tracker:  Session 创建的进程树追踪器（spawn 成功后同一路径内
                   register_root，进程树归属 tracker）。
 
@@ -52,35 +52,55 @@ def create_pty(command: List[str], cols: int = DEFAULT_COLS, rows: int = DEFAULT
         RuntimeError: 所有 PTY 后端均创建失败时抛出。
     """
     # 命令归一化：str 按 shell 语义拆分（Windows 下用 cmd 兼容拆分），
-    # 各后端（list2cmdline/CreateProcess）均要求 List[str]，避免逐字符展开
+    # 各后端均要求 List[str]，避免逐字符展开
     if isinstance(command, str):
         command = shlex.split(command)
     if IS_WINDOWS:
-        sbx_pty = _try_create_sandbox_pty(command, cols, rows, cwd, env, encoding, tracker)
+        # 首选 wezterm-py（OpenConsole 宿主，规避系统 conhost 的 VT 输入缺陷）
+        if _HAS_WEZTERM:
+            try:
+                _logger.info("create_pty: trying WeztermPseudoTerminal")
+                return WeztermPseudoTerminal(
+                    command,
+                    cols,
+                    rows,
+                    cwd=cwd,
+                    env=env,
+                    encoding=encoding,
+                    tracker=tracker,
+                )
+            except Exception as e:
+                _logger.warning(
+                    "create_pty: WeztermPseudoTerminal failed: %s, falling back", e
+                )
+        sbx_pty = _try_create_sandbox_pty(
+            command, cols, rows, cwd, env, encoding, tracker
+        )
         if sbx_pty is not None:
             return sbx_pty
-        if _CONDRV_OK:
-            try:
-                _logger.info("create_pty: trying ConDrvPseudoTerminal")
-                return ConDrvPseudoTerminal(command, cols, rows, cwd=cwd, env=env, tracker=tracker)
-            except Exception as e:
-                _logger.warning("create_pty: ConDrvPseudoTerminal failed: %s, falling back", e)
+        raise RuntimeError("所有 PTY 后端均创建失败（wezterm-py 不可用或创建失败）")
+
+    # Unix：统一 wezterm-py（portable-pty openpty）
+    if _HAS_WEZTERM:
         try:
-            _logger.info("create_pty: trying WindowsPseudoTerminal (ConPTY)")
-            return WindowsPseudoTerminal(command, cols, rows, cwd=cwd, env=env,
-                                         encoding=encoding, tracker=tracker)
+            _logger.info("create_pty: trying WeztermPseudoTerminal (unix)")
+            return WeztermPseudoTerminal(
+                command,
+                cols,
+                rows,
+                cwd=cwd,
+                env=env,
+                encoding=encoding,
+                tracker=tracker,
+            )
         except Exception as e:
-            raise RuntimeError(f"所有 PTY 后端均创建失败: {e}") from e
-
-    try:
-        _logger.info("create_pty: trying UnixPseudoTerminal")
-        return UnixPseudoTerminal(command, cols, rows, cwd=cwd, env=env, tracker=tracker)
-    except Exception as e:
-        raise RuntimeError(f"UnixPseudoTerminal 创建失败: {e}") from e
+            raise RuntimeError(f"WeztermPseudoTerminal 创建失败: {e}") from e
+    raise RuntimeError("wezterm-py 不可用，无法创建 PTY 后端")
 
 
-def _try_create_sandbox_pty(command, cols, rows, cwd, env, encoding,
-                            tracker: Optional[ProcessTreeTracker]):
+def _try_create_sandbox_pty(
+    command, cols, rows, cwd, env, encoding, tracker: Optional[ProcessTreeTracker]
+):
     """尝试创建 winsandbox 沙箱后端（sandbox.toml enabled=true 且带沙箱 tracker 时）
 
     沙箱会话 = 沙箱后端 + 沙箱进程树追踪器（Session 工厂同受 ENABLED 控制，
@@ -92,9 +112,11 @@ def _try_create_sandbox_pty(command, cols, rows, cwd, env, encoding,
         PseudoTerminal 实例或 None（未启用沙箱 / 无沙箱 tracker 时）。
     """
     from ..config import sandbox as _sbx_cfg
+
     if not _sbx_cfg.ENABLED:
         return None
-    from ..sandbox import SandboxPty, SandboxProcessTreeTracker
+    from ..sandbox import SandboxProcessTreeTracker, SandboxPty
+
     if tracker is None:
         # 无进程树追踪需求：视为非沙箱会话，回退原生后端
         return None
@@ -104,7 +126,15 @@ def _try_create_sandbox_pty(command, cols, rows, cwd, env, encoding,
         raise RuntimeError("沙箱已启用但进程树追踪器类型不匹配")
     try:
         _logger.info("create_pty: trying SandboxPty (winsandbox)")
-        return SandboxPty(command, cols, rows, cwd=cwd, env=env, encoding=encoding,
-                          tracker=tracker, manager=tracker.manager)
+        return SandboxPty(
+            command,
+            cols,
+            rows,
+            cwd=cwd,
+            env=env,
+            encoding=encoding,
+            tracker=tracker,
+            manager=tracker.manager,
+        )
     except Exception as e:
         raise RuntimeError(f"沙箱 PTY 创建失败（沙箱启用时不回退原生后端）: {e}") from e

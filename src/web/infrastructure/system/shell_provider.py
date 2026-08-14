@@ -12,7 +12,7 @@ class ShellProviderImpl(ShellProvider):
 
     def list_shells(self) -> dict:
         try:
-            from ....pty import detect_available_shells
+            from .....common.shells import detect_available_shells
 
             return detect_available_shells()
         except Exception as e:

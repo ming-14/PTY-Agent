@@ -17,7 +17,6 @@ tests/
 │   ├── auth/                # 认证层测试
 │   │   ├── test_context.py
 │   │   ├── test_ed25519_signer.py
-│   │   ├── test_or_verifier.py
 │   │   ├── test_pubkey.py
 │   │   ├── test_keys.py
 │   │   └── tls/             # TLS 认证测试

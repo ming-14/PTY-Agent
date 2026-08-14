@@ -18,15 +18,15 @@ export {
   restoreScrollbackAndSnapshot,
 } from './terminal/lifecycle.js';
 
-// 终端框尺寸与字号缩放（v9.2：按会话 frameRatio，Ctrl+滚轮调比例不改 cols/rows）
+// 终端框尺寸与字号缩放（按会话 frameRatio，Ctrl+滚轮调比例不改 cols/rows）
 export {
   applyTerminalFrameSize,
   applyTerminalSize,
   applyTerminalFontSize,
   reapplyAllTerminalSizes,
-  applySessionFrameRatio, // v9.2：切标签/stage 变化时恢复框大小（adaptive 设 frame+fit 改 cols/rows；非 adaptive 反算字号）
-  zoomActiveSession,       // v9.2：Ctrl+滚轮统一缩放入口（所有模式按 ratio 反算字号，cols/rows 不变）
-  resetActiveSessionZoom,  // v9.2：Ctrl+0 重置（所有模式字号回默认再反算 ratio，cols/rows 不变）
+  applySessionFrameRatio, // 切标签/stage 变化时恢复框大小（adaptive 设 frame+fit 改 cols/rows；非 adaptive 反算字号）
+  zoomActiveSession,       // Ctrl+滚轮统一缩放入口（所有模式按 ratio 反算字号，cols/rows 不变）
+  resetActiveSessionZoom,  // Ctrl+0 重置（所有模式字号回默认再反算 ratio，cols/rows 不变）
 } from './terminal/scale.js';
 
 // 终端尺寸模式相关纯函数
@@ -47,7 +47,7 @@ export {
   scrollTermToTop,
 } from './terminal/scroll.js';
 
-// 撑满检测（v8：全局 wheel 与终端 wheel 共用，防止框超出 stage）
+// 撑满检测（全局 wheel 与终端 wheel 共用，防止框超出 stage）
 export {
   isFrameAtMaxSize,
 } from './terminal/events.js';

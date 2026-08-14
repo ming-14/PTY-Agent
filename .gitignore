@@ -1,3 +1,5 @@
+!config/apikey.env
+
 # ===================== Python =====================
 __pycache__/
 *.py[cod]
@@ -67,25 +69,25 @@ pty-agent/
 
 # ===================== 参考 / 外部代码 =====================
 reference/
-wezterm-py/
+
+# ===================== 二进制 / 运行时产物 =====================
 src/web/static/vendor/rime/rime-plugin.js
 src/web/static/vendor/rime/rime-plugin.js.map
 src/web/static/vendor/rime/rime-plugin.esm.js
 src/web/static/vendor/rime/rime-plugin.esm.js.map
 **/.webpack-copy-tmp/
-
-# ===================== 二进制 / 运行时产物 =====================
 bin/ultravnc/
+bin/terminal_injector/
 bin/fastscreencore/fastscreen.dll
 bin/cursorlocator/cursorlocator_config.json
 bin/aichat/
 bin/rg/
 bin/win_sandbox/
 bin/openconsole/
+bin/pywezterm/
 
 # ===================== 参考 / 外部代码 =====================
 reference/
-wezterm-py/
 
 # ===================== 测试临时文件 =====================
 tests/live-environment/

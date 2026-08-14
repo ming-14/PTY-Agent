@@ -3,6 +3,7 @@
 import logging
 import os
 import time
+
 from ...application.ports import SystemStatsProvider, ThreadExecutor
 from ...domain.entities import SystemStats
 
@@ -100,6 +101,7 @@ def _get_linux_stats():
 
     # 读取 CPU 使用率（两次采样计算差值）
     try:
+
         def read_cpu_times():
             with open("/proc/stat", "r") as f:
                 line = f.readline()

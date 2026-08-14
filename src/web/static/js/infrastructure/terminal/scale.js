@@ -1,7 +1,7 @@
 /**
- * 终端基础设施：终端尺寸与字号缩放（v9.2，按会话 frameRatio 重构）
+ * 终端基础设施：终端尺寸与字号缩放（按会话 frameRatio）
  *
- * v9.2 核心思路（与用户需求"自适应的是比例"对齐）：
+ * 核心思路（"自适应的是比例"）：
  *   1. 每个会话（含 adaptive）持久化 frameRatio（框/stage 占比，取宽高较小值）
  *   2. applySessionFrameRatio（切标签 / stage 变化 / 新会话首次打开时调用）：
  *      - adaptive 模式：按 ratio 设 frame 尺寸 = ratio×stage → fit() 算 cols/rows
@@ -63,7 +63,7 @@ export function applyTerminalFrameSize(sid) {
   const frame = $('terminal-frame');
   if (!frame) return;
 
-  // v6: 移除 .adaptive class，所有模式 frame 都跟随 xterm 实际渲染区
+  // 不使用 .adaptive class，所有模式 frame 都跟随 xterm 实际渲染区
   frame.classList.remove('adaptive');
 
   // 读 .xterm-screen（canvas 容器）而非 .xterm（后者是 100%，会拿到 frame 尺寸）
@@ -81,7 +81,7 @@ export function applyTerminalFrameSize(sid) {
   requestAnimationFrame(() => {
     const rect = termEl.getBoundingClientRect();
     if (!rect.width || !rect.height) {
-      // v6 fix: div 为 display:none 时 .xterm-screen 尺寸为 0。
+      // div 为 display:none 时 .xterm-screen 尺寸为 0。
       // 仅当 sid 是当前活动标签时才重试（切标签后 div 刚可见但尚未渲染），
       // 非活动标签的 div 本就是隐藏的，无需设置 frame，直接返回避免无限 rAF 循环
       if (state.activeTab === sid) {
@@ -89,7 +89,7 @@ export function applyTerminalFrameSize(sid) {
       }
       return;
     }
-    // v7: frame 无 border（CSS 用 box-shadow 外部投影代替），box-sizing: content-box
+    // frame 无 border（CSS 用 box-shadow 外部投影代替），box-sizing: content-box
     // frame width = .xterm-screen width，frame 内容区 = .xterm-screen 尺寸
     // .xterm (100%) = frame 内容区 = .xterm-screen，xterm 内部 canvas 渲染区与 buffer 完全匹配
     frame.style.width = Math.ceil(rect.width) + 'px';
@@ -110,7 +110,7 @@ export function applyTerminalFrameSize(sid) {
  *
  * 读取该会话自身的尺寸模式（按 uid 查询）：
  * - 'default':  使用守护进程上报的 s.cols/s.rows
- * - 'adaptive': v9.2 调 applySessionFrameRatio：按保存的 frameRatio 设 frame 尺寸 + fit() 算 cols/rows
+ * - 'adaptive': 调 applySessionFrameRatio：按保存的 frameRatio 设 frame 尺寸 + fit() 算 cols/rows
  *               （adaptive 自适应 stage 宽高比，cols/rows 跟着 fit 变；Ctrl+滚轮不走这里）
  * - 'fixed':    使用 fixedCols/fixedRows，直接 term.resize
  * - 'custom':   使用 customCols/customRows，直接 term.resize
@@ -131,11 +131,10 @@ export function applyTerminalSize(sid, force, opts) {
   const skipDaemonResize = !!(opts && opts.skipDaemonResize);
   const forceDaemonResize = !!force;
   const cfg = getSessionSizeConfigBySid(sid);
-  // 历史会话强制非 adaptive：固定生前最后 cols/rows，不 fit 自适应 stage。
-  // 用户需求：历史会话原先是自适应的，就固定显示会话生前最后的尺寸。
+  // 历史会话原先是自适应的，固定显示会话生前最后的尺寸。
   const mode = s.history ? 'default' : cfg.mode;
 
-  // v9.2: adaptive 模式调 applySessionFrameRatio（按 ratio 设 frame + fit；Ctrl+滚轮不走这里）
+  // adaptive 模式调 applySessionFrameRatio（按 ratio 设 frame + fit；Ctrl+滚轮不走这里）
   if (mode === 'adaptive') {
     applySessionFrameRatio(sid);
     debug('terminal', 'applyTerminalSize adaptive → applySessionFrameRatio sid=%s (force=%s)',
@@ -154,10 +153,8 @@ export function applyTerminalSize(sid, force, opts) {
   const cols = size.cols;
   const rows = size.rows;
 
-  // v5 单路径同步（与 ttyd 一致）：
+  // 单路径同步（与 ttyd 一致）：
   //   只调用 term.resize()，由 onResize 回调统一发送 wsSend(resize)
-  //   移除旧的 _skipResizeSend 标志位 + 主动 wsSend 双路径逻辑
-  //   双路径是光标错位的根因之一：异常路径下 skip 标志可能不被正确清除
   if (inst.term.cols !== cols || inst.term.rows !== rows) {
     try {
       inst.term.resize(cols, rows);
@@ -181,8 +178,8 @@ export function applyTerminalSize(sid, force, opts) {
 /**
  * 应用指定会话的字号到其 term 实例。
  *
- * v9 改造：从"应用到所有 termInstances"改为"只应用指定 sid"。
- * 字号按会话独立维护（state.sessionFontSizes[sid]），不再全局共享。
+ * 只应用指定 sid 会话的字号。
+ * 字号按会话独立维护（state.sessionFontSizes[sid]），不全局共享。
  * 调用后用 rAF 等待 xterm 内部 dimensions 刷新，再读 .xterm-screen 重算 frame。
  *
  * @param {string} sid 会话 ID
@@ -196,7 +193,7 @@ export function applyTerminalFontSize(sid) {
   } catch (e) {
     console.error('set fontSize failed', e);
   }
-  // v6: 不 fit，cols/rows 不变，frame 跟随新 cell 像素
+  // 不 fit，cols/rows 不变，frame 跟随新 cell 像素
   requestAnimationFrame(() => {
     try { applyTerminalFrameSize(sid); } catch (_) {}
     // 再等一帧，确保 xterm 内部完全刷新（有些渲染器要两帧）
@@ -211,7 +208,7 @@ export function applyTerminalFontSize(sid) {
  * 重新计算并应用终端尺寸。
  * 用于尺寸模式切换、窗口 resize 等场景。
  *
- * 问题2：扩展可选 sid 参数。被降级到 fixed 时仅需对单个会话应用，
+ * 可选 sid 参数：被降级到 fixed 时仅需对单个会话应用，
  * 避免遍历所有会话引起其他会话不必要的 resize。
  *
  * @param {boolean} force 是否强制向守护进程发送 resize（用户显式选择尺寸时为 true）
@@ -234,15 +231,13 @@ export function reapplyAllTerminalSizes(force, sid) {
 /**
  * 根据会话保存的 frameRatio 和当前 stage 尺寸，恢复/应用框大小。
  *
- * v9.2：替代 v8 的 shrinkFontSizeToFitStage。
- *
  * 触发场景（注意：Ctrl+滚轮不走这里，走 zoomActiveSession）：
  *   - 切换标签（ui.switchTab）
  *   - stage 尺寸变化（ResizeObserver：sidebar 拖动、窗口 resize、全屏切换）
  *   - ensureTerminal 初始化完成后
  *   - applyTerminalSize 的 adaptive 分支
  *
- * 行为分支（v9.2: 所有模式都参与 ratio 记忆）：
+ * 行为分支（所有模式都参与 ratio 记忆）：
  *   - adaptive 模式（cols/rows 会变，自适应 stage 宽高比）：
  *     - frameRatio 为 null（首次）：用当前 frame 尺寸反算 ratio 并保存，不改变任何东西
  *     - frameRatio 有值：设 frame 尺寸 = stage × ratio，调 fit() 基于 frame 尺寸算 cols/rows
@@ -261,9 +256,8 @@ export function applySessionFrameRatio(sid) {
   if (!s || !s.uid) return false;
 
   const cfg = getSessionSizeConfigBySid(sid);
-  // 历史会话强制非 adaptive：固定生前最后 cols/rows，不 fit 自适应 stage。
-  // 用户需求：历史会话原先是自适应的，就固定显示会话生前最后的尺寸。
-  // 但允许 Ctrl+滚轮缩放字号（按 frameRatio 反算），且记忆 frameRatio。
+  // 历史会话原先是自适应的，固定显示会话生前最后的尺寸。
+  // 允许 Ctrl+滚轮缩放字号（按 frameRatio 反算），且记忆 frameRatio。
   const isHistory = !!s.history;
   const stage = $('terminal-stage');
   if (!stage) return false;
@@ -428,11 +422,11 @@ function getActiveStageAndCell() {
 /**
  * 调整当前活动会话的缩放。
  *
- * v9.2 统一缩放入口：Ctrl+滚轮 / 触摸捏合 / Ctrl+± 都调用本函数。
+ * 统一缩放入口：Ctrl+滚轮 / 触摸捏合 / Ctrl+± 都调用本函数。
  *
  * 行为（所有模式统一）：调整 frameRatio → 按 ratio 反算字号 → 应用字号（cols/rows 不变）。
  *
- * 关键区分（用户需求"自适应的是比例"）：
+ * 关键区分（"自适应的是比例"）：
  *   - adaptive 模式的"自适应 stage 宽高比"由 applySessionFrameRatio 在切标签 / stage 变化时
  *     通过"设 frame 尺寸 + fit()"完成，cols/rows 跟着 fit() 变；
  *   - Ctrl+滚轮只调整框占 stage 的真实大小（通过字号），**不改 cols/rows**。
@@ -466,7 +460,7 @@ export function zoomActiveSession(deltaRatio) {
   // 保存 ratio（持久化）
   setActiveSessionFrameRatio(nextRatio);
 
-  // v9.2: 所有模式统一按 ratio 反算字号（cols/rows 不变）。
+  // 所有模式统一按 ratio 反算字号（cols/rows 不变）。
   // adaptive 模式的"自适应 stage 宽高比"由 applySessionFrameRatio 在切标签/stage 变化时通过 fit() 完成，
   // Ctrl+滚轮只调整框占 stage 的真实大小（通过字号），不改 cols/rows。
   const currentFontSize = getSessionFontSize(sid);
@@ -484,7 +478,7 @@ export function zoomActiveSession(deltaRatio) {
 /**
  * 重置当前活动会话的缩放（Ctrl+0）。
  *
- * v9.2 行为（所有模式统一）：字号重置为 DEFAULT_FONT_SIZE，等渲染完成后按新 frame 反算 ratio 保存。
+ * 行为（所有模式统一）：字号重置为 DEFAULT_FONT_SIZE，等渲染完成后按新 frame 反算 ratio 保存。
  * cols/rows 不变（与 zoomActiveSession 一致：Ctrl+滚轮类操作不改 cols/rows）。
  *
  * @returns {boolean} 是否执行了重置
@@ -497,7 +491,7 @@ export function resetActiveSessionZoom() {
   const s = state.sessions[sid];
   if (!s || !s.uid) return false;
 
-  // v9.2: 所有模式统一字号回默认 + 反算 ratio（cols/rows 不变）
+  // 所有模式统一字号回默认 + 反算 ratio（cols/rows 不变）
   setSessionFontSize(sid, DEFAULT_FONT_SIZE);
   applyTerminalFontSize(sid);
   requestAnimationFrame(() => {

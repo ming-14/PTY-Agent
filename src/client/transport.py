@@ -4,41 +4,41 @@
 支持自动启动守护进程、临时默认配置覆盖。
 """
 
+import base64
+import gzip
+import json
 import logging
 import os
-import sys
-import ssl
-import json
-import gzip
-import base64
-import socket
 import shlex
+import socket
+import ssl
+import sys
 import time
 from typing import Optional
 
-from ..protocol.message import Message
-from ..protocol.response import Response
-from ..auth.token import TokenCredentialProvider
-from ..auth.token import HmacMessageSigner
-from ..auth.pubkey import Ed25519MessageSigner
-from ..auth.pubkey import PubkeyCredentialProvider
 from ..auth.keys import PrivateKey
+from ..auth.pubkey import Ed25519MessageSigner, PubkeyCredentialProvider
 from ..auth.tls.known_hosts import KnownHosts
-from .tls_transport import TLSClient
-from ..ipc.shm import read_hmac_key
-from ..config.common import DAEMON_HOST, IS_WINDOWS, DEFAULT_COLS, DEFAULT_ROWS
+from ..auth.token import HmacMessageSigner, TokenCredentialProvider
 from ..config.client import (
+    CONNECT_MODE,
     CONNECT_TIMEOUT,
     DEFAULT_TRIGGER_TIMEOUT,
-    ENABLE_TOKEN_AUTH,
-    ENABLE_PUBKEY_AUTH,
-    CLIENT_AUTH_METHOD,
-    PUBKEY_PRIVATE_KEY_PATH,
-    DAEMON_REMOTE_HOST,
-    DAEMON_REMOTE_PORT,
     KNOWN_HOSTS_FILE,
+    PLAIN_HOST,
+    PLAIN_PORT,
+    PUBKEY_PRIVATE_KEY_PATH,
+    TLS_HOST,
+    TLS_PORT,
     TOFU_STRICT,
+    TOKEN_HOST,
+    TOKEN_PORT,
 )
+from ..config.common import IS_WINDOWS
+from ..daemonctl import TLSClient
+from ..ipc.shm import read_hmac_key
+from ..protocol.message import Message
+from ..protocol.response import Response
 
 
 def _decompress_screen_buffer(resp: dict):
@@ -53,15 +53,16 @@ def _decompress_screen_buffer(resp: dict):
         _logger.warning("解压 screenBufferZ 失败: %s", e)
 
 
-from .lifecycle import is_running, start_daemon, stop_daemon
-from .input import process_input
-from .formatter import print_response
-from .config_manager import ConfigManager, _DEFAULTS as _DEFAULTS_MAP
+from ..daemonctl import start_daemon, stop_daemon
 from .ai_analyser import analyse_response
+from .config_manager import _DEFAULTS as _DEFAULTS_MAP
+from .config_manager import ConfigManager
+from .formatter import print_response
+from .input import process_input
 
 _logger = logging.getLogger("pty-client")
 
-_SHELL_OPS = frozenset({'|', '||', '&', '&&', ';', '>', '<', '>>'})
+_SHELL_OPS = frozenset({"|", "||", "&", "&&", ";", ">", "<", ">>"})
 
 
 def _has_shell_operators(cmd: str) -> bool:
@@ -74,26 +75,22 @@ def _has_shell_operators(cmd: str) -> bool:
 
 def _parse_iso_time(s: str) -> float:
     from datetime import datetime
+
     if s.endswith("Z"):
         s = s[:-1] + "+00:00"
     dt = datetime.fromisoformat(s)
     return dt.timestamp()
 
 
-def _read_daemon_port() -> Optional[int]:
-    from ..ipc.shm import read_port_from_shm
-    return read_port_from_shm()
-
-
 def _load_signer_and_providers():
-    """按 CLIENT_AUTH_METHOD 单选装配签名器与凭证提供者
+    """按 CONNECT_MODE 装配签名器与凭证提供者
 
-    客户端只能选一种认证方式，请求只携带一种凭证一种签名（OR 语义）：
-    - "token":  HMAC 对称，出站签请求 + 入站验响应（双向保护）
-    - "pubkey": Ed25519 非对称单向，出站签请求，入站不验响应（响应裸传）
-    - "none":   无认证
+    连接模式决定认证方式（与 daemon 侧对应监听器匹配）：
+    - "token":  Token + HMAC 对称，出站签请求 + 入站验响应（双向保护）
+                （令牌与 HMAC 密钥经同机 SHM 分发）
+    - "tls":    Ed25519 非对称单向，出站签请求，入站不验响应（响应裸传）
+    - "plain":  无认证，不装配签名器
 
-    校验 CLIENT_AUTH_METHOD 在服务端 ENABLE 支持列表内（同机共享 common.toml）。
     设置 Message 出/入站签名器，返回 providers 列表供调用方使用。
 
     幂等：若 Message 出站签名器已设置则直接返回 None（已装配过）。
@@ -101,33 +98,21 @@ def _load_signer_and_providers():
     if Message.get_outbound_signer() is not None:
         return None
 
-    method = CLIENT_AUTH_METHOD
-
-    # 校验客户端选择的方式在服务端支持列表内（同机能力校验）
-    if method == "token" and not ENABLE_TOKEN_AUTH:
-        raise RuntimeError(
-            "CLIENT_AUTH_METHOD=token 但服务端未启用 ENABLE_TOKEN_AUTH"
-        )
-    if method == "pubkey" and not ENABLE_PUBKEY_AUTH:
-        raise RuntimeError(
-            "CLIENT_AUTH_METHOD=pubkey 但服务端未启用 ENABLE_PUBKEY_AUTH"
-        )
-
     providers = []
 
-    if method == "token":
+    if CONNECT_MODE == "token":
         # HMAC 对称：出站签请求 + 入站验响应，复用同一实例
         key = read_hmac_key()
         if key is None:
-            _logger.warning("Token 认证已启用但无法从共享内存读取 HMAC 密钥")
+            _logger.warning("Token 连接已启用但无法从共享内存读取 HMAC 密钥")
         else:
             signer = HmacMessageSigner(key)
             Message.set_outbound_signer(signer)
             Message.set_inbound_verifier(signer)
             providers.append(TokenCredentialProvider())
-            _logger.info("客户端认证方式: token (HMAC 双向)")
+            _logger.info("客户端连接方式: token (HMAC 双向)")
 
-    elif method == "pubkey":
+    elif CONNECT_MODE == "tls":
         # Ed25519 非对称单向：出站签请求，入站不验响应（无私钥验响应）
         try:
             private_key = PrivateKey.from_file(PUBKEY_PRIVATE_KEY_PATH)
@@ -137,17 +122,13 @@ def _load_signer_and_providers():
         Message.set_outbound_signer(Ed25519MessageSigner(private_key=private_key))
         Message.set_inbound_verifier(None)
         providers.append(PubkeyCredentialProvider(private_key))
-        _logger.info("客户端认证方式: pubkey (Ed25519 单向)")
+        _logger.info("客户端连接方式: tls (Ed25519 单向)")
 
     else:
-        # 无认证
-        if ENABLE_TOKEN_AUTH or ENABLE_PUBKEY_AUTH:
-            _logger.warning(
-                "CLIENT_AUTH_METHOD=none 但服务端启用了认证，请求将被拒绝"
-            )
+        # plain 无认证
         Message.set_outbound_signer(None)
         Message.set_inbound_verifier(None)
-        _logger.warning("客户端认证方式: none (无认证)")
+        _logger.warning("客户端连接方式: plain (无认证)")
 
     return providers
 
@@ -155,63 +136,74 @@ def _load_signer_and_providers():
 class Client:
     """前端客户端，封装与守护进程的 TCP 通信
 
-    支持两种连接模式：
-    - 明文模式（token/none）：通过 SHM 发现同机 daemon，plain socket 连接
-    - TLS 模式（pubkey 跨机）：通过 TLS 连接远程 daemon，TOFU 证书验证
+    连接方式由 client.toml [connection] 的 CONNECT_MODE 决定，
+    与 daemon 侧 [listener] 对应监听器匹配：
+    - "plain": 直接连接 PLAIN_HOST:PLAIN_PORT，无认证（不自动启动 daemon）
+    - "token": 连接本机 TOKEN_HOST:TOKEN_PORT，SHM 发现 + Token/HMAC 认证
+              （daemon 未运行时自动启动，本机同机场景）
+    - "tls":   连接 TLS_HOST:TLS_PORT，TLS 传输 + TOFU 证书验证 + Ed25519 认证
     """
 
     def __init__(
         self,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
         config_overrides: Optional[dict] = None,
     ):
         """初始化客户端
 
         Args:
-            host: CLI 覆盖远程 daemon 主机地址（pubkey 跨机 TLS 模式）。
-                  None 时使用配置文件 DAEMON_REMOTE_HOST。
-            port: CLI 覆盖远程 daemon TLS 端口（pubkey 跨机 TLS 模式）。
-                  None 时使用配置文件 DAEMON_REMOTE_PORT。
             config_overrides: 配置覆盖字典。
         """
-        self.host = DAEMON_HOST  # 明文模式连接地址（固定 127.0.0.1，SHM 发现）
-        self._remote_host = host  # TLS 模式主机覆盖（None=用配置）
-        self._remote_port = port  # TLS 模式端口覆盖（None=用配置）
         self._config = ConfigManager(overrides=config_overrides)
         # 凭证提供者懒加载：首次 _connect 时由 _load_signer_and_providers() 装配
-        # 单选模式下 providers 只有 0 或 1 个：单 provider / None（无认证）
+        # providers 只有 0 或 1 个：单 provider / None（plain 无认证）
         self._credential_provider = None
 
-    def _connect(self, autostart: bool = True) -> socket.socket:
-        """连接守护进程（自动分流明文/TLS）
+    def connect_addr(self) -> tuple:
+        """按 CONNECT_MODE 返回连接目标地址 (host, port)"""
+        if CONNECT_MODE == "tls":
+            return TLS_HOST, TLS_PORT
+        if CONNECT_MODE == "plain":
+            return PLAIN_HOST, PLAIN_PORT
+        return TOKEN_HOST, TOKEN_PORT
 
-        pubkey 跨机模式（CLIENT_AUTH_METHOD=pubkey 且 DAEMON_REMOTE_HOST 非空）：
-            → TLS 连接 + TOFU 验证（_connect_tls）
-        其他模式（token/none 或同机 pubkey）：
-            → 明文连接 + SHM 发现（_connect_plain）
+    def _probe_port(self) -> Optional[int]:
+        """探测 daemon 端口
+
+        token 模式：本地 SHM 发现（本机 daemon 是否运行）；
+        plain/tls 模式：配置的目标端口（远程是否可达由连接探测）。
+        """
+        if CONNECT_MODE == "token":
+            from ..daemonctl import _find_daemon_port
+
+            return _find_daemon_port()
+        return self.connect_addr()[1]
+
+    def _connect(self, autostart: bool = True) -> socket.socket:
+        """连接守护进程（按 CONNECT_MODE 三路分流）
+
+        - tls:   TLS 连接 + TOFU 验证（_connect_tls），远程跨机
+        - plain: 直接明文连接（_connect_plain），无认证
+        - token: 明文连接 + SHM 发现（_connect_token），本机同机
 
         Args:
-            autostart: 明文模式下守护进程未运行时是否自动启动。
+            autostart: token 模式下守护进程未运行时是否自动启动。
 
         Returns:
             已连接的 socket（明文）或 SSLSocket（TLS）。
         """
-        method = CLIENT_AUTH_METHOD
-        is_remote = bool(self._remote_host or DAEMON_REMOTE_HOST)
-
-        if method == "pubkey" and is_remote:
+        if CONNECT_MODE == "tls":
             return self._connect_tls()
-        else:
-            return self._connect_plain(autostart)
+        if CONNECT_MODE == "plain":
+            return self._connect_plain()
+        return self._connect_token(autostart)
 
-    def _connect_plain(self, autostart: bool = True) -> socket.socket:
-        """明文连接守护进程（SHM 发现 + token/none 认证）
+    def _connect_token(self, autostart: bool = True) -> socket.socket:
+        """连接本机 token 监听器（SHM 发现 + token/HMAC 认证）
 
-        通过共享内存发现 daemon 端口，创建 plain socket 连接，
+        通过共享内存发现 daemon 存活与端口，创建 plain socket 连接，
         装配签名器与凭证提供者。autostart=True 时守护进程未运行则自动启动。
         """
-        from .lifecycle import _find_daemon_port, _ping_daemon
+        from ..daemonctl import _find_daemon_port
 
         port = _find_daemon_port()
         if port is None:
@@ -223,7 +215,11 @@ class Client:
             port = _find_daemon_port()
             if port is None:
                 _logger.error("启动守护进程失败")
-                print_response(Response.error("failed to start daemon (port not found in shm after start_daemon returned)"))
+                print_response(
+                    Response.error(
+                        "failed to start daemon (port not found in shm after start_daemon returned)"
+                    )
+                )
                 sys.exit(1)
 
         last_err = None
@@ -231,18 +227,19 @@ class Client:
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(CONNECT_TIMEOUT)
-                sock.connect((self.host, port))
-                _logger.info("已连接守护进程 %s:%s", self.host, port)
-                # 懒装配签名器与凭证提供者（按 ENABLE_TOKEN_AUTH / ENABLE_PUBKEY_AUTH）
+                sock.connect((TOKEN_HOST, port))
+                _logger.info("已连接守护进程 %s:%s", TOKEN_HOST, port)
+                # 懒装配签名器与凭证提供者（Token + HMAC 对称认证）
                 # 幂等：已装配时返回 None，跳过 provider 重建
                 providers = _load_signer_and_providers()
                 if providers is not None:
-                    # 单选模式：providers 只有 0 或 1 个，无需 CompositeCredentialProvider
                     self._credential_provider = providers[0] if providers else None
                 return sock
             except ConnectionRefusedError as e:
                 last_err = e
-                _logger.debug("_connect_plain: attempt %d refused, retrying...", attempt + 1)
+                _logger.debug(
+                    "_connect_token: attempt %d refused, retrying...", attempt + 1
+                )
                 time.sleep(0.2)
                 new_port = _find_daemon_port()
                 if new_port is None:
@@ -262,21 +259,37 @@ class Client:
         print_response(Response.error(f"failed to connect to daemon: {last_err}"))
         sys.exit(1)
 
-    def _connect_tls(self) -> ssl.SSLSocket:
-        """TLS 连接守护进程（pubkey 跨机模式）
+    def _connect_plain(self) -> socket.socket:
+        """直接连接明文无认证监听器（CONNECT_MODE=plain）
 
-        1. 从 CLI 覆盖或配置文件获取远程 daemon 地址
+        无认证无签名，不做 SHM 发现与自动启动；常用于内网/局域网直连。
+        """
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(CONNECT_TIMEOUT)
+            sock.connect((PLAIN_HOST, PLAIN_PORT))
+            _logger.info("已连接 plain 监听器 %s:%s", PLAIN_HOST, PLAIN_PORT)
+            providers = _load_signer_and_providers()
+            if providers is not None:
+                self._credential_provider = providers[0] if providers else None
+            return sock
+        except ConnectionRefusedError as e:
+            _logger.error("连接 plain 监听器失败: %s", e)
+            print_response(Response.error(f"failed to connect to daemon: {e}"))
+            sys.exit(1)
+
+    def _connect_tls(self) -> ssl.SSLSocket:
+        """TLS 连接守护进程（CONNECT_MODE=tls）
+
+        1. 从配置获取远程 daemon 地址（TLS_HOST:TLS_PORT）
         2. KnownHosts 加载 TOFU 信任存储
         3. TLSClient 建立 TLS 连接 + TOFU 证书验证
         4. 装配 Ed25519 签名器与凭证提供者
         """
-        tls_host = self._remote_host or DAEMON_REMOTE_HOST
-        tls_port = self._remote_port or DAEMON_REMOTE_PORT
-
         known_hosts = KnownHosts(KNOWN_HOSTS_FILE)
-        tls_client = TLSClient(tls_host, tls_port, known_hosts, TOFU_STRICT)
+        tls_client = TLSClient(TLS_HOST, TLS_PORT, known_hosts, TOFU_STRICT)
         ssl_sock = tls_client.connect()
-        _logger.info("已连接远程守护进程 (TLS) %s:%d", tls_host, tls_port)
+        _logger.info("已连接远程守护进程 (TLS) %s:%d", TLS_HOST, TLS_PORT)
 
         # 装配 Ed25519 签名器（幂等：已装配时返回 None）
         providers = _load_signer_and_providers()
@@ -309,9 +322,17 @@ class Client:
     def _get_client_defaults(self) -> dict:
         cfg = self._config.get_all()
         defaults = {}
-        for key in ("timeout", "newline", "keep_ansi", "encoding", "debug",
-                     "send_eol", "always_return_snapshot", "response_format",
-                     "svg_compression_level"):
+        for key in (
+            "timeout",
+            "newline",
+            "keep_ansi",
+            "encoding",
+            "debug",
+            "send_eol",
+            "always_return_snapshot",
+            "response_format",
+            "svg_compression_level",
+        ):
             val = cfg.get(key)
             if val is not None and val != _DEFAULTS_MAP.get(key):
                 defaults[key] = val
@@ -322,7 +343,9 @@ class Client:
         if not session_defaults or not isinstance(session_defaults, dict):
             return
         for key, val in session_defaults.items():
-            if self._config.get(key) is None or self._config.get(key) == _DEFAULTS_MAP.get(key):
+            if self._config.get(key) is None or self._config.get(
+                key
+            ) == _DEFAULTS_MAP.get(key):
                 try:
                     self._config.set(key, val)
                 except (ValueError, KeyError):
@@ -333,25 +356,36 @@ class Client:
             self._config.set("encoding", encoding)
 
     @staticmethod
-    def _handle_output(output_path: Optional[str], resp: dict,
-                       svg_compression_level: int = 1):
+    def _handle_output(
+        output_path: Optional[str], resp: dict, svg_compression_level: int = 1
+    ):
         if not output_path:
             return
         if resp.get("type") == "error":
             _logger.warning("请求失败，跳过输出到 %s", output_path)
             return
-        from .renderer import render_to_file, is_image_ext
+        from .renderer import is_image_ext, render_to_file
+
         if is_image_ext(output_path) and not resp.get("screenBuffer"):
             print_response(
-                Response.error(f"Image output requires --snapshot or --snapshot-mode (got --output {output_path})")
+                Response.error(
+                    f"Image output requires --snapshot or --snapshot-mode (got --output {output_path})"
+                )
             )
             return
-        err = render_to_file(output_path, resp, svg_compression_level=svg_compression_level)
+        err = render_to_file(
+            output_path, resp, svg_compression_level=svg_compression_level
+        )
         if err:
             print_response(Response.error(err))
 
-    def _apply_ai_analysis(self, resp: dict, ai_analyse: str,
-                           ai_prompt: Optional[str], output_file: Optional[str]) -> dict:
+    def _apply_ai_analysis(
+        self,
+        resp: dict,
+        ai_analyse: str,
+        ai_prompt: Optional[str],
+        output_file: Optional[str],
+    ) -> dict:
         """对 response 应用 AI 分析（--ai-analyse 钩子）
 
         封装 src/client/ai_analyser.analyse_response 调用：
@@ -375,6 +409,7 @@ class Client:
             return resp
         from ..config.common import AICHAT_TIMEOUT
         from .config_manager import _DEFAULTS as CFG_DEFAULTS
+
         prompt = ai_prompt or CFG_DEFAULTS.get("ai_prompt")
         return analyse_response(
             resp,
@@ -413,34 +448,42 @@ class Client:
         _logger.info("cmd_start")
         already_running = start_daemon()
         if already_running:
-            from .lifecycle import is_running
+            from ..daemonctl import is_running
+
             if is_running():
                 resp = self._send_recv({"type": "list"}, autostart=False)
                 print_response(resp)
 
     def cmd_stop(self, force: bool = False):
         _logger.info("cmd_stop force=%s", force)
-        stop_daemon(
-            force=force,
-            remote_host=self._remote_host,
-            remote_port=self._remote_port,
-        )
+        stop_daemon(force=force)
 
     def cmd_status(self):
         _logger.info("cmd_status")
-        from .lifecycle import _find_daemon_port, _find_daemon_pid
-        port = _find_daemon_port()
+        port = self._probe_port()
         if port is None:
             print_response({"type": "status", "running": False})
             return
-        pid = _find_daemon_pid()
+        pid = None
+        if CONNECT_MODE == "token":
+            from ..daemonctl import _find_daemon_pid
+
+            pid = _find_daemon_pid()
         try:
             resp = self._send_recv({"type": "status"}, autostart=False)
             print_response(resp)
         except SystemExit:
             print_response({"type": "status", "running": False})
         except Exception as e:
-            print_response({"type": "status", "running": True, "pid": pid, "port": port, "message": str(e)})
+            print_response(
+                {
+                    "type": "status",
+                    "running": True,
+                    "pid": pid,
+                    "port": port,
+                    "message": str(e),
+                }
+            )
 
     def cmd_exec(
         self,
@@ -466,12 +509,24 @@ class Client:
         size: Optional[str] = None,
         ai_analyse: str = "none",
         ai_prompt: Optional[str] = None,
+        plugins: Optional[list] = None,
     ):
-        _logger.info("cmd_exec: id=%r force=%s env=%s snapshot_mode=%s size=%s ai_analyse=%s",
-                     session_id, force, env, snapshot_mode, size, ai_analyse)
+        _logger.info(
+            "cmd_exec: id=%r force=%s env=%s snapshot_mode=%s size=%s ai_analyse=%s plugins=%s",
+            session_id,
+            force,
+            env,
+            snapshot_mode,
+            size,
+            ai_analyse,
+            plugins,
+        )
         original_timeout = timeout
         timeout, keep_ansi, encoding, newline, send_eol = self._apply_config_defaults(
-            timeout=timeout, keep_ansi=keep_ansi, encoding=encoding, newline=newline,
+            timeout=timeout,
+            keep_ansi=keep_ansi,
+            encoding=encoding,
+            newline=newline,
         )
         explicit_timeout = original_timeout is not None or timeout != 120.0
 
@@ -496,16 +551,22 @@ class Client:
                     )
                     return
                 _logger.warning(
-                    "--force-pty-mode: 忽略 shell 操作符检测，原样拆分执行, command=%r", command,
+                    "--force-pty-mode: 忽略 shell 操作符检测，原样拆分执行, command=%r",
+                    command,
                 )
             command = shlex.split(command, posix=not IS_WINDOWS)
             # PowerShell/CMD 传递含空格路径时 -c 参数可能保留字面量双引号
             command = [s.strip('"') for s in command]
 
         msg = {
-            "type": "exec", "id": session_id, "command": command,
-            "newline": newline, "fresh": fresh, "full": full,
-            "keep_ansi": keep_ansi, "timeout": timeout,
+            "type": "exec",
+            "id": session_id,
+            "command": command,
+            "newline": newline,
+            "fresh": fresh,
+            "full": full,
+            "keep_ansi": keep_ansi,
+            "timeout": timeout,
             "explicit_timeout": explicit_timeout,
         }
         if snapshot_mode:
@@ -523,7 +584,9 @@ class Client:
             for item in env:
                 if "=" not in item:
                     print_response(
-                        Response.error(f"Invalid --env format: {item!r} (expected KEY=VALUE)")
+                        Response.error(
+                            f"Invalid --env format: {item!r} (expected KEY=VALUE)"
+                        )
                     )
                     return
                 k, v = item.split("=", 1)
@@ -535,10 +598,13 @@ class Client:
             msg["include_screen_buffer"] = True
         if snapshot_diff:
             msg["snapshot_diff"] = True
+        if plugins:
+            msg["plugins"] = plugins
 
         # 终端尺寸：--size 优先，否则从 --default terminal-size 读取
         if size:
             from .config_manager import parse_terminal_size
+
             try:
                 c, r = parse_terminal_size(size)
                 msg["cols"] = c
@@ -550,6 +616,7 @@ class Client:
             ts = self._config.get("terminal_size")
             if ts and ts != "80x24":
                 from .config_manager import parse_terminal_size
+
                 try:
                     c, r = parse_terminal_size(ts)
                     msg["cols"] = c
@@ -572,11 +639,13 @@ class Client:
         # - none：跳过
         if ai_analyse == "fileOutput":
             if not output_path:
-                print_response(Response.error(
-                    "--ai-analyse fileOutput requires -o/--output"
-                ))
+                print_response(
+                    Response.error("--ai-analyse fileOutput requires -o/--output")
+                )
                 return
-            self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
+            self._handle_output(
+                output_path, resp, svg_compression_level=svg_compression_level
+            )
             resp = self._apply_ai_analysis(resp, ai_analyse, ai_prompt, output_path)
         elif ai_analyse == "responseOutput":
             resp = self._apply_ai_analysis(resp, ai_analyse, ai_prompt, None)
@@ -587,21 +656,31 @@ class Client:
                 return
             screen_buffer = resp.get("screenBuffer")
             if not screen_buffer:
-                print_response(Response.error(
-                    "--response-format svg requires snapshot mode (--snapshot for mouse; or --default always-return-snapshot on)"))
+                print_response(
+                    Response.error(
+                        "--response-format svg requires snapshot mode (--snapshot for mouse; or --default always-return-snapshot on)"
+                    )
+                )
                 return
-            from .renderer import render_svg_string, _compress_svg
+            from .renderer import _compress_svg, render_svg_string
+
             svg = render_svg_string(screen_buffer)
             svg = _compress_svg(svg, svg_compression_level)
             print_response({"type": "svg", "data": svg})
         elif output_path:
-            display = {k: v for k, v in resp.items() if k not in ("screenBuffer", "screenBufferMeta", "sessionDefaults")}
+            display = {
+                k: v
+                for k, v in resp.items()
+                if k not in ("screenBuffer", "screenBufferMeta", "sessionDefaults")
+            }
             print_response(display)
         else:
             print_response(resp)
         # fileOutput 模式已在上方先写过文件，这里跳过重复写入
         if ai_analyse != "fileOutput":
-            self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
+            self._handle_output(
+                output_path, resp, svg_compression_level=svg_compression_level
+            )
 
     def cmd_read(
         self,
@@ -627,11 +706,25 @@ class Client:
         ai_prompt: Optional[str] = None,
     ):
         """读取会话终端输出，支持触发条件等待"""
-        _logger.info("cmd_read: id=%r trigger=%r timeout=%s idle_timeout=%s lines=%s grep=%r offset=%s full=%s snapshot=%s ai_analyse=%s",
-                     session_id, trigger, timeout, idle_timeout, lines, grep, offset, full, snapshot, ai_analyse)
+        _logger.info(
+            "cmd_read: id=%r trigger=%r timeout=%s idle_timeout=%s lines=%s grep=%r offset=%s full=%s snapshot=%s ai_analyse=%s",
+            session_id,
+            trigger,
+            timeout,
+            idle_timeout,
+            lines,
+            grep,
+            offset,
+            full,
+            snapshot,
+            ai_analyse,
+        )
         original_timeout = timeout
         timeout, keep_ansi, encoding, newline, _ = self._apply_config_defaults(
-            timeout=timeout, keep_ansi=keep_ansi, encoding=encoding, newline=newline,
+            timeout=timeout,
+            keep_ansi=keep_ansi,
+            encoding=encoding,
+            newline=newline,
         )
         explicit_timeout = original_timeout is not None or timeout != 120.0
 
@@ -644,9 +737,12 @@ class Client:
             svg_compression_level = self._config.get("svg_compression_level") or 1
 
         msg = {
-            "type": "read", "id": session_id,
-            "full": full, "keep_ansi": keep_ansi,
-            "timeout": timeout, "explicit_timeout": explicit_timeout,
+            "type": "read",
+            "id": session_id,
+            "full": full,
+            "keep_ansi": keep_ansi,
+            "timeout": timeout,
+            "explicit_timeout": explicit_timeout,
         }
         if trigger is not None:
             msg["trigger"] = trigger
@@ -686,11 +782,13 @@ class Client:
         # AI 分析钩子（同 cmd_exec：fileOutput 先写文件再分析，responseOutput 直接分析）
         if ai_analyse == "fileOutput":
             if not output_path:
-                print_response(Response.error(
-                    "--ai-analyse fileOutput requires -o/--output"
-                ))
+                print_response(
+                    Response.error("--ai-analyse fileOutput requires -o/--output")
+                )
                 return
-            self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
+            self._handle_output(
+                output_path, resp, svg_compression_level=svg_compression_level
+            )
             resp = self._apply_ai_analysis(resp, ai_analyse, ai_prompt, output_path)
         elif ai_analyse == "responseOutput":
             resp = self._apply_ai_analysis(resp, ai_analyse, ai_prompt, None)
@@ -701,21 +799,31 @@ class Client:
                 return
             screen_buffer = resp.get("screenBuffer")
             if not screen_buffer:
-                print_response(Response.error(
-                    "--response-format svg requires snapshot mode (--snapshot-mode for exec; --snapshot for send/read; or --default always-return-snapshot on)"))
+                print_response(
+                    Response.error(
+                        "--response-format svg requires snapshot mode (--snapshot-mode for exec; --snapshot for send/read; or --default always-return-snapshot on)"
+                    )
+                )
                 return
-            from .renderer import render_svg_string, _compress_svg
+            from .renderer import _compress_svg, render_svg_string
+
             svg = render_svg_string(screen_buffer)
             svg = _compress_svg(svg, svg_compression_level)
             print_response({"type": "svg", "data": svg})
         elif output_path:
-            display = {k: v for k, v in resp.items() if k not in ("screenBuffer", "screenBufferMeta", "sessionDefaults")}
+            display = {
+                k: v
+                for k, v in resp.items()
+                if k not in ("screenBuffer", "screenBufferMeta", "sessionDefaults")
+            }
             print_response(display)
         else:
             print_response(resp)
         # fileOutput 模式已在上方先写过文件，这里跳过重复写入
         if ai_analyse != "fileOutput":
-            self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
+            self._handle_output(
+                output_path, resp, svg_compression_level=svg_compression_level
+            )
 
     def cmd_send(
         self,
@@ -765,25 +873,40 @@ class Client:
             svg_compression_level: SVG 压缩等级
             snapshot_diff: 仅返回屏幕变化行
         """
-        _logger.info("cmd_send: id=%r trigger=%r timeout=%s json_escaping=%s send_eol=%s ai_analyse=%s",
-                     session_id, trigger, timeout, json_escaping, send_eol, ai_analyse)
+        _logger.info(
+            "cmd_send: id=%r trigger=%r timeout=%s json_escaping=%s send_eol=%s ai_analyse=%s",
+            session_id,
+            trigger,
+            timeout,
+            json_escaping,
+            send_eol,
+            ai_analyse,
+        )
 
         # send_eol: CLI 传入的是名称（"cr"/"lf"/"crlf"/"none"），转为实际字符
         send_eol_char = None
         if send_eol is not None:
             from .config_manager import _SEND_EOL_MAP
+
             send_eol_char = _SEND_EOL_MAP.get(send_eol, send_eol)
 
         original_timeout = timeout
-        timeout, keep_ansi, encoding, newline, send_eol_resolved = self._apply_config_defaults(
-            timeout=timeout, keep_ansi=keep_ansi, encoding=encoding, newline=newline,
-            send_eol=send_eol_char,
+        timeout, keep_ansi, encoding, newline, send_eol_resolved = (
+            self._apply_config_defaults(
+                timeout=timeout,
+                keep_ansi=keep_ansi,
+                encoding=encoding,
+                newline=newline,
+                send_eol=send_eol_char,
+            )
         )
         explicit_timeout = original_timeout is not None or timeout != 120.0
 
         # 处理输入文本：JSON 转义解码 + 行尾符追加
         input_processed = process_input(
-            input_text, json_escaping=json_escaping, send_eol=send_eol_resolved,
+            input_text,
+            json_escaping=json_escaping,
+            send_eol=send_eol_resolved,
         )
 
         if not snapshot and self._config.get("always_return_snapshot"):
@@ -795,9 +918,13 @@ class Client:
             svg_compression_level = self._config.get("svg_compression_level") or 1
 
         msg = {
-            "type": "send", "id": session_id, "input": input_processed,
-            "full": full, "keep_ansi": keep_ansi,
-            "timeout": timeout, "explicit_timeout": explicit_timeout,
+            "type": "send",
+            "id": session_id,
+            "input": input_processed,
+            "full": full,
+            "keep_ansi": keep_ansi,
+            "timeout": timeout,
+            "explicit_timeout": explicit_timeout,
         }
         if trigger is not None:
             msg["trigger"] = trigger
@@ -829,11 +956,13 @@ class Client:
         # AI 分析钩子（同 cmd_exec：fileOutput 先写文件再分析，responseOutput 直接分析）
         if ai_analyse == "fileOutput":
             if not output_path:
-                print_response(Response.error(
-                    "--ai-analyse fileOutput requires -o/--output"
-                ))
+                print_response(
+                    Response.error("--ai-analyse fileOutput requires -o/--output")
+                )
                 return
-            self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
+            self._handle_output(
+                output_path, resp, svg_compression_level=svg_compression_level
+            )
             resp = self._apply_ai_analysis(resp, ai_analyse, ai_prompt, output_path)
         elif ai_analyse == "responseOutput":
             resp = self._apply_ai_analysis(resp, ai_analyse, ai_prompt, None)
@@ -844,26 +973,64 @@ class Client:
                 return
             screen_buffer = resp.get("screenBuffer")
             if not screen_buffer:
-                print_response(Response.error(
-                    "--response-format svg requires snapshot mode (--snapshot for send/read; or --default always-return-snapshot on)"))
+                print_response(
+                    Response.error(
+                        "--response-format svg requires snapshot mode (--snapshot for send/read; or --default always-return-snapshot on)"
+                    )
+                )
                 return
-            from .renderer import render_svg_string, _compress_svg
+            from .renderer import _compress_svg, render_svg_string
+
             svg = render_svg_string(screen_buffer)
             svg = _compress_svg(svg, svg_compression_level)
             print_response({"type": "svg", "data": svg})
         elif output_path:
-            display = {k: v for k, v in resp.items() if k not in ("screenBuffer", "screenBufferMeta", "sessionDefaults")}
+            display = {
+                k: v
+                for k, v in resp.items()
+                if k not in ("screenBuffer", "screenBufferMeta", "sessionDefaults")
+            }
             print_response(display)
         else:
             print_response(resp)
         # fileOutput 模式已在上方先写过文件，这里跳过重复写入
         if ai_analyse != "fileOutput":
-            self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
+            self._handle_output(
+                output_path, resp, svg_compression_level=svg_compression_level
+            )
 
     def cmd_list(self):
         """列出所有会话"""
         _logger.info("cmd_list")
         resp = self._send_recv({"type": "list"})
+        print_response(resp)
+
+    def cmd_plugin(
+        self,
+        action: str,
+        session_id: Optional[str] = None,
+        name: Optional[str] = None,
+        command: Optional[str] = None,
+        args: Optional[list] = None,
+    ):
+        """插件管理命令（list/ls/attach/detach/cmd）"""
+        _logger.info(
+            "cmd_plugin: action=%s id=%s name=%s cmd=%s",
+            action,
+            session_id,
+            name,
+            command,
+        )
+        msg = {"type": "plugin", "action": action}
+        if session_id is not None:
+            msg["id"] = session_id
+        if name is not None:
+            msg["name"] = name
+        if command is not None:
+            msg["command"] = command
+        if args is not None:
+            msg["args"] = args
+        resp = self._send_recv(msg, autostart=False)
         print_response(resp)
 
     def cmd_wait(self, timeout: Optional[float] = None):
@@ -878,12 +1045,21 @@ class Client:
         resp = self._send_recv({"type": "wait", "timeout": timeout})
         print_response(resp)
 
-    def cmd_events(self, session_id: str,
-                   last: Optional[int] = None,
-                   since: Optional[str] = None,
-                   until: Optional[str] = None):
+    def cmd_events(
+        self,
+        session_id: str,
+        last: Optional[int] = None,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+    ):
         """获取会话的所有事件"""
-        _logger.info("cmd_events: id=%r last=%s since=%s until=%s", session_id, last, since, until)
+        _logger.info(
+            "cmd_events: id=%r last=%s since=%s until=%s",
+            session_id,
+            last,
+            since,
+            until,
+        )
         msg: dict = {"type": "events", "id": session_id}
 
         if since:
@@ -896,15 +1072,24 @@ class Client:
         resp = self._send_recv(msg)
         print_response(resp)
 
-    def cmd_file_read(self, path: str, cwd_session: str,
-                      offset: Optional[int] = None,
-                      limit: Optional[int] = None):
+    def cmd_file_read(
+        self,
+        path: str,
+        cwd_session: str,
+        offset: Optional[int] = None,
+        limit: Optional[int] = None,
+    ):
         """读取文件内容（file read 子命令）
 
         路径原样传输，由 daemon 按会话 cwd（cwd_session 指定，不操作该会话）解析。
         """
-        _logger.info("cmd_file_read: path=%r cwd_session=%r offset=%s limit=%s",
-                     path, cwd_session, offset, limit)
+        _logger.info(
+            "cmd_file_read: path=%r cwd_session=%r offset=%s limit=%s",
+            path,
+            cwd_session,
+            offset,
+            limit,
+        )
         msg: dict = {"type": "file_read", "path": path, "cwd_session": cwd_session}
         if offset is not None:
             msg["offset"] = offset
@@ -913,22 +1098,28 @@ class Client:
         resp = self._send_recv(msg)
         print_response(resp)
 
-    def cmd_file_write(self, path: str, cwd_session: str,
-                       content: Optional[str] = None):
+    def cmd_file_write(
+        self, path: str, cwd_session: str, content: Optional[str] = None
+    ):
         """覆盖写/新建文件（file write 子命令）
 
         路径原样传输，由 daemon 按会话 cwd 解析；content 由调用方保证非空。
         """
-        _logger.info("cmd_file_write: path=%r cwd_session=%r content_len=%s",
-                     path, cwd_session, None if content is None else len(content))
+        _logger.info(
+            "cmd_file_write: path=%r cwd_session=%r content_len=%s",
+            path,
+            cwd_session,
+            None if content is None else len(content),
+        )
         msg: dict = {"type": "file_write", "path": path, "cwd_session": cwd_session}
         if content is not None:
             msg["content"] = content
         resp = self._send_recv(msg)
         print_response(resp)
 
-    def cmd_file_edit(self, path: str, cwd_session: str,
-                      old: Optional[str], new: Optional[str]):
+    def cmd_file_edit(
+        self, path: str, cwd_session: str, old: Optional[str], new: Optional[str]
+    ):
         """唯一匹配替换/删除/新建（file edit 子命令）
 
         --old 空 = 新建（文件必须不存在）；--new 空 = 删除；
@@ -936,29 +1127,44 @@ class Client:
         CLI 侧将 None 归一为空串，daemon 恒收到字符串；
         路径由 daemon 按会话 cwd（cwd_session）解析。
         """
-        _logger.info("cmd_file_edit: path=%r cwd_session=%r old_len=%s new_len=%s",
-                     path, cwd_session,
-                     None if old is None else len(old),
-                     None if new is None else len(new))
-        resp = self._send_recv({
-            "type": "file_edit",
-            "path": path,
-            "cwd_session": cwd_session,
-            "old": old or "",
-            "new": new or "",
-        })
+        _logger.info(
+            "cmd_file_edit: path=%r cwd_session=%r old_len=%s new_len=%s",
+            path,
+            cwd_session,
+            None if old is None else len(old),
+            None if new is None else len(new),
+        )
+        resp = self._send_recv(
+            {
+                "type": "file_edit",
+                "path": path,
+                "cwd_session": cwd_session,
+                "old": old or "",
+                "new": new or "",
+            }
+        )
         print_response(resp)
 
-    def cmd_file_grep(self, pattern: str, cwd_session: str,
-                      path: Optional[str] = None,
-                      include: Optional[str] = None,
-                      literal_text: bool = False):
+    def cmd_file_grep(
+        self,
+        pattern: str,
+        cwd_session: str,
+        path: Optional[str] = None,
+        include: Optional[str] = None,
+        literal_text: bool = False,
+    ):
         """内容搜索（file grep 子命令）
 
         path 缺省 = 会话 cwd（daemon 侧解析）；提供时按会话 cwd 展开。
         """
-        _logger.info("cmd_file_grep: pattern=%r cwd_session=%r path=%r include=%r literal=%s",
-                     pattern, cwd_session, path, include, literal_text)
+        _logger.info(
+            "cmd_file_grep: pattern=%r cwd_session=%r path=%r include=%r literal=%s",
+            pattern,
+            cwd_session,
+            path,
+            include,
+            literal_text,
+        )
         msg: dict = {
             "type": "file_grep",
             "pattern": pattern,
@@ -973,14 +1179,17 @@ class Client:
         resp = self._send_recv(msg)
         print_response(resp)
 
-    def cmd_file_glob(self, pattern: str, cwd_session: str,
-                      path: Optional[str] = None):
+    def cmd_file_glob(self, pattern: str, cwd_session: str, path: Optional[str] = None):
         """文件名匹配（file glob 子命令）
 
         path 缺省 = 会话 cwd（daemon 侧解析）；提供时按会话 cwd 展开。
         """
-        _logger.info("cmd_file_glob: pattern=%r cwd_session=%r path=%r",
-                     pattern, cwd_session, path)
+        _logger.info(
+            "cmd_file_glob: pattern=%r cwd_session=%r path=%r",
+            pattern,
+            cwd_session,
+            path,
+        )
         msg: dict = {
             "type": "file_glob",
             "pattern": pattern,
@@ -991,26 +1200,38 @@ class Client:
         resp = self._send_recv(msg)
         print_response(resp)
 
-    def cmd_file_upload(self, local_path: str, remote_path: str,
-                        cwd_session: str, force: bool = False,
-                        timeout: Optional[float] = None):
+    def cmd_file_upload(
+        self,
+        local_path: str,
+        remote_path: str,
+        cwd_session: str,
+        force: bool = False,
+        timeout: Optional[float] = None,
+    ):
         """上传本地文件/目录到 daemon 侧（file upload 子命令）
 
         - local_path 为 CLI 本机绝对路径（__main__ 已解析）
         - remote_path 由 daemon 按 cwd_session 会话 cwd 解析
         - 传输为多往返流式操作，不走 _send_recv：握手 JSON 后切换二进制帧
         """
-        from ..config.files import TRANSFER_TIMEOUT
-        from ..files.transfer.client_upload import upload
-        from ..files.transfer.common import (
+        from ..config.transfer import TRANSFER_TIMEOUT
+        from ..transfer.client_upload import upload
+        from ..transfer.common import (
             TransferAbortedError,
             TransferError,
             TransferTimeoutError,
         )
+
         if timeout is None:
             timeout = TRANSFER_TIMEOUT
-        _logger.info("cmd_file_upload: local=%r remote=%r cwd_session=%r force=%s timeout=%s",
-                     local_path, remote_path, cwd_session, force, timeout)
+        _logger.info(
+            "cmd_file_upload: local=%r remote=%r cwd_session=%r force=%s timeout=%s",
+            local_path,
+            remote_path,
+            cwd_session,
+            force,
+            timeout,
+        )
         sock = self._connect()
         try:
             # 握手消息凭证注入（与 _send_recv 一致：token/pubkey 认证字段）
@@ -1018,8 +1239,15 @@ class Client:
                 if self._credential_provider is not None:
                     self._credential_provider.enrich(msg)
 
-            resp = upload(sock, local_path, remote_path, cwd_session, force,
-                          timeout, enrich=enrich)
+            resp = upload(
+                sock,
+                local_path,
+                remote_path,
+                cwd_session,
+                force,
+                timeout,
+                enrich=enrich,
+            )
             print_response(resp)
         except (TransferAbortedError, TransferError, TransferTimeoutError) as e:
             print_response(Response.error(str(e)))
@@ -1032,25 +1260,37 @@ class Client:
             except OSError:
                 pass
 
-    def cmd_file_download(self, remote_path: str, local_path: str,
-                          cwd_session: str, force: bool = False,
-                          timeout: Optional[float] = None):
+    def cmd_file_download(
+        self,
+        remote_path: str,
+        local_path: str,
+        cwd_session: str,
+        force: bool = False,
+        timeout: Optional[float] = None,
+    ):
         """下载 daemon 侧文件/目录到本地（file download 子命令）
 
         - remote_path 由 daemon 按 cwd_session 会话 cwd 解析
         - local_path 为 CLI 本机绝对路径（__main__ 已解析）
         """
-        from ..config.files import TRANSFER_TIMEOUT
-        from ..files.transfer.client_download import download
-        from ..files.transfer.common import (
+        from ..config.transfer import TRANSFER_TIMEOUT
+        from ..transfer.client_download import download
+        from ..transfer.common import (
             TransferAbortedError,
             TransferError,
             TransferTimeoutError,
         )
+
         if timeout is None:
             timeout = TRANSFER_TIMEOUT
-        _logger.info("cmd_file_download: remote=%r local=%r cwd_session=%r force=%s timeout=%s",
-                     remote_path, local_path, cwd_session, force, timeout)
+        _logger.info(
+            "cmd_file_download: remote=%r local=%r cwd_session=%r force=%s timeout=%s",
+            remote_path,
+            local_path,
+            cwd_session,
+            force,
+            timeout,
+        )
         sock = self._connect()
         try:
             # 握手消息凭证注入（与 _send_recv 一致：token/pubkey 认证字段）
@@ -1058,8 +1298,15 @@ class Client:
                 if self._credential_provider is not None:
                     self._credential_provider.enrich(msg)
 
-            resp = download(sock, local_path, remote_path, cwd_session, force,
-                            timeout, enrich=enrich)
+            resp = download(
+                sock,
+                local_path,
+                remote_path,
+                cwd_session,
+                force,
+                timeout,
+                enrich=enrich,
+            )
             print_response(resp)
         except (TransferAbortedError, TransferError, TransferTimeoutError) as e:
             print_response(Response.error(str(e)))
@@ -1078,28 +1325,45 @@ class Client:
         if not session_id or not isinstance(session_id, str):
             print_response(Response.error("invalid session id"))
             return
-        from .lifecycle import is_running
+        from ..daemonctl import is_running
+
         if not is_running():
-            print_response({"commandType": "kill", "code": -1, "msg": "Daemon not running"})
+            print_response(
+                {"commandType": "kill", "code": -1, "msg": "Daemon not running"}
+            )
             return
         try:
             resp = self._send_recv({"type": "kill", "id": session_id})
         except ConnectionError:
-            resp = {"commandType": "kill", "code": 0, "msg": "daemon not running, session likely dead"}
+            resp = {
+                "commandType": "kill",
+                "code": 0,
+                "msg": "daemon not running, session likely dead",
+            }
         except socket.timeout:
-            resp = {"commandType": "kill", "code": 0, "msg": "daemon unresponsive, session likely dead"}
+            resp = {
+                "commandType": "kill",
+                "code": 0,
+                "msg": "daemon unresponsive, session likely dead",
+            }
         except OSError:
-            resp = {"commandType": "kill", "code": 0, "msg": "daemon connection failed, session likely dead"}
+            resp = {
+                "commandType": "kill",
+                "code": 0,
+                "msg": "daemon connection failed, session likely dead",
+            }
         print_response(resp)
 
     def cmd_closewin(self, session_id: str, hwnd: int):
         """关闭指定 GUI 窗口"""
         _logger.info("cmd_closewin: id=%r hwnd=0x%X", session_id, hwnd)
-        resp = self._send_recv({
-            "type": "closewin",
-            "id": session_id,
-            "hwnd": hwnd,
-        })
+        resp = self._send_recv(
+            {
+                "type": "closewin",
+                "id": session_id,
+                "hwnd": hwnd,
+            }
+        )
         print_response(resp)
 
     def cmd_mouse(
@@ -1128,11 +1392,20 @@ class Client:
             session_id: 会话标识
             action: 动作描述字典，由 CLI 解析后传入
         """
-        _logger.info("cmd_mouse: id=%r action=%s trigger=%r timeout=%s ai_analyse=%s",
-                     session_id, action.get("action"), trigger, timeout, ai_analyse)
+        _logger.info(
+            "cmd_mouse: id=%r action=%s trigger=%r timeout=%s ai_analyse=%s",
+            session_id,
+            action.get("action"),
+            trigger,
+            timeout,
+            ai_analyse,
+        )
         original_timeout = timeout
         timeout, keep_ansi, encoding, newline, _ = self._apply_config_defaults(
-            timeout=timeout, keep_ansi=keep_ansi, encoding=encoding, newline=newline,
+            timeout=timeout,
+            keep_ansi=keep_ansi,
+            encoding=encoding,
+            newline=newline,
         )
         explicit_timeout = original_timeout is not None or timeout != 120.0
 
@@ -1174,11 +1447,13 @@ class Client:
         # AI 分析钩子（同 cmd_exec：fileOutput 先写文件再分析，responseOutput 直接分析）
         if ai_analyse == "fileOutput":
             if not output_path:
-                print_response(Response.error(
-                    "--ai-analyse fileOutput requires -o/--output"
-                ))
+                print_response(
+                    Response.error("--ai-analyse fileOutput requires -o/--output")
+                )
                 return
-            self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
+            self._handle_output(
+                output_path, resp, svg_compression_level=svg_compression_level
+            )
             resp = self._apply_ai_analysis(resp, ai_analyse, ai_prompt, output_path)
         elif ai_analyse == "responseOutput":
             resp = self._apply_ai_analysis(resp, ai_analyse, ai_prompt, None)
@@ -1189,18 +1464,28 @@ class Client:
                 return
             screen_buffer = resp.get("screenBuffer")
             if not screen_buffer:
-                print_response(Response.error(
-                    "--response-format svg requires snapshot mode (--snapshot-mode for exec; --snapshot for send/read; or --default always-return-snapshot on)"))
+                print_response(
+                    Response.error(
+                        "--response-format svg requires snapshot mode (--snapshot-mode for exec; --snapshot for send/read; or --default always-return-snapshot on)"
+                    )
+                )
                 return
-            from .renderer import render_svg_string, _compress_svg
+            from .renderer import _compress_svg, render_svg_string
+
             svg = render_svg_string(screen_buffer)
             svg = _compress_svg(svg, svg_compression_level)
             print_response({"type": "svg", "data": svg})
         elif output_path:
-            display = {k: v for k, v in resp.items() if k not in ("screenBuffer", "screenBufferMeta", "sessionDefaults")}
+            display = {
+                k: v
+                for k, v in resp.items()
+                if k not in ("screenBuffer", "screenBufferMeta", "sessionDefaults")
+            }
             print_response(display)
         else:
             print_response(resp)
         # fileOutput 模式已在上方先写过文件，这里跳过重复写入
         if ai_analyse != "fileOutput":
-            self._handle_output(output_path, resp, svg_compression_level=svg_compression_level)
+            self._handle_output(
+                output_path, resp, svg_compression_level=svg_compression_level
+            )

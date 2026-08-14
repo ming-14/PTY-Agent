@@ -1,7 +1,7 @@
 /**
  * 终端基础设施：事件绑定（焦点、鼠标、滚轮、触摸、右键菜单）
  *
- * v9.2: Ctrl+滚轮 / 触摸捏合调用 zoomActiveSession 调整 frameRatio
+ * Ctrl+滚轮 / 触摸捏合调用 zoomActiveSession 调整 frameRatio
  *       所有模式统一：按 ratio 反算字号（cols/rows 不变）
  *       （adaptive 的"自适应 stage 宽高比"由 applySessionFrameRatio 在切标签/stage 变化时通过 fit() 完成）
  */
@@ -24,12 +24,12 @@ const WHEEL_LINES = 3;
 /**
  * 检查当前活动会话的框是否已撑满 stage（再增大就会超出）。
  *
- * v9 重构：统一基于"当前 frame 实际尺寸是否已达到 stage 内容区尺寸"判断。
+ * 统一基于"当前 frame 实际尺寸是否已达到 stage 内容区尺寸"判断。
  * 框宽高比固定（由 cols/rows 决定），撑满任一方向后再增大都会导致该方向超出。
  * 适用于所有模式（adaptive 和非 adaptive）。
  *
  * 用于 Ctrl+滚轮上滚 / 双指捏合放大时阻止继续增大：
- * 用户需求"框放到最大时，Ctrl+滚轮上滚终端不应继续变大"。
+ * 框放到最大时，Ctrl+滚轮上滚终端不应继续变大。
  *
  * @returns {boolean} true 表示已撑满，应阻止继续增大
  */
@@ -91,7 +91,7 @@ export function isFrameAtMaxSize() {
 
 /**
  * 从鼠标事件计算终端逻辑坐标 (col, row)。
- * v3 起不再有 CSS transform scale，鼠标坐标直接对应 xterm 内部逻辑坐标。
+ * 鼠标坐标直接对应 xterm 内部逻辑坐标（无 CSS transform scale）。
  */
 function getTerminalCellFromEvent(term, e) {
   const el = term.element;
@@ -106,26 +106,31 @@ function getTerminalCellFromEvent(term, e) {
   return { col, row };
 }
 
-function buildSGRMouse(button, col, row, isRelease, e) {
-  let b = button;
-  if (e && e.shiftKey) b += 4;
-  if (e && e.altKey) b += 8;
-  if (e && e.ctrlKey) b += 16;
-  const c = col + 1;
-  const r = row + 1;
-  const suffix = isRelease ? 'm' : 'M';
-  return '\x1b[<' + b + ';' + c + ';' + r + suffix;
+const _BTN_NAME = { 0: 'left', 1: 'middle', 2: 'right' };
+
+/** 鼠标事件修饰键 → wezterm KeyModifiers 位掩码 */
+function mouseMods(e) {
+  e = e || {};
+  return (e.shiftKey ? 2 : 0) | (e.altKey ? 4 : 0) | (e.ctrlKey ? 8 : 0) | (e.metaKey ? 16 : 0);
 }
 
-function sendSGRMouse(sid, seq) {
+/** 发送原始鼠标事件 → daemon wezterm 模式感知编码 → pty */
+function sendRawMouse(sid, col, row, kind, button, e) {
   const s = state.sessions[sid];
   if (!s || !s.running || s.closing) {
-    debug('mouse', 'SGR dropped: sid=%s running=%s closing=%s', sid, s && s.running, s && s.closing);
+    debug('mouse', 'raw dropped: sid=%s running=%s closing=%s', sid, s && s.running, s && s.closing);
     return;
   }
-  debug('mouse', 'SGR send: sid=%s seq=%s', sid, JSON.stringify(seq));
-  const dbg = document.getElementById('terminal-mouse-debug');
-  if (dbg) dbg.textContent = seq;
+  const mods = mouseMods(e);
+  debug('mouse', 'raw send: sid=%s x=%s y=%s kind=%s button=%s mods=%s', sid, col, row, kind, button, mods);
+  wsSend({ type: 'mouse', session_id: sid, x: col, y: row, kind, button, mods });
+}
+
+/** 发送固定 VT 文本（alternate scroll 方向键 / 焦点报告）→ 走 input 透传 */
+function sendVtText(sid, seq) {
+  const s = state.sessions[sid];
+  if (!s || !s.running || s.closing) return;
+  debug('mouse', 'vt text send: sid=%s seq=%s', sid, JSON.stringify(seq));
   wsSend({ type: 'input', session_id: sid, data: seq });
 }
 
@@ -145,17 +150,15 @@ function sendVtWheelEvent(sid, inst, term, e) {
     if (!isHorizontal) {
       const seq = direction < 0 ? '\x1b[A' : '\x1b[B';
       debug('mouse', 'alternate scroll seq=%s deltaY=%d', JSON.stringify(seq), e.deltaY);
-      sendSGRMouse(sid, seq);
+      sendVtText(sid, seq);
     }
   } else {
     const cell = getTerminalCellFromEvent(term, e);
     if (!cell) return true;
-    // SGR 编码：64 = wheel up, 65 = wheel down
-    // WT 行为：滚轮事件只有 press（M），没有 release（m）
-    const button = direction < 0 ? 64 : 65;
-    const seq = buildSGRMouse(button, cell.col, cell.row, false, e);
-    debug('mouse', 'wheel SGR button=%d col=%d row=%d seq=%s', button, cell.col, cell.row, JSON.stringify(seq));
-    sendSGRMouse(sid, seq);
+    // 原始滚轮事件：由 wezterm 编码 wheel_up/wheel_down
+    const button = direction < 0 ? 'wheel_up' : 'wheel_down';
+    debug('mouse', 'wheel raw button=%s col=%d row=%d', button, cell.col, cell.row);
+    sendRawMouse(sid, cell.col, cell.row, 'press', button, e);
   }
   return true;
 }
@@ -248,7 +251,7 @@ export function bindTerminalEvents(term, inst, sid) {
         if (e.button === 1) button = 1;
         else if (e.button === 2) button = 2;
         inst[_pressedButtonKey] = button;
-        sendSGRMouse(sid, buildSGRMouse(button, cell.col, cell.row, false, e));
+        sendRawMouse(sid, cell.col, cell.row, 'press', _BTN_NAME[button] || 'left', e);
       }
     }
   }, true);
@@ -263,7 +266,7 @@ export function bindTerminalEvents(term, inst, sid) {
     const button = inst[_pressedButtonKey] != null ? inst[_pressedButtonKey] : 0;
     inst[_pressedButtonKey] = null;
     if (!cell) return;
-    sendSGRMouse(sid, buildSGRMouse(button, cell.col, cell.row, true, e));
+    sendRawMouse(sid, cell.col, cell.row, 'release', _BTN_NAME[button] || 'left', e);
   }, true);
 
   div.addEventListener('mousemove', e => {
@@ -281,30 +284,25 @@ export function bindTerminalEvents(term, inst, sid) {
     if (!canSendVtMouseInput(inst, e)) return;
     const cell = getTerminalCellFromEvent(term, e);
     if (!cell) return;
-    // WT 行为：
-    // - 拖拽（有按键按下）：button = 实际按键(0/1/2) + 0x20(motion)
-    // - 纯 hover（无按键，1003 模式）：button = 3（Released），不加 motion 标志
-    let button;
-    if (buttonPressed) {
-      button = 32 + inst[_pressedButtonKey]; // motion + actual button
-    } else {
-      button = 3; // Released/hover, no motion flag (WT: WM_MOUSEMOVE -> button=3)
-    }
-    sendSGRMouse(sid, buildSGRMouse(button, cell.col, cell.row, false, e));
+    // 拖拽（有按键按下）：kind=move + 实际按键；纯 hover（1003）：kind=move + button=none
+    const moveButton = buttonPressed
+      ? _BTN_NAME[inst[_pressedButtonKey]] || 'left'
+      : 'none';
+    sendRawMouse(sid, cell.col, cell.row, 'move', moveButton, e);
   }, true);
 
   div.addEventListener('wheel', e => {
     const s = state.sessions[sid];
     const isHistory = !!(s && s.history);
 
-    // v9.2: 历史会话允许 Ctrl+滚轮缩放（用户需求），但跳过 VT 鼠标透传（无活动进程）。
+    // 历史会话允许 Ctrl+滚轮缩放，但跳过 VT 鼠标透传（无活动进程）。
     // 普通滚轮在历史会话中允许 scrollback 滚动（下方默认分支处理）。
     if (e.ctrlKey && !e.shiftKey) {
-      // v9.2: Ctrl+滚轮 = 调整 frameRatio（框/stage 占比）。
+      // Ctrl+滚轮 = 调整 frameRatio（框/stage 占比）。
       // 所有模式统一（含历史会话）：按 ratio 反算字号（cols/rows 不变）。
       // （adaptive 的"自适应 stage 宽高比"由 applySessionFrameRatio 在切标签/stage 变化时通过 fit() 完成）
       // 上滚（deltaY<0）= 增大，下滚（deltaY>0）= 减小。
-      // 撑满 stage 后阻止继续增大（用户需求"框放到最大时不应继续变大"）。
+      // 撑满 stage 后阻止继续增大。
       e.preventDefault();
       e.stopPropagation();
       const isZoomIn = e.deltaY < 0;
@@ -493,7 +491,7 @@ export function bindTerminalEvents(term, inst, sid) {
           selectionMode = 'vt';
           selectionStartCell = cell;
           selectionHasDragged = false;
-          sendSGRMouse(sid, buildSGRMouse(0, cell.col, cell.row, false, fakeEvent));
+          sendRawMouse(sid, cell.col, cell.row, 'press', 'left', fakeEvent);
           if (navigator.vibrate) navigator.vibrate(50);
           debug('touch', 'long-press → vt selection mode cell=(%s,%s)', cell.col, cell.row);
         } else {
@@ -511,11 +509,11 @@ export function bindTerminalEvents(term, inst, sid) {
       clearLongPressTimer();
       // 双指捏合开始时，若处于 VT 选择模式则发送 release 通知程序
       if (selectionMode === 'vt' && selectionStartCell) {
-        sendSGRMouse(sid, buildSGRMouse(0, selectionStartCell.col, selectionStartCell.row, true, { shiftKey: false }));
+        sendRawMouse(sid, selectionStartCell.col, selectionStartCell.row, 'release', 'left', { shiftKey: false });
       }
       exitSelectionMode();
       pinchInitialDist = touchDist(e.touches[0], e.touches[1]);
-      // v9.2: 捏合缩放改为调整 frameRatio（所有模式统一按 ratio 反算字号，cols/rows 不变），
+      // 捏合缩放调整 frameRatio（所有模式统一按 ratio 反算字号，cols/rows 不变），
       //     通过 zoomActiveSession 统一入口。记录初始 dist 供 touchmove 算比例。
       pinchActive = true;
       inst._touchAnchor = null;
@@ -540,8 +538,7 @@ export function bindTerminalEvents(term, inst, sid) {
         const cell = getTerminalCellFromEvent(term, t);
         if (cell) {
           selectionHasDragged = true;
-          // SGR motion: 32 = motion 标志 + 0 (left button)
-          sendSGRMouse(sid, buildSGRMouse(32, cell.col, cell.row, false, { shiftKey: false }));
+          sendRawMouse(sid, cell.col, cell.row, 'move', 'left', { shiftKey: false });
         }
       } else if (inst._touchAnchor) {
         // 滚动模式：移动超过 10px 即取消长按计时器
@@ -564,7 +561,7 @@ export function bindTerminalEvents(term, inst, sid) {
               // touchmove 频率高（~60fps），每次只发 1 个事件即可，
               // 不需要按 numRows 倍数发送（否则 VT 滚轮事件像机关枪一样密集）
               const seq = numRows > 0 ? '\x1b[B' : '\x1b[A';
-              sendSGRMouse(sid, seq);
+              sendVtText(sid, seq);
               debug('touch', 'alt-scroll touch: numRows=%s dy=%s', numRows, dy.toFixed(1));
             } else if (canSendVtMouseInput(inst, fakeEvent)) {
               // SGR 鼠标滚轮：拖动转换为 VT 滚轮事件
@@ -572,8 +569,8 @@ export function bindTerminalEvents(term, inst, sid) {
               // touchmove 频率高，每次只发 1 个事件
               const cell = getTerminalCellFromEvent(term, t);
               if (cell) {
-                const button = numRows > 0 ? 65 : 64; // 65=down, 64=up
-                sendSGRMouse(sid, buildSGRMouse(button, cell.col, cell.row, false, fakeEvent));
+                const button = numRows > 0 ? 'wheel_down' : 'wheel_up';
+                sendRawMouse(sid, cell.col, cell.row, 'press', button, fakeEvent);
                 debug('touch', 'vt touch scroll: numRows=%s dy=%s cell=(%s,%s)', numRows, dy.toFixed(1), cell.col, cell.row);
               }
             } else {
@@ -586,7 +583,7 @@ export function bindTerminalEvents(term, inst, sid) {
         }
       }
     } else if (e.touches.length === 2 && pinchInitialDist > 0) {
-      // v9.2: 双指捏合 = 调整当前会话的 frameRatio（所有模式统一按 ratio 反算字号，cols/rows 不变）。
+      // 双指捏合 = 调整当前会话的 frameRatio（所有模式统一按 ratio 反算字号，cols/rows 不变）。
       // 捏合比例 → ratio 增量，通过 zoomActiveSession 统一入口。
       e.preventDefault();
       const dist = touchDist(e.touches[0], e.touches[1]);
@@ -646,7 +643,7 @@ export function bindTerminalEvents(term, inst, sid) {
         ? getTerminalCellFromEvent(term, lastTouch)
         : selectionStartCell;
       if (cell) {
-        sendSGRMouse(sid, buildSGRMouse(0, cell.col, cell.row, true, { shiftKey: false }));
+        sendRawMouse(sid, cell.col, cell.row, 'release', 'left', { shiftKey: false });
       }
       debug('touch', 'vt selection done (dragged=%s)', selectionHasDragged);
     }

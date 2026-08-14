@@ -1,5 +1,5 @@
-import socket
 import logging
+import socket
 
 from ...protocol.message import Message
 from ...protocol.response import Response

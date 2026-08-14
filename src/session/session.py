@@ -16,45 +16,41 @@ Session 自身仅保留：PTY 生命周期、I/O 接口、触发条件协调、�
 / event_history / process_monitor。
 """
 
-import os
-import re
-import sys
-import uuid
-import errno
-import time
 import logging
+import os
 import threading
-from typing import Optional, List, Tuple, Callable
+import time
+import uuid
+from typing import List, Optional
 
-from ..pty.pty_factory import create_pty
-from ..pty.base import PseudoTerminal
-from ..config.common import IS_WINDOWS, DEFAULT_COLS, DEFAULT_ROWS
-from ..config.daemon import MAX_OUTPUT_BUFFER, MAX_TRIGGER_SCAN, STOP_TIMEOUT
-from ..process import (
-    _get_process_name,
-    _get_process_path,
-    _format_exit_code_message,
-    _signal_name,
-    _format_pty_error,
-    ProcessMonitor,
-    GuiDetector,
-    ProcessTreeTracker,
-    create_process_tree_tracker,
-)
+from ..config.common import DEFAULT_COLS, DEFAULT_ROWS, IS_WINDOWS
+from ..config.daemon import MAX_OUTPUT_BUFFER, STOP_TIMEOUT
+from ..encoding import EncodingDetector
+from ..input import InputInterceptor
 from ..output import (
-    OutputBuffer,
-    TriggerMatcher,
-    safe_regex_search,
     EventHistoryManager,
+    OutputBuffer,
     PendingEvent,
+    TriggerMatcher,
     _events_to_dicts,
 )
-from ..encoding import EncodingDetector
+from ..plugins.host import PluginHost
+from ..process import (
+    GuiDetector,
+    ProcessMonitor,
+    ProcessTreeTracker,
+    _format_exit_code_message,
+    _format_pty_error,
+    create_process_tree_tracker,
+)
+from ..pty.base import PseudoTerminal
+from ..pty.pty_factory import create_pty
 from ..terminal.screen import TerminalScreen
-from ..input import InputInterceptor
 from .publisher import SessionPublisher
 from .session_threads import (
-    SessionThreads, SessionComponents, _capture_exit_code_retry,
+    SessionComponents,
+    SessionThreads,
+    _capture_exit_code_retry,
     _extract_crash_error_from_output,
 )
 
@@ -82,7 +78,8 @@ if IS_WINDOWS:
     _daemon_ctrl_handler_ref = _HANDLER_ROUTINE(_daemon_ctrl_handler)
     try:
         _ctypes.WinDLL("kernel32", use_last_error=True).SetConsoleCtrlHandler(
-            _daemon_ctrl_handler_ref, True)
+            _daemon_ctrl_handler_ref, True
+        )
     except Exception as _e:
         _logger.warning("SetConsoleCtrlHandler 安装失败: %s", _e)
 
@@ -134,43 +131,50 @@ class Session:
         self._trig_mat = TriggerMatcher(decode_func=self._decode_only)
         self._evt_hist = EventHistoryManager()
         self._tracker = create_process_tree_tracker()
+        # 会话级插件宿主：须在后台线程构造前创建（SessionComponents 引用）
+        self.plugin_host = PluginHost(self)
         self._proc_mon = ProcessMonitor(
             tracker=self._tracker,
-            event_sink=self._evt_hist.add_event,
+            event_sink=self._on_event,
         )
-        self._gui = GuiDetector(event_sink=self._evt_hist.add_event)
+        self._gui = GuiDetector(event_sink=self._on_event)
         self._screen = TerminalScreen(cols=self._cols, rows=self._rows)
-        self._threads = SessionThreads(SessionComponents(
-            pty_provider=lambda: self._pty,
-            out_buf=self._out_buf,
-            trig_mat=self._trig_mat,
-            proc_mon=self._proc_mon,
-            tracker=self._tracker,
-            gui_detector=self._gui,
-            screen=self._screen,
-            session_id=session_id,
-            on_exit=self._on_reader_exit,
-            session_ref=lambda: self,
-        ))
+        self._threads = SessionThreads(
+            SessionComponents(
+                pty_provider=lambda: self._pty,
+                out_buf=self._out_buf,
+                trig_mat=self._trig_mat,
+                proc_mon=self._proc_mon,
+                tracker=self._tracker,
+                gui_detector=self._gui,
+                screen=self._screen,
+                session_id=session_id,
+                on_exit=self._on_reader_exit,
+                session_ref=lambda: self,
+                plugin_host=self.plugin_host,
+            )
+        )
 
         self._pty: Optional[PseudoTerminal] = None
+        # stop 防重入标志（自然结束路径会在读者线程内二次调用 stop）
+        self._stop_started = False
 
         self._publisher = SessionPublisher()
 
         self._input_interceptor = InputInterceptor(
-            pty_provider=lambda: self._pty,
-            event_sink=self._evt_hist.add_event,
             cols=self._cols,
             rows=self._rows,
         )
+        # wezterm 模式感知输入编码器：与终端模型共享同一 Terminal 实例，
+        # 编码结果直接写 pty
+        from ..input.wezterm_input import WeztermInputEncoder
+
+        self._input_encoder = WeztermInputEncoder(self._screen.emulator)
 
         self.client_config: dict = {}
         self._last_snapshot_lines: Optional[List[str]] = None
-        # v4: 不再使用 _suppress_publish_until 抑制 ConPTY repaint。
-        # 旧逻辑认为 ConPTY 的 partial repaint 含"错误光标定位序列"会覆盖 xterm.js reflow，
-        # 实测发现：xterm.js 自身 reflow 无法得知 PTY 真实光标位置，导致 resize 后光标错位
-        # （表现为"光标在 dir 输出中间"，见 reference/1.txt）。
-        # 新方案：让 ConPTY 输出直达前端，并通过 snapshot 强制 resync（term.reset + write）。
+        # 不使用 _suppress_publish_until 抑制 ConPTY repaint：
+        # 让 ConPTY 输出直达前端，并通过 snapshot 强制 resync（term.reset + write）。
 
     # ════════════════════════════════════════════════════════════
     # 生命周期
@@ -180,11 +184,17 @@ class Session:
         """启动会话：创建 PTY 后端 + 启动后台读者线程和监控线程"""
         if self.running:
             return
+        self._stop_started = False
         try:
             self._pty = create_pty(
-                self.command, self._cols, self._rows, cwd=self._cwd,
-                env=self._env, encoding=self._child_encoding,
-                tracker=self._tracker)
+                self.command,
+                self._cols,
+                self._rows,
+                cwd=self._cwd,
+                env=self._env,
+                encoding=self._child_encoding,
+                tracker=self._tracker,
+            )
         except Exception as e:
             self.running = False
             self.error_message = _format_pty_error(e)
@@ -196,8 +206,7 @@ class Session:
         self._proc_mon.reset()
         try:
             pids = self._tracker.get_process_list()
-            self._proc_mon.reset(
-                initial_pids=set(pids) if pids else set())
+            self._proc_mon.reset(initial_pids=set(pids) if pids else set())
         except Exception:
             self._proc_mon.reset()
 
@@ -209,8 +218,19 @@ class Session:
             time.sleep(0.1)
 
     def stop(self, timeout: float = STOP_TIMEOUT):
-        """停止会话：强杀进程树 + 关闭 PTY + 等待读者线程退出"""
+        """停止会话：强杀进程树 + 关闭 PTY + 等待读者线程退出
+
+        防重入：会话自然结束时（读者线程内 _on_reader_exit → notify_end →
+        _on_session_ended）会再次进入 stop；若停进程由当前线程发起，
+        二次 stop 的 join 会 join 当前线程（Python 3.12+ 直接报错），
+        首调即完成全部清理，重入调用直接返回。
+        """
+        if self._stop_started:
+            _logger.debug("stop: sid=%r 已在停止中，跳过重入调用", self.id)
+            return
+        self._stop_started = True
         import time as _time
+
         _t0 = _time.monotonic()
         self.running = False
         self._threads.stop_event.set()
@@ -219,8 +239,12 @@ class Session:
 
         if self._pty and self.exit_code is None:
             self._update_exit_info()
-            _logger.debug("stop: sid=%r _update_exit_info took %.3fs exit=%s",
-                          self.id, _time.monotonic() - _t0, self.exit_code)
+            _logger.debug(
+                "stop: sid=%r _update_exit_info took %.3fs exit=%s",
+                self.id,
+                _time.monotonic() - _t0,
+                self.exit_code,
+            )
 
         _t1 = _time.monotonic()
         try:
@@ -228,8 +252,9 @@ class Session:
             self._tracker.kill_tree()
         except Exception as e:
             _logger.warning("强杀进程树时异常: %s", e)
-        _logger.debug("stop: sid=%r kill_tree took %.3fs",
-                      self.id, _time.monotonic() - _t1)
+        _logger.debug(
+            "stop: sid=%r kill_tree took %.3fs", self.id, _time.monotonic() - _t1
+        )
         if self._pty:
             _t2 = _time.monotonic()
             try:
@@ -237,16 +262,21 @@ class Session:
             except Exception as e:
                 _logger.warning("关闭伪终端时异常: %s", e)
             self._pty = None
-            _logger.debug("stop: sid=%r pty.close took %.3fs",
-                          self.id, _time.monotonic() - _t2)
+            _logger.debug(
+                "stop: sid=%r pty.close took %.3fs", self.id, _time.monotonic() - _t2
+            )
         _t3 = _time.monotonic()
         self._threads.stop(timeout)
         try:
             self._tracker.close()
         except Exception as e:
             _logger.warning("关闭进程树追踪器时异常: %s", e)
-        _logger.info("stop: sid=%r threads.stop took %.3fs total %.3fs",
-                     self.id, _time.monotonic() - _t3, _time.monotonic() - _t0)
+        _logger.info(
+            "stop: sid=%r threads.stop took %.3fs total %.3fs",
+            self.id,
+            _time.monotonic() - _t3,
+            _time.monotonic() - _t0,
+        )
 
     # ════════════════════════════════════════════════════════════
     # I/O
@@ -270,18 +300,78 @@ class Session:
             raise TypeError(
                 f"输入数据必须是 str 或 bytes, 收到 {type(data).__name__}",
             )
-        _logger.debug("write_input: sid=%r len=%d data=%r", self.id, len(data),
-                       data[:200] if isinstance(data, str) else data[:200])
+        _logger.debug(
+            "write_input: sid=%r len=%d data=%r",
+            self.id,
+            len(data),
+            data[:200] if isinstance(data, str) else data[:200],
+        )
 
         data = self._input_interceptor.intercept(
-            data, self._child_encoding, self.encoding, self.id)
+            data, self._child_encoding, self.encoding, self.id
+        )
 
-        try:
-            if data:
+        if not self._dispatch_input(data):
+            _logger.info("write_input: sid=%r 输入被插件拦截", self.id)
+
+    def _dispatch_input(self, data) -> bool:
+        """统一输入分发：插件链变换后写入 PTY
+
+        供 write_input/key_input/key_up/mouse_input 共用，保证所有输入
+        路径都经过插件 on_input 链。
+
+        Returns:
+            True 已写入；False 被插件拦截丢弃。
+        """
+        data = self.plugin_host.on_input(data)
+        if data is None:
+            return False
+        if data:
+            try:
                 self._pty.write(data)
-        except Exception as e:
-            _logger.error("写入输入失败 (会话 '%s'): %s", self.id, e)
-            raise RuntimeError(f"写入输入失败: {e}") from e
+            except Exception as e:
+                _logger.error("写入输入失败 (会话 '%s'): %s", self.id, e)
+                raise RuntimeError(f"写入输入失败: {e}") from e
+        return True
+
+    # ── wezterm 模式感知输入（键盘/鼠标事件 → 编码字节 → 直接写 pty）──
+
+    def key_input(self, key: str, mods: int = 0) -> None:
+        """模式感知键盘按下编码并写入 PTY
+
+        由 wezterm-py Terminal 按终端当前状态（应用光标模式/kitty/CSI-u/win32）
+        编码为对应 VT 序列并直接写入 pty。
+
+        Args:
+            key:  按键名（"a"/"Up"/"F1"/"Enter"...）。
+            mods: KeyModifiers 位掩码（SHIFT=1<<1, ALT=1<<2, CTRL=1<<3, SUPER=1<<4）。
+        """
+        if not self._pty or not self.running:
+            raise RuntimeError(f"会话 '{self.id}' 未运行")
+        data = self._input_encoder.key_down(key, mods)
+        if data and not self._dispatch_input(data):
+            _logger.info("key_input: sid=%r 输入被插件拦截", self.id)
+
+    def key_up(self, key: str, mods: int = 0) -> None:
+        """模式感知键盘抬起编码并写入 PTY（win32 输入模式等需要 keyup 时）"""
+        if not self._pty or not self.running:
+            raise RuntimeError(f"会话 '{self.id}' 未运行")
+        data = self._input_encoder.key_up(key, mods)
+        if data and not self._dispatch_input(data):
+            _logger.info("key_up: sid=%r 输入被插件拦截", self.id)
+
+    def mouse_input(
+        self, x: int, y: int, kind: str = "press", button: str = "left", mods: int = 0
+    ) -> None:
+        """模式感知鼠标事件编码并写入 PTY
+
+        坐标 x/y 为 0-based 单元格；未启用鼠标上报时编码为空（不写入）。
+        """
+        if not self._pty or not self.running:
+            raise RuntimeError(f"会话 '{self.id}' 未运行")
+        data = self._input_encoder.mouse(x, y, kind, button, mods)
+        if data and not self._dispatch_input(data):
+            _logger.info("mouse_input: sid=%r 输入被插件拦截", self.id)
 
     def send_signal(self, sig: str):
         """向子进程发送信号（如 SIGINT）
@@ -294,15 +384,24 @@ class Session:
         if pid is None:
             return
         import signal as _signal
+
         if sig == "SIGINT":
             try:
                 if IS_WINDOWS:
                     self._send_sigint_windows(pid)
                 else:
                     os.kill(pid, _signal.SIGINT)
-                    _logger.info("send_signal: sid=%r SIGINT pid=%d (os.kill)", self.id, pid)
+                    _logger.info(
+                        "send_signal: sid=%r SIGINT pid=%d (os.kill)", self.id, pid
+                    )
             except Exception as e:
-                _logger.warning("send_signal failed: sid=%r sig=%s pid=%d err=%s", self.id, sig, pid, e)
+                _logger.warning(
+                    "send_signal failed: sid=%r sig=%s pid=%d err=%s",
+                    self.id,
+                    sig,
+                    pid,
+                    e,
+                )
         else:
             _logger.warning("send_signal: unsupported sig=%s", sig)
 
@@ -336,11 +435,17 @@ class Session:
         def _fallback_write_ctrl_c():
             """AttachConsole 失败时的兜底：写 \\x03 到 stdin（非真实信号）"""
             try:
-                self._pty.write(b'\x03')
-                _logger.info("send_signal: sid=%r \\x03 stdin pid=%d (fallback)", self.id, pid)
+                self._pty.write(b"\x03")
+                _logger.info(
+                    "send_signal: sid=%r \\x03 stdin pid=%d (fallback)", self.id, pid
+                )
             except Exception as e:
-                _logger.warning("send_signal all methods failed: sid=%r pid=%d err=%s",
-                                self.id, pid, e)
+                _logger.warning(
+                    "send_signal all methods failed: sid=%r pid=%d err=%s",
+                    self.id,
+                    pid,
+                    e,
+                )
 
         with _console_lock:
             # 先脱离当前控制台（守护进程可能没有控制台，失败也无妨）
@@ -351,7 +456,8 @@ class Session:
                     err = ctypes.get_last_error()
                     _logger.debug(
                         "send_signal: AttachConsole failed pid=%d err=%d, fallback to \\x03",
-                        pid, err,
+                        pid,
+                        err,
                     )
                     _fallback_write_ctrl_c()
                     return
@@ -362,7 +468,8 @@ class Session:
                     if kernel32.GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0):
                         _logger.info(
                             "send_signal: sid=%r SIGINT pid=%d (AttachConsole+CtrlEvent(0))",
-                            self.id, pid,
+                            self.id,
+                            pid,
                         )
                     else:
                         err = ctypes.get_last_error()
@@ -377,20 +484,22 @@ class Session:
             except Exception as e:
                 _logger.warning(
                     "send_signal: sid=%r AttachConsole path failed pid=%d err=%s, fallback to \\x03",
-                    self.id, pid, e,
+                    self.id,
+                    pid,
+                    e,
                 )
                 _fallback_write_ctrl_c()
 
     def perform_mouse_action(self, action: dict) -> dict:
         """执行鼠标动作（委托给 InputInterceptor）"""
         return self._input_interceptor.perform_mouse_action(
-            action, self._screen, self.pty_type, self.id, self.running,
+            action,
+            self._screen,
+            self.pty_type,
+            self.id,
+            self.running,
             write_fn=self.write_input,
         )
-
-    def update_mouse_mode_from_console(self):
-        """通过子进程控制台输入模式检测是否需要鼠标事件（委托给 InputInterceptor）"""
-        self._input_interceptor.update_mouse_mode_from_console(self.id, self.running)
 
     def detect_encoding(self, sample: Optional[bytes] = None) -> Optional[str]:
         """基于已有输出锁定编码，供 WebSocket 等外部订阅者使用"""
@@ -408,7 +517,8 @@ class Session:
     ) -> str:
         """获取会话输出"""
         data = self._out_buf.get_slice(
-            start=from_offset if from_offset is not None else 0)
+            start=from_offset if from_offset is not None else 0
+        )
         return self._enc.detect_decode(data, encoding)
 
     def get_output_with_offset(
@@ -422,12 +532,14 @@ class Session:
             (解码后文本, 当前缓冲区字节偏移) 元组。
         """
         data, cur_offset = self._out_buf.get_slice_with_length(
-            start=from_offset if from_offset is not None else 0)
+            start=from_offset if from_offset is not None else 0
+        )
         return self._enc.detect_decode(data, encoding), cur_offset
 
     def get_snapshot(self, keep_ansi: bool = False) -> str:
-        """获取终端屏幕快照"""
-        return self._screen.snapshot(keep_ansi=keep_ansi)
+        """获取终端屏幕快照（经插件 on_snapshot 变换链）"""
+        text = self._screen.snapshot(keep_ansi=keep_ansi)
+        return self.plugin_host.on_snapshot(text)
 
     def get_cursor_seq(self) -> str:
         """获取光标定位 VT 序列（CSI row;col H + ?25h/l）
@@ -467,7 +579,11 @@ class Session:
         max_len = max(len(current_lines), len(self._last_snapshot_lines))
         for i in range(max_len):
             cur = current_lines[i] if i < len(current_lines) else ""
-            prev = self._last_snapshot_lines[i] if i < len(self._last_snapshot_lines) else ""
+            prev = (
+                self._last_snapshot_lines[i]
+                if i < len(self._last_snapshot_lines)
+                else ""
+            )
             if cur != prev:
                 diff_lines.append(f"{i}:{cur}")
         self._last_snapshot_lines = current_lines
@@ -479,9 +595,12 @@ class Session:
     def export_screen_buffer(self) -> dict:
         return self._screen.export_buffer()
 
-    def set_snapshot_trigger(self, pattern: Optional[str] = None,
-                             idle_timeout: Optional[float] = None,
-                             idle_after_first_output: bool = False):
+    def set_snapshot_trigger(
+        self,
+        pattern: Optional[str] = None,
+        idle_timeout: Optional[float] = None,
+        idle_after_first_output: bool = False,
+    ):
         self._trig_mat.set_snapshot_trigger(
             pattern=pattern,
             idle_timeout=idle_timeout,
@@ -514,14 +633,14 @@ class Session:
         return self._rows
 
     def resize(self, cols: int, rows: int) -> str:
-        """调整终端尺寸（PTY + pyte screen + InputInterceptor）
+        """调整终端尺寸（PTY + wezterm screen + InputInterceptor）
 
         v5 方案（对齐 ConPTY 语义）：
-        - 先 resize pyte screen（GridScreen.resize 按 ConPTY 语义重排并写回
-          pyte.buffer：内容锚顶、光标绑定文本行，与 ConPTY 坐标系完全一致）
+        - 先 resize wezterm screen（wezterm-term 原生 reflow：内容锚顶、
+          光标绑定文本行，与 ConPTY 坐标系完全一致）
         - 再 resize PTY（ConPTY 内部 reflow；宽度变化时会发 repaint）
-        - 短暂等待 ConPTY repaint（如果有的话），让 pyte 同步到最新状态
-        - 返回 pyte.buffer 的 snapshot（含 VT 颜色序列 + 真实光标位置）
+        - 短暂等待 ConPTY repaint（如果有的话），让终端模型同步到最新状态
+        - 返回终端模型的 snapshot（含 VT 颜色序列 + 真实光标位置）
         - 前端收到 snapshot 后 \\x1b[3J + scrollback + \\x1b[2J + snapshot 重建
 
         关键不变量：snapshot 的可见区内容和光标 == ConPTY 的可见区内容和光标。
@@ -534,19 +653,24 @@ class Session:
             屏幕快照（含 VT 颜色序列与光标位置），供前端重建 buffer 使用。
         """
         cols, rows = int(cols), int(rows)
-        _logger.debug("resize: START %dx%d -> %dx%d", self._cols, self._rows, cols, rows)
+        _logger.debug(
+            "resize: START %dx%d -> %dx%d", self._cols, self._rows, cols, rows
+        )
 
         # resize 前 cursor 位置（诊断用）
         try:
-            old_cursor = self._screen._screen.cursor
-            _logger.debug("resize: before pyte.resize cursor=(x=%s y=%s)",
-                          getattr(old_cursor, 'x', '?'), getattr(old_cursor, 'y', '?'))
+            old_cursor = self._screen.cursor_position()
+            _logger.debug(
+                "resize: before screen.resize cursor=(x=%s y=%s)",
+                old_cursor[0],
+                old_cursor[1],
+            )
         except Exception:
             pass
 
-        # 1. 先 resize pyte screen（reflow 内容 + 保留光标）
+        # 1. 先 resize 终端模型（reflow 内容 + 保留光标）
         #    必须在 pty.resize() 之前完成，这样 reader 线程后续读到的 repaint
-        #    字节会以新尺寸被 pyte 正确处理，避免"内容错位"竞态
+        #    字节会以新尺寸被终端模型正确处理，避免"内容错位"竞态
         screen_ok = True
         try:
             self._screen.resize(cols, rows)
@@ -559,7 +683,7 @@ class Session:
             self._input_interceptor.resize(cols, rows)
 
         # 2. resize PTY（ConPTY 内部 reflow + 发送 repaint）
-        #    v4: 不再设置 _suppress_publish_until，让 ConPTY repaint 直达前端
+        #    让 ConPTY repaint 直达前端
         pty_ok = True
         try:
             if self._pty and hasattr(self._pty, "resize"):
@@ -571,15 +695,21 @@ class Session:
         if not (pty_ok and screen_ok):
             _logger.warning(
                 "resize partial (pty_ok=%s, screen_ok=%s), size=%dx%d",
-                pty_ok, screen_ok, self._cols, self._rows,
+                pty_ok,
+                screen_ok,
+                self._cols,
+                self._rows,
             )
 
         # 3. 短暂等待 ConPTY repaint（如果有的话）
-        #    pyte screen 已有 reflow 后的旧内容，即使 ConPTY 不发 repaint，
+        #    终端模型已有 reflow 后的旧内容，即使 ConPTY 不发 repaint，
         #    快照仍然包含正确的内容和光标位置
         if pty_ok:
             prior_feed = self._screen.feed_count
-            _logger.debug("resize: waiting for optional repaint feed, prior_feed_count=%d", prior_feed)
+            _logger.debug(
+                "resize: waiting for optional repaint feed, prior_feed_count=%d",
+                prior_feed,
+            )
             # 最多等 200ms 让 reader feed repaint
             waited_ms = 0
             for _ in range(20):
@@ -601,25 +731,31 @@ class Session:
                     else:
                         stable_ms = 0
                         last_count = cur_count
-            _logger.debug("resize: waited %dms, feed_count %d→%d (Δ=%d)",
-                          waited_ms, prior_feed, self._screen.feed_count,
-                          self._screen.feed_count - prior_feed)
+            _logger.debug(
+                "resize: waited %dms, feed_count %d→%d (Δ=%d)",
+                waited_ms,
+                prior_feed,
+                self._screen.feed_count,
+                self._screen.feed_count - prior_feed,
+            )
 
         # snapshot 前 cursor 位置（诊断用）
         try:
-            new_cursor = self._screen._screen.cursor
-            _logger.debug("resize: before snapshot cursor=(x=%s y=%s) hidden=%s",
-                          getattr(new_cursor, 'x', '?'),
-                          getattr(new_cursor, 'y', '?'),
-                          getattr(new_cursor, 'hidden', '?'))
+            new_cursor = self._screen.cursor_position()
+            _logger.debug(
+                "resize: before snapshot cursor=(x=%s y=%s) hidden=%s",
+                new_cursor[0],
+                new_cursor[1],
+                (not new_cursor[2]) if new_cursor[2] is not None else "?",
+            )
         except Exception:
             pass
 
         _logger.debug("resize: END, returning snapshot")
         try:
-            # 清除 Grid scrollback：resize 后 ConPTY repaint 可能触发 index()
+            # 清除 scrollback：resize 后 ConPTY repaint 可能触发 index()
             # 将可见区顶部行推入 scrollback，导致 scrollback 与 snapshot
-            # （读 pyte.buffer 可见区）内容重叠，前端 restoreScrollbackAndSnapshot
+            # （读终端模型可见区）内容重叠，前端 restoreScrollbackAndSnapshot
             # 会将同一内容写两遍（scrollback 区 + 可见区各一份）。
             # resize snapshot 已包含完整可见区状态，scrollback 在 resize 场景下
             # 是 repaint 竞态产生的冗余，清除后由后续正常输出滚动重新产生。
@@ -629,20 +765,39 @@ class Session:
             except Exception as e:
                 _logger.debug("resize: clear_scrollback failed (non-fatal): %s", e)
 
-            # 关键：snapshot 必须来自 pyte.buffer（ConPTY 真实可见区状态）。
-            # GridScreen.resize 已按 ConPTY 语义重排并写回 pyte.buffer，
+            # 关键：snapshot 必须来自终端模型（ConPTY 真实可见区状态）。
+            # wezterm 终端模型 resize 已按 ConPTY 语义原生 reflow，
             # 此处读出的内容和光标与 ConPTY 坐标系完全一致，
             # 前端重建后 ConPTY 的绝对光标定位不会错位。
             snapshot = self._screen.snapshot(keep_ansi=True, include_cursor=True)
             # 诊断日志：快照前 100 字符 + 末尾 60 字符
-            preview_head = snapshot[:100].replace('\r', '\\r').replace('\n', '\\n').replace('\x1b', '\\e')
-            preview_tail = snapshot[-60:].replace('\r', '\\r').replace('\n', '\\n').replace('\x1b', '\\e')
-            _logger.debug("resize: snapshot len=%d head=%r tail=%r", len(snapshot), preview_head, preview_tail)
+            preview_head = (
+                snapshot[:100]
+                .replace("\r", "\\r")
+                .replace("\n", "\\n")
+                .replace("\x1b", "\\e")
+            )
+            preview_tail = (
+                snapshot[-60:]
+                .replace("\r", "\\r")
+                .replace("\n", "\\n")
+                .replace("\x1b", "\\e")
+            )
+            _logger.debug(
+                "resize: snapshot len=%d head=%r tail=%r",
+                len(snapshot),
+                preview_head,
+                preview_tail,
+            )
             # 诊断：scrollback 摘要
             try:
                 sb = self._screen.capture_scrollback()
-                sb_text = sb.replace('\r', '\\r').replace('\n', '\\n').replace('\x1b', '\\e')
-                _logger.debug("resize: scrollback len=%d head=%r", len(sb), sb_text[:120])
+                sb_text = (
+                    sb.replace("\r", "\\r").replace("\n", "\\n").replace("\x1b", "\\e")
+                )
+                _logger.debug(
+                    "resize: scrollback len=%d head=%r", len(sb), sb_text[:120]
+                )
             except Exception:
                 pass
             return snapshot
@@ -667,7 +822,9 @@ class Session:
         idle_after_first_output: bool = False,
     ):
         self._trig_mat.set(
-            pattern=pattern, newline=newline, fresh=fresh,
+            pattern=pattern,
+            newline=newline,
+            fresh=fresh,
             start_offset=start_offset,
             idle_timeout=idle_timeout,
             idle_after_first_output=idle_after_first_output,
@@ -677,8 +834,7 @@ class Session:
             self._trig_mat.fresh_cycle = self._out_buf.read_cycle
             return
 
-        self._trig_mat.newline_count = (
-            self._out_buf.count_byte(ord("\n")))
+        self._trig_mat.newline_count = self._out_buf.count_byte(ord("\n"))
         with self._out_buf.lock:
             self._trig_mat.check(self._out_buf)
 
@@ -687,6 +843,23 @@ class Session:
         timeout: Optional[float] = None,
         gui_short_circuit: bool = True,
     ):
+        host = self.plugin_host
+        host.enter_wait()
+        try:
+            return self._wait_for_trigger_inner(timeout, gui_short_circuit)
+        finally:
+            host.exit_wait()
+
+    def _wait_for_trigger_inner(
+        self,
+        timeout: Optional[float] = None,
+        gui_short_circuit: bool = True,
+    ):
+        """触发等待主体循环（wait_for_trigger 在 enter/exit_wait 包裹下调用）
+
+        每轮循环检查插件返回请求（request_return），命中立即返回，
+        原因由插件自定义并原样透传。
+        """
         if self._trig_mat.matched:
             return True, "matched"
         if self._proc_mon.crash_event.is_set():
@@ -694,7 +867,11 @@ class Session:
             return False, "crashed"
         if not self.running:
             return False, "ended"
-        if gui_short_circuit and self._gui.gui_windows and self._gui.detected_event.is_set():
+        if (
+            gui_short_circuit
+            and self._gui.gui_windows
+            and self._gui.detected_event.is_set()
+        ):
             self._gui.detected_event.clear()
             return False, "gui_detected"
 
@@ -703,16 +880,30 @@ class Session:
         while True:
             remaining = deadline - time.time()
             if remaining <= 0:
-                _logger.info("wait_for_trigger: TIMEOUT id=%r pattern=%r "
-                             "timeout=%s", self.id,
-                             self._trig_mat.pattern, timeout)
+                _logger.info(
+                    "wait_for_trigger: TIMEOUT id=%r pattern=%r timeout=%s",
+                    self.id,
+                    self._trig_mat.pattern,
+                    timeout,
+                )
                 return False, "timeout"
 
             if self._trig_mat.check_idle_timeout():
-                _logger.info("wait_for_trigger: IDLE_TIMEOUT id=%r "
-                             "idle_timeout=%s",
-                             self.id, self._trig_mat.idle_timeout)
+                _logger.info(
+                    "wait_for_trigger: IDLE_TIMEOUT id=%r idle_timeout=%s",
+                    self.id,
+                    self._trig_mat.idle_timeout,
+                )
                 return False, "idle_timeout"
+
+            plugin_reason = self.plugin_host.consume_return_request()
+            if plugin_reason:
+                _logger.info(
+                    "wait_for_trigger: PLUGIN_RETURN id=%r reason=%r",
+                    self.id,
+                    plugin_reason,
+                )
+                return True, plugin_reason
 
             if self._proc_mon.crash_event.is_set():
                 self._proc_mon.clear_crash()
@@ -720,8 +911,11 @@ class Session:
 
             self._trig_mat.event.wait(min(0.1, remaining))
             if self._trig_mat.matched:
-                _logger.info("wait_for_trigger: MATCHED id=%r pattern=%r",
-                             self.id, self._trig_mat.pattern)
+                _logger.info(
+                    "wait_for_trigger: MATCHED id=%r pattern=%r",
+                    self.id,
+                    self._trig_mat.pattern,
+                )
                 return True, "matched"
             if not self.running:
                 return False, "ended"
@@ -735,9 +929,12 @@ class Session:
                 return False, "gui_detected"
 
     def clear_trigger(self):
-        _logger.info("clear_trigger: id=%r pattern=%r matched=%s",
-                     self.id, self._trig_mat.pattern,
-                     self._trig_mat.matched)
+        _logger.info(
+            "clear_trigger: id=%r pattern=%r matched=%s",
+            self.id,
+            self._trig_mat.pattern,
+            self._trig_mat.matched,
+        )
         self._trig_mat.clear()
         self._proc_mon.clear_crash()
 
@@ -746,14 +943,26 @@ class Session:
     def _decode_only(self, data: bytes) -> str:
         return self._enc.decode_only(data)
 
+    # ── 事件统一入口 ─────────────────────────────────────────
+
+    def _on_event(self, ev):
+        """会话事件统一入口（ProcessMonitor/GuiDetector 的 event_sink）
+
+        插件收到与 events 命令一致的 dict 事件（先过插件链再入事件历史）。
+        """
+        dicts = _events_to_dicts([ev])
+        self.plugin_host.on_event(dicts[0] if dicts else {})
+        self._evt_hist.add_event(ev)
+
     # ── 读者退出回调 ─────────────────────────────────────────
 
     def _on_all_processes_exited(self):
         if not self.running:
             return
         _logger.info("会话 '%s': 所有子进程已退出，调用 stop", self.id)
-        threading.Thread(target=self.stop, daemon=True,
-                         name=f"pty-stop-{self.id}").start()
+        threading.Thread(
+            target=self.stop, daemon=True, name=f"pty-stop-{self.id}"
+        ).start()
 
     def _on_reader_exit(self, exit_code, error_message):
         if exit_code is not None:
@@ -762,8 +971,14 @@ class Session:
                 self.error_message = error_message
         _logger.info(
             "会话 '%s': reader exiting, running=%s, exit_code=%s, error_msg=%s",
-            self.id, self.running, self.exit_code, self.error_message)
+            self.id,
+            self.running,
+            self.exit_code,
+            self.error_message,
+        )
         self.running = False
+        # 会话结束：卸载全部挂载插件（幂等，stop 引发的 reader 退出重复调用无副作用）
+        self.plugin_host.detach_all(exit_code)
         self._out_buf.first_output_event.set()
         self._trig_mat.event.set()
         self._publisher.notify_end(self)
@@ -786,6 +1001,36 @@ class Session:
     def close_window(self, hwnd: int) -> bool:
         return self._tracker.close_gui_window(hwnd)
 
+    def cursor_position(self):
+        """获取终端当前光标位置与可见性
+
+        Returns:
+            (x, y, visible) 元组；x/y 为 0-based 列/行，
+            visible 为 None 表示可见性未知。任意线程可调用。
+        """
+        return self._screen.cursor_position()
+
+    def is_alt_screen(self) -> bool:
+        """备用屏幕是否激活（vim/htop/less 等 TUI 应用）
+
+        基于终端层对 \x1b[?1049/1047/47/1048 开关序列的跟踪，任意线程可调用。
+        """
+        return self._screen.is_alt_screen()
+
+    def mode_restore_seq(self) -> str:
+        """终端模式恢复序列（订阅时拼在 replay 前，恢复 xterm 模式状态）
+
+        鼠标追踪/光标可见性/bracketed paste/备用屏幕等，见 TerminalScreen.mode_restore_seq。
+        """
+        return self._screen.mode_restore_seq()
+
+    def is_mouse_tracking(self) -> bool:
+        """TUI 应用是否激活鼠标追踪（\x1b[?1000/1002/1003 跟踪）
+
+        供 web 订阅响应携带当前鼠标模式，前端据此恢复鼠标输入状态。
+        """
+        return self._screen.is_mouse_tracking()
+
     # ════════════════════════════════════════════════════════════
     # 事件管理（委托给 EventHistoryManager）
     # ════════════════════════════════════════════════════════════
@@ -796,9 +1041,12 @@ class Session:
     def peek_events(self) -> List[dict]:
         return self._evt_hist.peek_pending()
 
-    def get_all_events(self, last: Optional[int] = None,
-                       since: Optional[float] = None,
-                       until: Optional[float] = None) -> List[dict]:
+    def get_all_events(
+        self,
+        last: Optional[int] = None,
+        since: Optional[float] = None,
+        until: Optional[float] = None,
+    ) -> List[dict]:
         return self._evt_hist.get_all(last=last, since=since, until=until)
 
     @staticmethod
@@ -807,7 +1055,8 @@ class Session:
 
     def check_event_existence(self, ev: dict) -> bool:
         return self._evt_hist.check_existence(
-            ev, tracker_provider=lambda: self._tracker)
+            ev, tracker_provider=lambda: self._tracker
+        )
 
     @property
     def pending_event_count(self) -> int:
@@ -840,10 +1089,6 @@ class Session:
     @property
     def publisher(self) -> "SessionPublisher":
         return self._publisher
-
-    @property
-    def input_interceptor(self) -> "InputInterceptor":
-        return self._input_interceptor
 
     def get_pty_process_list(self) -> list:
         try:

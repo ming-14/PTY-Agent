@@ -3,43 +3,16 @@
 提供按 PID 查询进程可执行文件名/路径的工具函数，
 进程详情查询（命令行、父PID、内存、CPU时间等），
 进程树构建，以及进程退出码和 PTY 创建失败的错误消息格式化。
+进程存在性探测（pid_exists）见 src/common/process.py（跨侧共享）。
 """
 
-import os
 import logging
+import os
 from typing import Dict, List, Optional
 
 from ..config.common import IS_WINDOWS
 
 _logger = logging.getLogger("pty-session")
-
-
-def pid_exists(pid: int) -> bool:
-    """检查指定 PID 的进程是否存在（跨平台）
-
-    Windows: OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION) 探测句柄；
-    Unix: os.kill(pid, 0) 信号探测。
-    """
-    if IS_WINDOWS:
-        try:
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-            if handle:
-                kernel32.CloseHandle(handle)
-                return True
-            return False
-        except Exception:
-            return False
-    else:
-        try:
-            os.kill(pid, 0)
-            return True
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
 
 
 # ── 进程信息查询 ──
@@ -79,6 +52,7 @@ def _get_process_path(pid: int) -> str:
         try:
             import ctypes
             from ctypes import wintypes as W
+
             PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
             k32 = ctypes.WinDLL("kernel32", use_last_error=True)
             hproc = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
@@ -91,7 +65,9 @@ def _get_process_path(pid: int) -> str:
                 if k32.QueryFullProcessImageNameW(hproc, 0, buf, ctypes.byref(size)):
                     _logger.debug("get_process_path: pid=%d path=%s", pid, buf.value)
                     return buf.value
-                _logger.debug("get_process_path: QueryFullProcessImageNameW(%d) failed", pid)
+                _logger.debug(
+                    "get_process_path: QueryFullProcessImageNameW(%d) failed", pid
+                )
                 return f"PID {pid}"
             finally:
                 k32.CloseHandle(hproc)
@@ -138,6 +114,7 @@ def _format_exit_code_message(exit_code: int) -> Optional[str]:
     if IS_WINDOWS:
         try:
             from .win32_error import format_process_exit_code
+
             return format_process_exit_code(exit_code)
         except ImportError:
             pass
@@ -154,6 +131,7 @@ def _signal_name(signum: int) -> str:
     """获取 Unix 信号名称"""
     try:
         import signal as _sig
+
         for name in dir(_sig):
             if name.startswith("SIG") and not name.startswith("SIG_"):
                 if getattr(_sig, name, None) == signum:
@@ -179,6 +157,7 @@ def _format_pty_error(exception: Exception) -> str:
             # OSError 格式：(error_code, message)
             if len(exception.args) >= 2 and isinstance(exception.args[0], int):
                 from .win32_error import format_create_process_error
+
                 return format_create_process_error(exception.args[0])
         except ImportError:
             pass
@@ -273,25 +252,40 @@ def _get_process_command_line_windows(pid: int) -> Optional[str]:
     """Windows: 通过 WMI 或进程读取命令行参数"""
     try:
         import ctypes
+
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
         PROCESS_VM_READ = 0x0010
         k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        hproc = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, False, pid)
+        hproc = k32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, False, pid
+        )
         if not hproc:
             return None
         try:
             try:
                 import subprocess
+
                 result = subprocess.run(
-                    ["wmic", "process", "where", f"ProcessId={pid}", "get", "CommandLine", "/value"],
-                    capture_output=True, text=True, timeout=3,
+                    [
+                        "wmic",
+                        "process",
+                        "where",
+                        f"ProcessId={pid}",
+                        "get",
+                        "CommandLine",
+                        "/value",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    check=False,
                     creationflags=0x08000000,
                 )
                 if result.returncode == 0:
                     for line in result.stdout.strip().splitlines():
                         line = line.strip()
                         if line.startswith("CommandLine="):
-                            cmd = line[len("CommandLine="):]
+                            cmd = line[len("CommandLine=") :]
                             return cmd if cmd else None
             except Exception:
                 pass
@@ -306,6 +300,7 @@ def _get_process_memory_windows(pid: int) -> Optional[float]:
     """Windows: 获取进程内存使用（MB）"""
     try:
         import ctypes
+
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
         k32 = ctypes.WinDLL("kernel32", use_last_error=True)
         psapi = ctypes.WinDLL("psapi", use_last_error=True)
@@ -313,6 +308,7 @@ def _get_process_memory_windows(pid: int) -> Optional[float]:
         if not hproc:
             return None
         try:
+
             class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
                 _fields_ = [
                     ("cb", ctypes.c_ulong),
@@ -326,6 +322,7 @@ def _get_process_memory_windows(pid: int) -> Optional[float]:
                     ("PagefileUsage", ctypes.c_size_t),
                     ("PeakPagefileUsage", ctypes.c_size_t),
                 ]
+
             pmc = PROCESS_MEMORY_COUNTERS()
             pmc.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
             if psapi.GetProcessMemoryInfo(hproc, ctypes.byref(pmc), pmc.cb):
@@ -341,6 +338,7 @@ def _get_process_cpu_time_windows(pid: int) -> Optional[float]:
     """Windows: 获取进程 CPU 时间（秒）"""
     try:
         import ctypes
+
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
         k32 = ctypes.WinDLL("kernel32", use_last_error=True)
         hproc = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
@@ -351,8 +349,13 @@ def _get_process_cpu_time_windows(pid: int) -> Optional[float]:
             exit_time = ctypes.c_ulonglong()
             kernel = ctypes.c_ulonglong()
             user = ctypes.c_ulonglong()
-            if k32.GetProcessTimes(hproc, ctypes.byref(creation), ctypes.byref(exit_time),
-                                   ctypes.byref(kernel), ctypes.byref(user)):
+            if k32.GetProcessTimes(
+                hproc,
+                ctypes.byref(creation),
+                ctypes.byref(exit_time),
+                ctypes.byref(kernel),
+                ctypes.byref(user),
+            ):
                 total_100ns = kernel.value + user.value
                 return round(total_100ns / 10_000_000, 2)
             return None
@@ -366,6 +369,7 @@ def _get_process_create_time_windows(pid: int) -> Optional[float]:
     """Windows: 获取进程创建时间（Unix 时间戳）"""
     try:
         import ctypes
+
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
         k32 = ctypes.WinDLL("kernel32", use_last_error=True)
         hproc = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
@@ -376,10 +380,16 @@ def _get_process_create_time_windows(pid: int) -> Optional[float]:
             exit_time = ctypes.c_ulonglong()
             kernel = ctypes.c_ulonglong()
             user = ctypes.c_ulonglong()
-            if k32.GetProcessTimes(hproc, ctypes.byref(creation), ctypes.byref(exit_time),
-                                   ctypes.byref(kernel), ctypes.byref(user)):
+            if k32.GetProcessTimes(
+                hproc,
+                ctypes.byref(creation),
+                ctypes.byref(exit_time),
+                ctypes.byref(kernel),
+                ctypes.byref(user),
+            ):
                 import datetime
-                epoch = datetime.datetime(1601, 1, 1)
+
+                epoch = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
                 delta = datetime.timedelta(microseconds=creation.value // 10)
                 dt = epoch + delta
                 return dt.timestamp()
@@ -420,7 +430,9 @@ def _get_process_detail_unix(pid: int) -> Optional[dict]:
         try:
             with open(f"{proc_dir}/cmdline", "rb") as f:
                 raw = f.read()
-                command_line = raw.replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+                command_line = (
+                    raw.replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+                )
         except Exception:
             pass
 
@@ -436,7 +448,7 @@ def _get_process_detail_unix(pid: int) -> Optional[dict]:
                         utime = int(rest[11])
                         stime = int(rest[12])
                         try:
-                            with open(f"/proc/uptime", "r") as uf:
+                            with open("/proc/uptime", "r") as uf:
                                 clk_tck = os.sysconf("SC_CLK_TCK")
                                 cpu_seconds = round((utime + stime) / clk_tck, 2)
                         except Exception:

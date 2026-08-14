@@ -33,8 +33,14 @@ class ProcessNotification:
         process_path:  进程完整路径（同上）。
     """
 
-    def __init__(self, type: str, pid: int, exit_code: Optional[int] = None,
-                 process_name: str = "", process_path: str = ""):
+    def __init__(
+        self,
+        type: str,
+        pid: int,
+        exit_code: Optional[int] = None,
+        process_name: str = "",
+        process_path: str = "",
+    ):
         self.type = type
         self.pid = pid
         self.exit_code = exit_code
@@ -51,8 +57,10 @@ class ProcessNotification:
         return self.type == NOTIF_CRASH
 
     def __repr__(self):
-        return (f"ProcessNotification({self.type}, pid={self.pid}, "
-                f"exit_code={self.exit_code})")
+        return (
+            f"ProcessNotification({self.type}, pid={self.pid}, "
+            f"exit_code={self.exit_code})"
+        )
 
 
 class ProcessTreeTracker(ABC):

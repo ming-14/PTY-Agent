@@ -1,7 +1,6 @@
 """JobProcessTreeTracker — Windows Job Object 进程树追踪实现
 
-迁移自 `pty/windows/job.py` 的 ProcessJob 主体，实现
-`ProcessTreeTracker` 抽象端口（见 design/process-manager-refactor.md §3.2）：
+实现 `ProcessTreeTracker` 抽象端口（见 design/process-manager-refactor.md §3.2）：
 
 - register_root：CreateProcess 返回后同一代码路径内登记 root（AssignProcessToJobObject，
   子进程自动继承入 Job，杜绝孙进程逃逸）
@@ -17,41 +16,47 @@ import ctypes
 import logging
 import threading
 import time
-from typing import List, Optional
 from ctypes import wintypes as W
+from typing import List, Optional
 
 from ...config.daemon import JOB_OBJECT_NAME_PREFIX
-from ..base import ProcessTreeTracker, ProcessNotification, NOTIF_SPAWN, NOTIF_EXIT, NOTIF_CRASH
+from ..base import (
+    NOTIF_CRASH,
+    NOTIF_EXIT,
+    NOTIF_SPAWN,
+    ProcessNotification,
+    ProcessTreeTracker,
+)
 from ..win32_error import STILL_ACTIVE
 from .api import (
-    _CreateJobObjectW,
-    _AssignProcessToJobObject,
-    _SetInformationJobObject,
-    _QueryInformationJobObject,
-    _CloseHandle,
-    _OpenProcess,
-    _GetExitCodeProcess,
-    _QueryFullProcessImageNameW,
-    _TerminateProcess,
-    _JobObjectExtendedLimitInformation,
-    _JobObjectBasicProcessIdList,
-    _JobObjectAssociateCompletionPortInformation,
-    JOBOBJECT_ASSOCIATE_COMPLETION_PORT,
-    _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    _JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JOBOBJECT_BASIC_PROCESS_ID_LIST,
-    _MAX_JOB_PIDS,
-    _CreateIoCompletionPort,
-    _GetQueuedCompletionStatus,
-    _PostQueuedCompletionStatus,
-    _JOB_OBJECT_MSG_NEW_PROCESS,
-    _JOB_OBJECT_MSG_EXIT_PROCESS,
-    _JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS,
     _INVALID_HANDLE_VALUE,
+    _JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION,
+    _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    _JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS,
+    _JOB_OBJECT_MSG_EXIT_PROCESS,
+    _JOB_OBJECT_MSG_NEW_PROCESS,
+    _MAX_JOB_PIDS,
     _WAIT_TIMEOUT,
+    JOBOBJECT_ASSOCIATE_COMPLETION_PORT,
+    JOBOBJECT_BASIC_PROCESS_ID_LIST,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     PROCESS_QUERY_LIMITED_INFORMATION,
     PROCESS_TERMINATE,
+    _AssignProcessToJobObject,
+    _CloseHandle,
+    _CreateIoCompletionPort,
+    _CreateJobObjectW,
+    _GetExitCodeProcess,
+    _GetQueuedCompletionStatus,
+    _JobObjectAssociateCompletionPortInformation,
+    _JobObjectBasicProcessIdList,
+    _JobObjectExtendedLimitInformation,
+    _OpenProcess,
+    _PostQueuedCompletionStatus,
+    _QueryFullProcessImageNameW,
+    _QueryInformationJobObject,
+    _SetInformationJobObject,
+    _TerminateProcess,
 )
 from .gui_monitor import GuiWindowMonitor
 
@@ -118,11 +123,15 @@ class JobProcessTreeTracker(ProcessTreeTracker):
         self._root_pid = pid
         hproc = hprocess
         if not hproc:
-            hproc = _OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
-                                 False, pid)
+            hproc = _OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, False, pid
+            )
             if not hproc:
-                _logger.warning("register_root: OpenProcess(%d) 失败 err=%d",
-                                pid, ctypes.get_last_error())
+                _logger.warning(
+                    "register_root: OpenProcess(%d) 失败 err=%d",
+                    pid,
+                    ctypes.get_last_error(),
+                )
                 return False
             try:
                 return self._assign(hproc)
@@ -136,8 +145,11 @@ class JobProcessTreeTracker(ProcessTreeTracker):
             return False
         ok = _AssignProcessToJobObject(self._hjob, hprocess)
         if not ok:
-            _logger.warning("AssignProcessToJobObject 失败: handle=%s err=%d",
-                            hprocess, ctypes.get_last_error())
+            _logger.warning(
+                "AssignProcessToJobObject 失败: handle=%s err=%d",
+                hprocess,
+                ctypes.get_last_error(),
+            )
         return bool(ok)
 
     # ── 进程树查询 ──
@@ -155,8 +167,11 @@ class JobProcessTreeTracker(ProcessTreeTracker):
             info = JOBOBJECT_BASIC_PROCESS_ID_LIST.from_buffer(buf)
             ret_len = W.DWORD(0)
             ok = _QueryInformationJobObject(
-                self._hjob, _JobObjectBasicProcessIdList,
-                ctypes.byref(info), buf_size, ctypes.byref(ret_len),
+                self._hjob,
+                _JobObjectBasicProcessIdList,
+                ctypes.byref(info),
+                buf_size,
+                ctypes.byref(ret_len),
             )
             if ok:
                 count = info.NumberOfProcessIdsInList
@@ -211,8 +226,9 @@ class JobProcessTreeTracker(ProcessTreeTracker):
         try:
             ok = _TerminateProcess(hproc, 1)
             if not ok:
-                _logger.warning("TerminateProcess(%d) 失败 err=%d",
-                                pid, ctypes.get_last_error())
+                _logger.warning(
+                    "TerminateProcess(%d) 失败 err=%d", pid, ctypes.get_last_error()
+                )
             return bool(ok)
         finally:
             _CloseHandle(hproc)
@@ -268,7 +284,10 @@ class JobProcessTreeTracker(ProcessTreeTracker):
             return
         try:
             self._iocp = _CreateIoCompletionPort(
-                _INVALID_HANDLE_VALUE, None, None, 0,
+                _INVALID_HANDLE_VALUE,
+                None,
+                None,
+                0,
             )
             if not self._iocp:
                 _logger.warning("CreateIoCompletionPort 失败")
@@ -280,8 +299,10 @@ class JobProcessTreeTracker(ProcessTreeTracker):
             assoc.CompletionKey = COMPLETION_KEY
             assoc.CompletionPort = self._iocp
             ok = _SetInformationJobObject(
-                self._hjob, _JobObjectAssociateCompletionPortInformation,
-                ctypes.byref(assoc), ctypes.sizeof(assoc),
+                self._hjob,
+                _JobObjectAssociateCompletionPortInformation,
+                ctypes.byref(assoc),
+                ctypes.sizeof(assoc),
             )
             if not ok:
                 err = ctypes.get_last_error()
@@ -340,23 +361,40 @@ class JobProcessTreeTracker(ProcessTreeTracker):
                 if msg_type == _JOB_OBJECT_MSG_NEW_PROCESS:
                     pid = raw_value
                     proc_path = self._get_process_path_fast(pid)
-                    proc_name = proc_path.rsplit("\\", 1)[-1] if proc_path and "\\" in proc_path else proc_path
+                    proc_name = (
+                        proc_path.rsplit("\\", 1)[-1]
+                        if proc_path and "\\" in proc_path
+                        else proc_path
+                    )
                     _logger.info("Job NEW_PROCESS: pid=%d name=%s", pid, proc_name)
-                    self._push_notif(ProcessNotification(
-                        NOTIF_SPAWN, pid=pid,
-                        process_name=proc_name or "",
-                        process_path=proc_path or "",
-                    ))
-                elif msg_type in (_JOB_OBJECT_MSG_EXIT_PROCESS, _JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS):
+                    self._push_notif(
+                        ProcessNotification(
+                            NOTIF_SPAWN,
+                            pid=pid,
+                            process_name=proc_name or "",
+                            process_path=proc_path or "",
+                        )
+                    )
+                elif msg_type in (
+                    _JOB_OBJECT_MSG_EXIT_PROCESS,
+                    _JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS,
+                ):
                     pid = raw_value
                     exit_code = self._get_exit_code(pid)
                     is_crash = msg_type == _JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS
-                    _logger.info("Job %s: pid=%d exit=%s",
-                                 "ABNORMAL_EXIT" if is_crash else "EXIT", pid, exit_code)
-                    self._push_notif(ProcessNotification(
-                        NOTIF_CRASH if is_crash else NOTIF_EXIT,
-                        pid=pid, exit_code=exit_code,
-                    ))
+                    _logger.info(
+                        "Job %s: pid=%d exit=%s",
+                        "ABNORMAL_EXIT" if is_crash else "EXIT",
+                        pid,
+                        exit_code,
+                    )
+                    self._push_notif(
+                        ProcessNotification(
+                            NOTIF_CRASH if is_crash else NOTIF_EXIT,
+                            pid=pid,
+                            exit_code=exit_code,
+                        )
+                    )
                 else:
                     _logger.debug("Job 通知: type=%d data=%d", msg_type, raw_value)
             except Exception as e:
@@ -411,8 +449,10 @@ class JobProcessTreeTracker(ProcessTreeTracker):
             | _JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
         )
         _SetInformationJobObject(
-            self._hjob, _JobObjectExtendedLimitInformation,
-            ctypes.byref(info), ctypes.sizeof(info),
+            self._hjob,
+            _JobObjectExtendedLimitInformation,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
         )
 
     def close(self):

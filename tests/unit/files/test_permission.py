@@ -1,6 +1,6 @@
 """权限策略单元测试 —— D3 放行语义与接口稳定性"""
 
-from src.files.permission import PermissionPolicy
+from config.plugins.files.permission import PermissionPolicy
 
 
 class TestPermissionPolicy:

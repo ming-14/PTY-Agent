@@ -12,12 +12,12 @@ OutputBuffer / Session 协作。
   超时自动降级返回 False。
 """
 
-import re
-import time
 import atexit
-import logging
-import threading
 import concurrent.futures
+import logging
+import re
+import threading
+import time
 from typing import Callable, Optional
 
 from ..config.daemon import MAX_TRIGGER_SCAN
@@ -44,25 +44,28 @@ def _check_regex_complexity(pattern: str) -> bool:
     i = 0
     while i < len(pattern):
         c = pattern[i]
-        if c == '(':
+        if c == "(":
             depth += 1
-            if depth > max_depth:
-                max_depth = depth
-        elif c == ')':
+            max_depth = max(max_depth, depth)
+        elif c == ")":
             depth = max(0, depth - 1)
-        elif c in ('+', '*', '?', '{'):
-            if i + 1 < len(pattern) and pattern[i + 1] == '?':
+        elif c in ("+", "*", "?", "{"):
+            if i + 1 < len(pattern) and pattern[i + 1] == "?":
                 i += 1
             if depth >= 2:
-                _logger.warning("正则复杂度预检: 嵌套量词深度 %d 可能导致 ReDoS: %r",
-                                depth, pattern[:200])
+                _logger.warning(
+                    "正则复杂度预检: 嵌套量词深度 %d 可能导致 ReDoS: %r",
+                    depth,
+                    pattern[:200],
+                )
                 return False
         i += 1
     return True
 
 
-def safe_regex_search(pattern: re.Pattern, text: str,
-                      timeout: float = _RE_SEARCH_TIMEOUT) -> bool:
+def safe_regex_search(
+    pattern: re.Pattern, text: str, timeout: float = _RE_SEARCH_TIMEOUT
+) -> bool:
     """在共享线程池中执行正则搜索，超时安全降级返回 False
 
     使用 ThreadPoolExecutor 复用线程，避免每次创建/销毁开销。
@@ -73,8 +76,9 @@ def safe_regex_search(pattern: re.Pattern, text: str,
     try:
         return future.result(timeout=timeout) is not None
     except concurrent.futures.TimeoutError:
-        _logger.warning("正则搜索超时: pattern=%r, text_len=%d",
-                        pattern.pattern[:200], len(text))
+        _logger.warning(
+            "正则搜索超时: pattern=%r, text_len=%d", pattern.pattern[:200], len(text)
+        )
         future.cancel()
         return False
     except re.error:
@@ -117,11 +121,16 @@ class TriggerMatcher:
 
     # ── 公开接口 ──
 
-    def set(self, pattern: str, newline: bool = False, fresh: bool = False,
-            start_offset: Optional[int] = None,
-            idle_timeout: Optional[float] = None,
-            idle_after_first_output: bool = False,
-            buffer_length: int = 0):
+    def set(
+        self,
+        pattern: str,
+        newline: bool = False,
+        fresh: bool = False,
+        start_offset: Optional[int] = None,
+        idle_timeout: Optional[float] = None,
+        idle_after_first_output: bool = False,
+        buffer_length: int = 0,
+    ):
         """设置触发条件
 
         Args:
@@ -138,15 +147,18 @@ class TriggerMatcher:
             try:
                 self._regex = re.compile(pattern)
                 if not _check_regex_complexity(pattern):
-                    _logger.warning("TriggerMatcher.set: 正则可能存在 ReDoS 风险，已降级为子串匹配: %r",
-                                    pattern[:200])
+                    _logger.warning(
+                        "TriggerMatcher.set: 正则可能存在 ReDoS 风险，已降级为子串匹配: %r",
+                        pattern[:200],
+                    )
                     self._regex = None
             except re.error:
                 self._regex = None
             self._matched = False
             self._event.clear()
-            self._start_offset = (start_offset if start_offset is not None
-                                  else buffer_length)
+            self._start_offset = (
+                start_offset if start_offset is not None else buffer_length
+            )
             self._on_newline = newline
 
             self._idle_timeout = idle_timeout
@@ -163,8 +175,13 @@ class TriggerMatcher:
         _logger.info(
             "TriggerMatcher.set: pattern=%r newline=%s fresh=%s "
             "offset=%d idle_timeout=%s idle_after_first=%s",
-            pattern, newline, fresh, self._start_offset,
-            idle_timeout, idle_after_first_output)
+            pattern,
+            newline,
+            fresh,
+            self._start_offset,
+            idle_timeout,
+            idle_after_first_output,
+        )
 
         if fresh:
             self._fresh = True
@@ -240,7 +257,9 @@ class TriggerMatcher:
                 return True
         else:
             if pattern in text:
-                _logger.info("TriggerMatcher.check: substring MATCHED pattern=%r", pattern)
+                _logger.info(
+                    "TriggerMatcher.check: substring MATCHED pattern=%r", pattern
+                )
                 with self._state_lock:
                     self._matched = True
                 self._event.set()
@@ -263,8 +282,11 @@ class TriggerMatcher:
     def clear(self):
         """清除所有触发条件"""
         with self._state_lock:
-            _logger.info("TriggerMatcher.clear: pattern=%r matched=%s",
-                         self._pattern, self._matched)
+            _logger.info(
+                "TriggerMatcher.clear: pattern=%r matched=%s",
+                self._pattern,
+                self._matched,
+            )
             self._pattern = None
             self._regex = None
             self._matched = False
@@ -275,9 +297,12 @@ class TriggerMatcher:
             self._idle_last_activity = 0.0
         self._event.clear()
 
-    def set_snapshot_trigger(self, pattern: Optional[str] = None,
-                             idle_timeout: Optional[float] = None,
-                             idle_after_first_output: bool = False):
+    def set_snapshot_trigger(
+        self,
+        pattern: Optional[str] = None,
+        idle_timeout: Optional[float] = None,
+        idle_after_first_output: bool = False,
+    ):
         """设置快照模式触发条件
 
         Args:
@@ -291,8 +316,10 @@ class TriggerMatcher:
                 try:
                     self._regex = re.compile(pattern)
                     if not _check_regex_complexity(pattern):
-                        _logger.warning("set_snapshot_trigger: ReDoS 风险，降级为子串匹配: %r",
-                                        pattern[:200])
+                        _logger.warning(
+                            "set_snapshot_trigger: ReDoS 风险，降级为子串匹配: %r",
+                            pattern[:200],
+                        )
                         self._regex = None
                 except re.error:
                     self._regex = None

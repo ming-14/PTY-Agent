@@ -1,10 +1,10 @@
+import logging
 import os
 import time
-import logging
 
+from ...config.daemon import WEB_HOST, WEB_PORT
 from ...protocol.message import Message
 from ...protocol.response import Response
-from ...config.daemon import WEB_HOST, WEB_PORT
 from .base import DaemonHandler, HandlerContext
 
 _logger = logging.getLogger("pty-daemon")
@@ -18,7 +18,11 @@ class StatusHandler(DaemonHandler):
         hs = ctx.manager._history_store
         if hs:
             ended = len(hs.list_ended_sessions())
-        uptime = time.time() - ctx.server._start_time if ctx.server and hasattr(ctx.server, '_start_time') else None
+        uptime = (
+            time.time() - ctx.server._start_time
+            if ctx.server and hasattr(ctx.server, "_start_time")
+            else None
+        )
         resp = Response.status_result(
             running=True,
             pid=os.getpid(),

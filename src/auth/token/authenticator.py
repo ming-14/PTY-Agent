@@ -6,13 +6,12 @@
 - TokenCredentialProvider:  客户端令牌凭证提供者（从 SHM 读取令牌）
 """
 
-import time
-import threading
 import logging
-from typing import Optional
+import threading
+import time
 
-from ..base import Authenticator, CredentialProvider
 from ...config.daemon import AUTH_TOKEN_GRACE_PERIOD
+from ..base import Authenticator, CredentialProvider
 
 _logger = logging.getLogger("pty-auth")
 
@@ -31,9 +30,7 @@ class TokenAuthenticator(Authenticator):
     def __init__(self, token: str = "", grace_period: float = AUTH_TOKEN_GRACE_PERIOD):
         self._lock = threading.Lock()
         self._grace_period = grace_period
-        self._tokens: dict = (
-            {token: float("inf")} if token else {}
-        )
+        self._tokens: dict = {token: float("inf")} if token else {}
 
     @property
     def name(self) -> str:
@@ -85,4 +82,5 @@ class TokenCredentialProvider(CredentialProvider):
     @staticmethod
     def _read_token() -> str:
         from ...ipc.shm import read_auth_token
+
         return read_auth_token() or ""

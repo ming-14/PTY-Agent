@@ -1,4 +1,4 @@
-"""Phase 4 e2e 测试 —— keygen 子命令的端到端验证
+"""e2e 测试 —— keygen 子命令的端到端验证
 
 覆盖场景（区别于单元测试，e2e 走真实 CLI 子进程链路）：
 - 真实调用 ``python -m src keygen`` 子进程
@@ -86,7 +86,7 @@ def _run_keygen_cli(*extra_args: str, env: dict = None) -> subprocess.CompletedP
         text=True,
         env=env,
         timeout=30,
-        encoding="utf-8",
+        encoding="utf-8", errors="replace",
     )
 
 
@@ -113,7 +113,7 @@ def _ssh_keygen_fingerprint(public_key_path: str) -> str:
         capture_output=True,
         text=True,
         timeout=10,
-        encoding="utf-8",
+        encoding="utf-8", errors="replace",
     )
     if result.returncode != 0:
         raise RuntimeError(f"ssh-keygen -lf 失败: {result.stderr}")
@@ -142,7 +142,7 @@ def _ssh_keygen_derive_public(private_key_path: str) -> str:
         capture_output=True,
         text=True,
         timeout=10,
-        encoding="utf-8",
+        encoding="utf-8", errors="replace",
     )
     if result.returncode != 0:
         raise RuntimeError(f"ssh-keygen -yf 失败: {result.stderr}")
@@ -305,7 +305,7 @@ class TestKeygenSshKeygenInterop:
             capture_output=True,
             text=True,
             timeout=10,
-            encoding="utf-8",
+            encoding="utf-8", errors="replace",
         )
         assert gen.returncode == 0, f"ssh-keygen 生成失败: {gen.stderr}"
 

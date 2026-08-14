@@ -62,7 +62,7 @@ export function handleMsg(msg) {
       break;
     case 'unsubscribed':
       break;
-    // 问题2：自适应排他锁相关消息
+    // 自适应排他锁相关消息
     case 'size_mode_changed':
       handleSizeModeChanged(msg);
       break;
@@ -246,7 +246,7 @@ export function initSessionState(sid, msg, isHistory) {
   const s = state.sessions[sid];
   s.running = msg.running;
   s.ptyType = msg.ptyType;
-  // v9.2: 历史会话通过 history_detail 恢复 uid，使 zoomActiveSession /
+  // 历史会话通过 history_detail 恢复 uid，使 zoomActiveSession /
   // applySessionFrameRatio 能按 uid 读写 localStorage 的 frameRatio 记忆
   if (msg.uid) s.uid = msg.uid;
   // 守护进程上报的原始尺寸（替换硬编码 80x24）
@@ -273,7 +273,7 @@ export function initSessionState(sid, msg, isHistory) {
   s.errorMessage = msg.errorMessage;
   s.pendingReplay = msg.replay || null;
   s.pendingSnapshot = msg.snapshot || null;
-  // 守护进程返回的 scrollback（GridScreen 历史区）
+  // 守护进程返回的 scrollback（wezterm 终端模型历史区）
   // 仅首次订阅非空（已订阅时为 ""），replayPending 消费后清空
   s.pendingScrollback = msg.scrollback || null;
   if (msg.startTime) s.startTime = msg.startTime;
@@ -289,8 +289,8 @@ export function handleSubscribed(msg) {
         (msg.replay || '').length, (msg.scrollback || '').length);
   state.pendingCreates.delete(sid);
 
-  // C2 改造（模拟 WT）：区分首次订阅和已订阅
-  // - 首次订阅：msg.replay 非空（pyte snapshot），initSessionState 设置 pendingReplay，
+  // 区分首次订阅和已订阅
+  // - 首次订阅：msg.replay 非空（后端 snapshot），initSessionState 设置 pendingReplay，
   //   switchTab → replayPending 会 term.clear()+write(snapshot) 初始化 xterm
   // - 已订阅：msg.replay 为空（handlers.py 已订阅时返回 replay=""),
   //   不设置 pendingReplay，保留 xterm.js 实例的 scrollback
@@ -298,7 +298,7 @@ export function handleSubscribed(msg) {
   initSessionState(sid, msg, false);
   ports.terminal.setAppMouseMode(sid, !!msg.appMouseMode);
 
-  // v3 改造：从 ws_subscribed 响应恢复自适应锁状态。
+  // 从 ws_subscribed 响应恢复自适应锁状态。
   // 刷新后 localAdaptiveOwnerSids 为空，但后端锁仍属于本 client_uid（按 uid 持有），
   // 后端在 ws_subscribed 中携带 adaptiveOwnerActive/adaptiveOwnerUid，
   // 前端据此恢复 localAdaptiveOwnerSids 与 session.adaptiveOwnerUid。
@@ -348,7 +348,7 @@ export function handleSessionEnded(msg) {
     s.subscribed = false;
     // 已结束会话即为历史会话，立即标记并乐观加入历史列表，便于 UI 立刻迁移
     s.history = true;
-    // v3: 会话结束后自适应锁随之释放，清空本端持有标记与 session 状态。
+    // 会话结束后自适应锁随之释放，清空本端持有标记与 session 状态。
     // 后端也会广播 size_mode_changed(adaptiveOwnerActive=false)，此处乐观清空避免 UI 延迟。
     s.adaptiveOwnerActive = false;
     s.adaptiveOwnerUid = null;
@@ -410,7 +410,7 @@ export function handleHistoryDetail(msg) {
   const s = initSessionState(sid, msg, true);
   s.running = false;
   s.history = true;
-  // v3: 历史会话只读，不持有自适应锁。清空残留状态防止 UI 误判。
+  // 历史会话只读，不持有自适应锁。清空残留状态防止 UI 误判。
   s.adaptiveOwnerActive = false;
   s.adaptiveOwnerUid = null;
   setLocalAdaptiveOwner(sid, false);
@@ -603,14 +603,14 @@ export function handleSessionEvent(msg) {
 /**
  * 处理 resize_complete 消息：用后端返回的 scrollback + snapshot 完全重建 buffer。
  *
- * 方案 AK（解决隔行空行 + 保留 scrollback 历史）：
- * - 后端 GridScreen.reflow 在 resize 时已按新列宽正确重排 scrollback（参考 tmux，无隔行空行）
+ * 后端返回的 scrollback + snapshot 完全重建 buffer（解决隔行空行 + 保留 scrollback 历史）：
+ * - 后端 wezterm 终端模型在 resize 时已按新列宽正确重排 scrollback（参考 tmux，无隔行空行）
  * - 后端在 resize_complete 中返回 scrollback（带 SGR 颜色）+ snapshot（viewport + 光标）
  * - 前端用 restoreScrollbackAndSnapshot 完全重建 xterm.js buffer：
  *   1. \x1b[3J 清除 xterm.js reflow 产生隔行空行的 scrollback
  *   2. 重写后端 reflow 后的 scrollback（带颜色）
  *   3. \x1b[2J + snapshot 覆盖 viewport（含光标位置）
- * - 这解决了 xterm.js 自身 reflow 与后端 pyte reflow 行为不一致导致的隔行空行问题
+ * - 这解决了 xterm.js 自身 reflow 与后端 wezterm reflow 行为不一致导致的隔行空行问题
  *
  * @param {object} msg { sessionId, cols, rows, snapshot, scrollback }
  */
@@ -629,7 +629,7 @@ export function handleResizeComplete(msg) {
     debug('session',
           'resize_complete sid=%s STALE dropped: msg=%dx%d term=%dx%d',
           sid, msg.cols, msg.rows, inst.term.cols, inst.term.rows);
-    // 方案 G: STALE 时不清除 _resizePending —— 仍有匹配当前 term 尺寸的 resize 在路上，
+    // STALE 时不清除 _resizePending —— 仍有匹配当前 term 尺寸的 resize 在路上，
     // 缓冲的 output 也要保留（可能包含该匹配 resize 期间的 output）。
     return;
   }
@@ -671,12 +671,12 @@ export function handleResizeComplete(msg) {
     }
   }
 
-  // 方案 G: resize_complete 已到达并完成重建，清除 resize pending 标志。
+  // resize_complete 已到达并完成重建，清除 resize pending 标志。
   // 丢弃 resize 期间缓冲的 ConPTY output —— 这些是针对旧/中间尺寸的 partial
   // repaint（如 \e[24;34H\e[J...），snapshot 已包含 resize 后的完整正确内容，
   // 写入缓冲的 repaint 会污染重建结果导致吞输出/错位。
-  // 安全性依据：后端 pyte.Screen 在 resize 期间持续 feed ConPTY output，
-  // resize 期间的有效输出（如用户输入触发的命令输出）已被 pyte 记录并包含在
+  // 安全性依据：后端 wezterm 终端模型在 resize 期间持续 feed ConPTY output，
+  // resize 期间的有效输出（如用户输入触发的命令输出）已包含在
   // snapshot 中，丢弃缓冲不会丢失真实数据。
   const discardedCount = inst._resizeBuffer.length;
   const discardedLen = discardedCount > 0
@@ -701,14 +701,14 @@ export function handleResizeComplete(msg) {
  * 处理 session_resized 消息：其他客户端发起的 resize 已在后端完成，
  * 后端定向广播给本客户端（非发起方），需同步调整终端尺寸并重建 buffer。
  *
- * 问题1（尺寸变更通知）：
+ * 尺寸变更通知：
  * - 发起方收到 resize_complete（已自行处理），不收到本消息（后端 exclude_conn_id 排除）
  * - 非发起方收到本消息，被动接受新尺寸：
  *   1. term.resize(cols, rows) 调整 xterm.js 尺寸
  *   2. 用后端 reflow 后的 scrollback + snapshot 重建 buffer（与 resize_complete 同源）
  *   3. 更新 state.sessions[sid].cols/rows + 状态栏 + frame 尺寸
  *
- * 注：自适应模式多客户端抢占问题属于问题2，此处不处理。
+ * 注：自适应模式多客户端抢占（锁竞争）不在此处处理。
  *
  * @param {object} msg { sessionId, cols, rows, snapshot, scrollback }
  */
@@ -782,7 +782,7 @@ export function handleSessionResized(msg) {
   // 更新状态栏（仅当该会话为活动标签时）
   if (state.activeTab === sid) {
     ports.ui.updateStatusInfo(sid);
-    // 问题2：若尺寸选择器下拉正打开，刷新其内容（被锁时"默认/自定义"等描述
+    // 若尺寸选择器下拉正打开，刷新其内容（被锁时"默认/自定义"等描述
     // 依赖 s.cols/s.rows，被动跟随后需重新渲染以同步显示）
     try { ports.ui.refreshSizeSelectorIfOpen(); } catch (_) {}
   }
@@ -809,7 +809,7 @@ export function handleFastScreenMessage(msg) {
 }
 
 // --------------------------------------------------------------------------- //
-// 问题2：自适应排他锁消息处理
+// 自适应排他锁消息处理
 // --------------------------------------------------------------------------- //
 
 /**
@@ -821,10 +821,10 @@ export function handleFastScreenMessage(msg) {
  * - 其他客户端调用 set_size_mode 非 adaptive / takeover / 持有者断开
  *   → 本端收到 adaptiveOwnerActive=false，需解锁 UI
  *
- * v3 改造：消息携带 adaptiveOwnerUid（持锁者的 client_uid）。
+ * 消息携带 adaptiveOwnerUid（持锁者的 client_uid）。
  * - 同一 client_uid 的多标签页场景：另一标签页获得锁时本端应"继承"锁状态，
  *   不降级（uid === state.clientUid 时 setLocalAdaptiveOwner(true)）。
- * - 不同 client_uid 持锁时本端被降级（原逻辑）。
+ * - 不同 client_uid 持锁时本端被降级。
  *
  * 注：发起方已被后端 exclude_conn_id 排除，本消息仅广播给非发起方。
  * takeover_size_control 例外：广播给所有订阅客户端（含发起方），发起方据此解锁 UI。
@@ -841,7 +841,7 @@ export function handleSizeModeChanged(msg) {
   const ownerActive = !!msg.adaptiveOwnerActive;
   const prevActive = !!s.adaptiveOwnerActive;
   s.adaptiveOwnerActive = ownerActive;
-  // v3: 同步后端权威的持锁者 uid。
+  // 同步后端权威的持锁者 uid。
   // ownerActive=true 时取 msg.adaptiveOwnerUid；ownerActive=false 时锁已释放，强制 null。
   s.adaptiveOwnerUid = ownerActive ? (msg.adaptiveOwnerUid || null) : null;
   info('size',
@@ -850,7 +850,7 @@ export function handleSizeModeChanged(msg) {
        state.localAdaptiveOwnerSids.has(sid), s.adaptiveOwnerUid);
 
   if (ownerActive) {
-    // v3: 判断持锁者是否是本 client_uid（同 uid 多标签页继承锁的场景）
+    // 判断持锁者是否是本 client_uid（同 uid 多标签页继承锁的场景）
     const isOwnLock = !!s.adaptiveOwnerUid && s.adaptiveOwnerUid === state.clientUid;
     if (isOwnLock) {
       // 同 client_uid 的另一个标签页获得了锁：本端应继承锁状态，不降级。
@@ -864,7 +864,7 @@ export function handleSizeModeChanged(msg) {
       setLocalAdaptiveOwner(sid, false);
 
       // 若本端当前是 adaptive 模式，切到 fixed（固定当前尺寸）
-      // 用户原话："取消自适应，变成取消自适应那一刻之前的尺寸"
+      // 取消自适应时回到取消那一刻之前的尺寸
       const cfg = getSessionSizeConfigBySid(sid);
       if (cfg.mode === 'adaptive') {
         const curCols = s.cols || msg.cols || cfg.fixedCols || DEFAULT_COLS;
@@ -875,7 +875,7 @@ export function handleSizeModeChanged(msg) {
              curCols, curRows, sid);
         // 重新应用终端尺寸（fixed 模式按 fixedCols/fixedRows）
         try { ports.terminal.reapplyAllTerminalSizes(false, sid); } catch (_) {}
-        // 问题2：切模式后按保存的 frameRatio 恢复框/stage 占比（用户要求比例不变）。
+        // 切模式后按保存的 frameRatio 恢复框/stage 占比，保持比例不变。
         // reapplyAllTerminalSizes 只同步 cols/rows，applySessionFrameRatio 才会按 ratio
         // 反算字号使 frame 维持原比例。等一帧让 xterm 尺寸刷新后再读 cell 尺寸。
         requestAnimationFrame(() => {
@@ -889,7 +889,7 @@ export function handleSizeModeChanged(msg) {
     // 锁释放：清除本地持有者标记。
     // 被接管场景：本端曾是持锁者（wasLocalOwner=true）但收到 adaptiveOwnerActive=false，
     // 表示其他客户端发起了 takeover_size_control 并清空了锁。
-    // 按用户要求"一端接管后，其他端如果是自适应模式要立刻退出"，
+    // 一端接管后，其他端如果是自适应模式要立刻退出：
     // 立即将本端从 adaptive 切到 fixed（固定当前尺寸），避免本端 FitAddon.fit() 持续
     // 触发 resize 与接管者后续选择的模式冲突。
     // 连接断开场景：持锁者断开时本端 wasLocalOwner=false（从未持锁），不触发降级。
@@ -906,7 +906,7 @@ export function handleSizeModeChanged(msg) {
              curCols, curRows, sid);
         // 重新应用终端尺寸（fixed 模式按 fixedCols/fixedRows；与当前一致则不触发 resize）
         try { ports.terminal.reapplyAllTerminalSizes(false, sid); } catch (_) {}
-        // 问题2：切模式后按保存的 frameRatio 恢复框/stage 占比（用户要求比例不变）。
+        // 切模式后按保存的 frameRatio 恢复框/stage 占比，保持比例不变。
         // 等一帧让 xterm 尺寸刷新后再读 cell 尺寸。
         requestAnimationFrame(() => {
           try { ports.terminal.applySessionFrameRatio(sid); } catch (e) {
@@ -940,7 +940,7 @@ export function handleSizeModeAck(msg) {
   const s = state.sessions[sid];
   if (mode === 'adaptive') {
     setLocalAdaptiveOwner(sid, true);
-    // v3: 同步 session 状态（防止后续 size_mode_changed 误判为"他人持有"）。
+    // 同步 session 状态（防止后续 size_mode_changed 误判为"他人持有"）。
     // 本端持锁 → adaptiveOwnerUid = state.clientUid
     if (s) {
       s.adaptiveOwnerActive = true;
@@ -948,7 +948,7 @@ export function handleSizeModeAck(msg) {
     }
   } else {
     setLocalAdaptiveOwner(sid, false);
-    // v3: 非 adaptive 模式不持锁，清空 uid
+    // 非 adaptive 模式不持锁，清空 uid
     if (s) {
       s.adaptiveOwnerActive = false;
       s.adaptiveOwnerUid = null;
@@ -961,7 +961,7 @@ export function handleSizeModeAck(msg) {
  *
  * 后端已清空自适应锁（旧持有者降级），本端可继续选择新模式。
  * 前端仅需更新 session.adaptiveOwnerActive=false（解锁 UI），
- * 不自动切模式（用户原话："接管后选模式"）。
+ * 不自动切模式（接管后由用户选择模式）。
  *
  * @param {object} msg { sessionId }
  */
@@ -969,7 +969,7 @@ export function handleTakeoverAck(msg) {
   const sid = msg.sessionId;
   info('size', 'takeover_ack sid=%s: lock cleared, waiting for mode selection', sid);
   const s = state.sessions[sid];
-  // v3: 锁被清空，uid 同步置 null
+  // 锁被清空，uid 同步置 null
   if (s) {
     s.adaptiveOwnerActive = false;
     s.adaptiveOwnerUid = null;

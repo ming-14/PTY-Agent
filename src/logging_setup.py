@@ -12,13 +12,13 @@ import os
 import shutil
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 
 def generate_log_timestamp() -> str:
     """生成精确到毫秒的时间戳字符串，用于日志文件名"""
-    now = datetime.now()
+    now = datetime.now(tz=timezone.utc).astimezone()
     return now.strftime("%Y%m%d-%H%M%S") + f".{now.microsecond // 1000:03d}"
 
 
@@ -83,12 +83,17 @@ def archive_previous_day_logs(log_dir: str) -> int:
     """
     if not os.path.isdir(log_dir):
         return 0
-    today = datetime.now().date()
+    today = datetime.now(tz=timezone.utc).astimezone().date()
     count = 0
     for entry in os.scandir(log_dir):
         if not entry.is_file() or not entry.name.endswith(".log"):
             continue
-        if datetime.fromtimestamp(entry.stat().st_mtime).date() >= today:
+        if (
+            datetime.fromtimestamp(entry.stat().st_mtime, tz=timezone.utc)
+            .astimezone()
+            .date()
+            >= today
+        ):
             continue
         src = entry.path
         dst = src + ".gz"

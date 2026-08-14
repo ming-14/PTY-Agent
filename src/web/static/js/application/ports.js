@@ -13,15 +13,13 @@ export const ports = {
     handleOutput: null,
     replayPending: null,
     setAppMouseMode: null,
-    // 终端框尺寸应用（原 infrastructure/terminalAdapter.applyTerminalFrameSize）
+    // 终端框尺寸应用
     applyTerminalFrameSize: null,
-    // scrollback + snapshot 重建 xterm buffer（原 restoreScrollbackAndSnapshot）
+    // scrollback + snapshot 重建 xterm buffer
     restoreScrollbackAndSnapshot: null,
-    // 问题2：重新应用所有终端尺寸（原 infrastructure/terminalAdapter.reapplyAllTerminalSizes）
-    // 应用层 messageHandlers 在被降级到 fixed 时调用，触发 fixed 模式 resize 同步守护进程
+    // 重新应用所有终端尺寸（被降级到 fixed 时调用，触发 fixed 模式 resize 同步守护进程）
     reapplyAllTerminalSizes: null,
-    // 问题2：按会话保存的 frameRatio 恢复框/stage 占比（原 infrastructure/terminalAdapter.applySessionFrameRatio）
-    // 被降级到 fixed 时调用，确保切模式后 frame 占 stage 的比例保持不变（用户要求）
+    // 按会话保存的 frameRatio 恢复框/stage 占比（被降级到 fixed 时调用，保持比例不变）
     applySessionFrameRatio: null,
   },
   ui: {
@@ -32,11 +30,11 @@ export const ports = {
     removeSessionTab: null,
     updateStatusInfo: null,
     applyReadonlyState: null,
-    // 自动隐藏状态更新（原 presentation/views/autohide.updateAutoHide）
+    // 自动隐藏状态更新
     updateAutoHide: null,
-    // 系统状态栏更新（原 infrastructure/domUtils.updateSystemStatsUI）
+    // 系统状态栏更新
     updateSystemStats: null,
-    // 问题2：尺寸选择器下拉若已打开则重新渲染（自适应锁状态变更后调用）
+    // 尺寸选择器下拉若已打开则重新渲染（自适应锁状态变更后调用）
     refreshSizeSelectorIfOpen: null,
   },
   detail: {
@@ -60,13 +58,13 @@ export const ports = {
     renderFastScreenPanel: null,
     handleMessage: null,
   },
-  // 会话 handler 注册机制（原 presentation/views/sessionHandlers）
+  // 会话 handler 注册机制
   // 提供给 application 层判断 sid 是否为 handler 会话、恢复 handler tab
   session: {
     isHandlerSid: null,        // (sid) => boolean
     restoreHandlerTab: null,   // (sid) => boolean  返回 true 表示有效并已恢复
   },
-  // 设置存储适配器（原 infrastructure/settingsStorage.js）
+  // 设置存储适配器
   // 提供给 application/settingsStore.js 读写 localStorage + GET 默认值
   settingsStorage: {
     loadFromLocal: null,       // () => object

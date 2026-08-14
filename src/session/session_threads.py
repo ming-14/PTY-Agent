@@ -6,19 +6,23 @@
 """
 
 import errno
+import logging
 import re
 import select
-import time
-import logging
 import threading
+import time
 from dataclasses import dataclass
-from typing import Optional, Callable
+from typing import TYPE_CHECKING, Callable, Optional
 
 from ..config.daemon import PTY_READ_SIZE
 from ..output import OutputBuffer, TriggerMatcher
-from ..process import ProcessMonitor, GuiDetector
-from ..terminal.screen import TerminalScreen
+from ..process import GuiDetector, ProcessMonitor
 from ..protocol.ansi import strip_ansi
+from ..terminal.screen import TerminalScreen
+
+if TYPE_CHECKING:
+    from ..plugins.host import PluginHost
+    from ..process.base import ProcessTreeTracker
 
 _logger = logging.getLogger("pty-session")
 
@@ -39,6 +43,7 @@ class SessionComponents:
         on_exit:       读者线程退出回调，签名 (exit_code: Optional[int], error_message: Optional[str]) -> None。
                        用于通知 Session 更新 running/exit_code/error_message 并关闭 PTY。
     """
+
     pty_provider: Callable
     out_buf: OutputBuffer
     trig_mat: TriggerMatcher
@@ -49,6 +54,8 @@ class SessionComponents:
     session_id: str
     on_exit: Callable
     session_ref: Callable = None
+    # 插件宿主（字符串注解避免会话线程层反向依赖插件包实体）
+    plugin_host: "PluginHost" = None
 
 
 class SessionThreads:
@@ -100,15 +107,11 @@ class SessionThreads:
         if self._reader_thread and self._reader_thread.is_alive():
             self._reader_thread.join(timeout)
             if self._reader_thread.is_alive():
-                _logger.warning(
-                    "读者线程超时未退出 (会话 '%s')",
-                    self._comp.session_id)
+                _logger.warning("读者线程超时未退出 (会话 '%s')", self._comp.session_id)
         if self._monitor_thread and self._monitor_thread.is_alive():
             self._monitor_thread.join(timeout)
             if self._monitor_thread.is_alive():
-                _logger.warning(
-                    "监控线程超时未退出 (会话 '%s')",
-                    self._comp.session_id)
+                _logger.warning("监控线程超时未退出 (会话 '%s')", self._comp.session_id)
 
     # ── 后台线程实现 ──────────────────────────────────────────
 
@@ -124,7 +127,7 @@ class SessionThreads:
 
         while not self._stop_event.is_set() and pty:
             # 使用 select 等待数据，避免非阻塞 read 立即返回导致空数据误判为 EOF
-            pty_fd = pty.fileno() if hasattr(pty, 'fileno') else None
+            pty_fd = pty.fileno() if hasattr(pty, "fileno") else None
             if pty_fd is not None:
                 try:
                     readable, _, _ = select.select([pty_fd], [], [], 0.5)
@@ -141,22 +144,18 @@ class SessionThreads:
             except OSError as e:
                 if e.errno == errno.EBADF:
                     break
-                _logger.warning(
-                    "读取 PTY 异常 (会话 '%s'): %s", session_id, e)
+                _logger.warning("读取 PTY 异常 (会话 '%s'): %s", session_id, e)
                 break
             except Exception as e:
-                _logger.warning(
-                    "读取 PTY 异常 (会话 '%s'): %s", session_id, e)
+                _logger.warning("读取 PTY 异常 (会话 '%s'): %s", session_id, e)
                 break
             if not data:
                 # select  readable 后 read 返回空表示真 EOF（slave 已关闭）
                 _logger.info(
                     "会话 '%s': reader EOF (pty read returned empty after select)",
-                    session_id)
+                    session_id,
+                )
                 break
-
-            # ── 终端查询自动响应（ConPTY 模式下 isTTY=false，需模拟终端回复）──
-            self._respond_terminal_queries(data, pty, session_id)
 
             # ── 排空管道 ──
             drained = pty.drain(PTY_READ_SIZE)
@@ -164,11 +163,28 @@ class SessionThreads:
                 data = data + drained
                 _logger.debug(
                     "会话 '%s': drain got %d more bytes, total %d",
-                    session_id, len(drained), len(data))
+                    session_id,
+                    len(drained),
+                    len(data),
+                )
 
             _logger.debug(
-                "会话 '%s': reader got %d bytes: %r",
-                session_id, len(data), data[:80])
+                "会话 '%s': reader got %d bytes: %r", session_id, len(data), data[:80]
+            )
+
+            # ── 插件输出变换链 ──
+            # 变换后的数据贯穿全链路（buffer/trigger/screen/推送保持一致）；
+            # 插件将输出清空视为吞掉该段输出，跳过后续处理
+            if comp.plugin_host is not None:
+                data = comp.plugin_host.on_output(data)
+                if not data:
+                    _logger.debug(
+                        "会话 '%s': 输出被插件吞掉, plugins=%s",
+                        session_id,
+                        comp.plugin_host.names(),
+                    )
+                    pty = comp.pty_provider()
+                    continue
 
             # 在 OutputBuffer 锁保护下完成：追加 → 计时 → 触发匹配
             with out_buf.lock:
@@ -178,13 +194,29 @@ class SessionThreads:
                 if trig_mat.has_pattern:
                     trig_mat.check(out_buf)
 
-            # 同步喂给终端屏幕快照管理器
-            # v4: 不再有 suppress 窗口，所有数据都 feed 给 pyte screen
+            # ── 同步喂给终端屏幕快照管理器 ──
+            # 所有数据都 feed 给终端模型
             comp.screen.feed(data)
 
+            # ── 终端查询应答回写（DA1/CPR/XTGETTCAP/OSC 等）──
+            # wezterm-term 模型在 feed() 后生成应答字节（如 \x1b[?65;...c），
+            # 需写回 PTY 输入管道，子进程（vim 等 TUI）才能继续初始化。
+            try:
+                resp = comp.screen.drain_terminal_response()
+                if resp:
+                    pty.write(resp)
+                    _logger.debug(
+                        "会话 '%s': 终端应答回写 %d 字节: %r",
+                        session_id,
+                        len(resp),
+                        resp[:80],
+                    )
+            except Exception as e:
+                _logger.warning("会话 '%s': 终端应答回写失败: %s", session_id, e)
+
             # 通知订阅者（Web WS 实时推送）
-            # v4: 移除 _suppress_publish_until 检查，让 ConPTY repaint 直达前端
-            #     前端通过 resize_complete 中的 snapshot 强制 resync，无需抑制 repaint
+            # 让 ConPTY repaint 直达前端
+            #     前端通过 resize_complete 中的 snapshot 强制 resync
             try:
                 session = comp.session_ref()
                 session._publisher.notify_subscribers(data, "pty")
@@ -216,14 +248,14 @@ class SessionThreads:
                 error_message = extracted
             else:
                 from ..process import _format_exit_code_message
+
                 error_message = _format_exit_code_message(exit_code)
 
         # 通知 Session：更新 running/exit_code/error_message 并关闭 PTY
         try:
             comp.on_exit(exit_code, error_message)
         except Exception as e:
-            _logger.warning(
-                "on_exit 回调异常 (会话 '%s'): %s", session_id, e)
+            _logger.warning("on_exit 回调异常 (会话 '%s'): %s", session_id, e)
 
     def _monitor_loop(self) -> None:
         """独立监控线程：检测进程事件和 GUI 窗口"""
@@ -233,6 +265,11 @@ class SessionThreads:
             comp.proc_mon.drain_notifications()
             comp.gui_detector.check(pty, comp.session_id)
             comp.proc_mon.check_events()
+
+            # ── 插件定时触发 ──
+            # 按各插件 poll_interval 节流调用 on_poll（最小有效粒度约 2s）
+            if comp.plugin_host is not None:
+                comp.plugin_host.poll_tick()
 
             # 自然退出检测：所有子进程已退出且 PTY 仍在运行，主动关闭 PTY 让 reader EOF
             if pty and not self._stop_event.is_set():
@@ -245,76 +282,13 @@ class SessionThreads:
                         if session and session.running:
                             _logger.info(
                                 "会话 '%s': 所有子进程已退出，触发自然结束",
-                                comp.session_id)
+                                comp.session_id,
+                            )
                             session._on_all_processes_exited()
                 except Exception:
                     pass
 
-            # 检测子进程控制台鼠标模式变化（MiMo 等 Windows TUI 不发 DECSET）
-            if not self._stop_event.is_set():
-                try:
-                    session = comp.session_ref()
-                    if session and session.running:
-                        session.update_mouse_mode_from_console()
-                except Exception:
-                    pass
-
             self._stop_event.wait(2.0)
-
-    def _respond_terminal_queries(self, data: bytes, pty, session_id: str) -> None:
-        """检测子进程发送的终端查询序列并自动回复
-
-        ConPTY 模式下子进程 isTTY=false，渲染器（如 @opentui/core）发送的
-        终端能力查询不会被 conhost 回复。此方法拦截这些查询并模拟 xterm-256color
-        终端的响应，使渲染器能正常初始化。
-        """
-        try:
-            text = data.decode("utf-8", errors="replace")
-        except Exception:
-            return
-
-        responses = []
-
-        # DA1 查询: CSI c → 回复 VT520-like
-        if "\x1b[c" in text or "\x1b[0c" in text:
-            responses.append(b"\x1b[?65;0c")
-
-        # DA2 查询: CSI > c → 回复 VT220
-        if "\x1b[>c" in text or "\x1b[>0c" in text:
-            responses.append(b"\x1b[>1;0c")
-
-        # CPR 查询: CSI 6n → 光标在 1;1
-        if "\x1b[6n" in text:
-            responses.append(b"\x1b[1;1R")
-
-        # DECRQM 查询: CSI ? Ps $p → 回复支持
-        for m in re.finditer(r"\x1b\[\?(\d+)\$p", text):
-            ps = m.group(1)
-            responses.append(f"\x1b[?{ps};2$y".encode())
-
-        # XTGETTCAP: DCS + q → 回复支持
-        if "\x1bP+q" in text or "\x1bP$q" in text:
-            responses.append(b"\x1bP1+r0\x1b\\")
-
-        # Kitty keyboard: CSI ? u → 回复支持
-        if "\x1b[?u" in text:
-            responses.append(b"\x1b[?u")
-
-        # OSC 10/11 颜色查询
-        if "\x1b]10;?" in text:
-            responses.append(b"\x1b]10;rgb:ffff/ffff/ffff\x07")
-        if "\x1b]11;?" in text:
-            responses.append(b"\x1b]11;rgb:0000/0000/0000\x07")
-
-        if responses:
-            for resp in responses:
-                try:
-                    pty.write(resp)
-                except Exception:
-                    pass
-            _logger.debug(
-                "终端查询自动响应 (会话 '%s'): 发送 %d 个响应",
-                session_id, len(responses))
 
 
 # ── 模块级工具函数 ──────────────────────────────────────────────
@@ -346,13 +320,35 @@ def _capture_exit_code_retry(pty, retries: int = 10) -> Optional[int]:
 
 # 常见异常名前缀，用于从输出中识别真实错误
 _KNOWN_EXCEPTION_PREFIXES = (
-    "ZeroDivisionError", "ValueError", "TypeError", "NameError", "KeyError",
-    "IndexError", "AttributeError", "ImportError", "ModuleNotFoundError",
-    "RuntimeError", "AssertionError", "OSError", "IOError", "FileNotFoundError",
-    "PermissionError", "WindowsError", "SyntaxError", "IndentationError",
-    "TabError", "OverflowError", "MemoryError", "RecursionError", "SystemError",
-    "ReferenceError", "NotImplementedError", "StopIteration", "GeneratorExit",
-    "KeyboardInterrupt", "SystemExit",
+    "ZeroDivisionError",
+    "ValueError",
+    "TypeError",
+    "NameError",
+    "KeyError",
+    "IndexError",
+    "AttributeError",
+    "ImportError",
+    "ModuleNotFoundError",
+    "RuntimeError",
+    "AssertionError",
+    "OSError",
+    "IOError",
+    "FileNotFoundError",
+    "PermissionError",
+    "WindowsError",
+    "SyntaxError",
+    "IndentationError",
+    "TabError",
+    "OverflowError",
+    "MemoryError",
+    "RecursionError",
+    "SystemError",
+    "ReferenceError",
+    "NotImplementedError",
+    "StopIteration",
+    "GeneratorExit",
+    "KeyboardInterrupt",
+    "SystemExit",
 )
 
 
@@ -389,17 +385,21 @@ def _extract_crash_error_from_output(stdout_data: bytes) -> Optional[str]:
         candidate = line.strip()
         if not candidate:
             continue
-        if any(candidate.startswith(prefix + ":") or candidate.startswith(prefix + " ")
-               for prefix in _KNOWN_EXCEPTION_PREFIXES):
+        if any(
+            candidate.startswith(prefix + ":") or candidate.startswith(prefix + " ")
+            for prefix in _KNOWN_EXCEPTION_PREFIXES
+        ):
             return _clean_error_candidate(candidate)
         # 常见的 "XxxError: ..." 或 "Error: ..." 行
-        if re.search(r"\b(Error|Exception|Failure|Failed)\b\s*[:：]", candidate, re.IGNORECASE):
+        if re.search(
+            r"\b(Error|Exception|Failure|Failed)\b\s*[:：]", candidate, re.IGNORECASE
+        ):
             return _clean_error_candidate(candidate)
     return None
 
 
 # 匹配所有 CSI 序列（ESC [ ... 字母）和 OSC 序列，用于清理提取的异常信息
-_CSI_ALL_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?(?:\x07|\x1b\\)')
+_CSI_ALL_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?(?:\x07|\x1b\\)")
 
 
 def _clean_error_candidate(text: str) -> str:

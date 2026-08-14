@@ -15,16 +15,16 @@ import json
 import struct
 from typing import Optional, Tuple
 
-from ..config.files import TRANSFER_CHUNK_SIZE, TRANSFER_MAX_CONTROL
+from ..config.transfer import TRANSFER_CHUNK_SIZE, TRANSFER_MAX_CONTROL
 from .message import Message as _Msg
 
 # 帧类型
-FT_DATA = 0x01        # 文件数据块（原始字节）
-FT_FILE_END = 0x02    # 单文件结束：payload=JSON {"relpath","sha256","size","mtime"}
-FT_ACK = 0x03         # 单文件结果：payload=JSON {"relpath","ok","error"?}
-FT_MANIFEST = 0x04    # 文件清单：payload=JSON {"entries":[...]}
-FT_PLAN = 0x05        # 传输计划：payload=JSON {"transfers","skips","mkdirs"}
-FT_ABORT = 0x06       # 中止：payload=JSON {"reason"}
+FT_DATA = 0x01  # 文件数据块（原始字节）
+FT_FILE_END = 0x02  # 单文件结束：payload=JSON {"relpath","sha256","size","mtime"}
+FT_ACK = 0x03  # 单文件结果：payload=JSON {"relpath","ok","error"?}
+FT_MANIFEST = 0x04  # 文件清单：payload=JSON {"entries":[...]}
+FT_PLAN = 0x05  # 传输计划：payload=JSON {"transfers","skips","mkdirs"}
+FT_ABORT = 0x06  # 中止：payload=JSON {"reason"}
 
 _HEADER = struct.Struct(">IB")
 
@@ -42,7 +42,8 @@ def encode_frame(frame_type: int, payload: bytes) -> bytes:
     if len(payload) > max_payload:
         raise TransferProtocolError(
             "frame payload too large: type=%d len=%d max=%d"
-            % (frame_type, len(payload), max_payload))
+            % (frame_type, len(payload), max_payload)
+        )
     return _HEADER.pack(len(payload), frame_type) + payload
 
 
@@ -57,7 +58,8 @@ def decode_frame(header: bytes) -> Tuple[int, int]:
     if payload_len > max_payload:
         raise TransferProtocolError(
             "frame payload too large: type=%d len=%d max=%d"
-            % (frame_type, payload_len, max_payload))
+            % (frame_type, payload_len, max_payload)
+        )
     return payload_len, frame_type
 
 
@@ -92,8 +94,8 @@ def recv_frame(sock, timeout: Optional[float] = None) -> Optional[Tuple[int, byt
 
     if not fill(_HEADER.size):
         return None
-    payload_len, frame_type = decode_frame(bytes(buf[:_HEADER.size]))
-    del buf[:_HEADER.size]
+    payload_len, frame_type = decode_frame(bytes(buf[: _HEADER.size]))
+    del buf[: _HEADER.size]
     if not fill(payload_len):
         return None
     payload = bytes(buf[:payload_len])
@@ -128,4 +130,5 @@ def send_control_frame(sock, frame_type: int, obj: dict) -> None:
 
 def _now() -> float:
     import time
+
     return time.monotonic()

@@ -1,14 +1,14 @@
 """相同文件判定与传输计划单元测试 —— classify 全分支 + build_plan"""
 
-from src.files.transfer.common import entry
-from src.files.transfer.judge import (
+from src.transfer.common import entry
+from config.plugins.files.transfer.judge import (
     DENIED,
     SKIP,
     TRANSFER,
     build_plan,
     classify,
 )
-from src.files.transfer.map import TransferRecord
+from config.plugins.files.transfer.map import TransferRecord
 
 
 def _cls(remote_exists, remote_size, remote_mtime,

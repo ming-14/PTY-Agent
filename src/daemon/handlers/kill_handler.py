@@ -1,10 +1,9 @@
-import socket
 import logging
+import socket
 
 from ...protocol.message import Message
 from ...protocol.response import Response
 from .base import DaemonHandler, HandlerContext
-from .utils import check_ended_session
 
 _logger = logging.getLogger("pty-daemon")
 
@@ -23,7 +22,9 @@ class KillHandler(DaemonHandler):
                 hs.delete_session(session_id)
                 Message.send(conn, Response.kill_result(0, "Ended session removed"))
                 return
-            Message.send(conn, Response.kill_result(-1, f"Session '{session_id}' not found"))
+            Message.send(
+                conn, Response.kill_result(-1, f"Session '{session_id}' not found")
+            )
             return
 
         if ctx.manager._history_store:

@@ -13,7 +13,7 @@ from .authenticator import TokenAuthenticator, TokenCredentialProvider
 from .signer import HmacMessageSigner
 
 __all__ = [
+    "HmacMessageSigner",
     "TokenAuthenticator",
     "TokenCredentialProvider",
-    "HmacMessageSigner",
 ]

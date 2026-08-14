@@ -14,10 +14,7 @@ from ..domain.entities import (
     ActiveSession,
     HistoryDetail,
     HistorySession,
-    OutputChunk,
-    SessionDetail,
     SessionEndedInfo,
-    SessionEvent,
     SystemStats,
 )
 
@@ -98,43 +95,27 @@ class ConnectionContext(ABC):
 
     承载连接级状态，如当前订阅的会话集合、消息队列等。
 
-    C2 改造（模拟 WT）：支持多会话同时订阅。
+    支持多会话同时订阅。
     - 每个会话有独立的 output/end/event 回调
     - 切换标签不再 unsubscribe 旧会话，所有订阅会话的输出持续推送
     - 前端根据 ws 消息的 sessionId 字段路由到对应 xterm 实例
 
-    v3 改造：增加 client_uid 字段，标识 web 客户端（持久化在 localStorage）。
+    增加 client_uid 字段，标识 web 客户端（持久化在 localStorage）。
     自适应锁以 client_uid 为持有者标识，刷新页面后 uid 不变，锁可恢复/继承。
     """
 
     @property
     @abstractmethod
-    def subscribed_session_id(self) -> Optional[str]:
-        """当前活动订阅的会话 ID（兼容旧代码，返回最近订阅的会话）。
-
-        C2 改造后保留此属性仅为兼容，实际多订阅状态用 subscribed_session_ids。
-        """
-
-    @property
-    @abstractmethod
     def subscribed_session_ids(self) -> set:
-        """当前所有订阅的会话 ID 集合（C2 多订阅）。"""
-
-    @abstractmethod
-    def set_subscribed_session_id(self, session_id: Optional[str]) -> None:
-        """设置当前活动订阅的会话 ID（兼容旧代码）。
-
-        C2 改造后：传入非 None 时自动 add 到 subscribed_session_ids，
-        传入 None 时清空所有订阅（用于连接关闭）。
-        """
+        """当前所有订阅的会话 ID 集合。"""
 
     @abstractmethod
     def add_subscription(self, session_id: str) -> None:
-        """添加一个会话订阅（C2 多订阅）。"""
+        """添加一个会话订阅。"""
 
     @abstractmethod
     def remove_subscription(self, session_id: str) -> None:
-        """移除一个会话订阅（C2 多订阅）。"""
+        """移除一个会话订阅。"""
 
     @abstractmethod
     def get_decoder(self, session_id: str) -> Optional[Any]:
@@ -152,30 +133,29 @@ class ConnectionContext(ABC):
     def get_callbacks(self, session_id: str) -> dict:
         """获取指定会话的回调字典（output/end/event）。
 
-        C2 改造：按 session_id 隔离回调，支持多订阅。
+        按 session_id 隔离回调，支持多订阅。
         """
 
     @abstractmethod
     def set_callbacks(self, session_id: str, callbacks: dict) -> None:
-        """设置指定会话的回调字典（C2 新增）。"""
+        """设置指定会话的回调字典。"""
 
     @abstractmethod
     def clear_callbacks(self, session_id: Optional[str] = None) -> None:
         """清除回调。
 
-        C2 改造：
         - 传入 session_id 时只清除该会话的回调
         - 传入 None 时清除所有会话的回调（用于连接关闭）
         """
 
     @abstractmethod
     def clear_all_subscriptions(self) -> None:
-        """清除所有订阅和回调（用于连接关闭，C2 新增）。"""
+        """清除所有订阅和回调（用于连接关闭）。"""
 
     @property
     @abstractmethod
     def client_uid(self) -> Optional[str]:
-        """本连接关联的 web 客户端 uid（v3 新增）。
+        """本连接关联的 web 客户端 uid。
 
         由前端生成并持久化在 localStorage，WS 连接 URL 携带。
         自适应锁以 client_uid 为持有者标识，刷新后 uid 不变，锁可恢复/继承。
@@ -183,7 +163,7 @@ class ConnectionContext(ABC):
 
     @abstractmethod
     def set_client_uid(self, uid: Optional[str]) -> None:
-        """设置本连接的 web 客户端 uid（v3 新增）。
+        """设置本连接的 web 客户端 uid。
 
         在 WS 连接建立时由 server.py 从 URL query 读取并注入。
         """
@@ -230,7 +210,7 @@ class EventPublisher(ABC):
     ) -> None:
         """广播会话尺寸变更事件（定向：仅发给订阅该会话的客户端）。
 
-        问题1（尺寸变更通知）：当任意来源（网页 resize 请求 / 守护进程命令行）
+        尺寸变更通知：当任意来源（网页 resize 请求 / 守护进程命令行）
         触发会话尺寸变更后，必须立刻通知所有订阅该会话的客户端调整终端显示。
 
         - 仅发给 context.subscribed_session_ids 包含 session_id 的连接
@@ -252,10 +232,10 @@ class EventPublisher(ABC):
     ) -> None:
         """广播尺寸模式变更事件（定向：仅发给订阅该会话的客户端）。
 
-        问题2（自适应排他锁）：当自适应锁状态变更（接管/释放/降级）或
+        自适应排他锁：当自适应锁状态变更（接管/释放/降级）或
         某客户端显式设定新尺寸模式时，通知所有订阅客户端更新 UI。
 
-        v3 改造：增加 adaptive_owner_uid，前端据此判断"自己是否持锁"并恢复 UI。
+        增加 adaptive_owner_uid，前端据此判断"自己是否持锁"并恢复 UI。
         - adaptive_owner_active: 是否有 client_uid 持有自适应锁
         - adaptive_owner_uid: 当前持有者的 client_uid（无持有者时为 None）
         - mode/cols/rows: 当 SetSizeMode 设定新模式时的尺寸信息（供其他客户端跟随）
@@ -316,5 +296,3 @@ class ThreadExecutor(ABC):
     @abstractmethod
     async def run(self, fn: Callable, *args, **kwargs) -> Any:
         """在线程池中执行可调用对象。"""
-
-

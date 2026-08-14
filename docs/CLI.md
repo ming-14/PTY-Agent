@@ -6,7 +6,8 @@
 | ---------- | ------------------------------------- |
 | Python     | >= 3.8                                |
 | 平台       | Windows 10+ (ConPTY) / Unix (os.openpty) |
-| daemon 端口 | 18765                                |
+| token 端口 | 10520                                |
+| plain 端口 | 10521                                |
 | web 端口   | 18766                                 |
 | TLS 端口   | 18767                                 |
 
@@ -71,15 +72,12 @@ python app.py <子命令> -h     # 查看该子命令的帮助
 | 选项                | 说明                                                         |
 | ------------------- | ------------------------------------------------------------ |
 | `--show-config [KEY]` | 查看配置值（不指定 KEY 则显示全部）                         |
-| `--host HOST`       | 远程 daemon 主机地址（pubkey 跨机 TLS 模式），覆盖 `DAEMON_REMOTE_HOST` |
-| `--port PORT`       | 远程 daemon TLS 端口，覆盖 `DAEMON_REMOTE_PORT`              |
 
 **示例：**
 
 ```bash
 python app.py --show-config
 python app.py --show-config timeout
-python app.py --host 10.0.0.5 --port 18767 exec s1 -c "bash"
 ```
 
 ---
@@ -118,7 +116,7 @@ python app.py --host 10.0.0.5 --port 18767 exec s1 -c "bash"
 python app.py start [公共选项]
 ```
 
-**说明：** 自动检测守护进程是否已运行。已运行则返回会话列表，未运行则自动启动子进程并写入共享内存（SHM）中的端口/PID/认证令牌。
+**说明：** 自动检测守护进程是否已运行。已运行则返回会话列表，未运行则自动启动子进程并写入共享内存（SHM）中的认证令牌/HMAC 密钥（监听位置由 daemon.toml `[listener]` 配置，不写入 SHM）。
 
 **示例：**
 
@@ -755,11 +753,14 @@ python app.py read s1 --no-debug
 **加载机制：** 从 TOML 文件展平为模块级常量
 
 ```
-common.py  = common.toml + 运行时计算
-daemon.py  = common.toml + daemon.toml + logging.toml + web.toml
-client.py  = common.toml + client.toml
-files.py   = files.toml + 运行时计算（RG_EXE 自动探测 bin/rg/ 与 PATH）
-sandbox.py = sandbox.toml
+common.py    = common.toml + 运行时计算
+daemon.py    = common.toml + daemon.toml + logging.toml + web.toml
+client.py    = common.toml + client.toml
+transfer.py  = transfer.toml
+sandbox.py   = sandbox.toml
+
+# 文件工具插件业务参数（读/写/搜索限制、忽略目录、RG_EXE）在插件自包含配置
+# config/plugins/files/files.toml（config.py 加载），不进核心配置目录
 ```
 
 **数据目录：** `~/.pty-agent/`
@@ -779,9 +780,6 @@ sandbox.py = sandbox.toml
 DEFAULT_COLS = 80
 DEFAULT_ROWS = 24
 
-[network]
-DAEMON_HOST = "127.0.0.1"
-
 [compression]
 GZIP_COMPRESS_LEVEL = 6
 
@@ -793,23 +791,26 @@ MAX_PATTERN_LEN    = 4096
 
 [ai]
 AICHAT_TIMEOUT = 120
-
-[auth]
-ENABLE_TOKEN_AUTH = true           # Token + HMAC 认证 (同机)
-ENABLE_PUBKEY_AUTH = false         # Ed25519 公私钥认证 (跨机 TLS)
-CLIENT_AUTH_METHOD = "token"       # token / pubkey / none
-PUBKEY_ALGORITHM       = "ed25519"
-PUBKEY_PRIVATE_KEY_PATH = "~/.pty-agent/keys/id_ed25519"
-PUBKEY_PUBLIC_KEY_PATH  = "~/.pty-agent/keys/id_ed25519.pub"
-PUBKEY_AUTHORIZED_KEYS  = "~/.pty-agent/authorized_keys"
-PUBKEY_KEY_DIR          = "~/.pty-agent/keys"
 ```
 
 ### 6.2  daemon.toml - 守护进程配置
 
+> 协议/IPC/daemon 控制等跨侧共享常量在 `shared.toml`；本文件管控监听器与认证参数。
+
 ```toml
-[network]
-DEFAULT_DAEMON_PORT = 18765
+[listener]
+# 三监听器各自的启用/监听位置，可同开或只开一个
+PLAIN_ENABLED = false
+PLAIN_HOST    = "0.0.0.0"     # 明文无认证监听地址（对外暴露需谨慎）
+PLAIN_PORT    = 10521
+
+TOKEN_ENABLED = true
+TOKEN_HOST    = "127.0.0.1"   # 本机 token 监听地址（固定回环，仅本机可达）
+TOKEN_PORT    = 10520
+
+TLS_ENABLED   = false
+TLS_HOST      = "0.0.0.0"     # TLS 监听地址（跨机访问需 0.0.0.0）
+TLS_PORT      = 18767
 
 [buffer]
 MAX_OUTPUT_BUFFER = 104_857_600    # 100 MB
@@ -817,42 +818,28 @@ MAX_TRIGGER_SCAN  = 1_048_576      # 1 MB
 
 [timeout]
 DEFAULT_TRIGGER_TIMEOUT = 120.0
-DAEMON_START_TIMEOUT    = 3.0
-PING_TIMEOUT            = 1.0
-STOP_TIMEOUT            = 3.0
 
 [misc]
 SOCKET_LISTEN_BACKLOG  = 5
-SOCKET_RECV_BUFSIZE    = 4096
 PTY_READ_SIZE          = 65536
-MAX_MESSAGE_LENGTH     = 1_048_576
-
-[daemon_start]
-DAEMON_START_POLL_INTERVAL    = 0.3
-PROCESS_EXIT_WAIT_RETRIES     = 10
-PROCESS_EXIT_WAIT_INTERVAL    = 0.1
 
 [named_resource]
-SINGLE_INSTANCE_MUTEX_NAME = "Local\\PTYAgentSingleInstance"
-JOB_OBJECT_NAME_PREFIX     = "Local\\PTYJob_"
+JOB_OBJECT_NAME_PREFIX = "Local\\PTYJob_"
 
 [input_limit]
 MAX_SESSIONS = 50
 
-[shared_memory]
-MMAP_NAME = "Local\\PTYAgentDaemon"
-MMAP_SIZE = 32
-
 [auth]
-AUTH_TOKEN_NAME             = "Local\\PTYAgentAuth"
-AUTH_TOKEN_SIZE             = 64
-AUTH_TOKEN_ROTATE_INTERVAL  = 1800
-AUTH_TOKEN_GRACE_PERIOD     = 120
-HMAC_KEY_NAME               = "Local\\PTYAgentHmac"
-HMAC_KEY_SIZE               = 64
-# TLS 服务端 (ENABLE_PUBKEY_AUTH=true 时生效)
-PUBKEY_LISTEN_HOST     = "0.0.0.0"
-PUBKEY_LISTEN_PORT     = 18767
+# Token 认证（[listener] TOKEN_ENABLED=true 时生效）
+AUTH_TOKEN_ROTATE_INTERVAL = 1800
+AUTH_TOKEN_GRACE_PERIOD    = 120
+
+# 公私钥认证（[listener] TLS_ENABLED=true 时生效）
+PUBKEY_ALGORITHM       = "ed25519"
+PUBKEY_AUTHORIZED_KEYS = "~/.pty-agent/authorized_keys"
+PUBKEY_KEY_DIR         = "~/.pty-agent/keys"
+
+# TLS 服务端（[listener] TLS_ENABLED=true 时生效）
 TLS_CERT_DIR           = "~/.pty-agent/certs"
 TLS_CERT_FILE          = "~/.pty-agent/certs/daemon.crt"
 TLS_KEY_FILE           = "~/.pty-agent/certs/daemon.key"
@@ -863,15 +850,31 @@ TLS_CERT_SUBJECT_CN    = "pty-agent-daemon"
 ### 6.3  client.toml - 客户端配置
 
 ```toml
+[connection]
+# 客户端连接方式，三选一，必须与 daemon 侧 [listener] 对应监听器 enabled 匹配
+CONNECT_MODE = "token"        # plain / token / tls
+
+# plain 模式连接位置（CONNECT_MODE=plain 时生效）
+PLAIN_HOST = "127.0.0.1"      # 明文无认证监听器地址
+PLAIN_PORT = 10521
+
+# token 模式连接位置（CONNECT_MODE=token 时生效，本机）
+TOKEN_HOST = "127.0.0.1"      # 本机 token 监听器地址
+TOKEN_PORT = 10520
+
+# tls 模式连接位置（CONNECT_MODE=tls 时生效）
+TLS_HOST = ""                 # 远程 daemon TLS 监听器地址
+TLS_PORT = 18767
+
 [timeout]
 CONNECT_TIMEOUT         = 30.0
 DEFAULT_TRIGGER_TIMEOUT = 120.0
 
 [auth]
-DAEMON_REMOTE_HOST  = ""            # 空=同机 SHM，非空=跨机 TLS
-DAEMON_REMOTE_PORT  = 18767
-KNOWN_HOSTS_FILE    = "~/.pty-agent/known_hosts"
-TOFU_STRICT         = true          # true=指纹不匹配拒绝
+# 公私钥认证（CONNECT_MODE=tls 时生效）
+PUBKEY_PRIVATE_KEY_PATH = "~/.pty-agent/keys/id_ed25519"  # 客户端私钥
+KNOWN_HOSTS_FILE        = "~/.pty-agent/known_hosts"      # TOFU 信任存储文件
+TOFU_STRICT             = true                            # true=指纹不匹配拒绝，false=仅警告
 ```
 
 ### 6.4  logging.toml - 日志配置
@@ -971,27 +974,39 @@ IME_KB_SCALE          = 1.0
 
 ---
 
-## 7. 认证模式
+## 7. 认证与监听方式
 
-支持三种认证模式，通过 `common.toml [auth]` 配置选择：
+支持三种连接方式，通过 `client.toml [connection]` 的 `CONNECT_MODE` 选择连接哪个 daemon 监听器，
+各自须与 `daemon.toml [listener]` 对应监听器的 enabled 状态匹配：
 
-### 7.1  Token + HMAC 认证（同机，默认）
+| `CONNECT_MODE` | 监听器 | 认证方式 | 适用场景 |
+|----------------|--------|----------|----------|
+| `token`（默认） | `[listener] TOKEN_ENABLED` | Token + HMAC（本机，SHM 分发） | 本机 IPC |
+| `plain` | `PLAIN_ENABLED` | 无认证 | 可信局域网，明文直连 |
+| `tls` | `TLS_ENABLED` | TLS + Ed25519（跨机，TOFU 信任） | 跨机安全访问 |
 
-- `ENABLE_TOKEN_AUTH = true`
-- `CLIENT_AUTH_METHOD = "token"`
+### 7.1  token - 本机 Token + HMAC 认证（默认）
+
+- `daemon.toml [listener] TOKEN_ENABLED = true`，监听 `TOKEN_HOST`:`TOKEN_PORT`（默认 127.0.0.1:10520）
+- `client.toml [connection] CONNECT_MODE = "token"`，目标 `TOKEN_HOST`:`TOKEN_PORT`
 - 守护进程启动时生成随机 Token 与 HMAC 密钥，写入共享内存
 - 客户端从 SHM 读取，每次消息附加 HMAC-SHA256 签名
-- Token 定期轮换（`AUTH_TOKEN_ROTATE_INTERVAL=1800s`），有宽限期
-- 仅限同机使用（SHM 隔离）
+- Token 定期轮换（`AUTH_TOKEN_ROTATE_INTERVAL=1800s`），有宽限期（`AUTH_TOKEN_GRACE_PERIOD`）
+- 仅限本机使用（SHM 隔离）
 
-### 7.2  Ed25519 公私钥认证（跨机 TLS）
+### 7.2  plain - 明文无认证（跨机/局域网直连）
 
-- `ENABLE_PUBKEY_AUTH = true`
-- `CLIENT_AUTH_METHOD = "pubkey"`
-- 客户端用私钥签名，服务端用 `authorized_keys` 白名单验签
+- `daemon.toml [listener] PLAIN_ENABLED = true`，监听 `PLAIN_HOST`:`PLAIN_PORT`（默认 0.0.0.0:10521）
+- `client.toml [connection] CONNECT_MODE = "plain"`，目标 `PLAIN_HOST`:`PLAIN_PORT`
+- 明文传输，无加密无认证，仅用于完全可信环境，对外暴露需谨慎
+
+### 7.3  tls - 跨机 TLS + Ed25519 公私钥认证
+
+- `daemon.toml [listener] TLS_ENABLED = true`，监听 `TLS_HOST`:`TLS_PORT`（默认 0.0.0.0:18767）
+- `client.toml [connection] CONNECT_MODE = "tls"`，目标 `TLS_HOST`:`TLS_PORT`（即远程 daemon 地址）
+- 客户端用私钥（`PUBKEY_PRIVATE_KEY_PATH`）签名，服务端用 `authorized_keys` 白名单验签
 - 传输层使用 TLS（自签证书，类似 SSH host key）
-- 客户端 TOFU 信任首次连接的证书指纹
-- `DAEMON_REMOTE_HOST` 非空时启用跨机模式
+- 客户端 TOFU 信任首次连接的证书指纹（`KNOWN_HOSTS_FILE` / `TOFU_STRICT`）
 
 **工作流：**
 
@@ -1000,16 +1015,13 @@ IME_KB_SCALE          = 1.0
 python app.py keygen -C "user@host"
 # 2. 将 ~/.pty-agent/keys/id_ed25519.pub 追加到服务端
 #    ~/.pty-agent/authorized_keys
-# 3. 服务端启用 ENABLE_PUBKEY_AUTH=true 并启动
+# 3. 服务端启用 TLS 监听器并启动
+#    daemon.toml: [listener] TLS_ENABLED = true
 python app.py start
-# 4. 客户端跨机执行
-python app.py --host <server> --port 18767 exec s1 -c "bash"
+# 4. 客户端配置 client.toml [connection] CONNECT_MODE = "tls"、
+#    TLS_HOST = <server>，跨机执行
+python app.py exec s1 -c "bash"
 ```
-
-### 7.3  无认证（none）
-
-- `CLIENT_AUTH_METHOD = "none"`
-- 仅用于测试或完全可信环境，生产环境禁用
 
 ---
 
@@ -1060,7 +1072,7 @@ python app.py --host <server> --port 18767 exec s1 -c "bash"
 7. 从 `BurntSushi/ripgrep` releases 下载 `rg.exe`（按系统架构 x86_64/aarch64）
 8. 下载 `UltraVNC_1824.zip`（按 x64/x86 架构）
 9. 下载 `terminal_injector_x64_v1.0.zip`
-10. 删除发布目录中的配置/日志/缓存文件（rime source map、aichat config、vnc.toml/vnc.example.toml、ultravnc 日志/ini）
+10. 删除发布目录中的配置/日志/缓存文件（rime source map、aichat config、daemon/vnc.toml/vnc.example.toml、ultravnc 日志/ini）
 
 **构建产物：** `./pty-agent/`（被 `.gitignore` 忽略）
 
@@ -1175,15 +1187,15 @@ app.py exec sid -c "terminal_injector.exe --mediator --target-pid $pid" \
 
 ## 11. 环境变量
 
-### 11.1  认证相关（通过 TOML 配置间接读取）
+### 11.1  连接与认证相关（通过 TOML 配置间接读取）
 
 | 变量                   | 说明                                       |
 | ---------------------- | ------------------------------------------ |
-| `ENABLE_TOKEN_AUTH`    | Token + HMAC 认证开关                      |
-| `ENABLE_PUBKEY_AUTH`   | Ed25519 公私钥认证开关                     |
-| `CLIENT_AUTH_METHOD`   | 客户端认证方式: token/pubkey/none          |
-| `DAEMON_REMOTE_HOST`   | 远程 daemon 主机（空=同机 SHM）            |
-| `DAEMON_REMOTE_PORT`   | 远程 daemon TLS 端口（默认 18767）        |
+| `CONNECT_MODE`         | 客户端连接方式: plain/token/tls             |
+| `PLAIN_HOST`/`PLAIN_PORT`   | 明文无认证监听器地址/端口            |
+| `TOKEN_HOST`/`TOKEN_PORT`   | 本机 token 监听器地址/端口           |
+| `TLS_HOST`/`TLS_PORT`       | 远程 TLS 监听器地址/端口            |
+| `PUBKEY_PRIVATE_KEY_PATH`  | 客户端 Ed25519 私钥路径           |
 | `KNOWN_HOSTS_FILE`     | TOFU 信任存储路径                          |
 | `TOFU_STRICT`          | TOFU 严格模式                              |
 
@@ -1319,13 +1331,13 @@ python app.py send myid -i "{enter}" -j                 # 回车
 ### 12.10  跨机 TLS 部署
 
 ```bash
-# 服务端:
-#   1. 启用 ENABLE_PUBKEY_AUTH=true
-#   2. python app.py start
+# 服务端: daemon.toml [listener] TLS_ENABLED=true（监听 TLS_HOST:TLS_PORT，跨机需 0.0.0.0）
+#   python app.py start
 # 客户端:
 python app.py keygen -C "user@client"
 # 将 id_ed25519.pub 追加到服务端 ~/.pty-agent/authorized_keys
-python app.py --host <server-ip> --port 18767 exec s1 -c "bash"
+# client.toml: [connection] CONNECT_MODE="tls", TLS_HOST="<server-ip>", TLS_PORT=18767
+python app.py exec s1 -c "bash"
 ```
 
 ### 12.11  Web 界面

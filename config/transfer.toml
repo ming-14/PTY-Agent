@@ -1,0 +1,13 @@
+# 文件传输协议配置 —— file upload/download（daemon 与 CLI 两端共享）
+# 加载入口：src/config/transfer.py（TRANSFER_* 常量）
+# 消费方：src/protocol/transfer.py（帧协议）、src/transfer/*（CLI 驱动）、
+#         src/client/transport.py（CLI 超时）、files 插件 daemon 侧
+
+[transfer]
+TRANSFER_CHUNK_SIZE = 262144       # 传输数据帧大小（256KB）
+TRANSFER_MAX_FILES = 100000        # 单次传输条目数上限（目录树防御）
+TRANSFER_MAX_CONTROL = 16777216    # 控制帧 payload 上限（16MB，清单/计划）
+TRANSFER_MAX_SIZE = 0              # 单文件大小上限；0 = 无限制
+TRANSFER_TMP_SUFFIX = ".pty-tmp"   # 传输临时文件后缀
+TRANSFER_PROGRESS_INTERVAL = 60    # 非 TTY 强制进度打印间隔（秒）
+TRANSFER_TIMEOUT = 120             # file upload/download 默认总时限（秒）

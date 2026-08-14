@@ -1,20 +1,19 @@
 """沙箱 PTY 后端 —— SandboxPty（PseudoTerminal 端口实现）
 
-win-sandbox 沙箱会话的完整终端语义：SandboxPty 自建 ConPTY 句柄
-（ConPtyHandle，与原生 WindowsPseudoTerminal 共用同一组件），把 HPCON
-外部传入 win_sandbox start_process(hpcon=...) —— 沙箱进程的 stdio 由该
-伪控制台驱动，回显/方向键/resize/Ctrl+C 与原生 ConPTY 完全一致。
+win-sandbox 沙箱会话的完整终端语义：SandboxPty 用 wezterm-py Pty 创建
+ConPTY（侧载 OpenConsole 宿主），把 HPCON 外部传入 win_sandbox
+start_process(hpcon=...) —— 沙箱进程的 stdio 由该伪控制台驱动，
+回显/方向键/resize/Ctrl+C 与原生 ConPTY 完全一致。
 
 数据通路：
-  - 输出：ConPtyHandle.outR（conhost → 父进程），read/drain 直读
-  - 输入：ConPtyHandle.inW（父进程 → conhost），write 直写
-      * ConPTY 输入走 VT 字节流：\x03 中断、方向键序列、\r\n 回车均由
-        conhost 按控制台模式处理（与原生 ConPTY 相同），不再依赖
-        Process.terminate / sandbox 命令
-  - resize：ResizePseudoConsole（conhost 内部 reflow + repaint）
+  - 输出：wezterm Pty 内部 reader 线程（master 读端）→ 缓冲队列，read/drain 直读
+  - 输入：wezterm Pty master 写端，write 直写（VT 字节流，conhost 解析）
+  - resize：wezterm Pty resize（HPCON 信号管道）
 
-spawn 成功后立即 register_root（与原生后端同一约定，防逃逸耦合）。
-进程树终止 / 沙箱 shutdown 由 Session 经 tracker 控制。
+沙箱场景下 wezterm Pty 不调用 spawn_command（由 win_sandbox 启动进程挂接
+HPCON），仅作为 ConPTY 的创建/IO/尺寸控制方。spawn 成功后立即 register_root
+（与原生后端同一约定，防逃逸耦合）。进程树终止 / 沙箱 shutdown 由 Session
+经 tracker 控制。
 """
 
 import logging
@@ -23,7 +22,7 @@ from typing import List, Optional
 
 from ..process.base import ProcessTreeTracker
 from ..pty.base import PseudoTerminal
-from ..pty.windows.conpty_handle import ConPtyHandle
+from ..pty.wezterm_pty import _HAS_WEZTERM, pywezterm
 from .manager import SandboxSessionManager
 
 _logger = logging.getLogger("sandbox-pty")
@@ -56,6 +55,8 @@ class SandboxPty(PseudoTerminal):
     ):
         if manager is None:
             raise ValueError("SandboxPty 需要 manager（沙箱会话管理器）")
+        if not _HAS_WEZTERM:
+            raise RuntimeError("wezterm-py 不可用，无法创建沙箱 ConPTY")
         self._manager = manager
         self._tracker = tracker
         self._cols = cols
@@ -66,27 +67,33 @@ class SandboxPty(PseudoTerminal):
         self._closed = False
 
         self._manager.start()
-        # 自建 ConPTY：沙箱进程 stdio 由该伪控制台驱动（外部传入 hpcon，
-        # 与原生 WindowsPseudoTerminal 共用 ConPtyHandle 组件）
-        self._pty_h = ConPtyHandle(cols, rows)
+        # 用 wezterm-py Pty 创建 ConPTY（不 spawn，由 win_sandbox 挂接 HPCON）
+        self._pty = pywezterm.Pty(cols=cols, rows=rows)
+        hpcon = self._pty.hpcon()
+        if not hpcon:
+            self._pty.close()
+            raise RuntimeError("wezterm Pty 未提供 HPCON")
         command_line = self._build_command_line(command, cwd, env)
         try:
             self._process_id, self._child_pid = self._manager.start_process(
-                command_line, working_dir=cwd, env_vars=env,
-                hpcon=self._pty_h.hpcon_value,
+                command_line,
+                working_dir=cwd,
+                env_vars=env,
+                hpcon=hpcon,
             )
         except Exception:
-            # 启动失败时释放已创建但未挂接的 ConPTY 句柄，避免泄漏
-            self._pty_h.close()
+            # 启动失败时释放已创建但未挂接的 ConPTY，避免泄漏
+            self._pty.close()
             raise
-        # 关闭父进程持有的可继承句柄副本（conhost 已复制）
-        self._pty_h.discard_inherited_ends()
         # spawn → 登记（紧耦合约定，与原生后端一致）
         if tracker is not None:
             tracker.register_root(self._child_pid)
         _logger.info(
             "SandboxPty 就绪: process_id=%s os_pid=%s %dx%d",
-            self._process_id, self._child_pid, cols, rows,
+            self._process_id,
+            self._child_pid,
+            cols,
+            rows,
         )
 
     @staticmethod
@@ -108,14 +115,14 @@ class SandboxPty(PseudoTerminal):
         return "win-sandbox"
 
     def read(self, n: int = 65536) -> bytes:
-        """阻塞读取 ConPTY 输出（最多 n 字节）；EOF 返回 b"""""
+        """阻塞读取 ConPTY 输出（最多 n 字节）；EOF 返回 b""" ""
         if self._closed:
             return b""
-        return self._pty_h.read(n)
+        return self._pty.read(n)
 
     def drain(self, max_bytes: int = 65536) -> bytes:
         """非阻塞排空当前已就绪输出"""
-        return self._pty_h.drain(max_bytes)
+        return self._pty.read(max_bytes, timeout=0.0)
 
     def write(self, data):
         """写入 ConPTY 输入管道（VT 字节流，conhost 解析）
@@ -123,23 +130,25 @@ class SandboxPty(PseudoTerminal):
         str 按 utf-8 编码（与原生 ConPTY write 语义一致）；
         InputInterceptor 对 utf-8 编码透传 str，此处必须兜底。
         """
-        self._pty_h.write(data)
+        if isinstance(data, str):
+            data = data.encode()
+        self._pty.write(data)
 
     def resize(self, cols: int, rows: int):
         """调整 ConPTY 尺寸（conhost 内部 reflow + repaint，与原生一致）"""
-        self._pty_h.resize(cols, rows)
+        self._pty.resize(cols, rows)
 
     def close(self):
         """关闭 ConPTY（进程树终止与沙箱 shutdown 由 Session 经 tracker 控制）"""
         if self._closed:
             return
         self._closed = True
-        self._pty_h.close()
+        self._pty.close()
         _logger.debug("SandboxPty close: process_id=%s", self._process_id)
 
     def fileno(self):
         """无文件描述符"""
-        return None
+        return
 
     def get_child_pid(self):
         """主进程 OS PID（start_process 返回）"""
@@ -149,6 +158,8 @@ class SandboxPty(PseudoTerminal):
         """主进程退出码（Job 退出回调记录；None = 仍在运行）"""
         return self._manager.get_exit_code()
 
-    def inject_mouse_event(self, x: int, y: int, button: int, is_release: bool, control_key_state: int = 0) -> bool:
+    def inject_mouse_event(
+        self, x: int, y: int, button: int, is_release: bool, control_key_state: int = 0
+    ) -> bool:
         """沙箱场景不支持鼠标注入（ConPTY 输入仅 VT 字节流）"""
         return False

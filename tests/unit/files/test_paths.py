@@ -1,12 +1,12 @@
-"""src/files/paths.py 单元测试 — 路径工具"""
+"""config/plugins/files/paths.py 单元测试 — 路径工具（Git-Bash 提示函数已迁核心 utils）"""
 
 import os
 import pytest
 
-from src.files.paths import (
+from src.daemon.handlers.utils import has_git_bash_style_path
+from config.plugins.files.paths import (
     resolve_session_path,
     is_within,
-    has_git_bash_style_path,
     normalize_key,
 )
 

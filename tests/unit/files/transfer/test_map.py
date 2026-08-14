@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.files.transfer.map import TransferMap, TransferRecord
+from config.plugins.files.transfer.map import TransferMap, TransferRecord
 
 
 @pytest.fixture

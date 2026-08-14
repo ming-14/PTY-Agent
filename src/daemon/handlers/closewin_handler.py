@@ -26,12 +26,19 @@ class CloseWinHandler(DaemonHandler):
 
         tracked_hwnds = {w["hwnd"] for w in session.gui_windows}
         if hwnd not in tracked_hwnds:
-            _logger.warning("closewin: hwnd=0x%X 不属于会话 '%s' 的已跟踪 GUI 窗口",
-                            hwnd, session_id)
-            Message.send(conn, Response.closewin_result(
-                closed=False, hwnd=hwnd,
-                message=f"hwnd 0x{hwnd:X} is not a tracked GUI window in session '{session_id}'",
-            ))
+            _logger.warning(
+                "closewin: hwnd=0x%X 不属于会话 '%s' 的已跟踪 GUI 窗口",
+                hwnd,
+                session_id,
+            )
+            Message.send(
+                conn,
+                Response.closewin_result(
+                    closed=False,
+                    hwnd=hwnd,
+                    message=f"hwnd 0x{hwnd:X} is not a tracked GUI window in session '{session_id}'",
+                ),
+            )
             return
 
         try:

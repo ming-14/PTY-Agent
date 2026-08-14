@@ -9,7 +9,6 @@ import logging
 import secrets
 import threading
 import time
-from typing import Optional
 
 _logger = logging.getLogger("pty-web-auth")
 
@@ -39,7 +38,9 @@ class SessionStore:
         expiry = time.monotonic() + max_age
         with self._lock:
             self._sessions[token] = expiry
-        _logger.info("session created, max_age=%d, total=%d", max_age, len(self._sessions))
+        _logger.info(
+            "session created, max_age=%d, total=%d", max_age, len(self._sessions)
+        )
         return token
 
     def validate(self, token: str) -> bool:
@@ -92,4 +93,8 @@ class SessionStore:
         for k in expired:
             del self._sessions[k]
         if expired:
-            _logger.debug("cleaned %d expired sessions, remaining=%d", len(expired), len(self._sessions))
+            _logger.debug(
+                "cleaned %d expired sessions, remaining=%d",
+                len(expired),
+                len(self._sessions),
+            )

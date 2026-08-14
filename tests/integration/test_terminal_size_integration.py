@@ -15,7 +15,7 @@ APP = [sys.executable, "app.py"]
 def _run(args, timeout=30):
     result = subprocess.run(
         APP + args,
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=timeout,
         cwd=os.path.join(os.path.dirname(__file__), "..", ".."),
     )
@@ -43,7 +43,7 @@ class TestTerminalSizeCLI:
         if resp and resp.get("commandType") == "exec":
             prog = resp.get("program", {})
             pty_type = prog.get("ptyType", "")
-            assert pty_type in ("win-conpty", "win-condrv"), f"Unexpected pty type: {pty_type}"
+            assert pty_type == "win-wezterm", f"Unexpected pty type: {pty_type}"
 
     def test_size_120x40(self):
         """--size 120x40 创建宽终端"""
@@ -52,7 +52,7 @@ class TestTerminalSizeCLI:
         if resp and resp.get("commandType") == "exec":
             prog = resp.get("program", {})
             pty_type = prog.get("ptyType", "")
-            assert pty_type in ("win-conpty", "win-condrv"), f"Unexpected pty type: {pty_type}"
+            assert pty_type == "win-wezterm", f"Unexpected pty type: {pty_type}"
 
     def test_size_invalid_format(self):
         """--size 格式错误返回错误"""
@@ -70,7 +70,7 @@ class TestTerminalSizeCLI:
         if resp and resp.get("commandType") == "exec":
             prog = resp.get("program", {})
             pty_type = prog.get("ptyType", "")
-            assert pty_type in ("win-conpty", "win-condrv"), f"Unexpected pty type: {pty_type}"
+            assert pty_type == "win-wezterm", f"Unexpected pty type: {pty_type}"
 
     def test_size_with_snapshot_mode(self):
         """--size 与 --snapshot-mode 组合"""

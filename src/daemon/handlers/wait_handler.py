@@ -5,9 +5,9 @@
 客户端断开连接时立即返回，不浪费线程资源。
 """
 
+import logging
 import select
 import time
-import logging
 
 from ...protocol.message import Message
 from ...protocol.response import Response

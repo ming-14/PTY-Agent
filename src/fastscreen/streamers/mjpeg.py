@@ -4,8 +4,9 @@ import threading
 from typing import Optional
 
 from fastscreencore import CaptureMethod
+
 from .encoding.mjpeg import encode_bgra_to_jpeg
-from .manager import StreamManager, StreamKey, FrameData, _drain_queue
+from .manager import FrameData, StreamKey, StreamManager, _drain_queue
 
 
 class MjpegStreamer:
@@ -54,8 +55,13 @@ class MjpegStreamer:
                 break
             try:
                 jpeg_data = encode_bgra_to_jpeg(
-                    frame_data.data, frame_data.width, frame_data.height, frame_data.stride,
-                    self.quality, self.scale_width, self.scale_height,
+                    frame_data.data,
+                    frame_data.width,
+                    frame_data.height,
+                    frame_data.stride,
+                    self.quality,
+                    self.scale_width,
+                    self.scale_height,
                 )
                 if jpeg_data:
                     while self._encoded_queue.full():

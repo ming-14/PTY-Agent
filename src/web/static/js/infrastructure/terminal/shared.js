@@ -3,12 +3,12 @@
  *
  * 被 terminal/ 子模块共享的常量与纯函数，避免循环依赖。
  *
- * 自 v3 起按 ttyd 风格重构：
- * - 移除手动 measureTerminalCellSize（由 FitAddon 内部使用 xterm _renderService.dimensions）
- * - 移除 computeAdaptiveSize（由 FitAddon.proposeDimensions / fit 替代）
+ * 按 ttyd 风格：
+ * - 不使用手动 measureTerminalCellSize（由 FitAddon 内部使用 xterm _renderService.dimensions）
+ * - 不使用 computeAdaptiveSize（由 FitAddon.proposeDimensions / fit 替代）
  * - 仅保留按尺寸模式查询目标 cols/rows 的纯函数
  *
- * v9 新增 frameRatio <-> fontSize 互算纯函数：
+ * frameRatio <-> fontSize 互算纯函数：
  * - computeFrameRatio：当前 frame + stage 尺寸 → ratio（取宽高较小值）
  * - computeFontSizeFromRatio：ratio + stage + cols/rows + 当前 cell → 字号
  */
@@ -19,7 +19,7 @@ import { DEFAULT_COLS, DEFAULT_ROWS, MIN_FONT_SIZE, MAX_FONT_SIZE } from '../../
 /**
  * 根据该会话自身的尺寸模式返回终端应使用的 cols/rows。
  *
- * 自 v2 起按会话 uid 查询配置，每个会话独立维护模式与自定义值。
+ * 按会话 uid 查询配置，每个会话独立维护模式与自定义值。
  *
  * - 'default':  使用会话从守护进程订阅到的 cols/rows（s.cols / s.rows）
  * - 'adaptive': 返回 null，由调用方使用 FitAddon 自动计算（这样 xterm 内部尺寸

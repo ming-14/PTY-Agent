@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 
-from fastscreencore import CaptureEngine, CapturedFrame
+from fastscreencore import CapturedFrame, CaptureEngine
 
 logger = logging.getLogger("fastscreen.manager")
 
@@ -32,7 +32,7 @@ class FrameData:
 
 
 class StreamKey:
-    __slots__ = ('target_type', 'target_id', 'method', 'fps')
+    __slots__ = ("fps", "method", "target_id", "target_type")
 
     def __init__(self, target_type: int, target_id: int, method: int, fps: int):
         self.target_type = target_type
@@ -43,10 +43,12 @@ class StreamKey:
     def __eq__(self, other):
         if not isinstance(other, StreamKey):
             return NotImplemented
-        return (self.target_type == other.target_type and
-                self.target_id == other.target_id and
-                self.method == other.method and
-                self.fps == other.fps)
+        return (
+            self.target_type == other.target_type
+            and self.target_id == other.target_id
+            and self.method == other.method
+            and self.fps == other.fps
+        )
 
     def __hash__(self):
         return hash((self.target_type, self.target_id, self.method, self.fps))
@@ -69,7 +71,9 @@ class SharedSession:
     def subscribe(self, callback: Callable[[FrameData], None]):
         with self._lock:
             self._subscribers.append(callback)
-        logger.info("Subscriber added to %s, total: %d", self.key, len(self._subscribers))
+        logger.info(
+            "Subscriber added to %s, total: %d", self.key, len(self._subscribers)
+        )
 
     def unsubscribe(self, callback: Callable[[FrameData], None]):
         with self._lock:
@@ -77,7 +81,9 @@ class SharedSession:
                 self._subscribers.remove(callback)
             except ValueError:
                 pass
-        logger.info("Subscriber removed from %s, total: %d", self.key, len(self._subscribers))
+        logger.info(
+            "Subscriber removed from %s, total: %d", self.key, len(self._subscribers)
+        )
 
     @property
     def subscriber_count(self) -> int:
@@ -94,7 +100,13 @@ class SharedSession:
                 return True
 
             # 调试状态：跟踪帧间隔与尺寸变化（排查 resize 时帧停滞问题）
-            state = {'last_ts': 0.0, 'last_w': 0, 'last_h': 0, 'count': 0, 'stall_logged': False}
+            state = {
+                "last_ts": 0.0,
+                "last_w": 0,
+                "last_h": 0,
+                "count": 0,
+                "stall_logged": False,
+            }
 
             def on_frame(frame: CapturedFrame):
                 if not self._running:
@@ -110,24 +122,44 @@ class SharedSession:
 
                 now = time.monotonic()
                 w, h = frame.width, frame.height
-                gap_ms = (now - state['last_ts']) * 1000 if state['last_ts'] > 0 else 0
-                state['count'] += 1
-                state['stall_logged'] = False
+                gap_ms = (now - state["last_ts"]) * 1000 if state["last_ts"] > 0 else 0
+                state["count"] += 1
+                state["stall_logged"] = False
 
                 # 尺寸变化或前 3 帧或间隔过大时打日志
-                if (state['last_w'] != w or state['last_h'] != h):
-                    logger.info("[CAPTURE] %s frame#%d size %dx%d -> %dx%d (gap=%.0fms)",
-                                self.key, state['count'], state['last_w'], state['last_h'], w, h, gap_ms)
-                elif state['count'] <= 3:
-                    logger.info("[CAPTURE] %s frame#%d size=%dx%d (gap=%.0fms)",
-                                self.key, state['count'], w, h, gap_ms)
+                if state["last_w"] != w or state["last_h"] != h:
+                    logger.info(
+                        "[CAPTURE] %s frame#%d size %dx%d -> %dx%d (gap=%.0fms)",
+                        self.key,
+                        state["count"],
+                        state["last_w"],
+                        state["last_h"],
+                        w,
+                        h,
+                        gap_ms,
+                    )
+                elif state["count"] <= 3:
+                    logger.info(
+                        "[CAPTURE] %s frame#%d size=%dx%d (gap=%.0fms)",
+                        self.key,
+                        state["count"],
+                        w,
+                        h,
+                        gap_ms,
+                    )
                 elif gap_ms > 1000:
-                    logger.info("[CAPTURE] %s frame#%d slow gap=%.0fms size=%dx%d",
-                                self.key, state['count'], gap_ms, w, h)
+                    logger.info(
+                        "[CAPTURE] %s frame#%d slow gap=%.0fms size=%dx%d",
+                        self.key,
+                        state["count"],
+                        gap_ms,
+                        w,
+                        h,
+                    )
 
-                state['last_ts'] = now
-                state['last_w'] = w
-                state['last_h'] = h
+                state["last_ts"] = now
+                state["last_w"] = w
+                state["last_h"] = h
 
                 frame_data = FrameData(
                     data=frame.to_bytes_gil_safe(),
@@ -168,10 +200,10 @@ class SharedSession:
 
 
 class StreamManager:
-    _instance: Optional['StreamManager'] = None
+    _instance: Optional["StreamManager"] = None
 
     @classmethod
-    def get(cls) -> 'StreamManager':
+    def get(cls) -> "StreamManager":
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
@@ -180,7 +212,9 @@ class StreamManager:
         self._sessions: Dict[StreamKey, SharedSession] = {}
         self._lock = threading.Lock()
 
-    def subscribe(self, key: StreamKey, callback: Callable[[FrameData], None]) -> Optional[SharedSession]:
+    def subscribe(
+        self, key: StreamKey, callback: Callable[[FrameData], None]
+    ) -> Optional[SharedSession]:
         with self._lock:
             session = self._sessions.get(key)
             if session is None:

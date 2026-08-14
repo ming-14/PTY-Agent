@@ -1,4 +1,4 @@
-"""GuiWindowMonitor — GUI 窗口检测器（迁移自 pty/windows/gui_monitor.py）
+"""GuiWindowMonitor — GUI 窗口检测器
 
 轮询 EnumWindows，交叉比对窗口所属进程 PID 是否在进程树内。
 进程树通过 `ProcessTreeTracker.get_process_list()` 获取，因此与
@@ -14,21 +14,21 @@ winsandbox 客户端可复用（见 design/process-manager-refactor.md §4.5）�
 
 import ctypes
 import logging
+from ctypes import wintypes as W
+from dataclasses import dataclass
 from threading import Lock
 from typing import Dict, List, Optional, Set
-from dataclasses import dataclass
-from ctypes import wintypes as W
 
 from ..base import ProcessTreeTracker
 from .api import (
-    _EnumWindows,
-    _GetWindowThreadProcessId,
-    _GetWindowTextW,
-    _GetClassNameW,
-    _IsWindowVisible,
-    _SendMessageW,
     WM_CLOSE,
     WNDENUMPROC,
+    _EnumWindows,
+    _GetClassNameW,
+    _GetWindowTextW,
+    _GetWindowThreadProcessId,
+    _IsWindowVisible,
+    _SendMessageW,
 )
 
 _logger = logging.getLogger("process-gui-monitor")
@@ -47,6 +47,7 @@ class GuiWindowInfo:
         title:      窗口标题。
         class_name: 窗口类名。
     """
+
     hwnd: int
     pid: int
     title: str
@@ -160,8 +161,13 @@ class GuiWindowMonitor:
         )
         self._known_hwnds.add(hwnd)
         self._temp_new_windows.append(info)
-        _logger.info("检测到 GUI 窗口: hwnd=0x%X pid=%d title=%r class=%s",
-                      hwnd, pid.value, title, class_name)
+        _logger.info(
+            "检测到 GUI 窗口: hwnd=0x%X pid=%d title=%r class=%s",
+            hwnd,
+            pid.value,
+            title,
+            class_name,
+        )
         return True
 
     @property

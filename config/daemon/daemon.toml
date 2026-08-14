@@ -1,0 +1,65 @@
+# 守护进程配置 —— 仅 Daemon 进程使用的常量
+# Web 配置 → web.toml（由 Daemon 启动 Web 服务）
+# 日志配置 → logging.toml
+# 协议/IPC/daemon 控制共享常量 → shared.toml
+
+# 单实例互斥锁开关
+# true:  启动时获取 Windows 命名互斥 / Unix flock 单实例锁（默认，同机仅一个 daemon）
+# false: 跳过单实例锁，允许同机多实例并存（仅 plain/tls 监听器场景适用）
+# 注意：token 监听器启用时 CLI 依赖互斥锁做存活发现与自动启动，此开关强制保留锁；
+#       仅当监听器全部为 plain/tls 时 false 才生效
+SINGLE_INSTANCE = true
+
+[listener]
+# 三种独立监听器，各自配置监听位置，支持同开或只开一个：
+# - plain: 明文端口，无认证（跨机/局域网直连，无加密无认证，谨慎开放）
+# - token: 本机端口，Token + HMAC 对称认证（密钥经 SHM 同机分发）
+# - tls:   远程端口，TLS 传输 + Ed25519 公私钥认证（跨机安全访问）
+# 客户端按 client.toml [connection] 的 CONNECT_MODE 选择连接对应监听器，
+# 两侧配置需相互匹配（监听器 enabled 与客户端 CONNECT_MODE 对应一致）
+PLAIN_ENABLED = false
+PLAIN_HOST    = "0.0.0.0"     # 明文无认证监听地址（对外暴露需谨慎）
+PLAIN_PORT    = 10521         # 明文无认证监听端口
+
+TOKEN_ENABLED = true
+TOKEN_HOST    = "127.0.0.1"   # 本机 token 监听地址（固定回环，仅本机可达）
+TOKEN_PORT    = 10520         # 本机 token 监听端口
+
+TLS_ENABLED   = false
+TLS_HOST      = "0.0.0.0"     # TLS 监听地址（跨机访问需 0.0.0.0）
+TLS_PORT      = 18767         # TLS 监听端口
+
+[buffer]
+MAX_OUTPUT_BUFFER = 104_857_600   # 100 MB
+MAX_TRIGGER_SCAN  = 1_048_576     # 1 MB
+
+[timeout]
+DEFAULT_TRIGGER_TIMEOUT = 120.0
+
+[misc]
+SOCKET_LISTEN_BACKLOG  = 5
+PTY_READ_SIZE          = 65536
+
+[named_resource]
+JOB_OBJECT_NAME_PREFIX = "Local\\PTYJob_"
+
+[input_limit]
+MAX_SESSIONS = 50
+
+[auth]
+# Token 认证（[listener] TOKEN_ENABLED=true 时生效）
+AUTH_TOKEN_ROTATE_INTERVAL = 1800
+AUTH_TOKEN_GRACE_PERIOD    = 120
+
+# 公私钥认证（[listener] TLS_ENABLED=true 时生效）
+PUBKEY_ALGORITHM       = "ed25519"                    # 预留算法字段，当前仅支持 ed25519
+PUBKEY_AUTHORIZED_KEYS = "~/.pty-agent/authorized_keys"  # 授权公钥列表（服务端）
+PUBKEY_KEY_DIR         = "~/.pty-agent/keys"          # 密钥目录
+
+# TLS 服务端配置（[listener] TLS_ENABLED=true 时生效）
+# TLS Listener 使用 TLS 传输，daemon 首次启动自动生成自签证书
+TLS_CERT_DIR           = "~/.pty-agent/certs"         # 证书存储目录
+TLS_CERT_FILE          = "~/.pty-agent/certs/daemon.crt"  # 证书文件路径
+TLS_KEY_FILE           = "~/.pty-agent/certs/daemon.key"  # 私钥文件路径
+TLS_CERT_VALIDITY_DAYS = 365                          # 证书有效期（天）
+TLS_CERT_SUBJECT_CN    = "pty-agent-daemon"           # 证书 Common Name

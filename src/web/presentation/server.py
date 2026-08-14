@@ -9,17 +9,17 @@ import time
 from typing import Callable, Optional
 from urllib.parse import urlparse
 
+import uvicorn
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-import uvicorn
 
+from ...fastscreen.ports import FastScreenServicePort
+from ...vnc import get_novnc_web_dir
+from ...vnc.ports import VncServicePort
 from ..application.adaptive_lock import AdaptiveLockService
 from ..application.ports import EventPublisher, HistoryRepository, SessionRepository
-from ...fastscreen.ports import FastScreenServicePort
-from ...vnc.ports import VncServicePort
-from ...vnc import get_novnc_web_dir
 from ..history import HistoryStore
 from ..infrastructure import (
     CursorLocatorAdapter,
@@ -27,15 +27,19 @@ from ..infrastructure import (
     FastAPIWebSocketTransport,
     FastScreenAdapter,
     HistoryRepositoryAdapter,
-    VncAdapter,
     SessionRepositoryAdapter,
     ShellProviderImpl,
     SystemStatsProviderImpl,
     ThreadExecutorImpl,
+    VncAdapter,
     WebSocketConnectionContext,
 )
 from ..infrastructure.auth import SessionStore
-from .controllers.auth_controller import create_auth_router, validate_request_auth, validate_ws_auth
+from .controllers.auth_controller import (
+    create_auth_router,
+    validate_request_auth,
+    validate_ws_auth,
+)
 from .controllers.fastscreen_controller import create_fastscreen_router
 from .controllers.settings_controller import create_settings_router
 from .controllers.websocket_controller import WebSocketController
@@ -51,8 +55,13 @@ class WebServer:
     负责启动后台 HTTP/WebSocket 服务。
     """
 
-    def __init__(self, manager, host: str = "127.0.0.1", port: int = 18766,
-                 password_hash: str = ""):
+    def __init__(
+        self,
+        manager,
+        host: str = "127.0.0.1",
+        port: int = 18766,
+        password_hash: str = "",
+    ):
         self.manager = manager
         self.host = host
         self.port = port
@@ -64,17 +73,21 @@ class WebServer:
         if self._auth_enabled:
             _logger.info("Web auth enabled (password hash set)")
         else:
-            _logger.info("Web auth disabled (no password, login page allows empty password)")
+            _logger.info(
+                "Web auth disabled (no password, login page allows empty password)"
+            )
 
         # 基础设施层
         self._executor = ThreadExecutorImpl()
         self._history_store = HistoryStore()
         self._session_repo: SessionRepository = SessionRepositoryAdapter(manager)
-        self._history_repo: HistoryRepository = HistoryRepositoryAdapter(self._history_store)
+        self._history_repo: HistoryRepository = HistoryRepositoryAdapter(
+            self._history_store
+        )
         self._system_stats = SystemStatsProviderImpl(self._executor)
         self._shell_provider = ShellProviderImpl()
 
-        existing = getattr(manager, '_history_store', None)
+        existing = getattr(manager, "_history_store", None)
         if existing is None:
             manager._history_store = self._history_store
 
@@ -84,7 +97,7 @@ class WebServer:
         self._publisher: EventPublisher = EventPublisherImpl(
             self._connections, self._get_loop
         )
-        # 问题2：自适应排他锁服务（会话级，单例，所有连接共享）
+        # 自适应排他锁服务（会话级，单例，所有连接共享）
         self._adaptive_lock = AdaptiveLockService()
         self._register_manager_callbacks()
 
@@ -108,7 +121,9 @@ class WebServer:
         try:
             self._cursor_locator_service = CursorLocatorAdapter()
         except Exception:
-            _logger.exception("CursorLocatorAdapter init failed, cursor locator disabled")
+            _logger.exception(
+                "CursorLocatorAdapter init failed, cursor locator disabled"
+            )
 
         # 控制器
         self._controller = WebSocketController(
@@ -122,7 +137,7 @@ class WebServer:
             vnc_service=self._vnc_service,
             fastscreen_service=self._fastscreen_service,
             cursor_locator_service=self._cursor_locator_service,
-            # v3: 注入 connections 字典，_cleanup 据此检查同 client_uid 是否还有
+            # 注入 connections 字典，_cleanup 据此检查同 client_uid 是否还有
             # 其他活跃连接订阅了该 sid（多标签页/刷新场景锁继承）
             connections=self._connections,
         )
@@ -150,15 +165,23 @@ class WebServer:
             if session and getattr(session, "uid", ""):
                 uid = session.uid
         except Exception:
-            _logger.exception("manager session_created get uid failed sid=%r", session_id)
+            _logger.exception(
+                "manager session_created get uid failed sid=%r", session_id
+            )
         self._publisher.publish_session_created(session_id, uid)
 
-    def _on_manager_session_removed(self, session_id: str, exit_code=None, error_message=None):
-        _logger.info("manager session_removed callback: %s exit=%s", session_id, exit_code)
+    def _on_manager_session_removed(
+        self, session_id: str, exit_code=None, error_message=None
+    ):
+        _logger.info(
+            "manager session_removed callback: %s exit=%s", session_id, exit_code
+        )
         self._publisher.publish_session_removed(session_id, exit_code, error_message)
 
     def start_background(self):
-        _logger.info("WebServer start_background called host=%s port=%d", self.host, self.port)
+        _logger.info(
+            "WebServer start_background called host=%s port=%d", self.host, self.port
+        )
         self._shutdown = False
         self._thread = threading.Thread(
             target=self._run_loop, daemon=True, name="pty-web-server"
@@ -168,8 +191,11 @@ class WebServer:
             target=self._watch_loop, daemon=True, name="pty-web-watcher"
         )
         self._watcher_thread.start()
-        _logger.info("WebServer background threads started (server=%s watcher=%s)",
-                     self._thread.name, self._watcher_thread.name)
+        _logger.info(
+            "WebServer background threads started (server=%s watcher=%s)",
+            self._thread.name,
+            self._watcher_thread.name,
+        )
 
     def _watch_loop(self):
         _logger.info("WebServer watcher started (interval=5s)")
@@ -184,7 +210,9 @@ class WebServer:
             if not thread_alive or not health_ok:
                 _logger.error(
                     "WebServer unhealthy (check #%d: thread_alive=%s health_ok=%s), restarting",
-                    check_count, thread_alive, health_ok,
+                    check_count,
+                    thread_alive,
+                    health_ok,
                 )
                 try:
                     self._stop_loop()
@@ -194,9 +222,14 @@ class WebServer:
                         target=self._run_loop, daemon=True, name="pty-web-server"
                     )
                     self._thread.start()
-                    _logger.info("WebServer restart thread started (attempt after check #%d)", check_count)
+                    _logger.info(
+                        "WebServer restart thread started (attempt after check #%d)",
+                        check_count,
+                    )
                 except Exception:
-                    _logger.exception("WebServer restart failed (after check #%d)", check_count)
+                    _logger.exception(
+                        "WebServer restart failed (after check #%d)", check_count
+                    )
             elif check_count % 12 == 0:
                 _logger.debug("WebServer watcher check #%d: healthy", check_count)
         _logger.info("WebServer watcher stopped (total checks=%d)", check_count)
@@ -224,7 +257,9 @@ class WebServer:
                 _logger.warning("WebServer _stop_loop failed: %s", e)
 
     def _run_loop(self):
-        _logger.info("WebServer _run_loop entered (thread=%s)", threading.current_thread().name)
+        _logger.info(
+            "WebServer _run_loop entered (thread=%s)", threading.current_thread().name
+        )
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         try:
@@ -351,11 +386,16 @@ class WebServer:
                     remote = request.client.host if request.client else "-"
                     _logger.warning(
                         "Loopback host check rejected: Host=%r from %s (allowed=%s)",
-                        host_header, remote, _loopback_allowed_hosts,
+                        host_header,
+                        remote,
+                        _loopback_allowed_hosts,
                     )
                     return JSONResponse(
                         status_code=403,
-                        content={"error": "forbidden", "message": "Invalid Host header"},
+                        content={
+                            "error": "forbidden",
+                            "message": "Invalid Host header",
+                        },
                     )
                 # 校验 Origin 头（若存在）
                 origin = request.headers.get("origin", "")
@@ -368,13 +408,16 @@ class WebServer:
                     else:
                         origin_host_port = origin_host.lower()
                     # 构造允许的 origin host 列表（含/不含端口）
-                    if origin_host_port not in _loopback_allowed_hosts and origin_host.lower() not in [
-                        h.split(":")[0] for h in _loopback_allowed_hosts
-                    ]:
+                    if (
+                        origin_host_port not in _loopback_allowed_hosts
+                        and origin_host.lower()
+                        not in [h.split(":")[0] for h in _loopback_allowed_hosts]
+                    ):
                         remote = request.client.host if request.client else "-"
                         _logger.warning(
                             "Loopback origin check rejected: Origin=%r from %s",
-                            origin, remote,
+                            origin,
+                            remote,
                         )
                         return JSONResponse(
                             status_code=403,
@@ -411,14 +454,21 @@ class WebServer:
                 elapsed_ms = (time.monotonic() - start) * 1000
                 _logger.info(
                     "HTTP %s %s from %s -> %d (%.1fms)",
-                    method, path, remote, response.status_code, elapsed_ms,
+                    method,
+                    path,
+                    remote,
+                    response.status_code,
+                    elapsed_ms,
                 )
                 return response
             except Exception:
                 elapsed_ms = (time.monotonic() - start) * 1000
                 _logger.exception(
                     "HTTP %s %s from %s -> ERROR (%.1fms)",
-                    method, path, remote, elapsed_ms,
+                    method,
+                    path,
+                    remote,
+                    elapsed_ms,
                 )
                 raise
 
@@ -433,9 +483,13 @@ class WebServer:
                         StaticFiles(directory=str(novnc_web_dir)),
                         name="static-novnc",
                     )
-                    _logger.info("noVNC static mounted at /static/novnc -> %s", novnc_web_dir)
+                    _logger.info(
+                        "noVNC static mounted at /static/novnc -> %s", novnc_web_dir
+                    )
                 else:
-                    _logger.warning("noVNC web dir not found, skip mount: %s", novnc_web_dir)
+                    _logger.warning(
+                        "noVNC web dir not found, skip mount: %s", novnc_web_dir
+                    )
             except Exception:
                 _logger.exception("noVNC static mount failed")
 
@@ -443,7 +497,11 @@ class WebServer:
         # 复用 StreamManager 多客户端共享会话；按需连接，断开即停止捕获
         if self._fastscreen_service is not None:
             try:
-                fs_router = create_fastscreen_router(self._fastscreen_service, auth_validator=_http_auth, session_store=self._session_store)
+                fs_router = create_fastscreen_router(
+                    self._fastscreen_service,
+                    auth_validator=_http_auth,
+                    session_store=self._session_store,
+                )
                 app.include_router(fs_router)
                 _logger.info(
                     "FastScreen router mounted: available=%s",
@@ -488,6 +546,7 @@ class WebServer:
                 _logger.exception("VNC proxy: connect to VNC TCP failed: %s", e)
                 await ws.close(code=1011, reason="VNC TCP connect failed")
                 return
+
             # 双向代理：WS→TCP + TCP→WS
             async def _ws_to_tcp():
                 try:
@@ -539,10 +598,14 @@ class WebServer:
         @app.websocket("/ws")
         async def _ws(ws: WebSocket):
             remote = ws.client.host if ws.client else "-"
-            # v3: 从 URL query 读取 client_uid（前端 localStorage 持久化，刷新不变）
+            # 从 URL query 读取 client_uid（前端 localStorage 持久化，刷新不变）
             # 用于自适应锁的持有者标识，使锁可跨重连/刷新恢复
             client_uid = ws.query_params.get("clientUid") or ""
-            _logger.info("WebSocket /ws connect from %s clientUid=%s", remote, client_uid or "(none)")
+            _logger.info(
+                "WebSocket /ws connect from %s clientUid=%s",
+                remote,
+                client_uid or "(none)",
+            )
             await ws.accept()
 
             # 端点级认证校验：Cookie 无效时发送 auth_required 后关闭
@@ -571,7 +634,11 @@ class WebServer:
             }
             try:
                 await self._controller.handle(transport, context, queue)
-                _logger.info("WebSocket /ws handler returned for %s (closed=%s)", remote, transport.closed)
+                _logger.info(
+                    "WebSocket /ws handler returned for %s (closed=%s)",
+                    remote,
+                    transport.closed,
+                )
             except Exception:
                 _logger.exception("WebSocket /ws error from %s", remote)
             finally:
@@ -603,7 +670,9 @@ class WebServer:
         except Exception as e:
             # 捕获 serve() 的非 OSError 异常（如端口占用时 uvicorn 内部抛出的 RuntimeError），
             # 避免异常被 task 吞掉导致诊断信息缺失（AGENTS.md: 完备的日志系统）
-            _logger.exception("WebServer serve error %s:%d: %s", self.host, self.port, e)
+            _logger.exception(
+                "WebServer serve error %s:%d: %s", self.host, self.port, e
+            )
         finally:
             _logger.info("WebServer _start finished")
             if heartbeat_task:
@@ -622,8 +691,14 @@ class WebServer:
                 await asyncio.sleep(30)
                 beat += 1
                 active_conns = len(self._connections)
-                _logger.debug("WebServer heartbeat #%d: serving on %s:%d, active_ws=%d",
-                              beat, self.host, self.port, active_conns)
+                _logger.debug(
+                    "WebServer heartbeat #%d: serving on %s:%d, active_ws=%d",
+                    beat,
+                    self.host,
+                    self.port,
+                    active_conns,
+                )
+
         if self._loop:
             return asyncio.ensure_future(heartbeat(), loop=self._loop)
         return None

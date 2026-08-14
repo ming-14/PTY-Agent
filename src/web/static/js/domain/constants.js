@@ -72,8 +72,7 @@ export const DARK_THEME = {
 };
 
 // 终端默认尺寸（80x24，参考 VT100 标准终端）
-// 原 infrastructure/terminal/shared.js 中定义，移至 domain 层以解除 application 层
-// 对 infrastructure 层的依赖（Clean Architecture 依赖规则：外层→内层）
+// 定义在 domain 层以解除对 infrastructure 层的依赖（Clean Architecture 依赖规则：外层→内层）
 export const DEFAULT_COLS = 80;
 export const DEFAULT_ROWS = 24;
 
@@ -85,7 +84,7 @@ export const MAX_FONT_SIZE = 32;
 export const FONT_SIZE_STEP = 1;       // Ctrl+滚轮 每次调整步长（adaptive 模式下直接调字号用）
 export const FONT_SIZE_PINCH_STEP = 1; // 触摸捏合每档步长
 
-// v9: frameRatio（框/stage 占比）相关常量。
+// frameRatio（框/stage 占比）相关常量。
 // 非 adaptive 模式下 Ctrl+滚轮 / 触摸捏合 / Ctrl+± 调整的是 frameRatio，
 // 字号由 frameRatio + stage 尺寸反算得到。
 export const FRAME_RATIO_MIN = 0.1;    // ratio 下限（防止框过小）

@@ -1,6 +1,6 @@
 """自适应尺寸锁服务（应用层）。
 
-问题2：自适应模式排他锁 + 接管机制。
+自适应模式排他锁 + 接管机制。
 
 核心规则：
 - 自适应模式排他：同一会话同一时刻只有一个 client_uid 能持有自适应锁
@@ -8,8 +8,7 @@
 - 非持有者的尺寸调整 UI 禁用，需点"接管"按钮夺取控制权
 - 接管时旧持有者退出自适应变 fixed（固定当前尺寸）
 
-v3 改造：锁持有者从 conn_id（id(transport)，刷新即变）改为 client_uid
-（localStorage 持久化，刷新后不变）。这样：
+锁持有者以 client_uid 标识（localStorage 持久化，刷新后不变）：
 - 同一 client_uid 的多个标签页/连接共享锁（任一连接 resize 都放行）
 - 刷新后 client_uid 不变，前端可从 ws_subscribed 响应识别自己持锁并恢复 UI
 - _cleanup 时需检查该 client_uid 是否还有其他活跃连接订阅了该 sid，
@@ -59,7 +58,8 @@ class AdaptiveLockService:
         self._owners[session_id] = client_uid
         _logger.info(
             "adaptive lock acquired: sid=%s new_owner=%s old_owner=%s",
-            session_id, client_uid,
+            session_id,
+            client_uid,
             old_owner if old_owner is not None else "None",
         )
         return old_owner
@@ -74,7 +74,9 @@ class AdaptiveLockService:
             return False
         if self._owners.get(session_id) == client_uid:
             del self._owners[session_id]
-            _logger.info("adaptive lock released: sid=%s owner=%s", session_id, client_uid)
+            _logger.info(
+                "adaptive lock released: sid=%s owner=%s", session_id, client_uid
+            )
             return True
         return False
 
@@ -95,6 +97,7 @@ class AdaptiveLockService:
         if old_owner is not None:
             _logger.info(
                 "adaptive lock cleared (takeover): sid=%s old_owner=%s",
-                session_id, old_owner,
+                session_id,
+                old_owner,
             )
         return old_owner

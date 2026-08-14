@@ -6,9 +6,9 @@
 新增命令时在 handlers/ 子包中添加 handler 类并在 dispatcher 中注册。
 """
 
-from .handlers.dispatcher import DaemonDispatcher
-from ..session.manager import SessionManager
 from ..auth.context import AuthContext
+from ..session.manager import SessionManager
+from .handlers.dispatcher import DaemonDispatcher
 
 
 class RequestHandler:
@@ -17,8 +17,7 @@ class RequestHandler:
     AuthContext 由 Listener 传入，包含该端口的签名器与认证器配置。
     """
 
-    def __init__(self, manager: SessionManager, auth_context: AuthContext,
-                 server=None):
+    def __init__(self, manager: SessionManager, auth_context: AuthContext, server=None):
         self._dispatcher = DaemonDispatcher(manager, auth_context, server)
 
     def handle(self, conn, addr):

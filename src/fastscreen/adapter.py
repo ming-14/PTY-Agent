@@ -10,11 +10,9 @@
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
 
-from .ports import FastScreenServicePort
-from ..config.common import PROJECT_ROOT
 from ..config.daemon import ENABLE_FASTSCREEN
+from .ports import FastScreenServicePort
 
 _logger = logging.getLogger("pty-fastscreenservice")
 
@@ -55,8 +53,11 @@ def _load_fastsreen_modules():
     try:
         _ensure_path(_resolve_bin_dir())
 
-        from fastscreencore import CaptureEngine  # noqa: F401
-        from fastscreencore import CaptureMethod, TargetType  # noqa: F401
+        from fastscreencore import (  # noqa: F401
+            CaptureEngine,
+            CaptureMethod,
+            TargetType,
+        )
 
         from .streamers.manager import StreamManager
 
@@ -65,7 +66,8 @@ def _load_fastsreen_modules():
         _fastscreen_loaded = True
         _logger.info(
             "FastScreen modules loaded: capture_engine=%s stream_manager=%s",
-            _capture_engine is not None, _stream_manager is not None,
+            _capture_engine is not None,
+            _stream_manager is not None,
         )
     except Exception as e:
         _logger.exception("FastScreen modules load failed: %s", e)
@@ -90,14 +92,19 @@ class FastScreenAdapter(FastScreenServicePort):
         if ENABLE_FASTSCREEN:
             _load_fastsreen_modules()
             if self.is_available():
-                _logger.info("FastScreen service initialized: dll=%s available=True", self._dll_path)
+                _logger.info(
+                    "FastScreen service initialized: dll=%s available=True",
+                    self._dll_path,
+                )
             else:
                 _logger.warning(
                     "FastScreen service initialized but not available (dll exists=%s)",
                     self._dll_path.exists(),
                 )
         else:
-            _logger.info("FastScreen service disabled by config (ENABLE_FASTSCREEN=False)")
+            _logger.info(
+                "FastScreen service disabled by config (ENABLE_FASTSCREEN=False)"
+            )
 
     def is_available(self) -> bool:
         """FastScreen 功能是否可用（配置启用 + DLL 存在 + 模块加载成功）。"""
@@ -110,27 +117,58 @@ class FastScreenAdapter(FastScreenServicePort):
     def list_targets(self) -> dict:
         """列出所有可查看目标（显示器 + 窗口）。"""
         if not self.is_available():
-            return {"disabled": not ENABLE_FASTSCREEN, "available": False, "monitors": [], "windows": []}
+            return {
+                "disabled": not ENABLE_FASTSCREEN,
+                "available": False,
+                "monitors": [],
+                "windows": [],
+            }
 
         try:
             monitors_raw = _capture_engine.enumerate_monitors()
             windows_raw = _capture_engine.enumerate_windows()
         except Exception as e:
             _logger.exception("FastScreen enumerate failed: %s", e)
-            return {"disabled": False, "available": True, "monitors": [], "windows": [], "error": str(e)}
+            return {
+                "disabled": False,
+                "available": True,
+                "monitors": [],
+                "windows": [],
+                "error": str(e),
+            }
 
         monitors = [
-            {"id": m.id, "name": m.name, "left": m.left, "top": m.top,
-             "width": m.width, "height": m.height, "primary": bool(m.primary)}
+            {
+                "id": m.id,
+                "name": m.name,
+                "left": m.left,
+                "top": m.top,
+                "width": m.width,
+                "height": m.height,
+                "primary": bool(m.primary),
+            }
             for m in monitors_raw
         ]
         windows = [
-            {"hwnd": int(w.hwnd) if w.hwnd else 0, "title": w.title, "class_name": w.class_name,
-             "left": w.left, "top": w.top, "width": w.width, "height": w.height, "visible": bool(w.visible)}
+            {
+                "hwnd": int(w.hwnd) if w.hwnd else 0,
+                "title": w.title,
+                "class_name": w.class_name,
+                "left": w.left,
+                "top": w.top,
+                "width": w.width,
+                "height": w.height,
+                "visible": bool(w.visible),
+            }
             for w in windows_raw
             if w.title and w.width > 0 and w.height > 0
         ]
-        return {"disabled": False, "available": True, "monitors": monitors, "windows": windows}
+        return {
+            "disabled": False,
+            "available": True,
+            "monitors": monitors,
+            "windows": windows,
+        }
 
     def get_status(self) -> dict:
         """返回服务状态。"""
@@ -143,7 +181,11 @@ class FastScreenAdapter(FastScreenServicePort):
                 active_sessions = _stream_manager.session_count
             except Exception:
                 active_sessions = 0
-        return {"disabled": False, "available": available, "active_sessions": active_sessions}
+        return {
+            "disabled": False,
+            "available": available,
+            "active_sessions": active_sessions,
+        }
 
     def cleanup(self) -> None:
         """daemon 退出时清理所有捕获会话。"""

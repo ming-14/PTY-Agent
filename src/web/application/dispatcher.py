@@ -3,8 +3,8 @@
 import logging
 from typing import Optional
 
-from .handlers import HandlerContext, MessageHandler, build_handler_registry
 from ...protocol.response import Response
+from .handlers import HandlerContext, MessageHandler, build_handler_registry
 
 _logger = logging.getLogger("pty-web")
 

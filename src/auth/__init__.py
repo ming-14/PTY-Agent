@@ -9,28 +9,26 @@
 - pubkey/: Ed25519 密钥认证（跨机 TLS 运输，非对称签名 + 白名单验签）
 
 共享基础设施（本包）：
-- base.py:       抽象接口（Authenticator, CredentialProvider）
-- keys.py:       Ed25519 密钥实体（PublicKey, PrivateKey, 生成/加载/指纹）
-- context.py:    连接级认证上下文（AuthContext）
-- composite.py:  组合认证器（OR 通过则放行）
-- or_verifier.py: OR 分发验签器（服务端支持多认证方式并存）
-- tls/:          TLS 连接设施（证书管理 + TOFU 指纹存储）
+- base.py:    抽象接口（Authenticator, CredentialProvider）
+- keys.py:    Ed25519 密钥实体（PublicKey, PrivateKey, 生成/加载/指纹）
+- context.py: 连接级认证上下文（AuthContext）
+- tls/:       TLS 连接设施（证书管理 + TOFU 指纹存储）
+
+三监听器架构下每个 Listener 独立持有单一认证方式的 AuthContext
+（daemon.toml [listener] 段 plain/token/tls 与 client.toml [connection] 的
+CONNECT_MODE 一一对应），本包不再提供单端口多认证组合设施。
 """
 
 from .base import Authenticator, CredentialProvider
 from .context import AuthContext
-from .composite import CompositeAuthenticator
-from .keys import PublicKey, PrivateKey, generate_keypair, load_authorized_keys
-from .or_verifier import OrVerifier
+from .keys import PrivateKey, PublicKey, generate_keypair, load_authorized_keys
 
 __all__ = [
+    "AuthContext",
     "Authenticator",
     "CredentialProvider",
-    "AuthContext",
-    "CompositeAuthenticator",
-    "PublicKey",
     "PrivateKey",
+    "PublicKey",
     "generate_keypair",
     "load_authorized_keys",
-    "OrVerifier",
 ]

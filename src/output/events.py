@@ -11,7 +11,7 @@
 import logging
 import threading
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable, List, Optional
 
 from ..config.common import IS_WINDOWS
@@ -22,6 +22,7 @@ _logger = logging.getLogger("pty-session")
 @dataclass
 class PendingEvent:
     """待处理事件 — 进程创建/退出、GUI 窗口出现等"""
+
     timestamp: float
     type: str
     pid: int = 0
@@ -48,8 +49,13 @@ class EventHistoryManager:
                     listener(dicts[0] if dicts else {})
                 except Exception:
                     pass
-        _logger.debug("add_event: type=%s pid=%s hwnd=0x%X info=%r",
-                      ev.type, ev.pid, ev.hwnd, ev.info[:80] if ev.info else "")
+        _logger.debug(
+            "add_event: type=%s pid=%s hwnd=0x%X info=%r",
+            ev.type,
+            ev.pid,
+            ev.hwnd,
+            ev.info[:80] if ev.info else "",
+        )
 
     def add_events(self, events: List[PendingEvent]):
         with self._lock:
@@ -61,7 +67,11 @@ class EventHistoryManager:
             events = list(self._pending)
             self._pending.clear()
             self._history.extend(events)
-        _logger.debug("consume_all: consumed %d events (history=%d)", len(events), len(self._history))
+        _logger.debug(
+            "consume_all: consumed %d events (history=%d)",
+            len(events),
+            len(self._history),
+        )
         return _events_to_dicts(events)
 
     def peek_pending(self) -> List[dict]:
@@ -71,9 +81,12 @@ class EventHistoryManager:
         _logger.debug("peek_pending: %d pending events", len(events))
         return _events_to_dicts(events)
 
-    def get_all(self, last: Optional[int] = None,
-                since: Optional[float] = None,
-                until: Optional[float] = None) -> List[dict]:
+    def get_all(
+        self,
+        last: Optional[int] = None,
+        since: Optional[float] = None,
+        until: Optional[float] = None,
+    ) -> List[dict]:
         with self._lock:
             all_ev = list(self._history) + list(self._pending)
 
@@ -156,7 +169,7 @@ class EventHistoryManager:
 def _events_to_dicts(events: List[PendingEvent]) -> List[dict]:
     result = []
     for e in events:
-        dt = datetime.fromtimestamp(e.timestamp)
+        dt = datetime.fromtimestamp(e.timestamp, tz=timezone.utc).astimezone()
         iso_time = dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 10000:02d}"
         d = {
             "time": iso_time,
@@ -177,6 +190,7 @@ def _check_hwnd_exists(hwnd: int) -> bool:
     if not hwnd or not IS_WINDOWS:
         return False
     import ctypes
+
     try:
         user32 = ctypes.windll.user32
         return bool(user32.IsWindow(ctypes.c_void_p(hwnd)))

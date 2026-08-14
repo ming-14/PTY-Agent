@@ -1,0 +1,31 @@
+# 共享配置 —— Daemon 与 Client 均需使用的常量（协议 / IPC / daemon 控制 / 日志格式）
+#
+# 消费方：
+# - 协议域（src/protocol）：消息收发缓冲与上限
+# - IPC 域（src/ipc）：共享内存、单实例锁命名与尺寸
+# - daemon 控制（src/daemonctl）：端口发现、启动/停止超时与轮询
+# - 日志格式（config/common → shared 聚合）：两端统一的格式与日期格式
+
+[protocol]
+SOCKET_RECV_BUFSIZE = 4096
+MAX_MESSAGE_LENGTH  = 1_048_576   # 1 MB
+
+[ipc]
+SINGLE_INSTANCE_MUTEX_NAME = "Local\\PTYAgentSingleInstance"
+AUTH_TOKEN_NAME = "Local\\PTYAgentAuth"
+AUTH_TOKEN_SIZE = 64
+HMAC_KEY_NAME   = "Local\\PTYAgentHmac"
+HMAC_KEY_SIZE   = 64
+
+[daemonctl]
+# daemon 启动/停止/探测相关（client 侧控制能力）
+DAEMON_START_TIMEOUT       = 3.0
+DAEMON_START_POLL_INTERVAL = 0.3
+PING_TIMEOUT               = 1.0
+STOP_TIMEOUT               = 3.0
+PROCESS_EXIT_WAIT_RETRIES  = 10
+PROCESS_EXIT_WAIT_INTERVAL = 0.1
+
+[logging]
+LOG_FORMAT      = "%(asctime)s.%(msecs)03d [%(levelname)-8s] [%(name)s:%(threadName)s] %(filename)s:%(lineno)d - %(message)s"
+LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"

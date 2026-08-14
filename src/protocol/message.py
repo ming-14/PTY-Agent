@@ -23,7 +23,7 @@ import threading
 import weakref
 from typing import Optional
 
-from ..config.daemon import SOCKET_RECV_BUFSIZE, MAX_MESSAGE_LENGTH
+from ..config.shared import MAX_MESSAGE_LENGTH, SOCKET_RECV_BUFSIZE
 from .signing import MessageSigner
 
 _logger = logging.getLogger("pty-protocol")
@@ -89,7 +89,9 @@ class Message:
     def encode(obj: dict) -> bytes:
         """将 dict 编码为 JSON 行 + \\n + UTF-8 字节"""
         encoded = (json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8")
-        _logger.debug("Message.encode: type=%s len=%d", obj.get("type", "?"), len(encoded))
+        _logger.debug(
+            "Message.encode: type=%s len=%d", obj.get("type", "?"), len(encoded)
+        )
         return encoded
 
     @staticmethod
@@ -97,14 +99,18 @@ class Message:
         """从 bytes 解码为 dict"""
         try:
             decoded = json.loads(data.decode("utf-8"))
-            _logger.debug("Message.decode: type=%s len=%d", decoded.get("type", "?"), len(data))
+            _logger.debug(
+                "Message.decode: type=%s len=%d", decoded.get("type", "?"), len(data)
+            )
             return decoded
         except Exception as e:
             _logger.warning("Message.decode 失败: %s, data=%r", e, data[:200])
             raise
 
     @staticmethod
-    def recv(sock: socket.socket, max_retries: int = 3, skip_sign: bool = False) -> Optional[dict]:
+    def recv(
+        sock: socket.socket, max_retries: int = 3, skip_sign: bool = False
+    ) -> Optional[dict]:
         """从 socket 接收一条消息（基于缓冲的行读取，效率更高）
 
         Args:
@@ -123,8 +129,10 @@ class Message:
             idx = buf.find(b"\n")
             if idx >= 0:
                 line = buf[:idx]
-                Message._recv_buffers[sock_key] = buf[idx + 1:]
-                _logger.debug("recv: fd=%d complete line len=%d", sock.fileno(), len(line))
+                Message._recv_buffers[sock_key] = buf[idx + 1 :]
+                _logger.debug(
+                    "recv: fd=%d complete line len=%d", sock.fileno(), len(line)
+                )
                 if not line:
                     return None
                 try:
@@ -139,11 +147,16 @@ class Message:
                     if has_sig:
                         verified = signer.verify_and_strip(msg)
                         if verified is None:
-                            _logger.warning("recv: 签名验证失败，丢弃 (type=%s)", msg.get("type"))
+                            _logger.warning(
+                                "recv: 签名验证失败，丢弃 (type=%s)", msg.get("type")
+                            )
                             return None
                         msg = verified
                     elif msg.get("type") not in ("ping", "pong", "stop"):
-                        _logger.warning("recv: 签名已启用但消息无签名，丢弃 (type=%s)", msg.get("type"))
+                        _logger.warning(
+                            "recv: 签名已启用但消息无签名，丢弃 (type=%s)",
+                            msg.get("type"),
+                        )
                         return None
                 return msg
             try:
@@ -151,7 +164,11 @@ class Message:
             except socket.timeout:
                 retries += 1
                 if retries >= max_retries:
-                    _logger.warning("recv: fd=%d timeout after %d retries", sock.fileno(), max_retries)
+                    _logger.warning(
+                        "recv: fd=%d timeout after %d retries",
+                        sock.fileno(),
+                        max_retries,
+                    )
                     Message._recv_buffers.pop(sock_key, None)
                     return None
                 continue
@@ -165,7 +182,9 @@ class Message:
                 return None
             buf += chunk
             if len(buf) > MAX_MESSAGE_LENGTH:
-                _logger.warning("recv: fd=%d line too large (%d), dropping", sock.fileno(), len(buf))
+                _logger.warning(
+                    "recv: fd=%d line too large (%d), dropping", sock.fileno(), len(buf)
+                )
                 Message._recv_buffers.pop(sock_key, None)
                 return None
 
@@ -184,7 +203,9 @@ class Message:
             data = Message.encode(obj)
         else:
             data = Message.encode(obj)
-        _logger.debug("send: fd=%d type=%s len=%d", sock.fileno(), obj.get("type", "?"), len(data))
+        _logger.debug(
+            "send: fd=%d type=%s len=%d", sock.fileno(), obj.get("type", "?"), len(data)
+        )
         sock.sendall(data)
 
     @staticmethod
@@ -210,5 +231,5 @@ class Message:
             resp = Message.recv(sock, skip_sign=True)
             sock.close()
             return resp is not None and resp.get("type") == "pong"
-        except (socket.error, ConnectionRefusedError, OSError):
+        except (ConnectionRefusedError, OSError):
             return False

@@ -1,6 +1,6 @@
 """领域实体与值对象。"""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Optional
 
 

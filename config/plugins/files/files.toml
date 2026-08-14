@@ -1,0 +1,17 @@
+# files 插件配置 —— 文件工具业务参数（插件自治，不依赖核心配置目录）
+# 加载入口：config.py（同目录），消费方见 config/plugins/files README
+
+[files]
+MAX_READ_SIZE = 262144          # file read 单文件大小上限（250KB）
+DEFAULT_READ_LIMIT = 2000       # file read 默认读取行数
+MAX_LINE_LENGTH = 2000          # 单行超过此长度截断显示
+MAX_PATH_LEN = 4096             # 路径参数长度上限
+MAX_CONTENT_LEN = 1048576       # file write/edit 内容参数长度上限
+MAX_GREP_MATCHES = 100          # file grep 返回匹配文件数上限
+MAX_GLOB_FILES = 100            # file glob 返回文件数上限
+RG_EXE = ""                     # rg 可执行文件路径；空 = 自动探测
+IGNORED_DIRS = [                # 搜索忽略的目录名（路径任意段命中即跳过）
+    ".git", ".opencode", ".idea", ".vscode", "node_modules", "vendor",
+    "dist", "build", "target", "__pycache__", "bin", "obj", "out",
+    "coverage", "tmp", "temp", "logs", "generated",
+]

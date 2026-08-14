@@ -92,9 +92,11 @@ class PublicKey:
             raise ValueError(f"无效的 authorized_keys 行: {line!r}")
         key_type, key_b64 = parts[0], parts[1]
         if key_type != _SSH_KEY_TYPE_ED25519:
-            raise ValueError(f"不支持的公钥类型: {key_type}（仅支持 {_SSH_KEY_TYPE_ED25519}）")
+            raise ValueError(
+                f"不支持的公钥类型: {key_type}（仅支持 {_SSH_KEY_TYPE_ED25519}）"
+            )
         # load_ssh_public_key 接受 "ssh-ed25519 AAAA..." 字节串
-        pub = load_ssh_public_key(f"{key_type} {key_b64}".encode("utf-8"))
+        pub = load_ssh_public_key(f"{key_type} {key_b64}".encode())
         if not isinstance(pub, Ed25519PublicKey):
             raise ValueError(f"密钥类型不是 Ed25519: {key_type}")
         return cls(pub)
@@ -181,7 +183,11 @@ class PrivateKey:
         key = load_ssh_private_key(data, password=None)
         if not isinstance(key, Ed25519PrivateKey):
             raise ValueError("私钥类型不是 Ed25519")
-        _logger.debug("已加载 Ed25519 私钥: %s (fp=%s)", path, _short_fp(PublicKey(key.public_key()).fingerprint))
+        _logger.debug(
+            "已加载 Ed25519 私钥: %s (fp=%s)",
+            path,
+            _short_fp(PublicKey(key.public_key()).fingerprint),
+        )
         return cls(key)
 
     def to_openssh_bytes(self) -> bytes:
@@ -231,7 +237,8 @@ def load_authorized_keys(path: _PathLike) -> Dict[str, PublicKey]:
             if pub.fingerprint in keys:
                 _logger.warning(
                     "authorized_keys 第 %d 行指纹重复，覆盖: %s",
-                    lineno, _short_fp(pub.fingerprint),
+                    lineno,
+                    _short_fp(pub.fingerprint),
                 )
             keys[pub.fingerprint] = pub
     _logger.info("authorized_keys 加载完成: %s 个公钥", len(keys))
@@ -280,9 +287,7 @@ def _check_private_key_permissions(path: Path) -> None:
         return
     mode = path.stat().st_mode & 0o777
     if mode != 0o600:
-        raise PermissionError(
-            f"私钥文件权限过宽 ({oct(mode)})，应为 0600: {path}"
-        )
+        raise PermissionError(f"私钥文件权限过宽 ({oct(mode)})，应为 0600: {path}")
 
 
 def _short_fp(fingerprint: str) -> str:

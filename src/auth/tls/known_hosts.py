@@ -12,10 +12,10 @@
     # 注释行以 # 开头
 """
 
-import os
 import logging
+import os
 import threading
-from typing import Optional, Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 _logger = logging.getLogger("pty-auth-tls")
 
@@ -53,14 +53,18 @@ class KnownHosts:
                 parts = line.split(None, 1)
                 if len(parts) != 2:
                     _logger.warning(
-                        "known_hosts 第 %d 行格式错误，跳过: %s", line_no, line[:50],
+                        "known_hosts 第 %d 行格式错误，跳过: %s",
+                        line_no,
+                        line[:50],
                     )
                     continue
                 host_port, fingerprint = parts
                 # 解析 host:port
                 if ":" not in host_port:
                     _logger.warning(
-                        "known_hosts 第 %d 行 host:port 格式错误: %s", line_no, host_port,
+                        "known_hosts 第 %d 行 host:port 格式错误: %s",
+                        line_no,
+                        host_port,
                     )
                     continue
                 host, port_str = host_port.rsplit(":", 1)
@@ -68,7 +72,9 @@ class KnownHosts:
                     port = int(port_str)
                 except ValueError:
                     _logger.warning(
-                        "known_hosts 第 %d 行端口非数字: %s", line_no, port_str,
+                        "known_hosts 第 %d 行端口非数字: %s",
+                        line_no,
+                        port_str,
                     )
                     continue
                 self._entries[(host, port)] = fingerprint
@@ -102,7 +108,9 @@ class KnownHosts:
             self._entries[(host, port)] = fingerprint
             self._save()
 
-        _logger.info("TOFU 信任新主机: %s:%d (指纹: %s...)", host, port, fingerprint[:32])
+        _logger.info(
+            "TOFU 信任新主机: %s:%d (指纹: %s...)", host, port, fingerprint[:32]
+        )
 
     def verify(self, host: str, port: int, fingerprint: str) -> bool:
         """验证指纹（TOFU 模型）
@@ -125,7 +133,10 @@ class KnownHosts:
                 self._entries[(host, port)] = fingerprint
                 self._save()
                 _logger.info(
-                    "TOFU 首次信任: %s:%d (指纹: %s...)", host, port, fingerprint[:32],
+                    "TOFU 首次信任: %s:%d (指纹: %s...)",
+                    host,
+                    port,
+                    fingerprint[:32],
                 )
                 return True
 
@@ -135,7 +146,10 @@ class KnownHosts:
 
             _logger.warning(
                 "指纹不匹配! %s:%d\n  已知: %s\n  实际: %s",
-                host, port, existing[:32], fingerprint[:32],
+                host,
+                port,
+                existing[:32],
+                fingerprint[:32],
             )
             return False
 
@@ -174,5 +188,7 @@ class KnownHosts:
         with open(self.path, "w", encoding="utf-8") as f:
             f.write("# PTY-Agent known_hosts - TOFU 信任存储\n")
             f.write("# 格式: <host>:<port> <sha256-fingerprint>\n")
-            for (host, port), fp in sorted(self._entries.items()):
-                f.write(f"{host}:{port} {fp}\n")
+            f.writelines(
+                f"{host}:{port} {fp}\n"
+                for (host, port), fp in sorted(self._entries.items())
+            )

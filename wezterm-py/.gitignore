@@ -1,0 +1,6 @@
+target/
+__pycache__/
+*.pyc
+dist/
+!pywezterm/OpenConsole.exe
+!pywezterm/conpty.dll

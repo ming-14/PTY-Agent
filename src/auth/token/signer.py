@@ -4,9 +4,9 @@ Token 认证方式的消息签名实现，使用对称密钥（HMAC-SHA256）
 对消息进行双向签名与验证，防止同机其他进程伪造或篡改消息。
 """
 
-import json
-import hmac
 import hashlib
+import hmac
+import json
 import logging
 from typing import Optional
 
@@ -63,4 +63,6 @@ class HmacMessageSigner(MessageSigner):
 
     @staticmethod
     def _canonical_json(obj: dict) -> bytes:
-        return json.dumps(obj, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+        return json.dumps(
+            obj, sort_keys=True, ensure_ascii=True, separators=(",", ":")
+        ).encode("utf-8")

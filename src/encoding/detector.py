@@ -10,10 +10,10 @@ import logging
 from typing import Optional
 
 from .codec import (
-    detect_decode,
-    decode_strip_tail,
-    detect_decode_ext,
     check_encoding_ok,
+    decode_strip_tail,
+    detect_decode,
+    detect_decode_ext,
 )
 
 _logger = logging.getLogger("pty-session")
@@ -36,13 +36,13 @@ class EncodingDetector:
         self._encoding_locked = encoding is not None
         _logger.debug(
             "EncodingDetector init: encoding=%s locked=%s",
-            encoding, self._encoding_locked,
+            encoding,
+            self._encoding_locked,
         )
 
     # ── 主解码入口（可修改 self.encoding）──────────────────────
 
-    def detect_decode(self, data: bytes,
-                      encoding: Optional[str] = None) -> str:
+    def detect_decode(self, data: bytes, encoding: Optional[str] = None) -> str:
         """探测编码并解码（可修改 self.encoding）
 
         在 get_output 中调用，无持锁要求。
@@ -64,16 +64,14 @@ class EncodingDetector:
                 self.encoding = encoding
                 self._encoding_locked = True
                 return text
-            _logger.info(
-                "编码回退: 显式编码 %s 不可用，回退自动探测", encoding)
+            _logger.info("编码回退: 显式编码 %s 不可用，回退自动探测", encoding)
 
         # ── 已锁定编码 ──
         if self._encoding_locked and self.encoding:
             text = decode_strip_tail(data, self.encoding)
             if check_encoding_ok(text):
                 return text
-            _logger.info(
-                "编码重探测: 锁定编码 %s 产生替换符，重新探测", self.encoding)
+            _logger.info("编码重探测: 锁定编码 %s 产生替换符，重新探测", self.encoding)
 
         # ── 自动探测 ──
         result, detected_enc = detect_decode_ext(data)

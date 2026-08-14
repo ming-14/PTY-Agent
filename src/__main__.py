@@ -6,21 +6,22 @@ r"""命令行交互式程序交互代理
 子命令: start | stop | list | exec | send | read | kill | events | closewin | mouse | keygen
 """
 
+import argparse
+import json
 import logging
 import os
 import sys
-import argparse
-import json
+import time
 from typing import Optional
 
 if sys.platform == "win32":
     import ctypes
     import ctypes.wintypes
 
-from .client.transport import Client
-from .client.formatter import set_debug_mode
 from .client.config_manager import ConfigManager
+from .client.formatter import set_debug_mode
 from .client.lifecycle import setup_client_logging
+from .client.transport import Client
 from .protocol.response import Response
 
 _logger = logging.getLogger("pty-client")
@@ -51,13 +52,13 @@ def _maybe_expand_time(s: Optional[str]) -> Optional[str]:
     if "T" in s or "-" in s[:5]:
         s = s.replace(" ", "T")
         if "+" not in s and not s.endswith("Z") and len(s) >= 19:
-            from datetime import datetime, timezone, timedelta
             local_offset = -time.timezone // 3600
             sign = "+" if local_offset >= 0 else "-"
             s += f"{sign}{abs(local_offset):02d}:00"
         return s
-    from datetime import date
-    today = date.today().isoformat()
+    from datetime import datetime, timezone
+
+    today = datetime.now(tz=timezone.utc).astimezone().date().isoformat()
     return f"{today}T{s}"
 
 
@@ -65,15 +66,16 @@ class _HintParser(argparse.ArgumentParser):
     def error(self, message):
         if "invalid choice" in message:
             import re
+
             m = re.search(r"'([^']+)'", message)
             if m:
                 bad = m.group(1)
                 if any(c in bad for c in ("/", "\\", ".")):
                     print(
                         "\n提示: 如需启动程序，请使用 exec 命令:\n"
-                        f"  pty-agent exec my-session -c \"{bad}\"\n"
+                        f'  pty-agent exec my-session -c "{bad}"\n'
                         "示例:\n"
-                        f"  pty-agent exec build -c \"{bad} --help\" -t \"error\"\n",
+                        f'  pty-agent exec build -c "{bad} --help" -t "error"\n',
                         file=sys.stderr,
                     )
         super().error(message)
@@ -83,7 +85,7 @@ class _TimeoutHintAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         parser.error(
             "read 命令不支持 --timeout（读取输出是即时操作，无需等待）\n"
-            "若需等待特定输出，请使用: pty-agent send <id> -i \"<输入>\" -t <正则>"
+            '若需等待特定输出，请使用: pty-agent send <id> -i "<输入>" -t <正则>'
         )
 
 
@@ -93,18 +95,30 @@ def _parse_coords(s: str) -> dict:
         col_str, row_str = s.split(",")
         return {"col": int(col_str), "row": int(row_str)}
     except Exception as e:
-        raise argparse.ArgumentTypeError(f"Invalid coordinates '{s}', expected 'col,row' (1-based): {e}") from e
+        raise argparse.ArgumentTypeError(
+            f"Invalid coordinates '{s}', expected 'col,row' (1-based): {e}"
+        ) from e
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--encoding", default=None,
-                        help="终端编码（如 utf-8、gbk），本次调用记忆")
-    parser.add_argument("--default", nargs=2, metavar=("KEY", "VALUE"),
-                        action="append", default=None,
-                        help="设置默认配置 "
-                             "(timeout/newline/keep-ansi/encoding/debug/send-eol/always-return-snapshot/response-format/svg-compression-level/terminal-size/ai-analyse/ai-prompt)")
-    parser.add_argument("--no-debug", action="store_true", default=False,
-                        help="禁用响应中的 debugInformation 输出（进程树/GUI 窗口/事件）")
+    parser.add_argument(
+        "--encoding", default=None, help="终端编码（如 utf-8、gbk），本次调用记忆"
+    )
+    parser.add_argument(
+        "--default",
+        nargs=2,
+        metavar=("KEY", "VALUE"),
+        action="append",
+        default=None,
+        help="设置默认配置 "
+        "(timeout/newline/keep-ansi/encoding/debug/send-eol/always-return-snapshot/response-format/svg-compression-level/terminal-size/ai-analyse/ai-prompt)",
+    )
+    parser.add_argument(
+        "--no-debug",
+        action="store_true",
+        default=False,
+        help="禁用响应中的 debugInformation 输出（进程树/GUI 窗口/事件）",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -115,27 +129,35 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=__doc__,
     )
 
-    parser.add_argument("--show-config", nargs="?", const="", default=None,
-                        metavar="KEY",
-                        help="查看配置值（不指定 KEY 则显示全部）")
-    parser.add_argument("--host", default=None,
-                        help="远程 daemon 主机地址（pubkey 跨机 TLS 模式，覆盖 DAEMON_REMOTE_HOST）")
-    parser.add_argument("--port", type=int, default=None,
-                        help="远程 daemon TLS 端口（pubkey 跨机 TLS 模式，覆盖 DAEMON_REMOTE_PORT）")
+    parser.add_argument(
+        "--show-config",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="KEY",
+        help="查看配置值（不指定 KEY 则显示全部）",
+    )
 
     sub = parser.add_subparsers(dest="subcmd", help="可用命令")
 
     p_set_default = sub.add_parser("set-default", help="覆盖默认配置（会话级）")
-    p_set_default.add_argument("key", metavar="KEY",
-                               help="配置键名 (timeout/newline/keep-ansi/encoding/debug/send-eol/always-return-snapshot/response-format/svg-compression-level/terminal-size/ai-analyse/ai-prompt)")
+    p_set_default.add_argument(
+        "key",
+        metavar="KEY",
+        help="配置键名 (timeout/newline/keep-ansi/encoding/debug/send-eol/always-return-snapshot/response-format/svg-compression-level/terminal-size/ai-analyse/ai-prompt)",
+    )
     p_set_default.add_argument("value", metavar="VALUE", help="配置值")
 
     p_start = sub.add_parser("start", help="启动后台守护进程")
     _add_common_args(p_start)
 
     p_stop = sub.add_parser("stop", help="停止后台守护进程")
-    p_stop.add_argument("--force", "-f", action="store_true",
-                        help="强制清理（端口丢失时通过互斥锁定位并终止守护进程）")
+    p_stop.add_argument(
+        "--force",
+        "-f",
+        action="store_true",
+        help="强制清理（端口丢失时通过互斥锁定位并终止守护进程）",
+    )
     _add_common_args(p_stop)
 
     p_status = sub.add_parser("status", help="查看守护进程运行状态")
@@ -148,135 +170,340 @@ def build_parser() -> argparse.ArgumentParser:
     p_exec = sub.add_parser("exec", help="启动或附加到会话")
     _add_common_args(p_exec)
     p_exec.add_argument("id", help="会话标识")
-    p_exec.add_argument("--command", "-c", default=None,
-                        help="要执行的命令字符串（自动拆分为参数列表执行）")
-    p_exec.add_argument("--force-pty-mode", action="store_true", default=False,
-                        help="强制模式：忽略 shell 操作符检测，原样拆分执行")
-    p_exec.add_argument("--trigger", "-t", default=None,
-                        help="触发条件（正则表达式），命中后返回输出")
-    p_exec.add_argument("--newline", action="store_true", default=None,
-                        help="仅在换行后才检查触发条件（默认取配置值）")
-    p_exec.add_argument("--timeout", type=float, default=None,
-                        help="等待超时秒数（默认 120，可通过 --default timeout 修改）")
-    p_exec.add_argument("--idle-timeout", type=float, default=None,
-                        help="输出静默超时（秒）。程序持续 N 秒无新输出时触发返回")
-    p_exec.add_argument("--idle-after-first-output", action="store_true", default=False,
-                        help="仅在程序首次输出后才开始检测静默超时（初始不检测）")
-    p_exec.add_argument("--full", action="store_true", default=False,
-                        help="返回全部累积输出而非仅新输出")
-    p_exec.add_argument("--keep-ansi", action="store_true", default=None,
-                        help="保留终端颜色/样式码（默认过滤；清屏/光标等控制序列始终保留）")
-    p_exec.add_argument("--cwd", default=None,
-                        help="指定子进程工作目录（默认为守护进程当前目录）")
-    p_exec.add_argument("--env", nargs="*", default=None,
-                        help="子进程环境变量，格式 KEY=VALUE，可指定多个")
-    p_exec.add_argument("--snapshot-mode", action="store_true", default=False,
-                        help="快照模式：禁用 trigger/idle-timeout，"
-                             "所有输出返回终端屏幕快照而非原始 VT 序列")
-    p_exec.add_argument("--size", default=None, metavar="WxH",
-                        help="终端尺寸（如 120x40，默认 80x24）")
-    p_exec.add_argument("--snapshot-diff", "-s", action="store_true", default=False,
-                        help="仅返回屏幕变化的行（需快照模式，stream 格式）")
-    p_exec.add_argument("--output", "-o", default=None, dest="output_path",
-                        help="输出到文件（.txt/.log=纯文本; .svg=矢量图; .png/.jpg/.bmp=位图，需 Pillow）")
-    p_exec.add_argument("--response-format", default=None, choices=["stream", "svg"],
-                        dest="response_format",
-                        help="响应格式（默认 stream；svg 需屏幕快照模式）")
-    p_exec.add_argument("--svg-compression-level", type=int, default=None,
-                        choices=[0, 1, 2], dest="svg_compression_level",
-                        help="SVG 压缩等级（0=不压缩; 1=轻度; 2=深度，默认）")
-    p_exec.add_argument("--ai-analyse", default=None,
-                        choices=["none", "fileOutput", "responseOutput"], dest="ai_analyse",
-                        help="对响应输出做 AI 分析并覆盖 outputStream（none=不分析；fileOutput=读 -o 文件喂 AI；responseOutput=把 outputStream 拼进 prompt 喂 AI）")
-    p_exec.add_argument("--ai-prompt", default=None, dest="ai_prompt",
-                        help="AI 分析提示词（默认 --default ai-prompt 或内置默认）")
+    p_exec.add_argument(
+        "--command",
+        "-c",
+        default=None,
+        help="要执行的命令字符串（自动拆分为参数列表执行）",
+    )
+    p_exec.add_argument(
+        "--force-pty-mode",
+        action="store_true",
+        default=False,
+        help="强制模式：忽略 shell 操作符检测，原样拆分执行",
+    )
+    p_exec.add_argument(
+        "--trigger", "-t", default=None, help="触发条件（正则表达式），命中后返回输出"
+    )
+    p_exec.add_argument(
+        "--newline",
+        action="store_true",
+        default=None,
+        help="仅在换行后才检查触发条件（默认取配置值）",
+    )
+    p_exec.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="等待超时秒数（默认 120，可通过 --default timeout 修改）",
+    )
+    p_exec.add_argument(
+        "--idle-timeout",
+        type=float,
+        default=None,
+        help="输出静默超时（秒）。程序持续 N 秒无新输出时触发返回",
+    )
+    p_exec.add_argument(
+        "--idle-after-first-output",
+        action="store_true",
+        default=False,
+        help="仅在程序首次输出后才开始检测静默超时（初始不检测）",
+    )
+    p_exec.add_argument(
+        "--full",
+        action="store_true",
+        default=False,
+        help="返回全部累积输出而非仅新输出",
+    )
+    p_exec.add_argument(
+        "--keep-ansi",
+        action="store_true",
+        default=None,
+        help="保留终端颜色/样式码（默认过滤；清屏/光标等控制序列始终保留）",
+    )
+    p_exec.add_argument(
+        "--cwd", default=None, help="指定子进程工作目录（默认为守护进程当前目录）"
+    )
+    p_exec.add_argument(
+        "--env",
+        nargs="*",
+        default=None,
+        help="子进程环境变量，格式 KEY=VALUE，可指定多个",
+    )
+    p_exec.add_argument(
+        "--snapshot-mode",
+        action="store_true",
+        default=False,
+        help="快照模式：禁用 trigger/idle-timeout，"
+        "所有输出返回终端屏幕快照而非原始 VT 序列",
+    )
+    p_exec.add_argument(
+        "--size", default=None, metavar="WxH", help="终端尺寸（如 120x40，默认 80x24）"
+    )
+    p_exec.add_argument(
+        "--snapshot-diff",
+        "-s",
+        action="store_true",
+        default=False,
+        help="仅返回屏幕变化的行（需快照模式，stream 格式）",
+    )
+    p_exec.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        dest="output_path",
+        help="输出到文件（.txt/.log=纯文本; .svg=矢量图; .png/.jpg/.bmp=位图，需 Pillow）",
+    )
+    p_exec.add_argument(
+        "--response-format",
+        default=None,
+        choices=["stream", "svg"],
+        dest="response_format",
+        help="响应格式（默认 stream；svg 需屏幕快照模式）",
+    )
+    p_exec.add_argument(
+        "--svg-compression-level",
+        type=int,
+        default=None,
+        choices=[0, 1, 2],
+        dest="svg_compression_level",
+        help="SVG 压缩等级（0=不压缩; 1=轻度; 2=深度，默认）",
+    )
+    p_exec.add_argument(
+        "--ai-analyse",
+        default=None,
+        choices=["none", "fileOutput", "responseOutput"],
+        dest="ai_analyse",
+        help="对响应输出做 AI 分析并覆盖 outputStream（none=不分析；fileOutput=读 -o 文件喂 AI；responseOutput=把 outputStream 拼进 prompt 喂 AI）",
+    )
+    p_exec.add_argument(
+        "--ai-prompt",
+        default=None,
+        dest="ai_prompt",
+        help="AI 分析提示词（默认 --default ai-prompt 或内置默认）",
+    )
+    p_exec.add_argument(
+        "--plugin",
+        action="append",
+        default=None,
+        dest="plugins",
+        help="注入插件（可多次指定；未指定时按插件 auto_load 条件自动注入）",
+    )
 
     # send
     p_send = sub.add_parser("send", help="向运行中的会话发送输入")
     _add_common_args(p_send)
     p_send.add_argument("id", help="会话标识")
-    p_send.add_argument("-i", "--input", required=True,
-                        help="要发送的输入文本（最长 65536 字符）")
-    p_send.add_argument("--trigger", "-t", default=None,
-                        help="触发条件（正则表达式），命中后返回输出")
-    p_send.add_argument("--newline", action="store_true", default=None,
-                        help="仅在换行后才检查触发条件（默认取配置值）")
-    p_send.add_argument("--timeout", type=float, default=None,
-                        help="等待超时秒数（默认 120，可通过 --default timeout 修改）")
-    p_send.add_argument("--idle-timeout", type=float, default=None,
-                        help="输出静默超时（秒）。程序持续 N 秒无新输出时触发返回")
-    p_send.add_argument("--idle-after-first-output", action="store_true", default=False,
-                        help="仅在程序首次输出后才开始检测静默超时（初始不检测）")
-    p_send.add_argument("--full", action="store_true", default=False,
-                        help="返回全部累积输出而非仅新输出")
-    p_send.add_argument("--keep-ansi", action="store_true", default=None,
-                        help="保留终端颜色/样式码（默认过滤；清屏/光标等控制序列始终保留）")
-    p_send.add_argument("--json-escaping", "-j", action="store_true", default=False,
-                        help="启用 JSON + 控制字符转义解码（\\n→换行；{ctrl+a}、{enter}、{up}、{f1} 等生成对应控制字符/VT 序列）；默认 raw 模式原样发送")
-    p_send.add_argument("--send-eol", "-e", default=None,
-                        choices=["lf", "crlf", "cr", "none"],
-                        help="末尾追加的行尾符（默认 cr=\\r，模拟终端 Enter 键；lf=\\n；crlf=\\r\\n；none=不追加）")
-    p_send.add_argument("--snapshot", action="store_true", default=False,
-                        help="返回终端屏幕快照而非原始 VT 序列输出")
-    p_send.add_argument("--snapshot-diff", "-s", action="store_true", default=False,
-                        help="仅返回屏幕变化的行（需快照模式，stream 格式）")
-    p_send.add_argument("--output", "-o", default=None, dest="output_path",
-                        help="输出到文件（.txt/.log=纯文本; .svg=矢量图; .png/.jpg/.bmp=位图，需 Pillow）")
-    p_send.add_argument("--response-format", default=None, choices=["stream", "svg"],
-                        dest="response_format",
-                        help="响应格式（默认 stream；svg 需屏幕快照模式）")
-    p_send.add_argument("--svg-compression-level", type=int, default=None,
-                            choices=[0, 1, 2], dest="svg_compression_level",
-                            help="SVG 压缩等级（0=不压缩; 1=轻度; 2=深度，默认）")
-    p_send.add_argument("--ai-analyse", default=None,
-                            choices=["none", "fileOutput", "responseOutput"], dest="ai_analyse",
-                            help="对响应输出做 AI 分析并覆盖 outputStream")
-    p_send.add_argument("--ai-prompt", default=None, dest="ai_prompt",
-                            help="AI 分析提示词（默认 --default ai-prompt 或内置默认）")
+    p_send.add_argument(
+        "-i", "--input", required=True, help="要发送的输入文本（最长 65536 字符）"
+    )
+    p_send.add_argument(
+        "--trigger", "-t", default=None, help="触发条件（正则表达式），命中后返回输出"
+    )
+    p_send.add_argument(
+        "--newline",
+        action="store_true",
+        default=None,
+        help="仅在换行后才检查触发条件（默认取配置值）",
+    )
+    p_send.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="等待超时秒数（默认 120，可通过 --default timeout 修改）",
+    )
+    p_send.add_argument(
+        "--idle-timeout",
+        type=float,
+        default=None,
+        help="输出静默超时（秒）。程序持续 N 秒无新输出时触发返回",
+    )
+    p_send.add_argument(
+        "--idle-after-first-output",
+        action="store_true",
+        default=False,
+        help="仅在程序首次输出后才开始检测静默超时（初始不检测）",
+    )
+    p_send.add_argument(
+        "--full",
+        action="store_true",
+        default=False,
+        help="返回全部累积输出而非仅新输出",
+    )
+    p_send.add_argument(
+        "--keep-ansi",
+        action="store_true",
+        default=None,
+        help="保留终端颜色/样式码（默认过滤；清屏/光标等控制序列始终保留）",
+    )
+    p_send.add_argument(
+        "--json-escaping",
+        "-j",
+        action="store_true",
+        default=False,
+        help="启用 JSON + 控制字符转义解码（\\n→换行；{ctrl+a}、{enter}、{up}、{f1} 等生成对应控制字符/VT 序列）；默认 raw 模式原样发送",
+    )
+    p_send.add_argument(
+        "--send-eol",
+        "-e",
+        default=None,
+        choices=["lf", "crlf", "cr", "none"],
+        help="末尾追加的行尾符（默认 cr=\\r，模拟终端 Enter 键；lf=\\n；crlf=\\r\\n；none=不追加）",
+    )
+    p_send.add_argument(
+        "--snapshot",
+        action="store_true",
+        default=False,
+        help="返回终端屏幕快照而非原始 VT 序列输出",
+    )
+    p_send.add_argument(
+        "--snapshot-diff",
+        "-s",
+        action="store_true",
+        default=False,
+        help="仅返回屏幕变化的行（需快照模式，stream 格式）",
+    )
+    p_send.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        dest="output_path",
+        help="输出到文件（.txt/.log=纯文本; .svg=矢量图; .png/.jpg/.bmp=位图，需 Pillow）",
+    )
+    p_send.add_argument(
+        "--response-format",
+        default=None,
+        choices=["stream", "svg"],
+        dest="response_format",
+        help="响应格式（默认 stream；svg 需屏幕快照模式）",
+    )
+    p_send.add_argument(
+        "--svg-compression-level",
+        type=int,
+        default=None,
+        choices=[0, 1, 2],
+        dest="svg_compression_level",
+        help="SVG 压缩等级（0=不压缩; 1=轻度; 2=深度，默认）",
+    )
+    p_send.add_argument(
+        "--ai-analyse",
+        default=None,
+        choices=["none", "fileOutput", "responseOutput"],
+        dest="ai_analyse",
+        help="对响应输出做 AI 分析并覆盖 outputStream",
+    )
+    p_send.add_argument(
+        "--ai-prompt",
+        default=None,
+        dest="ai_prompt",
+        help="AI 分析提示词（默认 --default ai-prompt 或内置默认）",
+    )
 
     # read
     p_read = sub.add_parser("read", help="读取会话终端输出")
     _add_common_args(p_read)
     p_read.add_argument("id", help="会话标识")
-    p_read.add_argument("--trigger", "-t", default=None,
-                        help="触发条件（正则表达式），命中后返回输出")
-    p_read.add_argument("--newline", action="store_true", default=None,
-                        help="仅在换行后才检查触发条件（默认取配置值）")
-    p_read.add_argument("--timeout", type=float, default=None,
-                        help="等待超时秒数（默认 120，可通过 --default timeout 修改）")
-    p_read.add_argument("--idle-timeout", type=float, default=None,
-                        help="输出静默超时（秒）。程序持续 N 秒无新输出时触发返回")
-    p_read.add_argument("--idle-after-first-output", action="store_true", default=False,
-                        help="仅在程序首次输出后才开始检测静默超时（初始不检测）")
-    p_read.add_argument("--lines", "-l", default=None,
-                        help="行数过滤: N=最后N行, start:end=范围")
-    p_read.add_argument("--grep", "-g", default=None,
-                        help="正则匹配过滤行")
-    p_read.add_argument("--offset", type=int, default=None,
-                        help="增量读取：从指定字节偏移开始")
-    p_read.add_argument("--full", action="store_true", default=False,
-                        help="返回全部累积输出而非仅新输出")
-    p_read.add_argument("--keep-ansi", action="store_true", default=None,
-                        help="保留终端颜色/样式码（默认过滤；清屏/光标等控制序列始终保留）")
-    p_read.add_argument("--snapshot", action="store_true", default=False,
-                        help="返回终端屏幕快照（用户真正看到的终端界面文本，而非原始 VT 序列）")
-    p_read.add_argument("--snapshot-diff", "-s", action="store_true", default=False,
-                        help="仅返回屏幕变化的行（需快照模式，stream 格式）")
-    p_read.add_argument("--output", "-o", default=None, dest="output_path",
-                        help="输出到文件（.txt/.log=纯文本; .svg=矢量图; .png/.jpg/.bmp=位图，需 Pillow）")
-    p_read.add_argument("--response-format", default=None, choices=["stream", "svg"],
-                        dest="response_format",
-                        help="响应格式（默认 stream；svg 需屏幕快照模式）")
-    p_read.add_argument("--svg-compression-level", type=int, default=None,
-                            choices=[0, 1, 2], dest="svg_compression_level",
-                            help="SVG 压缩等级（0=不压缩; 1=轻度; 2=深度，默认）")
-    p_read.add_argument("--ai-analyse", default=None,
-                            choices=["none", "fileOutput", "responseOutput"], dest="ai_analyse",
-                            help="对响应输出做 AI 分析并覆盖 outputStream")
-    p_read.add_argument("--ai-prompt", default=None, dest="ai_prompt",
-                            help="AI 分析提示词（默认 --default ai-prompt 或内置默认）")
-    p_read.add_argument("--column", type=int, default=None, metavar="N",
-                        help="输出第 N 列（1-based，仅 PTY 快照模式）")
+    p_read.add_argument(
+        "--trigger", "-t", default=None, help="触发条件（正则表达式），命中后返回输出"
+    )
+    p_read.add_argument(
+        "--newline",
+        action="store_true",
+        default=None,
+        help="仅在换行后才检查触发条件（默认取配置值）",
+    )
+    p_read.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="等待超时秒数（默认 120，可通过 --default timeout 修改）",
+    )
+    p_read.add_argument(
+        "--idle-timeout",
+        type=float,
+        default=None,
+        help="输出静默超时（秒）。程序持续 N 秒无新输出时触发返回",
+    )
+    p_read.add_argument(
+        "--idle-after-first-output",
+        action="store_true",
+        default=False,
+        help="仅在程序首次输出后才开始检测静默超时（初始不检测）",
+    )
+    p_read.add_argument(
+        "--lines", "-l", default=None, help="行数过滤: N=最后N行, start:end=范围"
+    )
+    p_read.add_argument("--grep", "-g", default=None, help="正则匹配过滤行")
+    p_read.add_argument(
+        "--offset", type=int, default=None, help="增量读取：从指定字节偏移开始"
+    )
+    p_read.add_argument(
+        "--full",
+        action="store_true",
+        default=False,
+        help="返回全部累积输出而非仅新输出",
+    )
+    p_read.add_argument(
+        "--keep-ansi",
+        action="store_true",
+        default=None,
+        help="保留终端颜色/样式码（默认过滤；清屏/光标等控制序列始终保留）",
+    )
+    p_read.add_argument(
+        "--snapshot",
+        action="store_true",
+        default=False,
+        help="返回终端屏幕快照（用户真正看到的终端界面文本，而非原始 VT 序列）",
+    )
+    p_read.add_argument(
+        "--snapshot-diff",
+        "-s",
+        action="store_true",
+        default=False,
+        help="仅返回屏幕变化的行（需快照模式，stream 格式）",
+    )
+    p_read.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        dest="output_path",
+        help="输出到文件（.txt/.log=纯文本; .svg=矢量图; .png/.jpg/.bmp=位图，需 Pillow）",
+    )
+    p_read.add_argument(
+        "--response-format",
+        default=None,
+        choices=["stream", "svg"],
+        dest="response_format",
+        help="响应格式（默认 stream；svg 需屏幕快照模式）",
+    )
+    p_read.add_argument(
+        "--svg-compression-level",
+        type=int,
+        default=None,
+        choices=[0, 1, 2],
+        dest="svg_compression_level",
+        help="SVG 压缩等级（0=不压缩; 1=轻度; 2=深度，默认）",
+    )
+    p_read.add_argument(
+        "--ai-analyse",
+        default=None,
+        choices=["none", "fileOutput", "responseOutput"],
+        dest="ai_analyse",
+        help="对响应输出做 AI 分析并覆盖 outputStream",
+    )
+    p_read.add_argument(
+        "--ai-prompt",
+        default=None,
+        dest="ai_prompt",
+        help="AI 分析提示词（默认 --default ai-prompt 或内置默认）",
+    )
+    p_read.add_argument(
+        "--column",
+        type=int,
+        default=None,
+        metavar="N",
+        help="输出第 N 列（1-based，仅 PTY 快照模式）",
+    )
 
     # kill
     p_kill = sub.add_parser("kill", help="终止指定会话")
@@ -287,180 +514,387 @@ def build_parser() -> argparse.ArgumentParser:
     p_events = sub.add_parser("events", help="查看会话事件（默认返回所有事件）")
     _add_common_args(p_events)
     p_events.add_argument("id", help="会话标识")
-    p_events.add_argument("--last", "-l", type=int, default=None, metavar="N",
-                          help="仅返回最近 N 条事件")
-    p_events.add_argument("--since", type=str, default=None, metavar="<ISO时间|HH:MM>",
-                          help="仅返回此时间之后的事件（支持 ISO 8601 或 HH:MM）")
-    p_events.add_argument("--until", type=str, default=None, metavar="<ISO时间|HH:MM>",
-                          help="仅返回此时间之前的事件（支持 ISO 8601 或 HH:MM）")
+    p_events.add_argument(
+        "--last", "-l", type=int, default=None, metavar="N", help="仅返回最近 N 条事件"
+    )
+    p_events.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        metavar="<ISO时间|HH:MM>",
+        help="仅返回此时间之后的事件（支持 ISO 8601 或 HH:MM）",
+    )
+    p_events.add_argument(
+        "--until",
+        type=str,
+        default=None,
+        metavar="<ISO时间|HH:MM>",
+        help="仅返回此时间之前的事件（支持 ISO 8601 或 HH:MM）",
+    )
 
     # closewin
     p_closewin = sub.add_parser("closewin", help="关闭指定 GUI 窗口")
     _add_common_args(p_closewin)
     p_closewin.add_argument("id", help="会话标识")
-    p_closewin.add_argument("hwnd", type=lambda x: int(x, 0),
-                            help="窗口句柄（十进制或 0x 十六进制）")
+    p_closewin.add_argument(
+        "hwnd", type=lambda x: int(x, 0), help="窗口句柄（十进制或 0x 十六进制）"
+    )
 
     # mouse
     p_mouse = sub.add_parser("mouse", help="发送鼠标动作到 PTY 会话")
     _add_common_args(p_mouse)
     p_mouse.add_argument("id", help="会话标识")
-    p_mouse.add_argument("action", choices=["click", "drag", "scroll", "hover", "press", "grep", "_get_cursor_location"],
-                         help="鼠标动作类型")
+    p_mouse.add_argument(
+        "action",
+        choices=[
+            "click",
+            "drag",
+            "scroll",
+            "hover",
+            "press",
+            "grep",
+            "_get_cursor_location",
+        ],
+        help="鼠标动作类型",
+    )
     p_mouse.add_argument("args", nargs="*", help="动作位置参数")
-    p_mouse.add_argument("--button", default="left", choices=["left", "right", "middle"],
-                         help="鼠标按钮（默认 left）")
-    p_mouse.add_argument("--count", type=int, default=1, choices=[1, 2, 3],
-                         help="点击次数（默认 1，仅 click 有效）")
+    p_mouse.add_argument(
+        "--button",
+        default="left",
+        choices=["left", "right", "middle"],
+        help="鼠标按钮（默认 left）",
+    )
+    p_mouse.add_argument(
+        "--count",
+        type=int,
+        default=1,
+        choices=[1, 2, 3],
+        help="点击次数（默认 1，仅 click 有效）",
+    )
     p_mouse.add_argument("--ctrl", action="store_true", help="按住 Ctrl")
     p_mouse.add_argument("--shift", action="store_true", help="按住 Shift")
     p_mouse.add_argument("--alt", action="store_true", help="按住 Alt")
-    p_mouse.add_argument("--grep", default=None, dest="grep_pattern",
-                         help="用正则匹配终端屏幕内容获取坐标（多匹配时不执行动作）")
-    p_mouse.add_argument("--trigger", "-t", default=None,
-                         help="触发条件（正则表达式），命中后返回输出")
-    p_mouse.add_argument("--newline", action="store_true", default=None,
-                         help="仅在换行后才检查触发条件（默认取配置值）")
-    p_mouse.add_argument("--timeout", type=float, default=None,
-                         help="等待超时秒数（默认 120，可通过 --default timeout 修改）")
-    p_mouse.add_argument("--idle-timeout", type=float, default=None,
-                         help="输出静默超时（秒）。程序持续 N 秒无新输出时触发返回")
-    p_mouse.add_argument("--idle-after-first-output", action="store_true", default=False,
-                         help="仅在程序首次输出后才开始检测静默超时（初始不检测）")
-    p_mouse.add_argument("--keep-ansi", action="store_true", default=None,
-                         help="保留终端颜色/样式码（默认过滤；清屏/光标等控制序列始终保留）")
-    p_mouse.add_argument("--snapshot", action="store_true", default=False,
-                         help="返回终端屏幕快照而非原始输出")
-    p_mouse.add_argument("--snapshot-diff", "-s", action="store_true", default=False,
-                         help="仅返回屏幕变化的行（需快照模式，stream 格式）")
-    p_mouse.add_argument("--output", "-o", default=None, dest="output_path",
-                         help="输出到文件（.txt/.log=纯文本; .svg=矢量图; .png/.jpg/.bmp=位图，需 Pillow）")
-    p_mouse.add_argument("--response-format", default=None, choices=["stream", "svg"],
-                         dest="response_format",
-                         help="响应格式（默认 stream；svg 需屏幕快照模式）")
-    p_mouse.add_argument("--svg-compression-level", type=int, default=None,
-                             choices=[0, 1, 2], dest="svg_compression_level",
-                             help="SVG 压缩等级（0=不压缩; 1=轻度; 2=深度，默认）")
-    p_mouse.add_argument("--ai-analyse", default=None,
-                             choices=["none", "fileOutput", "responseOutput"], dest="ai_analyse",
-                             help="对响应输出做 AI 分析并覆盖 outputStream")
-    p_mouse.add_argument("--ai-prompt", default=None, dest="ai_prompt",
-                             help="AI 分析提示词（默认 --default ai-prompt 或内置默认）")
+    p_mouse.add_argument(
+        "--grep",
+        default=None,
+        dest="grep_pattern",
+        help="用正则匹配终端屏幕内容获取坐标（多匹配时不执行动作）",
+    )
+    p_mouse.add_argument(
+        "--trigger", "-t", default=None, help="触发条件（正则表达式），命中后返回输出"
+    )
+    p_mouse.add_argument(
+        "--newline",
+        action="store_true",
+        default=None,
+        help="仅在换行后才检查触发条件（默认取配置值）",
+    )
+    p_mouse.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="等待超时秒数（默认 120，可通过 --default timeout 修改）",
+    )
+    p_mouse.add_argument(
+        "--idle-timeout",
+        type=float,
+        default=None,
+        help="输出静默超时（秒）。程序持续 N 秒无新输出时触发返回",
+    )
+    p_mouse.add_argument(
+        "--idle-after-first-output",
+        action="store_true",
+        default=False,
+        help="仅在程序首次输出后才开始检测静默超时（初始不检测）",
+    )
+    p_mouse.add_argument(
+        "--keep-ansi",
+        action="store_true",
+        default=None,
+        help="保留终端颜色/样式码（默认过滤；清屏/光标等控制序列始终保留）",
+    )
+    p_mouse.add_argument(
+        "--snapshot",
+        action="store_true",
+        default=False,
+        help="返回终端屏幕快照而非原始输出",
+    )
+    p_mouse.add_argument(
+        "--snapshot-diff",
+        "-s",
+        action="store_true",
+        default=False,
+        help="仅返回屏幕变化的行（需快照模式，stream 格式）",
+    )
+    p_mouse.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        dest="output_path",
+        help="输出到文件（.txt/.log=纯文本; .svg=矢量图; .png/.jpg/.bmp=位图，需 Pillow）",
+    )
+    p_mouse.add_argument(
+        "--response-format",
+        default=None,
+        choices=["stream", "svg"],
+        dest="response_format",
+        help="响应格式（默认 stream；svg 需屏幕快照模式）",
+    )
+    p_mouse.add_argument(
+        "--svg-compression-level",
+        type=int,
+        default=None,
+        choices=[0, 1, 2],
+        dest="svg_compression_level",
+        help="SVG 压缩等级（0=不压缩; 1=轻度; 2=深度，默认）",
+    )
+    p_mouse.add_argument(
+        "--ai-analyse",
+        default=None,
+        choices=["none", "fileOutput", "responseOutput"],
+        dest="ai_analyse",
+        help="对响应输出做 AI 分析并覆盖 outputStream",
+    )
+    p_mouse.add_argument(
+        "--ai-prompt",
+        default=None,
+        dest="ai_prompt",
+        help="AI 分析提示词（默认 --default ai-prompt 或内置默认）",
+    )
 
-        # wait
+    # wait
     p_wait = sub.add_parser("wait", help="恒等待指定秒数（守护进程侧等待）")
     _add_common_args(p_wait)
-    p_wait.add_argument("--timeout", type=float, default=None,
-                        help="等待秒数（默认 120，可通过 --default timeout 修改）")
+    p_wait.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="等待秒数（默认 120，可通过 --default timeout 修改）",
+    )
 
     # keygen
     p_keygen = sub.add_parser(
         "keygen",
         help="生成 Ed25519 公私钥对（用于公私钥认证）",
         description=(
-            "生成 Ed25519 密钥对并写入 ~/.pty-agent/keys/，"
-            "用于 ENABLE_PUBKEY_AUTH=true 时的非对称认证。\n"
+            "生成 Ed25519 密钥对并写入 ~/.pty-agent/keys/，\n"
+            "用于 CONNECT_MODE=tls 时的非对称认证。\n"
             "生成后需把公钥追加到服务端 ~/.pty-agent/authorized_keys"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_keygen.add_argument(
-        "--force", "-f", action="store_true", default=False,
+        "--force",
+        "-f",
+        action="store_true",
+        default=False,
         help="覆盖已存在的密钥文件",
     )
     p_keygen.add_argument(
-        "--key-dir", default=None,
+        "--key-dir",
+        default=None,
         help="密钥目录（默认 ~/.pty-agent/keys）",
     )
     p_keygen.add_argument(
-        "--comment", "-C", default=None,
+        "--comment",
+        "-C",
+        default=None,
         help="公钥注释（默认 用户名@主机名）",
     )
+
+    # plugin 父子命令（插件管理）
+    p_plugin = sub.add_parser("plugin", help="插件管理（list/ls/attach/detach/cmd）")
+    plugin_sub = p_plugin.add_subparsers(dest="plugin_subcmd", help="插件子命令")
+
+    p_plugin_list = plugin_sub.add_parser("list", help="列出已加载插件")
+    _add_common_args(p_plugin_list)
+
+    p_plugin_ls = plugin_sub.add_parser("ls", help="列出会话挂载的插件")
+    _add_common_args(p_plugin_ls)
+    p_plugin_ls.add_argument("id", help="会话标识")
+
+    p_plugin_attach = plugin_sub.add_parser("attach", help="动态挂载插件到运行中的会话")
+    _add_common_args(p_plugin_attach)
+    p_plugin_attach.add_argument("id", help="会话标识")
+    p_plugin_attach.add_argument("name", help="插件名")
+
+    p_plugin_detach = plugin_sub.add_parser("detach", help="从会话卸载插件")
+    _add_common_args(p_plugin_detach)
+    p_plugin_detach.add_argument("id", help="会话标识")
+    p_plugin_detach.add_argument("name", help="插件名")
+
+    p_plugin_cmd = plugin_sub.add_parser("cmd", help="调用插件自定义命令")
+    _add_common_args(p_plugin_cmd)
+    p_plugin_cmd.add_argument("id", help="会话标识")
+    p_plugin_cmd.add_argument("name", help="插件名")
+    p_plugin_cmd.add_argument("command", help="命令名")
+    p_plugin_cmd.add_argument("args", nargs="*", default=None, help="命令参数（可选）")
 
     # file 父子命令（文件工具）
     p_file = sub.add_parser("file", help="文件工具（read/write/edit/grep/glob）")
     file_sub = p_file.add_subparsers(dest="file_subcmd", help="文件子命令")
     p_file_read = file_sub.add_parser("read", help="读取文件内容（带行号）")
     _add_common_args(p_file_read)
-    p_file_read.add_argument("-s", "--cwd-session", metavar="SESSION_ID", required=True,
-                             help="取该会话 cwd 作为路径解析基准（不操作该会话）")
+    p_file_read.add_argument(
+        "-s",
+        "--cwd-session",
+        metavar="SESSION_ID",
+        required=True,
+        help="取该会话 cwd 作为路径解析基准（不操作该会话）",
+    )
     p_file_read.add_argument("path", help="文件路径（绝对或相对会话 cwd，支持 ~ 展开）")
-    p_file_read.add_argument("--offset", type=int, default=None,
-                             help="起始行号（0-based）")
-    p_file_read.add_argument("--limit", type=int, default=None,
-                             help="读取行数（默认 2000）")
+    p_file_read.add_argument(
+        "--offset", type=int, default=None, help="起始行号（0-based）"
+    )
+    p_file_read.add_argument(
+        "--limit", type=int, default=None, help="读取行数（默认 2000）"
+    )
 
     p_file_write = file_sub.add_parser("write", help="覆盖写/新建文件（自动建父目录）")
     _add_common_args(p_file_write)
-    p_file_write.add_argument("-s", "--cwd-session", metavar="SESSION_ID", required=True,
-                              help="取该会话 cwd 作为路径解析基准（不操作该会话）")
-    p_file_write.add_argument("path", help="文件路径（绝对或相对会话 cwd，支持 ~ 展开）")
-    p_file_write.add_argument("--content", default=None,
-                              help="写入内容（与 --content-file 二选一；已存在文件需先 file read）")
-    p_file_write.add_argument("--content-file", metavar="FILE", default=None,
-                              help="从文件读取写入内容（--content 与 --content-file 二选一；UTF-8）")
+    p_file_write.add_argument(
+        "-s",
+        "--cwd-session",
+        metavar="SESSION_ID",
+        required=True,
+        help="取该会话 cwd 作为路径解析基准（不操作该会话）",
+    )
+    p_file_write.add_argument(
+        "path", help="文件路径（绝对或相对会话 cwd，支持 ~ 展开）"
+    )
+    p_file_write.add_argument(
+        "--content",
+        default=None,
+        help="写入内容（与 --content-file 二选一；已存在文件需先 file read）",
+    )
+    p_file_write.add_argument(
+        "--content-file",
+        metavar="FILE",
+        default=None,
+        help="从文件读取写入内容（--content 与 --content-file 二选一；UTF-8）",
+    )
 
     p_file_edit = file_sub.add_parser("edit", help="唯一匹配替换/删除/新建")
     _add_common_args(p_file_edit)
-    p_file_edit.add_argument("-s", "--cwd-session", metavar="SESSION_ID", required=True,
-                             help="取该会话 cwd 作为路径解析基准（不操作该会话）")
+    p_file_edit.add_argument(
+        "-s",
+        "--cwd-session",
+        metavar="SESSION_ID",
+        required=True,
+        help="取该会话 cwd 作为路径解析基准（不操作该会话）",
+    )
     p_file_edit.add_argument("path", help="文件路径（绝对或相对会话 cwd，支持 ~ 展开）")
-    p_file_edit.add_argument("--old", default="",
-                             help="待替换文本（留空=新建；须唯一匹配）")
-    p_file_edit.add_argument("--old-file", metavar="FILE", default=None,
-                             help="从文件读取待替换文本（与 --old 二选一；UTF-8）")
-    p_file_edit.add_argument("--new", default="",
-                             help="新文本（留空=删除）")
-    p_file_edit.add_argument("--new-file", metavar="FILE", default=None,
-                             help="从文件读取新文本（与 --new 二选一；UTF-8）")
+    p_file_edit.add_argument(
+        "--old", default="", help="待替换文本（留空=新建；须唯一匹配）"
+    )
+    p_file_edit.add_argument(
+        "--old-file",
+        metavar="FILE",
+        default=None,
+        help="从文件读取待替换文本（与 --old 二选一；UTF-8）",
+    )
+    p_file_edit.add_argument("--new", default="", help="新文本（留空=删除）")
+    p_file_edit.add_argument(
+        "--new-file",
+        metavar="FILE",
+        default=None,
+        help="从文件读取新文本（与 --new 二选一；UTF-8）",
+    )
 
     p_file_grep = file_sub.add_parser("grep", help="内容搜索（rg 优先）")
     _add_common_args(p_file_grep)
-    p_file_grep.add_argument("-s", "--cwd-session", metavar="SESSION_ID", required=True,
-                             help="取该会话 cwd 作为路径解析基准（不操作该会话）")
+    p_file_grep.add_argument(
+        "-s",
+        "--cwd-session",
+        metavar="SESSION_ID",
+        required=True,
+        help="取该会话 cwd 作为路径解析基准（不操作该会话）",
+    )
     p_file_grep.add_argument("pattern", help="正则（--literal-text 时按字面量）")
-    p_file_grep.add_argument("path", nargs="?", default=None,
-                             help="搜索根（默认会话 cwd）")
-    p_file_grep.add_argument("--include", default=None,
-                             help="文件名 glob 过滤（如 *.py）")
-    p_file_grep.add_argument("--literal-text", action="store_true",
-                             help="按字面量匹配而非正则")
+    p_file_grep.add_argument(
+        "path", nargs="?", default=None, help="搜索根（默认会话 cwd）"
+    )
+    p_file_grep.add_argument(
+        "--include", default=None, help="文件名 glob 过滤（如 *.py）"
+    )
+    p_file_grep.add_argument(
+        "--literal-text", action="store_true", help="按字面量匹配而非正则"
+    )
 
     p_file_glob = file_sub.add_parser("glob", help="文件名匹配（rg 优先）")
     _add_common_args(p_file_glob)
-    p_file_glob.add_argument("-s", "--cwd-session", metavar="SESSION_ID", required=True,
-                             help="取该会话 cwd 作为路径解析基准（不操作该会话）")
+    p_file_glob.add_argument(
+        "-s",
+        "--cwd-session",
+        metavar="SESSION_ID",
+        required=True,
+        help="取该会话 cwd 作为路径解析基准（不操作该会话）",
+    )
     p_file_glob.add_argument("pattern", help="路径 glob（如 *.py、src/**/*.go）")
-    p_file_glob.add_argument("path", nargs="?", default=None,
-                             help="搜索根（默认会话 cwd）")
+    p_file_glob.add_argument(
+        "path", nargs="?", default=None, help="搜索根（默认会话 cwd）"
+    )
 
-    p_file_upload = file_sub.add_parser("upload", help="上传本地文件/目录到会话侧（scp -r 语义）")
+    p_file_upload = file_sub.add_parser(
+        "upload", help="上传本地文件/目录到会话侧（scp -r 语义）"
+    )
     _add_common_args(p_file_upload)
-    p_file_upload.add_argument("-s", "--cwd-session", metavar="SESSION_ID", required=True,
-                               help="取该会话 cwd 作为远端路径解析基准（不操作该会话）")
-    p_file_upload.add_argument("local_path", help="本地路径（文件或目录，CLI 本机解析）")
-    p_file_upload.add_argument("remote_path", help="远端路径（绝对或相对会话 cwd，支持 ~ 展开）")
-    p_file_upload.add_argument("--force", action="store_true",
-                               help="远端目标已存在且内容不同时允许覆盖")
-    p_file_upload.add_argument("--timeout", type=float, default=None,
-                               help="整个传输命令的总时限（秒，默认 120）")
+    p_file_upload.add_argument(
+        "-s",
+        "--cwd-session",
+        metavar="SESSION_ID",
+        required=True,
+        help="取该会话 cwd 作为远端路径解析基准（不操作该会话）",
+    )
+    p_file_upload.add_argument(
+        "local_path", help="本地路径（文件或目录，CLI 本机解析）"
+    )
+    p_file_upload.add_argument(
+        "remote_path", help="远端路径（绝对或相对会话 cwd，支持 ~ 展开）"
+    )
+    p_file_upload.add_argument(
+        "--force", action="store_true", help="远端目标已存在且内容不同时允许覆盖"
+    )
+    p_file_upload.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="整个传输命令的总时限（秒，默认 120）",
+    )
 
-    p_file_download = file_sub.add_parser("download", help="下载会话侧文件/目录到本地（scp -r 语义）")
+    p_file_download = file_sub.add_parser(
+        "download", help="下载会话侧文件/目录到本地（scp -r 语义）"
+    )
     _add_common_args(p_file_download)
-    p_file_download.add_argument("-s", "--cwd-session", metavar="SESSION_ID", required=True,
-                                 help="取该会话 cwd 作为远端路径解析基准（不操作该会话）")
-    p_file_download.add_argument("remote_path", help="远端路径（绝对或相对会话 cwd，支持 ~ 展开）")
-    p_file_download.add_argument("local_path", help="本地路径（文件或目录，CLI 本机解析）")
-    p_file_download.add_argument("--force", action="store_true",
-                                 help="本地目标已存在且内容不同时允许覆盖")
-    p_file_download.add_argument("--timeout", type=float, default=None,
-                                 help="整个传输命令的总时限（秒，默认 120）")
+    p_file_download.add_argument(
+        "-s",
+        "--cwd-session",
+        metavar="SESSION_ID",
+        required=True,
+        help="取该会话 cwd 作为远端路径解析基准（不操作该会话）",
+    )
+    p_file_download.add_argument(
+        "remote_path", help="远端路径（绝对或相对会话 cwd，支持 ~ 展开）"
+    )
+    p_file_download.add_argument(
+        "local_path", help="本地路径（文件或目录，CLI 本机解析）"
+    )
+    p_file_download.add_argument(
+        "--force", action="store_true", help="本地目标已存在且内容不同时允许覆盖"
+    )
+    p_file_download.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="整个传输命令的总时限（秒，默认 120）",
+    )
 
     return parser
 
 
-def _resolve_cli_content(inline: Optional[str], content_file: Optional[str],
-                         inline_opt: str, file_opt: str) -> Optional[str]:
+def _resolve_cli_content(
+    inline: Optional[str], content_file: Optional[str], inline_opt: str, file_opt: str
+) -> Optional[str]:
     """file write/edit 内容解析：inline 与 --*-file 二选一
 
     空串视为未提供（--old "" --old-file f 时取文件）；file 侧按 UTF-8 读取，
@@ -474,7 +908,8 @@ def _resolve_cli_content(inline: Optional[str], content_file: Optional[str],
                 content = f.read().decode("utf-8")
             except UnicodeDecodeError as e:
                 raise ValueError(
-                    "content file is not valid UTF-8: %s (%s)" % (content_file, e))
+                    "content file is not valid UTF-8: %s (%s)" % (content_file, e)
+                )
         # CRLF 规范化为 LF：对齐 daemon 读文件的 universal newlines 视图
         # （file read 显示/edit 匹配均不含 \r），避免 --old-file 匹配失败
         return content.replace("\r\n", "\n")
@@ -494,21 +929,32 @@ def _handle_config_ops(args) -> Optional[dict]:
                 overrides[internal_key] = cfg.get(internal_key)
             except ValueError as e:
                 from .client.input import safe_print
+
                 safe_print(json.dumps(Response.error(str(e)), ensure_ascii=False))
                 sys.exit(1)
         # --default 发送到守护进程按 session UID 存储
         if args.subcmd is None:
             from .client.input import safe_print
+
             for key, value in default_vals:
                 internal_key = _parse_default_key(key)
-                safe_print(json.dumps(
-                    Response.info(f"已设置默认值: {key} = {cfg.get(internal_key)}（将随会话命令发送到守护进程）"),
-                ensure_ascii=False, default=str))
+                safe_print(
+                    json.dumps(
+                        Response.info(
+                            f"已设置默认值: {key} = {cfg.get(internal_key)}（将随会话命令发送到守护进程）"
+                        ),
+                        ensure_ascii=False,
+                        default=str,
+                    )
+                )
 
     if args.show_config is not None:
-        internal_key = _parse_default_key(args.show_config) if args.show_config else None
+        internal_key = (
+            _parse_default_key(args.show_config) if args.show_config else None
+        )
         show_text = cfg.show(internal_key)
         from .client.input import safe_print
+
         safe_print(json.dumps(Response.config(show_text), ensure_ascii=False))
         if args.subcmd is None:
             return None
@@ -609,9 +1055,10 @@ def _cmd_keygen(args) -> None:
     Args:
         args: argparse Namespace，含 force/key_dir/comment 字段
     """
-    import os
     import getpass
+    import os
     import socket
+
     from .auth.keys import generate_keypair
     from .client.input import safe_print
 
@@ -627,16 +1074,24 @@ def _cmd_keygen(args) -> None:
     # 检查文件是否存在（除非 --force）
     if not args.force:
         if os.path.exists(private_key_path):
-            safe_print(json.dumps(Response.error(
-                f"私钥文件已存在: {private_key_path}\n"
-                f"使用 --force 覆盖"
-            ), ensure_ascii=False))
+            safe_print(
+                json.dumps(
+                    Response.error(
+                        f"私钥文件已存在: {private_key_path}\n使用 --force 覆盖"
+                    ),
+                    ensure_ascii=False,
+                )
+            )
             sys.exit(1)
         if os.path.exists(public_key_path):
-            safe_print(json.dumps(Response.error(
-                f"公钥文件已存在: {public_key_path}\n"
-                f"使用 --force 覆盖"
-            ), ensure_ascii=False))
+            safe_print(
+                json.dumps(
+                    Response.error(
+                        f"公钥文件已存在: {public_key_path}\n使用 --force 覆盖"
+                    ),
+                    ensure_ascii=False,
+                )
+            )
             sys.exit(1)
 
     # 创建目录
@@ -659,18 +1114,26 @@ def _cmd_keygen(args) -> None:
     _logger.info("Ed25519 密钥对已生成: %s", private_key_path)
 
     # 打印结果
-    safe_print(json.dumps({
-        "type": "keygen",
-        "status": "ok",
-        "privateKeyPath": private_key_path,
-        "publicKeyPath": public_key_path,
-        "fingerprint": fingerprint,
-        "publicKey": public_line,
-        "comment": comment,
-    }, ensure_ascii=False, indent=2))
+    safe_print(
+        json.dumps(
+            {
+                "type": "keygen",
+                "status": "ok",
+                "privateKeyPath": private_key_path,
+                "publicKeyPath": public_key_path,
+                "fingerprint": fingerprint,
+                "publicKey": public_line,
+                "comment": comment,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
     # 提示用户追加公钥到 authorized_keys
-    authorized_keys_path = os.path.join(os.path.expanduser("~"), ".pty-agent", "authorized_keys")
+    authorized_keys_path = os.path.join(
+        os.path.expanduser("~"), ".pty-agent", "authorized_keys"
+    )
     print(
         f"\n公钥已生成，请将其追加到服务端 authorized_keys 文件:\n"
         f"  {authorized_keys_path}\n\n"
@@ -692,6 +1155,7 @@ def _write_key_file(path: str, data: bytes, mode: int) -> None:
         mode: Unix 权限位（如 0o600）
     """
     import os
+
     if os.name == "nt":
         # Windows: 普通写入，权限由 NTFS ACL 管理
         with open(path, "wb") as f:
@@ -743,58 +1207,98 @@ def main():
     if args.subcmd == "exec" and not args.command:
         parser.error("'exec' 命令需要 --command/-c 参数")
 
-    if args.subcmd in ("exec", "send") and args.idle_after_first_output and args.idle_timeout is None:
+    if (
+        args.subcmd in ("exec", "send")
+        and args.idle_after_first_output
+        and args.idle_timeout is None
+    ):
         warn_msg = (
             "--idle-after-first-output 需要配合 --idle-timeout 使用，"
             "单独设置无效（当前未启用静默超时检测）"
         )
         from .client.input import safe_print
+
         safe_print(json.dumps(Response.warning(warn_msg), ensure_ascii=False))
 
     is_snapshot_active = False
     if args.subcmd == "exec":
-        is_snapshot_active = args.snapshot_mode or bool(config_overrides.get("always_return_snapshot"))
+        is_snapshot_active = args.snapshot_mode or bool(
+            config_overrides.get("always_return_snapshot")
+        )
     elif args.subcmd in ("send", "read"):
-        is_snapshot_active = args.snapshot or bool(config_overrides.get("always_return_snapshot"))
+        is_snapshot_active = args.snapshot or bool(
+            config_overrides.get("always_return_snapshot")
+        )
 
-    if config_overrides.get("svg_compression_level") is not None and not is_snapshot_active:
+    if (
+        config_overrides.get("svg_compression_level") is not None
+        and not is_snapshot_active
+    ):
         from .client.input import safe_print
-        safe_print(json.dumps(
-            Response.warning("--default svg-compression-level set but snapshot mode not active; hint will not take effect until snapshot mode is enabled"),
-        ensure_ascii=False))
 
-    if args.subcmd == "read" and args.snapshot and (args.grep or args.offset or args.full):
+        safe_print(
+            json.dumps(
+                Response.warning(
+                    "--default svg-compression-level set but snapshot mode not active; hint will not take effect until snapshot mode is enabled"
+                ),
+                ensure_ascii=False,
+            )
+        )
+
+    if (
+        args.subcmd == "read"
+        and args.snapshot
+        and (args.grep or args.offset or args.full)
+    ):
         from .client.input import safe_print
-        safe_print(json.dumps(
-            Response.warning("--snapshot is incompatible with --grep/--offset/--full; snapshot output will be returned, other filters ignored"),
-        ensure_ascii=False))
+
+        safe_print(
+            json.dumps(
+                Response.warning(
+                    "--snapshot is incompatible with --grep/--offset/--full; snapshot output will be returned, other filters ignored"
+                ),
+                ensure_ascii=False,
+            )
+        )
 
     if args.subcmd == "read" and args.offset and args.full:
         from .client.input import safe_print
-        safe_print(json.dumps(
-            Response.error("--offset cannot be used with --full"),
-        ensure_ascii=False))
+
+        safe_print(
+            json.dumps(
+                Response.error("--offset cannot be used with --full"),
+                ensure_ascii=False,
+            )
+        )
         return
 
     if getattr(args, "snapshot_diff", False):
         if args.subcmd == "exec" and not is_snapshot_active:
             from .client.input import safe_print
-            safe_print(json.dumps(
-                Response.error("--snapshot-diff requires snapshot mode (--snapshot-mode for exec; --snapshot for send/read; or --default always-return-snapshot on)"),
-            ensure_ascii=False))
+
+            safe_print(
+                json.dumps(
+                    Response.error(
+                        "--snapshot-diff requires snapshot mode (--snapshot-mode for exec; --snapshot for send/read; or --default always-return-snapshot on)"
+                    ),
+                    ensure_ascii=False,
+                )
+            )
             return
         if getattr(args, "response_format", None) == "svg":
             from .client.input import safe_print
-            safe_print(json.dumps(
-                Response.error("--snapshot-diff is incompatible with --response-format svg"),
-            ensure_ascii=False))
+
+            safe_print(
+                json.dumps(
+                    Response.error(
+                        "--snapshot-diff is incompatible with --response-format svg"
+                    ),
+                    ensure_ascii=False,
+                )
+            )
             return
 
-    client = Client(
-        host=getattr(args, "host", None),
-        port=getattr(args, "port", None),
-        config_overrides=config_overrides or None,
-    )
+    client = Client(config_overrides=config_overrides or None)
     _logger.info("执行命令: %s id=%s", args.subcmd, getattr(args, "id", "N/A"))
 
     try:
@@ -811,85 +1315,97 @@ def main():
                 cfg.set(internal_key, args.value)
             except ValueError as e:
                 from .client.input import safe_print
+
                 safe_print(json.dumps(Response.error(str(e)), ensure_ascii=False))
                 sys.exit(1)
             from .client.input import safe_print
-            safe_print(json.dumps(
-                Response.info(f"已设置默认值: {args.key} = {cfg.get(internal_key)}（将随会话命令发送到守护进程）"),
-            ensure_ascii=False, default=str))
+
+            safe_print(
+                json.dumps(
+                    Response.info(
+                        f"已设置默认值: {args.key} = {cfg.get(internal_key)}（将随会话命令发送到守护进程）"
+                    ),
+                    ensure_ascii=False,
+                    default=str,
+                )
+            )
         elif args.subcmd == "list":
             client.cmd_list()
         elif args.subcmd == "exec":
-                client.cmd_exec(
-                    session_id=args.id,
-                    command=args.command,
-                    trigger=args.trigger,
-                    newline=args.newline,
-                    fresh=True,
-                    timeout=args.timeout,
-                    encoding=args.encoding,
-                    full=args.full,
-                    keep_ansi=args.keep_ansi,
-                    idle_timeout=args.idle_timeout,
-                    idle_after_first_output=args.idle_after_first_output,
-                    force=args.force_pty_mode,
-                    cwd=args.cwd,
-                    env=args.env,
-                    snapshot_mode=args.snapshot_mode,
-                    output_path=args.output_path,
-                    response_format=args.response_format,
-                    svg_compression_level=args.svg_compression_level,
-                    snapshot_diff=args.snapshot_diff,
-                    size=args.size,
-                    ai_analyse=args.ai_analyse or config_overrides.get("ai_analyse", "none"),
-                    ai_prompt=args.ai_prompt or config_overrides.get("ai_prompt"),
-                )
+            client.cmd_exec(
+                session_id=args.id,
+                command=args.command,
+                trigger=args.trigger,
+                newline=args.newline,
+                fresh=True,
+                timeout=args.timeout,
+                encoding=args.encoding,
+                full=args.full,
+                keep_ansi=args.keep_ansi,
+                idle_timeout=args.idle_timeout,
+                idle_after_first_output=args.idle_after_first_output,
+                force=args.force_pty_mode,
+                cwd=args.cwd,
+                env=args.env,
+                snapshot_mode=args.snapshot_mode,
+                output_path=args.output_path,
+                response_format=args.response_format,
+                svg_compression_level=args.svg_compression_level,
+                snapshot_diff=args.snapshot_diff,
+                size=args.size,
+                ai_analyse=args.ai_analyse
+                or config_overrides.get("ai_analyse", "none"),
+                ai_prompt=args.ai_prompt or config_overrides.get("ai_prompt"),
+                plugins=args.plugins,
+            )
         elif args.subcmd == "send":
-                client.cmd_send(
-                    session_id=args.id,
-                    input_text=args.input,
-                    trigger=args.trigger,
-                    newline=args.newline,
-                    fresh=True,
-                    timeout=args.timeout,
-                    encoding=args.encoding,
-                    full=args.full,
-                    keep_ansi=args.keep_ansi,
-                    idle_timeout=args.idle_timeout,
-                    idle_after_first_output=args.idle_after_first_output,
-                    json_escaping=args.json_escaping,
-                    send_eol=args.send_eol,
-                    snapshot=args.snapshot,
-                    output_path=args.output_path,
-                    response_format=args.response_format,
-                    svg_compression_level=args.svg_compression_level,
-                    snapshot_diff=args.snapshot_diff,
-                    ai_analyse=args.ai_analyse or config_overrides.get("ai_analyse", "none"),
-                    ai_prompt=args.ai_prompt or config_overrides.get("ai_prompt"),
-                )
+            client.cmd_send(
+                session_id=args.id,
+                input_text=args.input,
+                trigger=args.trigger,
+                newline=args.newline,
+                fresh=True,
+                timeout=args.timeout,
+                encoding=args.encoding,
+                full=args.full,
+                keep_ansi=args.keep_ansi,
+                idle_timeout=args.idle_timeout,
+                idle_after_first_output=args.idle_after_first_output,
+                json_escaping=args.json_escaping,
+                send_eol=args.send_eol,
+                snapshot=args.snapshot,
+                output_path=args.output_path,
+                response_format=args.response_format,
+                svg_compression_level=args.svg_compression_level,
+                snapshot_diff=args.snapshot_diff,
+                ai_analyse=args.ai_analyse
+                or config_overrides.get("ai_analyse", "none"),
+                ai_prompt=args.ai_prompt or config_overrides.get("ai_prompt"),
+            )
         elif args.subcmd == "read":
-                client.cmd_read(
-                    session_id=args.id,
-                    trigger=args.trigger,
-                    newline=args.newline,
-                    timeout=args.timeout,
-                    idle_timeout=args.idle_timeout,
-                    idle_after_first_output=args.idle_after_first_output,
-                    lines=args.lines,
-                    grep=args.grep,
-                    offset=args.offset,
-                    encoding=args.encoding,
-                    full=args.full,
-                    keep_ansi=args.keep_ansi,
-                    snapshot=args.snapshot,
-                    output_path=args.output_path,
-                    response_format=args.response_format,
-                    svg_compression_level=args.svg_compression_level,
-                    snapshot_diff=args.snapshot_diff,
-                    column=args.column,
-                    ai_analyse=args.ai_analyse or config_overrides.get("ai_analyse", "none"),
-                    ai_prompt=args.ai_prompt or config_overrides.get("ai_prompt"),
-                )
+            client.cmd_read(
+                session_id=args.id,
+                trigger=args.trigger,
+                newline=args.newline,
+                timeout=args.timeout,
+                idle_timeout=args.idle_timeout,
+                idle_after_first_output=args.idle_after_first_output,
+                lines=args.lines,
+                grep=args.grep,
+                offset=args.offset,
+                encoding=args.encoding,
+                full=args.full,
+                keep_ansi=args.keep_ansi,
+                snapshot=args.snapshot,
+                output_path=args.output_path,
+                response_format=args.response_format,
+                svg_compression_level=args.svg_compression_level,
+                snapshot_diff=args.snapshot_diff,
+                column=args.column,
+                ai_analyse=args.ai_analyse
+                or config_overrides.get("ai_analyse", "none"),
+                ai_prompt=args.ai_prompt or config_overrides.get("ai_prompt"),
+            )
         elif args.subcmd == "kill":
             client.cmd_kill(args.id)
         elif args.subcmd == "events":
@@ -903,6 +1419,23 @@ def main():
             )
         elif args.subcmd == "closewin":
             client.cmd_closewin(args.id, args.hwnd)
+        elif args.subcmd == "plugin":
+            if args.plugin_subcmd == "list":
+                client.cmd_plugin("list")
+            elif args.plugin_subcmd == "ls":
+                client.cmd_plugin("ls", session_id=args.id)
+            elif args.plugin_subcmd == "attach":
+                client.cmd_plugin("attach", session_id=args.id, name=args.name)
+            elif args.plugin_subcmd == "detach":
+                client.cmd_plugin("detach", session_id=args.id, name=args.name)
+            elif args.plugin_subcmd == "cmd":
+                client.cmd_plugin(
+                    "cmd",
+                    session_id=args.id,
+                    name=args.name,
+                    command=args.command,
+                    args=args.args,
+                )
         elif args.subcmd == "mouse":
             action = {"action": args.action}
             modifiers = []
@@ -922,19 +1455,25 @@ def main():
             if args.action == "click":
                 if not args.grep_pattern:
                     if len(mouse_args) < 1:
-                        parser.error("click requires <coordinates> (e.g. 10,5) or --grep")
+                        parser.error(
+                            "click requires <coordinates> (e.g. 10,5) or --grep"
+                        )
                     action["coords"] = _parse_coords(mouse_args[0])
                 action["button"] = args.button
                 action["count"] = args.count
             elif args.action == "hover":
                 if not args.grep_pattern:
                     if len(mouse_args) < 1:
-                        parser.error("hover requires <coordinates> (e.g. 10,5) or --grep")
+                        parser.error(
+                            "hover requires <coordinates> (e.g. 10,5) or --grep"
+                        )
                     action["coords"] = _parse_coords(mouse_args[0])
             elif args.action == "scroll":
                 if not args.grep_pattern:
                     if len(mouse_args) < 1:
-                        parser.error("scroll requires <coordinates> (e.g. 10,5) or --grep")
+                        parser.error(
+                            "scroll requires <coordinates> (e.g. 10,5) or --grep"
+                        )
                     action["coords"] = _parse_coords(mouse_args[0])
                 if len(mouse_args) < 2:
                     parser.error("scroll requires <direction> (up/down)")
@@ -952,14 +1491,18 @@ def main():
             elif args.action == "drag":
                 if not args.grep_pattern:
                     if len(mouse_args) < 2:
-                        parser.error("drag requires <from> <to> coordinates (e.g. 10,5 30,5) or --grep")
+                        parser.error(
+                            "drag requires <from> <to> coordinates (e.g. 10,5 30,5) or --grep"
+                        )
                     action["coords"] = _parse_coords(mouse_args[0])
                     action["to"] = _parse_coords(mouse_args[1])
                 action["button"] = args.button
             elif args.action == "press":
                 if not args.grep_pattern:
                     if len(mouse_args) < 2:
-                        parser.error("press requires <coordinates> <seconds> (e.g. 10,5 2.0) or --grep")
+                        parser.error(
+                            "press requires <coordinates> <seconds> (e.g. 10,5 2.0) or --grep"
+                        )
                     action["coords"] = _parse_coords(mouse_args[0])
                     try:
                         action["duration"] = float(mouse_args[1])
@@ -977,22 +1520,24 @@ def main():
                 pass
 
             client.cmd_mouse(
-                    args.id, action,
-                    trigger=args.trigger,
-                    newline=args.newline,
-                    timeout=args.timeout,
-                    encoding=args.encoding,
-                    keep_ansi=args.keep_ansi,
-                    idle_timeout=args.idle_timeout,
-                    idle_after_first_output=args.idle_after_first_output,
-                    output_path=args.output_path,
-                    response_format=args.response_format,
-                    svg_compression_level=args.svg_compression_level,
-                    snapshot=args.snapshot,
-                    snapshot_diff=args.snapshot_diff,
-                    ai_analyse=args.ai_analyse or config_overrides.get("ai_analyse", "none"),
-                    ai_prompt=args.ai_prompt or config_overrides.get("ai_prompt"),
-                )
+                args.id,
+                action,
+                trigger=args.trigger,
+                newline=args.newline,
+                timeout=args.timeout,
+                encoding=args.encoding,
+                keep_ansi=args.keep_ansi,
+                idle_timeout=args.idle_timeout,
+                idle_after_first_output=args.idle_after_first_output,
+                output_path=args.output_path,
+                response_format=args.response_format,
+                svg_compression_level=args.svg_compression_level,
+                snapshot=args.snapshot,
+                snapshot_diff=args.snapshot_diff,
+                ai_analyse=args.ai_analyse
+                or config_overrides.get("ai_analyse", "none"),
+                ai_prompt=args.ai_prompt or config_overrides.get("ai_prompt"),
+            )
         elif args.subcmd == "wait":
             client.cmd_wait(timeout=args.timeout)
         elif args.subcmd == "file":
@@ -1005,7 +1550,8 @@ def main():
                 )
             elif args.file_subcmd == "write":
                 content = _resolve_cli_content(
-                    args.content, args.content_file, "--content", "--content-file")
+                    args.content, args.content_file, "--content", "--content-file"
+                )
                 client.cmd_file_write(
                     path=args.path,
                     cwd_session=args.cwd_session,
@@ -1013,9 +1559,11 @@ def main():
                 )
             elif args.file_subcmd == "edit":
                 old = _resolve_cli_content(
-                    args.old, args.old_file, "--old", "--old-file")
+                    args.old, args.old_file, "--old", "--old-file"
+                )
                 new = _resolve_cli_content(
-                    args.new, args.new_file, "--new", "--new-file")
+                    args.new, args.new_file, "--new", "--new-file"
+                )
                 client.cmd_file_edit(
                     path=args.path,
                     cwd_session=args.cwd_session,
@@ -1057,10 +1605,12 @@ def main():
 
     except KeyboardInterrupt:
         from .client.formatter import print_response
+
         print_response(Response.error("Interrupted by user"))
         sys.exit(130)
     except Exception as e:
         from .client.formatter import print_response
+
         print_response(Response.error(str(e)))
         sys.exit(1)
 

@@ -16,10 +16,10 @@ class TestTerminalScreenInit:
         assert screen._cols == 120
         assert screen._rows == 40
 
-    def test_available_when_pyte_installed(self):
+    def test_available_when_wezterm_installed(self):
         screen = TerminalScreen()
         try:
-            import pyte
+            import pywezterm  # noqa: F401
             assert screen.available is True
         except ImportError:
             assert screen.available is False
@@ -103,7 +103,7 @@ class TestTerminalScreenDiagnostics:
         screen = TerminalScreen()
         info = screen.diagnostics()
         assert isinstance(info, dict)
-        assert "pyte_available" in info
+        assert "wezterm_available" in info
         assert "feed_count" in info
         assert "feed_bytes" in info
 

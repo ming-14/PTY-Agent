@@ -26,8 +26,12 @@ class EventPublisherImpl(EventPublisher):
     def publish_session_removed(
         self, session_id: str, exit_code: Optional[int], error_message: Optional[str]
     ) -> None:
-        self._broadcast("session_removed", session_id,
-                         exit_code=exit_code, error_message=error_message)
+        self._broadcast(
+            "session_removed",
+            session_id,
+            exit_code=exit_code,
+            error_message=error_message,
+        )
 
     def publish_session_resized(
         self,
@@ -40,7 +44,7 @@ class EventPublisherImpl(EventPublisher):
     ) -> None:
         """定向广播尺寸变更：仅发给订阅该会话的客户端，排除发起方。
 
-        问题1：尺寸变更通知。发起方已通过 resize_complete 完成本地调整，
+        尺寸变更通知。发起方已通过 resize_complete 完成本地调整，
         其他订阅客户端通过 session_resized 同步调整终端尺寸与 buffer。
         """
         self._broadcast(
@@ -66,10 +70,10 @@ class EventPublisherImpl(EventPublisher):
     ) -> None:
         """定向广播尺寸模式变更：仅发给订阅该会话的客户端，排除发起方。
 
-        问题2：自适应排他锁。通知所有客户端当前自适应锁状态 + 模式变更，
+        通知所有客户端当前自适应锁状态 + 模式变更，
         前端据此禁用/启用尺寸调整 UI，被降级端切换到 fixed 模式。
 
-        v3 改造：携带 adaptive_owner_uid，前端据此判断"自己是否持锁"并恢复 UI。
+        携带 adaptive_owner_uid，前端据此判断"自己是否持锁"并恢复 UI。
         """
         self._broadcast(
             "size_mode_changed",
@@ -90,7 +94,7 @@ class EventPublisherImpl(EventPublisher):
         exit_code: Optional[int] = None,
         error_message: Optional[str] = None,
         uid: str = "",
-        # 定向广播参数（问题1：尺寸变更通知 / 问题2：模式变更）
+        # 定向广播参数（尺寸变更通知 / 模式变更）
         cols: Optional[int] = None,
         rows: Optional[int] = None,
         snapshot: str = "",
@@ -125,7 +129,7 @@ class EventPublisherImpl(EventPublisher):
             payload["mode"] = mode
         if adaptive_owner_active is not None:
             payload["adaptiveOwnerActive"] = adaptive_owner_active
-        # v3: 携带持锁者 client_uid，前端据此判断"自己是否持锁"并恢复 UI
+        # 携带持锁者 client_uid，前端据此判断"自己是否持锁"并恢复 UI
         if adaptive_owner_uid is not None:
             payload["adaptiveOwnerUid"] = adaptive_owner_uid
 
@@ -143,20 +147,34 @@ class EventPublisherImpl(EventPublisher):
                         if session_id in context.subscribed_session_ids:
                             targets.append(conn)
                     except Exception as e:
-                        _logger.debug("broadcast %s: filter sid check error: %s", event_type, e)
+                        _logger.debug(
+                            "broadcast %s: filter sid check error: %s", event_type, e
+                        )
                 _logger.info(
                     "broadcast %s: sid=%r filtered to %d subscribers (excluded initiator=%s)",
-                    event_type, session_id, len(targets), exclude_conn_id is not None,
+                    event_type,
+                    session_id,
+                    len(targets),
+                    exclude_conn_id is not None,
                 )
                 conns = targets
             else:
                 conns = list(self._connections.values())
-                _logger.info("broadcast %s: sid=%r to %d connections", event_type, session_id, len(conns))
+                _logger.info(
+                    "broadcast %s: sid=%r to %d connections",
+                    event_type,
+                    session_id,
+                    len(conns),
+                )
             for conn in conns:
                 try:
                     conn["queue"].put_nowait(payload)
                 except asyncio.QueueFull:
-                    _logger.warning("broadcast %s: queue full, dropping (sid=%r)", event_type, session_id)
+                    _logger.warning(
+                        "broadcast %s: queue full, dropping (sid=%r)",
+                        event_type,
+                        session_id,
+                    )
                 except Exception as e:
                     _logger.debug("broadcast %s: queue put error: %s", event_type, e)
 

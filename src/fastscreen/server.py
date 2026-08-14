@@ -17,13 +17,13 @@ _bin_dir = str(Path(__file__).resolve().parent.parent.parent / "bin")
 if _bin_dir not in sys.path:
     sys.path.insert(0, _bin_dir)
 
-from aiohttp import web, WSMsgType
+from aiohttp import WSMsgType, web
+from fastscreencore import CaptureEngine, CaptureMethod, TargetType
 
-from fastscreencore import CaptureEngine, TargetType, CaptureMethod
-from .streamers.mjpeg import MjpegStreamer
 from .streamers.encoding.mjpeg import frame_to_jpeg, frame_to_png
 from .streamers.h264 import H264Streamer
 from .streamers.h264_mse import H264MSEStreamer
+from .streamers.mjpeg import MjpegStreamer
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -51,15 +51,17 @@ async def api_monitors(request: web.Request) -> web.Response:
     monitors = _engine.enumerate_monitors()
     data = []
     for m in monitors:
-        data.append({
-            "id": m.id,
-            "name": m.name,
-            "left": m.left,
-            "top": m.top,
-            "width": m.width,
-            "height": m.height,
-            "primary": bool(m.primary),
-        })
+        data.append(
+            {
+                "id": m.id,
+                "name": m.name,
+                "left": m.left,
+                "top": m.top,
+                "width": m.width,
+                "height": m.height,
+                "primary": bool(m.primary),
+            }
+        )
     return web.json_response(data)
 
 
@@ -67,16 +69,18 @@ async def api_windows(request: web.Request) -> web.Response:
     windows = _engine.enumerate_windows()
     data = []
     for w in windows:
-        data.append({
-            "hwnd": int(w.hwnd) if w.hwnd else 0,
-            "title": w.title,
-            "class_name": w.class_name,
-            "left": w.left,
-            "top": w.top,
-            "width": w.width,
-            "height": w.height,
-            "visible": bool(w.visible),
-        })
+        data.append(
+            {
+                "hwnd": int(w.hwnd) if w.hwnd else 0,
+                "title": w.title,
+                "class_name": w.class_name,
+                "left": w.left,
+                "top": w.top,
+                "width": w.width,
+                "height": w.height,
+                "visible": bool(w.visible),
+            }
+        )
     return web.json_response(data)
 
 
@@ -135,7 +139,9 @@ async def api_stream_mjpeg(request: web.Request) -> web.StreamResponse:
     scale_w = int(width_str)
     scale_h = int(height_str)
 
-    streamer = MjpegStreamer(target_type, target_id, method, fps, quality, scale_w, scale_h)
+    streamer = MjpegStreamer(
+        target_type, target_id, method, fps, quality, scale_w, scale_h
+    )
     ok = await streamer.start()
     if not ok:
         return web.json_response(
@@ -198,15 +204,24 @@ async def ws_stream_h264(request: web.Request) -> web.WebSocketResponse:
             method = _METHOD_MAP.get(method_str, CaptureMethod.AUTO)
 
             streamer = H264Streamer(
-                target_type, target_id, method, fps,
-                scale_w, scale_h, bitrate, gop_size, quality,
+                target_type,
+                target_id,
+                method,
+                fps,
+                scale_w,
+                scale_h,
+                bitrate,
+                gop_size,
+                quality,
             )
             ok = await streamer.start()
             if not ok:
                 await ws.send_json({"error": "failed to start capture"})
                 continue
 
-            await ws.send_json({"status": "streaming", "fps": fps, "width": scale_w, "height": scale_h})
+            await ws.send_json(
+                {"status": "streaming", "fps": fps, "width": scale_w, "height": scale_h}
+            )
 
             try:
                 while streamer.is_running and not ws.closed:
@@ -254,15 +269,24 @@ async def ws_stream_h264_mse(request: web.Request) -> web.WebSocketResponse:
             method = _METHOD_MAP.get(method_str, CaptureMethod.AUTO)
 
             streamer = H264MSEStreamer(
-                target_type, target_id, method, fps,
-                scale_w, scale_h, bitrate, gop_size, quality,
+                target_type,
+                target_id,
+                method,
+                fps,
+                scale_w,
+                scale_h,
+                bitrate,
+                gop_size,
+                quality,
             )
             ok = await streamer.start()
             if not ok:
                 await ws.send_json({"error": "failed to start capture"})
                 continue
 
-            await ws.send_json({"status": "streaming", "fps": fps, "width": scale_w, "height": scale_h})
+            await ws.send_json(
+                {"status": "streaming", "fps": fps, "width": scale_w, "height": scale_h}
+            )
 
             try:
                 while streamer.is_running and not ws.closed:
@@ -301,7 +325,9 @@ def create_app() -> web.Application:
 
 def main():
     parser = argparse.ArgumentParser(description="FastScreen Web Server")
-    parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
+    parser.add_argument(
+        "--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)"
+    )
     parser.add_argument("--port", type=int, default=8080, help="Port (default: 8080)")
     args = parser.parse_args()
 

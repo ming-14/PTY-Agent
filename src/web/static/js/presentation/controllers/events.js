@@ -60,7 +60,7 @@ export function bindGlobalEvents() {
       sb.style.minWidth = '';
       sb.style.maxWidth = '';
     }
-    // v5: sidebar 折叠/展开后由 stage 的 ResizeObserver 自动接管尺寸更新
+    // sidebar 折叠/展开后由 stage 的 ResizeObserver 自动接管尺寸更新
     // 不再这里手动调用 applyTerminalFrameSize
   };
 
@@ -183,7 +183,7 @@ export function bindGlobalEvents() {
   };
 
   // 状态栏尺寸项点击：弹出尺寸选择器下拉（支持鼠标与触摸）
-  // v9.2: 历史会话禁用尺寸按钮（固定生前最后尺寸，不允许切换模式），但允许 Ctrl+滚轮缩放
+  // 历史会话禁用尺寸按钮（固定生前最后尺寸，不允许切换模式），但允许 Ctrl+滚轮缩放
   const statusSize = $('status-size');
   if (statusSize) {
     statusSize.onclick = (e) => {
@@ -243,7 +243,7 @@ document.addEventListener('keydown', e => {
       return;
     }
     if (e.ctrlKey && (e.key === '=' || e.key === '+' || e.key === '-')) {
-      // v9.2: Ctrl+/-/= 调整 frameRatio
+      // Ctrl+/-/= 调整 frameRatio
       // 所有模式统一：按 ratio 反算字号（cols/rows 不变）
       // （adaptive 的"自适应 stage 宽高比"由 applySessionFrameRatio 在切标签/stage 变化时通过 fit() 完成）
       e.preventDefault();
@@ -256,7 +256,7 @@ document.addEventListener('keydown', e => {
       return;
     }
     if (e.ctrlKey && e.key === '0') {
-      // v9.2: Ctrl+0 重置当前会话缩放
+      // Ctrl+0 重置当前会话缩放
       // 所有模式统一：字号回默认，按渲染反算新 ratio（cols/rows 不变）
       e.preventDefault();
       resetActiveSessionZoom();
@@ -327,7 +327,7 @@ document.addEventListener('keydown', e => {
   window.addEventListener('wheel', e => {
     // 在终端区域内的 Ctrl+滚轮已在 capture 阶段处理缩放并阻止传播；
     // 这里兜底处理页面其它区域以及未阻止到的 Ctrl+滚轮。
-    // v9.2: 统一调用 zoomActiveSession 调整 frameRatio（所有模式按 ratio 反算字号，cols/rows 不变）。
+    // 统一调用 zoomActiveSession 调整 frameRatio（所有模式按 ratio 反算字号，cols/rows 不变）。
     if (e.ctrlKey && !e.shiftKey) {
       e.preventDefault();
       const isZoomIn = e.deltaY < 0;
@@ -341,7 +341,7 @@ document.addEventListener('keydown', e => {
 
   // 全局双指捏合缩放：终端区域由其自身 touch 处理器接管；此处理器覆盖页面其他区域。
   // 不改变终端聚焦状态（即使原本未聚焦终端）。
-  // v9.2: 捏合改为调整 frameRatio（所有模式按 ratio 反算字号，cols/rows 不变），通过 zoomActiveSession 统一入口。
+  // 捏合改为调整 frameRatio（所有模式按 ratio 反算字号，cols/rows 不变），通过 zoomActiveSession 统一入口。
   let globalPinchDist = 0;
   function globalTouchDist(t1, t2) {
     const dx = t1.clientX - t2.clientX;
@@ -389,7 +389,7 @@ document.addEventListener('keydown', e => {
     globalPinchDist = 0;
   }, { passive: true });
 
-  // v9.2：统一终端 resize 防抖（trailing debounce 150ms）
+  // 统一终端 resize 防抖（trailing debounce 150ms）
   // 覆盖所有导致 stage 尺寸变化的场景：sidebar 折叠/展开（CSS transition 0.2s 动画）、
   // sidebar 拖动、fullscreen 切换、window resize。
   // 痛点：sidebar 折叠动画 200ms 期间 ResizeObserver 每帧触发（~12 次），不防抖会导致
@@ -406,7 +406,7 @@ document.addEventListener('keydown', e => {
       const s = state.sessions[sid];
       const isHistory = !!(s && s.history);
       const cfg = getSessionSizeConfigBySid(sid);
-      // v9.2: 历史会话强制非 adaptive 路径（固定生前 cols/rows，按 frameRatio 反算字号）
+      // 历史会话强制非 adaptive 路径（固定生前 cols/rows，按 frameRatio 反算字号）
       if (cfg.mode === 'adaptive' && !isHistory) {
         // 自适应：stage 变了，按保存的 ratio 设 frame 尺寸 + fit() 同步 cols/rows
         // （adaptive 自适应 stage 宽高比，cols/rows 跟着 fit 变；此处是 applySessionFrameRatio 的 adaptive 分支，与 Ctrl+滚轮不同）
@@ -468,7 +468,7 @@ export function initSidebarResize() {
     sb.style.width = w + 'px';
     sb.style.minWidth = w + 'px';
     sb.style.maxWidth = MAX_SIDEBAR_WIDTH + 'px';
-    // v5: sidebar 拖动时由 stage 的 ResizeObserver 接管尺寸更新
+    // sidebar 拖动时由 stage 的 ResizeObserver 接管尺寸更新
     // 不再这里手动调用 applyTerminalFrameSize，避免重复计算和时序问题
     // ResizeObserver 会在下一帧自动触发 applyTerminalSize + applyTerminalFrameSize
   }

@@ -6,8 +6,9 @@ import threading
 from typing import Optional
 
 from fastscreencore import CaptureMethod
-from .manager import StreamManager, StreamKey, FrameData, _drain_queue
+
 from .encoding.h264 import H264Encoder
+from .manager import FrameData, StreamKey, StreamManager, _drain_queue
 
 logger = logging.getLogger("fastscreen.h264_webcodecs")
 
@@ -71,8 +72,12 @@ class H264Streamer:
                 break
             try:
                 # 对齐到偶数：libx264 yuv420p 要求 width/height 为偶数
-                w = (self.scale_width if self.scale_width > 0 else frame_data.width) & ~1
-                h = (self.scale_height if self.scale_height > 0 else frame_data.height) & ~1
+                w = (
+                    self.scale_width if self.scale_width > 0 else frame_data.width
+                ) & ~1
+                h = (
+                    self.scale_height if self.scale_height > 0 else frame_data.height
+                ) & ~1
 
                 # 检测尺寸变化（首帧或窗口 resize），重新配置编码器
                 if first_frame or self._encoder is None or enc_w != w or enc_h != h:
@@ -82,7 +87,15 @@ class H264Streamer:
                     # 重写 type 1→5 会导致 slice header 不匹配（IDR 需要 idr_pic_id），
                     # WebCodecs VideoDecoder 严格校验会解码失败。
                     # 前端通过 EncodedVideoChunk.type='key' 标记首帧为关键帧。
-                    self._encoder = H264Encoder(w, h, self.fps, self.bitrate, self.gop_size, self.quality_to_crf(self.quality), rewrite_to_idr=False)
+                    self._encoder = H264Encoder(
+                        w,
+                        h,
+                        self.fps,
+                        self.bitrate,
+                        self.gop_size,
+                        self.quality_to_crf(self.quality),
+                        rewrite_to_idr=False,
+                    )
                     # 清空旧 raw 帧队列，避免旧尺寸帧被新编码器处理
                     while not self._raw_queue.empty():
                         try:
@@ -91,9 +104,20 @@ class H264Streamer:
                             break
                     enc_w, enc_h = w, h
                     first_frame = False
-                    logger.info("[WebCodecs-ENC] encoder created %dx%d, rewrite_to_idr=False", w, h)
+                    logger.info(
+                        "[WebCodecs-ENC] encoder created %dx%d, rewrite_to_idr=False",
+                        w,
+                        h,
+                    )
 
-                nals = self._encoder.encode_bgra(frame_data.data, frame_data.stride, frame_data.width, frame_data.height, w, h)
+                nals = self._encoder.encode_bgra(
+                    frame_data.data,
+                    frame_data.stride,
+                    frame_data.width,
+                    frame_data.height,
+                    w,
+                    h,
+                )
 
                 if nals:
                     nal_types = []
@@ -106,8 +130,12 @@ class H264Streamer:
                         self._nal_queue.put(nal)
                         # 解析 NAL 类型用于诊断（支持 3-byte 和 4-byte 起始码）
                         nal_types.extend(H264Encoder._parse_nal_types(nal))
-                    logger.debug("[WebCodecs-ENC] produced %d NALs, types=%s, queue_size=%d",
-                                 len(nals), nal_types, self._nal_queue.qsize())
+                    logger.debug(
+                        "[WebCodecs-ENC] produced %d NALs, types=%s, queue_size=%d",
+                        len(nals),
+                        nal_types,
+                        self._nal_queue.qsize(),
+                    )
             except Exception as e:
                 logger.error("[WebCodecs-ENC] encode_loop error: %s", e, exc_info=True)
 

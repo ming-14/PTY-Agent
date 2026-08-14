@@ -60,13 +60,16 @@ pip install cryptography tomli
 | `file <read\|write\|edit\|grep\|glob>` | 文件工具（读/写/唯一匹配替换/内容搜索/文件名匹配） |
 | `keygen` | 生成 Ed25519 密钥对 |
 
-## 认证模式
+## 连接方式
 
-| 模式 | 配置 | 说明 |
-|------|------|------|
-| Token + HMAC | `CLIENT_AUTH_METHOD=token` | 默认，同机 SHM 发现 |
-| Ed25519 公私钥 | `CLIENT_AUTH_METHOD=pubkey` | 跨机 TLS，authorized_keys 白名单 |
-| 无认证 | `CLIENT_AUTH_METHOD=none` | 仅本地调试 |
+daemon 支持三种独立监听器（`daemon.toml [listener]` 段），可同开或只开一个；
+客户端用 `client.toml [connection]` 的 `CONNECT_MODE` 选择连接位置。
+
+| 监听器 | 连接方式 `CONNECT_MODE` | 认证 | 默认位置 |
+|--------|------------------------|------|----------|
+| `plain` | `plain` | 无认证 | `0.0.0.0:10521`（关闭） |
+| `token` | `token` | Token + HMAC（同机 SHM） | `127.0.0.1:10520`（开启） |
+| `tls` | `tls` | TLS + Ed25519 / authorized_keys | `0.0.0.0:18767`（关闭） |
 
 ## 平台要求
 

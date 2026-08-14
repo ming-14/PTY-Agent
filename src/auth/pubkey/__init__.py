@@ -10,12 +10,12 @@
 """
 
 from .authenticator import PubkeyAuthenticator, PubkeyCredentialProvider
-from .signer import Ed25519MessageSigner, SIG_FIELD, PUBKEY_FP_FIELD
+from .signer import PUBKEY_FP_FIELD, SIG_FIELD, Ed25519MessageSigner
 
 __all__ = [
+    "PUBKEY_FP_FIELD",
+    "SIG_FIELD",
+    "Ed25519MessageSigner",
     "PubkeyAuthenticator",
     "PubkeyCredentialProvider",
-    "Ed25519MessageSigner",
-    "SIG_FIELD",
-    "PUBKEY_FP_FIELD",
 ]

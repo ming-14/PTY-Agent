@@ -1,26 +1,25 @@
-"""file upload/download 集成测试 —— loopback TCP 全链路（握手+二进制帧+落盘+历史+映射）
+"""files 插件 upload/download 集成测试 —— loopback TCP 全链路（握手+二进制帧+落盘+历史+映射）
 
-daemon 侧：真实 handler + 注入 :memory: history/tmap/state，线程内跑
-client 侧：真实 upload/download 驱动，走完整协议
-不依赖真实 PTY 会话（FakeManager 提供固定 cwd，同现有 handler 单测模式）
+daemon 侧：真实 FilesPlugin.handle_message + PluginIO，线程内跑
+client 侧：真实 upload/download 驱动（src/transfer），走完整协议
+不依赖真实 PTY 会话（FakeManager 提供固定 cwd）
 """
 
 import os
 import socket
 import threading
-import time
 
 import pytest
 
-from src.daemon.handlers.base import HandlerContext
-from src.daemon.handlers.file_download_handler import FileDownloadHandler
-from src.daemon.handlers.file_upload_handler import FileUploadHandler
-from src.files.history import FileHistoryStore
-from src.files.state import FileRecordStore
-from src.files.transfer.client_download import download
-from src.files.transfer.client_upload import upload
-from src.files.transfer.common import TransferError
-from src.files.transfer.map import TransferMap
+from src.plugins.base import ProcessPluginContext
+from src.plugins.io import PluginIO
+from src.transfer.client_download import download
+from src.transfer.client_upload import upload
+from src.transfer.common import TransferError
+from config.plugins.files.files_plugin import FilesPlugin
+from config.plugins.files.history import FileHistoryStore
+from config.plugins.files.state import FileRecordStore
+from config.plugins.files.transfer.map import TransferMap
 
 
 class _FakeSession:
@@ -36,23 +35,26 @@ class _FakeManager:
 
 
 class _DaemonSide:
-    """在独立线程中运行 handler（真实 TCP 连接，仿 dispatcher 先 recv 握手 JSON）"""
+    """在独立线程中运行插件 handle_message（真实 TCP 连接，仿 dispatcher 先 recv 握手 JSON）"""
 
-    def __init__(self, handler, cwd, inject=None):
-        self._handler = handler
+    def __init__(self, plugin, cwd):
+        self._plugin = plugin
         self._manager = _FakeManager(cwd)
-        self._inject = inject or {}
         self.error = None
 
     def start(self, conn):
         def run():
             try:
                 from src.protocol.message import Message
-                ctx = HandlerContext(manager=self._manager)
+                from src.plugins.base import HANDLED
                 msg = Message.recv(conn)  # 仿 dispatcher：先读握手 JSON
                 if msg is None:
                     return
-                self._handler.handle(ctx, conn, msg, **self._inject)
+                pctx = ProcessPluginContext(self._manager, self._plugin, PluginIO(conn))
+                result = self._plugin.handle_message(pctx, msg)
+                # 仿调度器：返回 dict 需发送，HANDLED（多帧协议）已自行响应
+                if result is not HANDLED and result is not None:
+                    Message.send(conn, result)
             except Exception as e:  # 线程内异常上报主线程断言
                 self.error = e
             finally:
@@ -92,11 +94,9 @@ def _pair():
 
 def _upload(local, remote_rel, cwd, force=False, timeout=15, infra=None):
     cli, daemon_conn = _pair()
-    kwargs = {}
-    if infra:
-        kwargs = {"history": infra["history"], "tmap": infra["tmap"],
-                  "store": infra["store"]}
-    side = _DaemonSide(FileUploadHandler(), cwd, kwargs).start(daemon_conn)
+    plugin = FilesPlugin(history=infra["history"], tmap=infra["tmap"],
+                         store=infra["store"]) if infra else FilesPlugin()
+    side = _DaemonSide(plugin, cwd).start(daemon_conn)
     try:
         summary = upload(cli, str(local), remote_rel, "sid", force, timeout)
     finally:
@@ -108,8 +108,8 @@ def _upload(local, remote_rel, cwd, force=False, timeout=15, infra=None):
 
 def _download(remote_rel, local, cwd, force=False, timeout=15, infra=None):
     cli, daemon_conn = _pair()
-    kwargs = {"tmap": infra["tmap"]} if infra else {}
-    side = _DaemonSide(FileDownloadHandler(), cwd, kwargs).start(daemon_conn)
+    plugin = FilesPlugin(tmap=infra["tmap"]) if infra else FilesPlugin()
+    side = _DaemonSide(plugin, cwd).start(daemon_conn)
     try:
         summary = download(cli, str(local), remote_rel, "sid", force, timeout)
     finally:
@@ -269,7 +269,7 @@ class TestDownload:
 
     def test_remote_missing_errors(self, infra, tmp_path):
         cli, daemon_conn = _pair()
-        side = _DaemonSide(FileDownloadHandler(), str(tmp_path)).start(daemon_conn)
+        side = _DaemonSide(FilesPlugin(), str(tmp_path)).start(daemon_conn)
         try:
             with pytest.raises(TransferError, match="does not exist"):
                 download(cli, str(tmp_path / "out"), "nope.txt", "sid", False, 15)
@@ -295,7 +295,7 @@ class TestMisc:
         src.write_bytes(b"hello")
         remote = tmp_path / "remote" / "f.txt"
         _upload(src, "remote/f.txt", str(tmp_path), infra=infra)
-        from src.files.write.writer import edit_file
+        from config.plugins.files.write import edit_file
         result = edit_file(str(remote), "hello", "world",
                            store=infra["store"], history=infra["history"])
         assert result.path == str(remote)

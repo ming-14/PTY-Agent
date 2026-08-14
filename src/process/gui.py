@@ -5,9 +5,9 @@
 依赖 ProcessTreeTracker 抽象（poll_gui_windows / get_process_list）。
 """
 
-import time
 import logging
 import threading
+import time
 from typing import List
 
 from ..output.events import PendingEvent
@@ -61,25 +61,30 @@ class GuiDetector:
                     self.gui_windows.extend(new_windows)
                 self._detected_event.set()
                 _logger.info(
-                    "会话 '%s' 检测到 %d 个新 GUI 窗口",
-                    session_id, len(new_windows))
+                    "会话 '%s' 检测到 %d 个新 GUI 窗口", session_id, len(new_windows)
+                )
                 ev_now = time.time()
                 for w in new_windows:
-                    self._event_sink(PendingEvent(
-                        timestamp=ev_now, type="gui_window",
-                        pid=w.get("pid", 0),
-                        info=w.get("title", ""),
-                        hwnd=w.get("hwnd", 0),
-                        detail={"title": w.get("title", ""), "className": w.get("class_name", "")},
-                    ))
+                    self._event_sink(
+                        PendingEvent(
+                            timestamp=ev_now,
+                            type="gui_window",
+                            pid=w.get("pid", 0),
+                            info=w.get("title", ""),
+                            hwnd=w.get("hwnd", 0),
+                            detail={
+                                "title": w.get("title", ""),
+                                "className": w.get("class_name", ""),
+                            },
+                        )
+                    )
             # 更新进程树信息
             pids = tracker.get_process_list()
             if pids:
                 with self._lock:
                     self.processes = pids
         except Exception as e:
-            _logger.debug(
-                "GUI 窗口检测异常 (会话 '%s'): %s", session_id, e)
+            _logger.debug("GUI 窗口检测异常 (会话 '%s'): %s", session_id, e)
 
     def clear(self) -> None:
         """重置 GUI 检测状态"""

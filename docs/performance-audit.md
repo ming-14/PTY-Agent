@@ -633,9 +633,9 @@ if self._screen.feed_count > prior_feed:
 
 ### L2. shm.py 每次创建新 mmap
 
-**位置**：`src/ipc/shm.py`（`read_daemon_info_from_shm`）
+**位置**：`src/ipc/shm.py`（`read_auth_token` / `read_hmac_key`）
 
-**问题**：每次读取守护进程信息都新建 mmap + read + close。
+**问题**：每次读取认证凭据都新建 mmap + read + close。
 
 **量级**：低频（连接建立时）。
 

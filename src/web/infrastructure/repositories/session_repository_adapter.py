@@ -2,9 +2,9 @@
 
 from typing import Any, Callable, Optional
 
+from ....session.session import Session
 from ...application.ports import SessionRepository
 from ...domain.entities import ActiveSession, SessionEndedInfo
-from ....session.session import Session
 
 
 class SessionRepositoryAdapter(SessionRepository):
