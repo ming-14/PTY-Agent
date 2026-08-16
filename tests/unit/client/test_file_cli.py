@@ -3,13 +3,22 @@
 import os
 import pytest
 
-from src.__main__ import _resolve_cli_content, build_parser
+from src.cli.commands import register_all
+from src.cli.commands.file import _resolve_cli_content
+from src.cli.registry import CommandRegistry
 from src.client.transport import Client
+
+
+def _build_parser():
+    """经命令注册表构建完整解析器"""
+    registry = CommandRegistry()
+    register_all(registry)
+    return registry.build_parser(prog="pty-agent", description="", epilog="")
 
 
 class TestFileReadParser:
     def test_parse_minimal(self):
-        args = build_parser().parse_args(["file", "read", "-s", "sid", "C:/x/a.txt"])
+        args = _build_parser().parse_args(["file", "read", "-s", "sid", "C:/x/a.txt"])
         assert args.subcmd == "file"
         assert args.file_subcmd == "read"
         assert args.path == "C:/x/a.txt"
@@ -17,43 +26,43 @@ class TestFileReadParser:
         assert args.limit is None
 
     def test_parse_full_options(self):
-        args = build_parser().parse_args(
+        args = _build_parser().parse_args(
             ["file", "read", "-s", "sid", "a.txt", "--offset", "10", "--limit", "5"])
         assert args.offset == 10
         assert args.limit == 5
 
     def test_missing_path_errors(self):
         with pytest.raises(SystemExit):
-            build_parser().parse_args(["file", "read"])
+            _build_parser().parse_args(["file", "read"])
 
     def test_missing_cwd_session_errors(self):
         # -s/--cwd-session 必填
         with pytest.raises(SystemExit):
-            build_parser().parse_args(["file", "read", "C:/x/a.txt"])
+            _build_parser().parse_args(["file", "read", "C:/x/a.txt"])
 
     def test_cwd_session_short_flag(self):
-        args = build_parser().parse_args(["file", "read", "-s", "sid", "C:/x/a.txt"])
+        args = _build_parser().parse_args(["file", "read", "-s", "sid", "C:/x/a.txt"])
         assert args.cwd_session == "sid"
 
     def test_unknown_subcommand_errors(self):
         with pytest.raises(SystemExit):
-            build_parser().parse_args(["file", "unknown"])
+            _build_parser().parse_args(["file", "unknown"])
 
 
 class TestFileWriteParser:
     def test_parse_content(self):
-        args = build_parser().parse_args(["file", "write", "-s", "sid", "a.txt", "--content", "hello"])
+        args = _build_parser().parse_args(["file", "write", "-s", "sid", "a.txt", "--content", "hello"])
         assert args.file_subcmd == "write"
         assert args.path == "a.txt"
         assert args.content == "hello"
 
     def test_content_optional_in_parser(self):
         # parser 不强制 --content（stdin/默认值场景由 main 分支处理）
-        args = build_parser().parse_args(["file", "write", "-s", "sid", "a.txt"])
+        args = _build_parser().parse_args(["file", "write", "-s", "sid", "a.txt"])
         assert args.content is None
 
     def test_parse_content_file(self):
-        args = build_parser().parse_args(
+        args = _build_parser().parse_args(
             ["file", "write", "-s", "sid", "a.txt", "--content-file", "big.txt"])
         assert args.content is None
         assert args.content_file == "big.txt"
@@ -61,7 +70,7 @@ class TestFileWriteParser:
 
 class TestFileEditParser:
     def test_parse_replace(self):
-        args = build_parser().parse_args(
+        args = _build_parser().parse_args(
             ["file", "edit", "-s", "sid", "a.txt", "--old", "x", "--new", "y"])
         assert args.file_subcmd == "edit"
         assert args.old == "x"
@@ -69,12 +78,12 @@ class TestFileEditParser:
 
     def test_defaults_empty(self):
         # --old/--new 缺省为空串（delete/create 分支）
-        args = build_parser().parse_args(["file", "edit", "-s", "sid", "a.txt"])
+        args = _build_parser().parse_args(["file", "edit", "-s", "sid", "a.txt"])
         assert args.old == ""
         assert args.new == ""
 
     def test_parse_old_new_file(self):
-        args = build_parser().parse_args(
+        args = _build_parser().parse_args(
             ["file", "edit", "-s", "sid", "a.txt", "--old-file", "o.txt", "--new-file", "n.txt"])
         assert args.old_file == "o.txt"
         assert args.new_file == "n.txt"
@@ -119,7 +128,7 @@ class TestResolveCliContent:
 
 class TestFileGrepGlobParser:
     def test_grep_with_optional_path(self):
-        args = build_parser().parse_args(["file", "grep", "-s", "sid", "foo"])
+        args = _build_parser().parse_args(["file", "grep", "-s", "sid", "foo"])
         assert args.file_subcmd == "grep"
         assert args.pattern == "foo"
         assert args.path is None
@@ -127,21 +136,21 @@ class TestFileGrepGlobParser:
         assert args.literal_text is False
 
     def test_grep_full_options(self):
-        args = build_parser().parse_args(
+        args = _build_parser().parse_args(
             ["file", "grep", "-s", "sid", "foo", "src", "--include", "*.py", "--literal-text"])
         assert args.path == "src"
         assert args.include == "*.py"
         assert args.literal_text is True
 
     def test_glob(self):
-        args = build_parser().parse_args(["file", "glob", "-s", "sid", "**/*.go", "src"])
+        args = _build_parser().parse_args(["file", "glob", "-s", "sid", "**/*.go", "src"])
         assert args.file_subcmd == "glob"
         assert args.pattern == "**/*.go"
         assert args.path == "src"
 
     def test_missing_pattern_errors(self):
         with pytest.raises(SystemExit):
-            build_parser().parse_args(["file", "grep"])
+            _build_parser().parse_args(["file", "grep"])
 
 
 class TestCmdFileRead:

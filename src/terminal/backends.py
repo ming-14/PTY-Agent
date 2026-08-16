@@ -1,7 +1,8 @@
 """终端模拟后端 —— wezterm-py 终端仿真引擎
 
 终端模型统一抽象：可见区/scrollback 都表示为「行 × 单元格」的稀疏网格，
-单元格用 ScreenCell 描述（列索引 + 字符 + 前景/背景色 + 样式 + 宽度）。
+单元格是引擎原生元组 (col, data, fg, bg, bold, italic, underline, reverse,
+strikethrough, width)，渲染函数直接按下标消费，避免逐 cell 构造中间对象。
 渲染（纯文本 / 带 SGR 颜色 / 光标序列）在模块级共享，与具体引擎解耦。
 
 实现：
@@ -12,14 +13,14 @@ TerminalScreen（screen.py）作为门面，通过 create_backend() 创建后端
 对外保持稳定 API，业务层不感知具体引擎。
 """
 
-import logging
+import functools
 import os
 import sys
-from collections import namedtuple
 
 from ..config.common import DEFAULT_COLS, DEFAULT_ROWS
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-session")
+_logger = get_logger("pty-session")
 
 # 加载 vendored pywezterm（bin/pywezterm，BUILD.ps1 编译产出），先注入 sys.path
 _here = os.path.dirname(os.path.abspath(__file__))
@@ -39,12 +40,17 @@ except ImportError:
 # scrollback 历史行上限（参考 tmux default history-limit 2000，这里给更大值）
 _DEFAULT_HLIMIT = 10000
 
-# 单元格：列索引, 字符, 前景, 背景, 粗体, 斜体, 下划线, 反显, 删除线, 宽度
-# 与 wezterm-py snapshot() 返回的元组字段顺序一致
-ScreenCell = namedtuple(
-    "ScreenCell",
-    "col data fg bg bold italic underline reverse strikethrough width",
-)
+# 单元格元组字段下标（与 wezterm-py snapshot() 返回的 CellTuple 一致）：
+# (col, data, fg, bg, bold, italic, underline, reverse, strikethrough, width)
+_CELL_COL = 0
+_CELL_DATA = 1
+_CELL_FG = 2
+_CELL_BG = 3
+_CELL_BOLD = 4
+_CELL_ITALIC = 5
+_CELL_UNDERLINE = 6
+_CELL_REVERSE = 7
+_CELL_STRIKE = 8
 
 
 # ── SGR 颜色序列化（与 grid.py / 旧 screen.py 逻辑一致，扩展 wezterm "pN" 调色板） ──
@@ -72,10 +78,12 @@ _ANSI_FG_BRIGHT = {
 }
 
 
+@functools.lru_cache(maxsize=1024)
 def color_to_sgr(color, is_fg: bool) -> str:
     """颜色值转 SGR 序列
 
     支持 wezterm 调色板索引、RGB hex（#rrggbb）、256 色索引（int）。
+    常见调色板/样式组合结果缓存，避免逐 cell 重复拼接。
     """
     if color == "default":
         return ""
@@ -109,23 +117,31 @@ def color_to_sgr(color, is_fg: bool) -> str:
     return ""
 
 
-def cell_to_sgr(cell: ScreenCell) -> str:
-    """将单元格属性转为 SGR 序列"""
+def cell_to_sgr(cell) -> str:
+    """将单元格属性转为 SGR 序列（样式组合结果缓存）"""
+    return _style_to_sgr((cell[_CELL_BOLD], cell[_CELL_ITALIC], cell[_CELL_UNDERLINE],
+                          cell[_CELL_REVERSE], cell[_CELL_STRIKE], cell[_CELL_FG], cell[_CELL_BG]))
+
+
+@functools.lru_cache(maxsize=1024)
+def _style_to_sgr(style) -> str:
+    """按样式元组缓存 SGR 序列（终端内样式组合远少于 cell 数）"""
+    bold, italic, underline, reverse, strikethrough, fg, bg = style
     attrs = []
-    if cell.bold:
+    if bold:
         attrs.append("1")
-    if cell.italic:
+    if italic:
         attrs.append("3")
-    if cell.underline:
+    if underline:
         attrs.append("4")
-    if cell.reverse:
+    if reverse:
         attrs.append("7")
-    if cell.strikethrough:
+    if strikethrough:
         attrs.append("9")
-    fg_sgr = color_to_sgr(cell.fg, is_fg=True)
+    fg_sgr = color_to_sgr(fg, is_fg=True)
     if fg_sgr:
         attrs.append(fg_sgr)
-    bg_sgr = color_to_sgr(cell.bg, is_fg=False)
+    bg_sgr = color_to_sgr(bg, is_fg=False)
     if bg_sgr:
         attrs.append(bg_sgr)
     if not attrs:
@@ -133,17 +149,17 @@ def cell_to_sgr(cell: ScreenCell) -> str:
     return f"\x1b[{';'.join(attrs)}m"
 
 
-def is_default_cell(cell: ScreenCell) -> bool:
+def is_default_cell(cell) -> bool:
     """是否默认空白单元格（无字符、无样式）"""
     return (
-        (not cell.data or cell.data == " ")
-        and (not cell.fg or cell.fg == "default")
-        and (not cell.bg or cell.bg == "default")
-        and not cell.bold
-        and not cell.italic
-        and not cell.underline
-        and not cell.reverse
-        and not cell.strikethrough
+        (not cell[_CELL_DATA] or cell[_CELL_DATA] == " ")
+        and (not cell[_CELL_FG] or cell[_CELL_FG] == "default")
+        and (not cell[_CELL_BG] or cell[_CELL_BG] == "default")
+        and not cell[_CELL_BOLD]
+        and not cell[_CELL_ITALIC]
+        and not cell[_CELL_UNDERLINE]
+        and not cell[_CELL_REVERSE]
+        and not cell[_CELL_STRIKE]
     )
 
 
@@ -161,10 +177,13 @@ def build_cursor_seq(x, y, visible) -> str:
 
 
 def render_plain(cells_rows) -> str:
-    """可见屏幕纯文本：每行去尾空白，去掉末尾空行，行间 \\n"""
+    """可见屏幕纯文本：每行去尾空白，去掉末尾空行，行间 \\n
+
+    直接消费引擎原生单元格元组（下标访问），避免中间对象。
+    """
     lines = []
     for cells in cells_rows:
-        lines.append("".join(c.data for c in cells).rstrip())
+        lines.append("".join(c[_CELL_DATA] for c in cells).rstrip())
     while lines and not lines[-1]:
         lines.pop()
     return "\n".join(lines)
@@ -183,7 +202,7 @@ def render_ansi(cells_rows, include_cursor: bool = False, cursor=None) -> str:
         last_sgr = ""
         has_content = False
         for cell in cells:
-            if not cell.data:
+            if not cell[_CELL_DATA]:
                 continue
             if not has_content and not is_default_cell(cell):
                 has_content = True
@@ -191,7 +210,7 @@ def render_ansi(cells_rows, include_cursor: bool = False, cursor=None) -> str:
             if sgr != last_sgr:
                 line_parts.append(sgr)
                 last_sgr = sgr
-            line_parts.append(cell.data)
+            line_parts.append(cell[_CELL_DATA])
         if last_sgr:
             line_parts.append("\x1b[0m")
         rendered = "".join(line_parts)
@@ -210,22 +229,28 @@ def render_ansi(cells_rows, include_cursor: bool = False, cursor=None) -> str:
     return "".join(parts)
 
 
-def render_scrollback(cells_rows) -> str:
-    """scrollback 历史区 ANSI 渲染：每行 ANSI 内容 + \\r\\n（供前端推入 scrollback）"""
+def render_scrollback(cells_rows, keep_ansi: bool = False) -> str:
+    """scrollback 历史区渲染
+
+    keep_ansi=True: 每行 ANSI 内容 + \\r\\n（供前端推入 scrollback）。
+    keep_ansi=False: 纯文本，每行去尾空白、剔除末尾空行、行间 \\n（与 render_plain 一致）。
+    """
     if not cells_rows:
         return ""
+    if not keep_ansi:
+        return render_plain(cells_rows)
     parts = []
     for cells in cells_rows:
         line_parts = []
         last_sgr = ""
         for cell in cells:
-            if not cell.data:
+            if not cell[_CELL_DATA]:
                 continue
             sgr = cell_to_sgr(cell)
             if sgr != last_sgr:
                 line_parts.append(sgr)
                 last_sgr = sgr
-            line_parts.append(cell.data)
+            line_parts.append(cell[_CELL_DATA])
         if last_sgr:
             line_parts.append("\x1b[0m")
         parts.append("".join(line_parts))
@@ -237,7 +262,7 @@ class ScreenBackend:
     """终端模拟后端接口（wezterm 实现遵循的公共契约）
 
     后端只负责维护终端模型；可见区/scrollback 统一以
-    List[List[ScreenCell]] 稀疏网格暴露，渲染由模块级函数完成。
+    List[List[cell-tuple]] 稀疏网格暴露，渲染由模块级函数完成。
     """
 
     name = "base"
@@ -285,7 +310,7 @@ class ScreenBackend:
 
     # —— 数据查询 ——
     def cells(self):  # pragma: no cover
-        """可见区稀疏网格：List[List[ScreenCell]]"""
+        """可见区稀疏网格：List[List[cell-tuple]]（引擎原生元组，勿构造中间对象）"""
         raise NotImplementedError
 
     def cursor(self):  # pragma: no cover
@@ -365,14 +390,11 @@ class WeztermBackend(ScreenBackend):
             return
         self._term.reset()
 
-    @staticmethod
-    def _cells_of(grid):
-        return [[ScreenCell(*t) for t in row] for row in grid]
-
     def cells(self):
         if self._term is None:
             return []
-        return self._cells_of(self._term.snapshot())
+        # 直接返回引擎原生网格元组，渲染层按下标消费（避免逐 cell 转换）
+        return self._term.snapshot()
 
     def cursor(self):
         if self._term is None:
@@ -381,10 +403,10 @@ class WeztermBackend(ScreenBackend):
         y, x, visible = self._term.cursor()
         return (x, y, visible)
 
-    def capture_scrollback(self) -> str:
+    def capture_scrollback(self, keep_ansi: bool = False) -> str:
         if self._term is None:
             return ""
-        return render_scrollback(self._cells_of(self._term.scrollback()))
+        return render_scrollback(self._term.scrollback(), keep_ansi=keep_ansi)
 
     def clear_scrollback(self) -> None:
         if self._term is None:

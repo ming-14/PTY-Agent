@@ -5,15 +5,15 @@
 客户端断开连接时立即返回，不浪费线程资源。
 """
 
-import logging
 import select
 import time
 
 from ...protocol.message import Message
 from ...protocol.response import Response
 from .base import DaemonHandler, HandlerContext
+from ...logging import get_logger
 
-_logger = logging.getLogger("pty-daemon")
+_logger = get_logger("pty-daemon")
 
 
 class WaitHandler(DaemonHandler):

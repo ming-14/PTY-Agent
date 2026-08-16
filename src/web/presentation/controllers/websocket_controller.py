@@ -1,13 +1,12 @@
 """WebSocket 连接控制器。"""
 
+from __future__ import annotations
+
 import asyncio
 import json
-import logging
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
-from ....fastscreen.ports import FastScreenServicePort
 from ....protocol.response import Response
-from ....vnc.ports import VncServicePort
 from ...application.adaptive_lock import AdaptiveLockService
 from ...application.dispatcher import MessageDispatcher
 from ...application.handlers import HandlerContext
@@ -24,8 +23,16 @@ from ...application.ports import (
 )
 from ...application.services import MessageEncoderService, SubscriptionService
 from ...infrastructure.web.fastapi_transport import WSMsgType
+from ....logging import get_logger, bind, unbind
 
-_logger = logging.getLogger("pty-web")
+if TYPE_CHECKING:
+    from ....screenshare.ports import ScreenshareServicePort
+    from ....vnc.ports import VncServicePort
+
+_logger = get_logger("pty-web")
+
+# WS 出站批量合并上限：单帧最多合并消息数（限制单帧大小与前端解析开销）
+_WS_BATCH_MAX = 64
 
 
 class WebSocketController:
@@ -48,7 +55,7 @@ class WebSocketController:
         publisher: EventPublisher,
         adaptive_lock: Optional[AdaptiveLockService] = None,
         vnc_service: Optional[VncServicePort] = None,
-        fastscreen_service: Optional[FastScreenServicePort] = None,
+        screenshare_service: Optional[ScreenshareServicePort] = None,
         cursor_locator_service: Optional[CursorLocatorServicePort] = None,
         dispatcher: Optional[MessageDispatcher] = None,
         connections: Optional[dict] = None,
@@ -61,7 +68,7 @@ class WebSocketController:
         self._publisher = publisher
         self._adaptive_lock = adaptive_lock
         self._vnc_service = vnc_service
-        self._fastscreen_service = fastscreen_service
+        self._screenshare_service = screenshare_service
         self._cursor_locator_service = cursor_locator_service
         self._dispatcher = dispatcher or MessageDispatcher()
         # 引用 server.py 的 connections 字典，_cleanup 据此检查同 client_uid
@@ -109,7 +116,7 @@ class WebSocketController:
             enqueue=_enqueue,
             adaptive_lock=self._adaptive_lock,
             vnc_service=self._vnc_service,
-            fastscreen_service=self._fastscreen_service,
+            screenshare_service=self._screenshare_service,
             cursor_locator_service=self._cursor_locator_service,
         )
 
@@ -117,6 +124,7 @@ class WebSocketController:
             self._consume(transport, handler_ctx, _enqueue)
         )
         producer = asyncio.ensure_future(self._produce(transport, queue))
+        _ctx_token = bind(request_id=sid)
         try:
             done, pending = await asyncio.wait(
                 [consumer, producer], return_when=asyncio.FIRST_COMPLETED
@@ -130,6 +138,7 @@ class WebSocketController:
         except Exception:
             _logger.exception("ws handle error conn_id=0x%x", sid)
         finally:
+            unbind(_ctx_token)
             _logger.info(
                 "ws handle cleanup conn_id=0x%x subscribed=%s",
                 sid,
@@ -223,9 +232,21 @@ class WebSocketController:
         try:
             while True:
                 msg = await queue.get()
+                batch = [msg]
+                # 批量出队：非阻塞收集积压消息，合并为单帧发送
+                # （高频 output 推送时避免每块一个 WS 帧 + 一次 send_json）
                 try:
-                    await transport.send(msg)
-                    sent_count += 1
+                    while len(batch) < _WS_BATCH_MAX:
+                        batch.append(queue.get_nowait())
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    if len(batch) == 1:
+                        await transport.send(batch[0])
+                    else:
+                        await transport.send_batch(batch)
+                    sent_count += len(batch)
+                    msg = batch[0]
                     msg_type = msg.get("type", "")
                     if msg_type == "output":
                         _logger.debug(

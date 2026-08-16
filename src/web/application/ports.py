@@ -80,6 +80,14 @@ class OutboundMessageChannel(ABC):
     async def send(self, message: dict) -> None:
         """发送 JSON 消息。"""
 
+    async def send_batch(self, messages: list) -> None:
+        """批量发送多条消息（合并为单帧，减少 WS 帧开销）
+
+        默认逐条转发；实现可覆盖为合并发送（如 JSON 数组文本帧）。
+        """
+        for message in messages:
+            await self.send(message)
+
     @abstractmethod
     async def close(self, code: int = 1000) -> None:
         """关闭通道。"""

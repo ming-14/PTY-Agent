@@ -5,9 +5,9 @@ _draw_block_element 用 GDI 原语 (FillRect / LineTo / Arc) 按指令绘制，
 对齐 Windows Terminal 的矢量绘制效果，避免依赖字体中的 box drawing 字形。
 """
 
-import logging
+from ...logging import get_logger
 
-_logger = logging.getLogger("pty-client")
+_logger = get_logger("pty-client")
 
 _SHAPE_LIGHT = 0
 _SHAPE_HEAVY = 1
@@ -17,6 +17,10 @@ _SHAPE_ROUND_RECT = 4
 _SHAPE_SHADE = 5
 
 _BOX_DRAWING_TABLE = None
+
+# GDI 函数绑定缓存：首次绘制时绑定一次（argtypes/restype），
+# 每格调用不再重复声明 ~10 个 ctypes 原型
+_GDI_FUNCS = None
 
 
 def _get_box_drawing_table():
@@ -468,11 +472,21 @@ def _get_box_drawing_table():
     return _BOX_DRAWING_TABLE
 
 
-def _draw_block_element(
-    gdi32, user32, hdc, x: int, y: int, w: int, h: int, cp: int, fg: int, bg: int
-):
+def _get_gdi_funcs() -> dict:
+    """获取缓存的 GDI 函数绑定（首次调用时声明 argtypes/restype）
+
+    函数名以 _fn 后缀区分绑定对象；仅 Windows 首次实际绘制时执行绑定，
+    模块可被跨平台安全导入。
+    """
+    global _GDI_FUNCS
+    if _GDI_FUNCS is not None:
+        return _GDI_FUNCS
+
     import ctypes
     import ctypes.wintypes as W
+
+    gdi32 = ctypes.windll.gdi32
+    user32 = ctypes.windll.user32
 
     FillRect = user32.FillRect
     FillRect.restype = ctypes.c_int
@@ -493,6 +507,10 @@ def _draw_block_element(
     SelectObject_fn = gdi32.SelectObject
     SelectObject_fn.restype = W.HGDIOBJ
     SelectObject_fn.argtypes = [W.HDC, W.HGDIOBJ]
+
+    GetStockObject_fn = gdi32.GetStockObject
+    GetStockObject_fn.restype = W.HGDIOBJ
+    GetStockObject_fn.argtypes = [ctypes.c_int]
 
     MoveToEx = gdi32.MoveToEx
     MoveToEx.restype = W.BOOL
@@ -516,7 +534,64 @@ def _draw_block_element(
         ctypes.c_int,
     ]
 
-    PS_SOLID = 0
+    SetTextColor = gdi32.SetTextColor
+    SetTextColor.restype = W.COLORREF
+    SetTextColor.argtypes = [W.HDC, W.COLORREF]
+
+    SetBkColor = gdi32.SetBkColor
+    SetBkColor.restype = W.COLORREF
+    SetBkColor.argtypes = [W.HDC, W.COLORREF]
+
+    ExtTextOutW = gdi32.ExtTextOutW
+    ExtTextOutW.restype = W.BOOL
+    ExtTextOutW.argtypes = [
+        W.HDC,
+        ctypes.c_int,
+        ctypes.c_int,
+        W.UINT,
+        ctypes.c_void_p,
+        ctypes.c_wchar_p,
+        W.UINT,
+        ctypes.c_void_p,
+    ]
+
+    _GDI_FUNCS = {
+        "FillRect": FillRect,
+        "CreateSolidBrush": CreateSolidBrush,
+        "DeleteObject": DeleteObject,
+        "CreatePen": CreatePen,
+        "SelectObject": SelectObject_fn,
+        "GetStockObject": GetStockObject_fn,
+        "MoveToEx": MoveToEx,
+        "LineTo": LineTo,
+        "Arc": Arc,
+        "SetTextColor": SetTextColor,
+        "SetBkColor": SetBkColor,
+        "ExtTextOutW": ExtTextOutW,
+        "_c_long_4": ctypes.c_long * 4,
+        "_NULL_BRUSH": 5,  # NULL_BRUSH 库存画刷
+        "_PS_SOLID": 0,
+        "_OPAQUE": 2,
+    }
+    return _GDI_FUNCS
+
+
+def _draw_block_element(
+    gdi32, user32, hdc, x: int, y: int, w: int, h: int, cp: int, fg: int, bg: int
+):
+    f = _get_gdi_funcs()
+    FillRect = f["FillRect"]
+    CreateSolidBrush = f["CreateSolidBrush"]
+    DeleteObject = f["DeleteObject"]
+    CreatePen = f["CreatePen"]
+    SelectObject_fn = f["SelectObject"]
+    GetStockObject_fn = f["GetStockObject"]
+    MoveToEx = f["MoveToEx"]
+    LineTo = f["LineTo"]
+    Arc = f["Arc"]
+    c_long_4 = f["_c_long_4"]
+    NULL_BRUSH = f["_NULL_BRUSH"]
+    PS_SOLID = f["_PS_SOLID"]
 
     table = _get_box_drawing_table()
     instructions = table.get(cp)
@@ -526,7 +601,7 @@ def _draw_block_element(
 
     if bg != 0x0C0C0C:
         hbr_bg = CreateSolidBrush(bg)
-        rect_bg = (ctypes.c_long * 4)(x, y, x + w, y + h)
+        rect_bg = c_long_4(x, y, x + w, y + h)
         FillRect(hdc, rect_bg, hbr_bg)
         DeleteObject(hbr_bg)
 
@@ -553,7 +628,7 @@ def _draw_block_element(
 
         if shape == _SHAPE_FILL:
             hbr = CreateSolidBrush(fg)
-            rect = (ctypes.c_long * 4)(px1, py1, px2, py2)
+            rect = c_long_4(px1, py1, px2, py2)
             FillRect(hdc, rect, hbr)
             DeleteObject(hbr)
         elif shape in (_SHAPE_LIGHT, _SHAPE_HEAVY):
@@ -563,22 +638,19 @@ def _draw_block_element(
             if is_horizontal:
                 ry = py1 - line_lw // 2
                 hbr = CreateSolidBrush(fg)
-                rect = (ctypes.c_long * 4)(px1, ry, px2, ry + line_lw)
+                rect = c_long_4(px1, ry, px2, ry + line_lw)
                 FillRect(hdc, rect, hbr)
                 DeleteObject(hbr)
             elif is_vertical:
                 rx = px1 - line_lw // 2
                 hbr = CreateSolidBrush(fg)
-                rect = (ctypes.c_long * 4)(rx, py1, rx + line_lw, py2)
+                rect = c_long_4(rx, py1, rx + line_lw, py2)
                 FillRect(hdc, rect, hbr)
                 DeleteObject(hbr)
             else:
                 hpen = CreatePen(PS_SOLID, line_lw, fg)
                 old_pen = SelectObject_fn(hdc, hpen)
-                GetStockObject_fn = gdi32.GetStockObject
-                GetStockObject_fn.restype = W.HGDIOBJ
-                GetStockObject_fn.argtypes = [ctypes.c_int]
-                hbr_null = GetStockObject_fn(5)
+                hbr_null = GetStockObject_fn(NULL_BRUSH)
                 old_brush = SelectObject_fn(hdc, hbr_null)
                 MoveToEx(hdc, px1, py1, None)
                 LineTo(hdc, px2, py2)
@@ -588,13 +660,13 @@ def _draw_block_element(
         elif shape == _SHAPE_EMPTY_RECT:
             line_lw = light_lw
             hbr = CreateSolidBrush(fg)
-            top = (ctypes.c_long * 4)(px1, py1, px2, py1 + line_lw)
+            top = c_long_4(px1, py1, px2, py1 + line_lw)
             FillRect(hdc, top, hbr)
-            bottom = (ctypes.c_long * 4)(px1, py2 - line_lw, px2, py2)
+            bottom = c_long_4(px1, py2 - line_lw, px2, py2)
             FillRect(hdc, bottom, hbr)
-            left = (ctypes.c_long * 4)(px1, py1, px1 + line_lw, py2)
+            left = c_long_4(px1, py1, px1 + line_lw, py2)
             FillRect(hdc, left, hbr)
-            right = (ctypes.c_long * 4)(px2 - line_lw, py1, px2, py2)
+            right = c_long_4(px2 - line_lw, py1, px2, py2)
             FillRect(hdc, right, hbr)
             DeleteObject(hbr)
         elif shape == _SHAPE_ROUND_RECT:
@@ -602,10 +674,7 @@ def _draw_block_element(
             cr = min(light_lw * 5, min(w, h) // 2)
             hpen = CreatePen(PS_SOLID, line_lw, fg)
             old_pen = SelectObject_fn(hdc, hpen)
-            GetStockObject_fn = gdi32.GetStockObject
-            GetStockObject_fn.restype = W.HGDIOBJ
-            GetStockObject_fn.argtypes = [ctypes.c_int]
-            hbr_null = GetStockObject_fn(5)
+            hbr_null = GetStockObject_fn(NULL_BRUSH)
             old_brush = SelectObject_fn(hdc, hbr_null)
             cx = (px1 + px2) // 2
             cy = (py1 + py2) // 2
@@ -642,20 +711,11 @@ def _draw_block_element(
 
 
 def _draw_shade_pattern(gdi32, user32, hdc, x1, y1, x2, y2, fg, bg, density):
-    import ctypes
-    import ctypes.wintypes as W
-
-    FillRect = user32.FillRect
-    FillRect.restype = ctypes.c_int
-    FillRect.argtypes = [W.HDC, ctypes.c_void_p, W.HBRUSH]
-
-    CreateSolidBrush = gdi32.CreateSolidBrush
-    CreateSolidBrush.restype = W.HBRUSH
-    CreateSolidBrush.argtypes = [W.COLORREF]
-
-    DeleteObject = gdi32.DeleteObject
-    DeleteObject.restype = W.BOOL
-    DeleteObject.argtypes = [W.HGDIOBJ]
+    f = _get_gdi_funcs()
+    FillRect = f["FillRect"]
+    CreateSolidBrush = f["CreateSolidBrush"]
+    DeleteObject = f["DeleteObject"]
+    c_long_4 = f["_c_long_4"]
 
     hbr = CreateSolidBrush(fg)
     cw = x2 - x1
@@ -665,7 +725,7 @@ def _draw_shade_pattern(gdi32, user32, hdc, x1, y1, x2, y2, fg, bg, density):
         return
 
     if density >= 1.0:
-        rect = (ctypes.c_long * 4)(x1, y1, x2, y2)
+        rect = c_long_4(x1, y1, x2, y2)
         FillRect(hdc, rect, hbr)
         DeleteObject(hbr)
         return
@@ -680,7 +740,7 @@ def _draw_shade_pattern(gdi32, user32, hdc, x1, y1, x2, y2, fg, bg, density):
                 if (row + col) % 4 == 0:
                     dx = x1 + col * dot_size
                     dy = y1 + row * dot_size
-                    rect = (ctypes.c_long * 4)(
+                    rect = c_long_4(
                         dx, dy, min(dx + dot_size, x2), min(dy + dot_size, y2)
                     )
                     FillRect(hdc, rect, hbr)
@@ -690,12 +750,12 @@ def _draw_shade_pattern(gdi32, user32, hdc, x1, y1, x2, y2, fg, bg, density):
                 if (row + col) % 2 == 0:
                     dx = x1 + col * dot_size
                     dy = y1 + row * dot_size
-                    rect = (ctypes.c_long * 4)(
+                    rect = c_long_4(
                         dx, dy, min(dx + dot_size, x2), min(dy + dot_size, y2)
                     )
                     FillRect(hdc, rect, hbr)
     else:
-        rect = (ctypes.c_long * 4)(x1, y1, x2, y2)
+        rect = c_long_4(x1, y1, x2, y2)
         FillRect(hdc, rect, hbr)
         bg_brush = CreateSolidBrush(bg if bg != 0x0C0C0C else 0x0C0C0C)
         for row in range(rows):
@@ -703,7 +763,7 @@ def _draw_shade_pattern(gdi32, user32, hdc, x1, y1, x2, y2, fg, bg, density):
                 if (row + col) % 4 == 0:
                     dx = x1 + col * dot_size
                     dy = y1 + row * dot_size
-                    rect = (ctypes.c_long * 4)(
+                    rect = c_long_4(
                         dx, dy, min(dx + dot_size, x2), min(dy + dot_size, y2)
                     )
                     FillRect(hdc, rect, bg_brush)
@@ -713,31 +773,13 @@ def _draw_shade_pattern(gdi32, user32, hdc, x1, y1, x2, y2, fg, bg, density):
 
 
 def _ext_text_out_fallback(gdi32, hdc, x, y, w, h, cp, fg, bg):
-    import ctypes
-    import ctypes.wintypes as W
-    import struct
-
-    SetTextColor = gdi32.SetTextColor
-    SetTextColor.restype = W.COLORREF
-    SetTextColor.argtypes = [W.HDC, W.COLORREF]
-    SetBkColor = gdi32.SetBkColor
-    SetBkColor.restype = W.COLORREF
-    SetBkColor.argtypes = [W.HDC, W.COLORREF]
-    ExtTextOutW = gdi32.ExtTextOutW
-    ExtTextOutW.restype = W.BOOL
-    ExtTextOutW.argtypes = [
-        W.HDC,
-        ctypes.c_int,
-        ctypes.c_int,
-        W.UINT,
-        ctypes.c_void_p,
-        ctypes.c_wchar_p,
-        W.UINT,
-        ctypes.c_void_p,
-    ]
-    OPAQUE = 2
+    f = _get_gdi_funcs()
+    SetTextColor = f["SetTextColor"]
+    SetBkColor = f["SetBkColor"]
+    ExtTextOutW = f["ExtTextOutW"]
+    c_long_4 = f["_c_long_4"]
+    OPAQUE = f["_OPAQUE"]
     SetTextColor(hdc, fg)
     SetBkColor(hdc, bg)
-    rect = struct.pack("llll", x, y, x + w, y + h)
-    rect_buf = ctypes.create_string_buffer(rect)
-    ExtTextOutW(hdc, x, y, OPAQUE, rect_buf, chr(cp), 1, None)
+    rect = c_long_4(x, y, x + w, y + h)
+    ExtTextOutW(hdc, x, y, OPAQUE, rect, chr(cp), 1, None)

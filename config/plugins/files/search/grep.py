@@ -154,6 +154,7 @@ def grep_files(pattern: str, path: str, include: Optional[str] = None,
     engine = _run_rg_engine(pattern, path, include, literal_text)
     if engine is None:
         matches = _run_fallback_engine(pattern, path, include, literal_text)
+        _sort_by_mtime(matches)
         result = _limit_matches(matches)
         result.engine = "fallback"
         if result.truncated:

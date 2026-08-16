@@ -38,14 +38,17 @@ import ctypes
 import json
 import logging
 import os
+import platform
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import urllib.request
 import uuid
 import zipfile
 from pathlib import Path
+from typing import Optional
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = SCRIPT_DIR / "pty-agent"
@@ -55,6 +58,49 @@ logger = logging.getLogger("build")
 
 # 运行期配置（镜像等），main 中填充
 CONFIG = {"mirror": "", "api_mirror": "https://api.github.com"}
+
+IS_WINDOWS = sys.platform == "win32"
+
+
+def _find_cargo() -> Optional[Path]:
+    """定位 cargo：优先 PATH，回退 rustup 默认安装位置（~/.cargo/bin）。"""
+    cargo = shutil.which("cargo")
+    if cargo:
+        return Path(cargo)
+    home = Path(os.environ.get("USERPROFILE") or Path.home())
+    exe = "cargo.exe" if IS_WINDOWS else "cargo"
+    cand = home / ".cargo" / "bin" / exe
+    return cand if cand.is_file() else None
+
+
+def _ensure_maturin() -> bool:
+    """检查 python -m maturin 可用；缺失时自动 pip 安装。"""
+    try:
+        rc = run_cmd([sys.executable, "-m", "maturin", "--version"])
+        if rc == 0:
+            return True
+    except Exception:
+        pass
+    logger.info("[wezterm-py] maturin 未安装，正在安装...")
+    try:
+        rc = run_cmd([sys.executable, "-m", "pip", "install", "maturin>=1.0,<2.0"])
+        return rc == 0
+    except Exception:
+        return False
+
+
+def _tool_triple(tool: str) -> str:
+    """按当前平台与 CPU 架构返回发布资产的 target triple。
+
+    Args:
+        tool: 资产名（aichat / rg），Windows 与 Unix 的命名规则一致。
+    """
+    machine = platform.machine().lower()
+    is_arm64 = machine in ("aarch64", "arm64")
+    arch = "aarch64" if is_arm64 else "x86_64"
+    if IS_WINDOWS:
+        return f"{arch}-pc-windows-msvc"
+    return f"{arch}-unknown-linux-musl"
 
 
 def _setup_logging():
@@ -170,15 +216,24 @@ def step_build_rime():
 
 
 def step_copy_base():
-    """复制基础包（src/bin/app.py/SKILL.md）到发布目录。"""
+    """复制基础包（src/bin/app.py/SKILL.md + 整体 config/ 配置）到发布目录。"""
     for name in ("src", "bin"):
         shutil.copytree(str(SCRIPT_DIR / name), str(OUTPUT_DIR / name), dirs_exist_ok=True)
+    # 整体复制 config/：运行期必需 common/shared/transfer.toml 与 client/、daemon/
+    # 子目录，插件也随 config/plugins 携带；apikey.env、真实 vnc.toml、ai 插件的
+    # config.yaml 等敏感文件由收尾步骤删除，不入发布包
+    shutil.copytree(str(SCRIPT_DIR / "config"), str(OUTPUT_DIR / "config"), dirs_exist_ok=True)
     for name in ("app.py", "SKILL.md"):
         shutil.copy2(str(SCRIPT_DIR / name), str(OUTPUT_DIR / name))
 
 
 def _has_hidden_or_system_attr(path):
-    """Windows 文件属性检测（ctypes，免额外依赖）；隐藏/系统属性目录不清理。"""
+    """Windows 文件属性检测（ctypes，免额外依赖）；隐藏/系统属性目录不清理。
+
+    Unix 无此语义，恒返回 False（点目录由调用方的 relative.parts 过滤）。
+    """
+    if not IS_WINDOWS:
+        return False
     attr = ctypes.windll.kernel32.GetFileAttributesW(str(path))
     if attr == 0xFFFFFFFF:  # INVALID_FILE_ATTRIBUTES
         return False
@@ -285,36 +340,89 @@ def step_build_win_sandbox():
     logger.info("[win-sandbox] 编译完成: %s", pyd.name)
 
 
+def _warn_wezterm_py_missing(detail: str) -> None:
+    """wezterm-py 缺失告警：PTY 后端为必备基本包，发布目录必须携带其二进制。"""
+    logger.warning(
+        "[wezterm-py] %s；wezterm-py 为必备基本包（PTY 后端），"
+        "发布目录必须携带 bin/pywezterm 二进制", detail)
+
+
+def _files_in_use(directory):
+    """检测目录中当前被进程占用（Windows 上不可覆盖）的文件名列表。
+
+    守护进程加载 pywezterm.pyd 时连带锁住 conpty.dll，PTY 会话宿主持有
+    OpenConsole.exe；以独占写方式打开探测，PermissionError 即被占用。
+    """
+    locked = []
+    if not directory.is_dir():
+        return locked
+    for f in directory.iterdir():
+        if f.is_file():
+            try:
+                with open(str(f), "r+b"):
+                    pass
+            except OSError:
+                locked.append(f.name)
+    return locked
+
+
 def step_build_wezterm_py():
-    """编译 wezterm-py：maturin 构建 pywezterm wheel，解包复制 vendored 包。"""
+    """编译 wezterm-py：maturin 构建 pywezterm wheel，解包复制 vendored 包。
+
+    Windows：vcvars64 环境经临时 .cmd 注入后执行 maturin（MSVC 链接）；
+    Unix：cargo/maturin 直接可用，在原环境执行。
+    """
     wz_source = SCRIPT_DIR / "wezterm-py"
-    cargo = Path(os.environ["USERPROFILE"]) / ".cargo" / "bin" / "cargo.exe"
-    if not cargo.is_file():
-        logger.warning("[wezterm-py] cargo 未找到，跳过编译")
+    pkg_dst = SCRIPT_DIR / "bin" / "pywezterm"
+    cargo_ok = _find_cargo() is not None
+    if not cargo_ok:
+        _warn_wezterm_py_missing("cargo 未找到，跳过编译")
         return
-    vcvars = find_vcvars()
-    if not vcvars:
-        logger.warning("[wezterm-py] 未找到 vcvars64.bat，跳过编译")
-        return
-    # maturin 需要 vcvars 环境注入 + cargo PATH，经临时 .cmd 包装；
-    # 在 wezterm-py 根目录执行（pyproject.toml 的 [tool.maturin] 指定 pywezterm crate）
-    cmd_file = write_cmd_wrapper("wezterm_py", [
-        'call "{}" >nul 2>&1'.format(vcvars),
-        'set "PATH={};%PATH%"'.format(cargo.parent),
-        'cd /d "{}"'.format(wz_source),
-        'python -m maturin build --release --out target\\wheels',
-    ])
-    try:
-        rc = run_cmd(["cmd", "/c", str(cmd_file)])
-    finally:
-        cmd_file.unlink(missing_ok=True)
+    if IS_WINDOWS:
+        # Windows 上 pyd/dll/exe 被运行中进程占用时不可覆盖：守护进程加载
+        # pywezterm.pyd（连带 conpty.dll），PTY 会话宿主持有 OpenConsole.exe。
+        # 编译前先探测占用，避免编译完成后复制失败（编译耗时且产物无法落地）。
+        locked = _files_in_use(pkg_dst)
+        if locked:
+            logger.warning(
+                "[wezterm-py] 以下文件被运行中的进程占用（PTY-Agent 守护进程/PTY 会话）: %s",
+                ", ".join(locked),
+            )
+            logger.warning("[wezterm-py] 请先停止守护进程与所有 PTY 会话（stop.ps1 / stop.sh）后重新构建")
+            return
+        vcvars = find_vcvars()
+        if not vcvars:
+            _warn_wezterm_py_missing("未找到 vcvars64.bat，跳过编译")
+            return
+        # maturin 需要 vcvars 环境注入 + cargo PATH，经临时 .cmd 包装；
+        # 在 wezterm-py 根目录执行（pyproject.toml 的 [tool.maturin] 指定 pywezterm crate）
+        cmd_file = write_cmd_wrapper("wezterm_py", [
+            'call "{}" >nul 2>&1'.format(vcvars),
+            'set "PATH={};%PATH%"'.format(_find_cargo().parent),
+            'cd /d "{}"'.format(wz_source),
+            'python -m maturin build --release --out target\\wheels',
+        ])
+        try:
+            rc = run_cmd(["cmd", "/c", str(cmd_file)])
+        finally:
+            cmd_file.unlink(missing_ok=True)
+    else:
+        # Unix：maturin 缺失时自动安装；cargo 从 PATH/rustup 定位
+        if not _ensure_maturin():
+            _warn_wezterm_py_missing("maturin 安装失败，跳过编译")
+            return
+        rc = run_cmd(
+            [sys.executable, "-m", "maturin", "build", "--release",
+             "--out", "target/wheels"],
+            cwd=str(wz_source),
+        )
     if rc != 0:
-        logger.warning("[wezterm-py] 编译失败（exit=%s）", rc)
+        _warn_wezterm_py_missing("编译失败（exit=%s）" % rc)
         return
     wheels_dir = wz_source / "target" / "wheels"
     whl = max((p for p in wheels_dir.glob("*.whl")), key=lambda p: p.stat().st_mtime, default=None)
     if not whl:
-        logger.warning("[wezterm-py] 未找到编译产物 wheel")
+        _warn_wezterm_py_missing("未找到编译产物 wheel")
         return
     extract_dir = Path(tempfile.gettempdir()) / "wezterm_py_extract_{}".format(uuid.uuid4().hex)
     try:
@@ -322,12 +430,22 @@ def step_build_wezterm_py():
             zf.extractall(str(extract_dir))
         pkg_src = extract_dir / "pywezterm"
         if not pkg_src.is_dir():
-            logger.warning("[wezterm-py] wheel 缺少 pywezterm 包")
+            _warn_wezterm_py_missing("wheel 缺少 pywezterm 包")
             return
         # pywezterm 落入源目录基础包 bin/pywezterm，由复制基础包步骤统一打包
-        pkg_dst = SCRIPT_DIR / "bin" / "pywezterm"
         pkg_dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(str(pkg_src), str(pkg_dst), dirs_exist_ok=True)
+        try:
+            # Unix 发布物不需要 Windows 侧载文件（maturin include 会把
+            # wezterm-py/pywezterm 下的 conpty.dll/OpenConsole.exe 打进 wheel，
+            # 但 Linux 平台 pty.rs 不会加载它们）
+            if not IS_WINDOWS:
+                for f in ("conpty.dll", "OpenConsole.exe"):
+                    (pkg_src / f).unlink(missing_ok=True)
+            shutil.copytree(str(pkg_src), str(pkg_dst), dirs_exist_ok=True)
+        except PermissionError as exc:
+            logger.warning(
+                "[wezterm-py] 复制产物时文件被占用: %s；请停止守护进程后重试", exc)
+            return
         logger.info("[wezterm-py] 编译完成: %s -> bin\\pywezterm", whl.name)
     finally:
         shutil.rmtree(extract_dir, ignore_errors=True)
@@ -336,8 +454,12 @@ def step_build_wezterm_py():
 # ===================== 下载步骤 =====================
 
 def _mirror_url(original):
-    """GitHub 下载链接拼接镜像前缀；未配置镜像时返回原链接。"""
-    return CONFIG["mirror"] + original if CONFIG["mirror"] else original
+    """GitHub 下载链接拼接镜像前缀；非 GitHub 链接（如 uvnc.eu）直连，不套镜像。"""
+    if not CONFIG["mirror"]:
+        return original
+    if original.startswith("https://github.com/"):
+        return CONFIG["mirror"] + original
+    return original
 
 
 def _latest_release_tag(repo):
@@ -349,8 +471,13 @@ def _latest_release_tag(repo):
 
 
 def _download_to_temp(url, label):
-    """下载到临时文件并返回路径；中断时清理半成品。"""
-    dest = Path(tempfile.gettempdir()) / "{}_{}.tmp".format(label, uuid.uuid4().hex[:8])
+    """下载到临时文件并返回路径；中断时清理半成品。
+
+    临时文件保留 URL 扩展名（.zip/.tar.gz），供 _extract_to_temp 分流解压。
+    """
+    ext = ".zip" if url.endswith(".zip") else ".tar.gz"
+    dest = Path(tempfile.gettempdir()) / "{}_{}{}".format(
+        label, uuid.uuid4().hex[:8], ext)
     logger.info("[%s] 下载 %s ...", label, url)
     try:
         urllib.request.urlretrieve(url, str(dest))
@@ -360,12 +487,19 @@ def _download_to_temp(url, label):
     return dest
 
 
-def _extract_to_temp(zip_path, label):
-    """解压 zip 到独立临时目录并返回目录。"""
+def _extract_to_temp(archive_path, label):
+    """解压 zip/tar.gz 到独立临时目录并返回目录。"""
     extract_dir = Path(tempfile.gettempdir()) / "{}_{}".format(label, uuid.uuid4().hex[:8])
     extract_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(str(zip_path)) as zf:
-        zf.extractall(str(extract_dir))
+    suffix = archive_path.suffix.lower()
+    if suffix == ".zip":
+        with zipfile.ZipFile(str(archive_path)) as zf:
+            zf.extractall(str(extract_dir))
+    elif suffix == ".gz":
+        with tarfile.open(str(archive_path), "r:gz") as tf:
+            tf.extractall(str(extract_dir))
+    else:
+        raise ValueError("不支持的压缩格式: %s" % archive_path)
     return extract_dir
 
 
@@ -386,52 +520,65 @@ def _copy_zip_contents(extract_dir, dest_dir):
 
 
 def step_download_aichat():
-    """下载 aichat.exe 到源目录基础包 bin\\aichat\\bin。"""
-    dest_exe = SCRIPT_DIR / "bin" / "aichat" / "bin" / "aichat.exe"
+    """下载 aichat 到 ai 插件目录 config/plugins/ai/bin（自包含）。
+
+    Windows 资产为 zip（aichat.exe），Unix 为 tar.gz（无扩展名可执行文件）；
+    资产名 aichat-{tag}-{triple}.zip / .tar.gz（tag 如 v0.30.0，triple 按平台）。
+    """
+    exe_name = "aichat.exe" if IS_WINDOWS else "aichat"
+    dest_exe = SCRIPT_DIR / "config" / "plugins" / "ai" / "bin" / exe_name
     dest_exe.parent.mkdir(parents=True, exist_ok=True)
     try:
         version = _latest_release_tag("sigoden/aichat")
-        original = "https://github.com/sigoden/aichat/releases/download/{}/" \
-                   "aichat-{}-x86_64-pc-windows-msvc.zip".format(version, version)
-        zip_path = _download_to_temp(_mirror_url(original), label="aichat")
-        extract_dir = _extract_to_temp(zip_path, "aichat")
+        ext = ".zip" if IS_WINDOWS else ".tar.gz"
+        archive_name = "aichat-{}-{}{}".format(
+            version, _tool_triple("aichat"), ext)
+        original = "https://github.com/sigoden/aichat/releases/download/{}/{}".format(
+            version, archive_name)
+        archive_path = _download_to_temp(_mirror_url(original), label="aichat")
+        extract_dir = _extract_to_temp(archive_path, "aichat")
         try:
-            exe = _find_file(extract_dir, "aichat.exe")
+            exe = _find_file(extract_dir, exe_name)
             if not exe:
-                logger.warning("[aichat] 未在压缩包中找到 aichat.exe")
+                logger.warning("[aichat] 未在压缩包中找到 %s", exe_name)
                 return
             shutil.copy2(str(exe), str(dest_exe))
             logger.info("[aichat] 已下载: %s", dest_exe)
         finally:
             shutil.rmtree(extract_dir, ignore_errors=True)
-            zip_path.unlink(missing_ok=True)
+            archive_path.unlink(missing_ok=True)
     except Exception as exc:
         logger.warning("[aichat] 下载失败: %s", exc)
 
 
 def step_download_rg():
-    """下载 ripgrep 到源目录基础包 bin\\rg（按系统架构选 x86_64/aarch64 包）。"""
-    dest_exe = SCRIPT_DIR / "bin" / "rg" / "rg.exe"
+    """下载 ripgrep 到源目录基础包 bin/rg（按平台与 CPU 架构选包）。
+
+    Windows 资产为 zip（rg.exe），Unix 为 tar.gz（rg）；
+    资产名 ripgrep-{tag}-{triple}.zip / .tar.gz（tag 如 15.2.0，triple 按平台）。
+    """
+    exe_name = "rg.exe" if IS_WINDOWS else "rg"
+    dest_exe = SCRIPT_DIR / "bin" / "rg" / exe_name
     dest_exe.parent.mkdir(parents=True, exist_ok=True)
-    is_arm64 = (os.environ.get("PROCESSOR_ARCHITECTURE", "") == "ARM64") or \
-        (os.environ.get("PROCESSOR_ARCHITEW6432", "") == "ARM64")
-    target = "aarch64-pc-windows-msvc" if is_arm64 else "x86_64-pc-windows-msvc"
     try:
         version = _latest_release_tag("BurntSushi/ripgrep")
-        original = "https://github.com/BurntSushi/ripgrep/releases/download/{}/" \
-                   "ripgrep-{}-{}.zip".format(version, version, target)
-        zip_path = _download_to_temp(_mirror_url(original), label="rg")
-        extract_dir = _extract_to_temp(zip_path, "rg")
+        ext = ".zip" if IS_WINDOWS else ".tar.gz"
+        archive_name = "ripgrep-{}-{}{}".format(
+            version, _tool_triple("rg"), ext)
+        original = "https://github.com/BurntSushi/ripgrep/releases/download/{}/{}".format(
+            version, archive_name)
+        archive_path = _download_to_temp(_mirror_url(original), label="rg")
+        extract_dir = _extract_to_temp(archive_path, "rg")
         try:
-            exe = _find_file(extract_dir, "rg.exe")
+            exe = _find_file(extract_dir, exe_name)
             if not exe:
-                logger.warning("[rg] 未在压缩包中找到 rg.exe")
+                logger.warning("[rg] 未在压缩包中找到 %s", exe_name)
                 return
             shutil.copy2(str(exe), str(dest_exe))
             logger.info("[rg] 已下载: %s", dest_exe)
         finally:
             shutil.rmtree(extract_dir, ignore_errors=True)
-            zip_path.unlink(missing_ok=True)
+            archive_path.unlink(missing_ok=True)
     except Exception as exc:
         logger.warning("[rg] 下载失败: %s", exc)
 
@@ -488,9 +635,14 @@ def step_final_cleanup():
             if f.is_file() and f.name.startswith("rime-plugin.esm.js"):
                 f.unlink(missing_ok=True)
         (rime_dir / "rime-plugin.js.map").unlink(missing_ok=True)
-    (OUTPUT_DIR / "bin" / "aichat" / "config" / "config.yaml").unlink(missing_ok=True)
-    for name in ("vnc.toml", "vnc.example.toml"):
-        (OUTPUT_DIR / "src" / "config" / name).unlink(missing_ok=True)
+    # ai 插件的 config.yaml（含真实 api_key）不入发布包，首跑由 config.yaml.example 自愈重建
+    (OUTPUT_DIR / "config" / "plugins" / "ai" / "config" / "config.yaml").unlink(
+        missing_ok=True
+    )
+    # apikey.env 为 aichat 密钥文件（含多种 provider 的 key），不入发布包
+    (OUTPUT_DIR / "config" / "apikey.env").unlink(missing_ok=True)
+    # winvnc 运行时配置：删真实 vnc.toml（可能含密码），保留 vnc.example.toml 作模板
+    (OUTPUT_DIR / "config" / "daemon" / "vnc.toml").unlink(missing_ok=True)
     ultravnc_dir = OUTPUT_DIR / "bin" / "ultravnc"
     if ultravnc_dir.is_dir():
         for f in ultravnc_dir.iterdir():
@@ -537,18 +689,32 @@ def main():
     else:
         logger.info("[rime-plugin] 跳过构建（BUILD_RIME=false 或 -NoRime）")
 
-    if _enabled(args.NoFastscreen, "BUILD_FASTSCREEN"):
-        steps.append(("编译 fastscreen.dll", step_build_fastscreen))
+# Windows 专属组件（fastscreen/win-sandbox/UltraVNC/terminal_injector）：
+    # 仅 Windows 构建/下载，Unix 平台直接跳过（这些功能依赖 Windows 原生二进制）
+    if IS_WINDOWS:
+        if _enabled(args.NoFastscreen, "BUILD_FASTSCREEN"):
+            steps.append(("编译 fastscreen.dll", step_build_fastscreen))
+        else:
+            logger.info("[fastscreen] 跳过构建（BUILD_FASTSCREEN=false 或 -NoFastscreen）")
+        if _enabled(args.NoWinsandbox, "BUILD_WINSANDBOX"):
+            steps.append(("编译 win_sandbox_native.pyd", step_build_win_sandbox))
+        else:
+            logger.info("[win-sandbox] 跳过编译（BUILD_WINSANDBOX=false 或 -NoWinsandbox）")
+        if _enabled(args.NoUltravnc, "DOWNLOAD_ULTRAVNC"):
+            steps.append(("下载 UltraVNC", step_download_ultravnc))
+        else:
+            logger.info("[ultravnc] 跳过下载（DOWNLOAD_ULTRAVNC=false 或 -NoUltravnc）")
+        if _enabled(args.NoTerminalInjector, "DOWNLOAD_TERMINALINJECTOR"):
+            steps.append(("下载 terminal_injector", step_download_terminal_injector))
+        else:
+            logger.info("[terminal_injector] 跳过下载（DOWNLOAD_TERMINALINJECTOR=false 或 -NoTerminalInjector）")
     else:
-        logger.info("[fastscreen] 跳过编译（BUILD_FASTSCREEN=false 或 -NoFastscreen）")
-    if _enabled(args.NoWinsandbox, "BUILD_WINSANDBOX"):
-        steps.append(("编译 win_sandbox_native.pyd", step_build_win_sandbox))
-    else:
-        logger.info("[win-sandbox] 跳过编译（BUILD_WINSANDBOX=false 或 -NoWinsandbox）")
+        logger.info("[fastscreen/win-sandbox/ultravnc/terminal_injector] Unix 平台跳过（Windows 专属组件）")
+
     if _enabled(args.NoWeztermPy, "BUILD_WEZTERMPY"):
         steps.append(("编译 wezterm-py", step_build_wezterm_py))
     else:
-        logger.info("[wezterm-py] 跳过编译（BUILD_WEZTERMPY=false 或 -NoWeztermPy）")
+        _warn_wezterm_py_missing("跳过编译（BUILD_WEZTERMPY=false 或 -NoWeztermPy）")
 
     if _enabled(args.NoAichat, "DOWNLOAD_AICHAT"):
         steps.append(("下载 aichat", step_download_aichat))
@@ -558,14 +724,6 @@ def main():
         steps.append(("下载 ripgrep", step_download_rg))
     else:
         logger.info("[rg] 跳过下载（DOWNLOAD_RG=false 或 -NoRg）")
-    if _enabled(args.NoUltravnc, "DOWNLOAD_ULTRAVNC"):
-        steps.append(("下载 UltraVNC", step_download_ultravnc))
-    else:
-        logger.info("[ultravnc] 跳过下载（DOWNLOAD_ULTRAVNC=false 或 -NoUltravnc）")
-    if _enabled(args.NoTerminalInjector, "DOWNLOAD_TERMINALINJECTOR"):
-        steps.append(("下载 terminal_injector", step_download_terminal_injector))
-    else:
-        logger.info("[terminal_injector] 跳过下载（DOWNLOAD_TERMINALINJECTOR=false 或 -NoTerminalInjector）")
 
     # 所有产物已落入基础包源码目录，最后整体复制进干净的发布目录并收尾
     steps += [

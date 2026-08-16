@@ -5,6 +5,17 @@ import pytest
 from src.client.config_manager import ConfigManager, _format_value
 
 
+@pytest.fixture(autouse=True)
+def _isolate_persistent_defaults(monkeypatch):
+    """隔离本机 ~/.pty-agent/client_defaults.json（set-default 持久化）
+
+    未隔离时用户机器上的持久化默认值会覆盖内置默认，导致断言不稳定。
+    """
+    monkeypatch.setattr(
+        "src.client.config_manager.load_persistent_defaults", lambda: {}
+    )
+
+
 class TestConfigManagerGet:
     def test_get_default_timeout(self):
         cfg = ConfigManager()
@@ -20,15 +31,11 @@ class TestConfigManagerGet:
 
     def test_get_default_debug(self):
         cfg = ConfigManager()
-        assert cfg.get("debug") is True
+        assert cfg.get("debug") is False
 
     def test_get_default_send_eol(self):
         cfg = ConfigManager()
         assert cfg.get("send_eol") == "\r"
-
-    def test_get_default_always_return_snapshot(self):
-        cfg = ConfigManager()
-        assert cfg.get("always_return_snapshot") is False
 
     def test_get_unknown_key_returns_none(self):
         cfg = ConfigManager()
@@ -82,11 +89,6 @@ class TestConfigManagerSet:
         cfg = ConfigManager()
         with pytest.raises(ValueError, match="Invalid send-eol value"):
             cfg.set("send_eol", "invalid_value")
-
-    def test_set_always_return_snapshot(self):
-        cfg = ConfigManager()
-        cfg.set("always_return_snapshot", "on")
-        assert cfg.get("always_return_snapshot") is True
 
     def test_set_response_format_stream(self):
         cfg = ConfigManager()

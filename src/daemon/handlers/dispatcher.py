@@ -1,5 +1,4 @@
 import json
-import logging
 import time
 import traceback
 
@@ -23,8 +22,10 @@ from .status_handler import StatusHandler
 from .stop_handler import StopHandler
 from .utils import get_detail
 from .wait_handler import WaitHandler
+from .workflow_handler import WorkflowHandler
+from ...logging import get_logger, bind, unbind
 
-_logger = logging.getLogger("pty-daemon")
+_logger = get_logger("pty-daemon")
 
 
 class PluginMessageHandler(DaemonHandler):
@@ -86,6 +87,7 @@ class DaemonDispatcher:
             "stop": StopHandler(),
             "wait": WaitHandler(),
             "plugin": PluginHandler(),
+            "workflow": WorkflowHandler(),
         }
         # 进程级插件路由：插件声明的 message_types 注册到派发表；
         # 与内置 handler 冲突时内置优先（核心命令权威），记录警告
@@ -113,12 +115,6 @@ class DaemonDispatcher:
         session_id = msg.get("id", "")
         detail = get_detail(msg)
 
-        if msg_type not in ("ping",) and self._ctx.authenticator:
-            if not self._ctx.authenticator.authenticate(msg):
-                _logger.warning("认证失败 (type=%s id=%s)", msg_type, session_id)
-                Message.send(conn, Response.error("Authentication failed"))
-                return
-
         _logger.info("请求: %s id=%s %s", msg_type, session_id, detail)
         msg["_t_start"] = time.monotonic()
 
@@ -139,6 +135,7 @@ class DaemonDispatcher:
         # 双端口架构下每个 Listener 的连接线程独立设置，互不干扰
         Message.set_outbound_signer(self._auth_context.outbound_signer)
         Message.set_inbound_verifier(self._auth_context.inbound_verifier)
+        _ctx_token = bind(connection_id=id(conn))
         try:
             msg = Message.recv(conn)
             if msg is None:
@@ -151,6 +148,15 @@ class DaemonDispatcher:
                 except Exception:
                     pass
                 return
+            # 连接级握手认证：验签已隐含身份（token 凭据有效性 / pubkey 白名单 /
+            # basic 密码均被签名内容覆盖），此处仅每连接校验一次，后续消息只验签
+            if msg.get("type") != "ping" and self._ctx.authenticator:
+                if not self._ctx.authenticator.authenticate(msg):
+                    _logger.warning(
+                        "认证失败 (type=%s id=%s)", msg.get("type"), msg.get("id")
+                    )
+                    Message.send(conn, Response.error("Authentication failed"))
+                    return
             self.dispatch(conn, msg)
         except json.JSONDecodeError:
             _logger.error("JSON 解析失败")
@@ -169,6 +175,7 @@ class DaemonDispatcher:
             except Exception:
                 pass
         finally:
+            unbind(_ctx_token)
             try:
                 conn.close()
             except OSError:

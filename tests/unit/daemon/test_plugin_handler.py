@@ -16,6 +16,9 @@ from src.plugins.base import Plugin
 from src.plugins.registry import PluginRegistry
 from src.session.manager import SessionManager
 
+# Python 入口随平台而异（Windows: python；Unix: python3）
+_PYTHON_CMD = sys.executable
+
 
 class _FakeConn:
     def __init__(self):
@@ -89,7 +92,7 @@ class TestPluginHandler:
         assert resp["type"] == "error"
 
     def test_attach_detach_unknown_plugin(self, ctx, manager, tmp_path):
-        session = manager.create_session("s1", "python -u -i", cwd=str(tmp_path))
+        session = manager.create_session("s1", [sys.executable, "-u", "-i"], cwd=str(tmp_path))
         try:
             resp = _send(PluginHandler(), ctx, {"type": "plugin", "action": "attach",
                                                 "id": "s1", "name": "ghost"})
@@ -98,7 +101,7 @@ class TestPluginHandler:
             session.stop()
 
     def test_attach_detach_lifecycle(self, ctx, manager, tmp_path):
-        session = manager.create_session("s1", "python -u -i", cwd=str(tmp_path))
+        session = manager.create_session("s1", [sys.executable, "-u", "-i"], cwd=str(tmp_path))
         try:
             resp = _send(PluginHandler(), ctx, {"type": "plugin", "action": "attach",
                                                 "id": "s1", "name": "echo"})
@@ -124,7 +127,7 @@ class TestPluginHandler:
             session.stop()
 
     def test_cmd_route(self, ctx, manager, tmp_path):
-        session = manager.create_session("s1", "python -u -i", cwd=str(tmp_path))
+        session = manager.create_session("s1", [sys.executable, "-u", "-i"], cwd=str(tmp_path))
         try:
             resp = _send(PluginHandler(), ctx, {"type": "plugin", "action": "cmd",
                                                 "id": "s1", "name": "echo",
@@ -142,3 +145,14 @@ class TestPluginHandler:
     def test_unknown_action(self, ctx):
         resp = _send(PluginHandler(), ctx, {"type": "plugin", "action": "nope"})
         assert resp["type"] == "error"
+
+    def test_ls_includes_cli_plugins(self, ctx, manager, tmp_path):
+        """exec 记录的 CLI 插件在 plugin ls 中回显（客户端据此自动挂钩）"""
+        session = manager.create_session(
+            "s1", [sys.executable, "-u", "-i"], cwd=str(tmp_path), cli_plugins=["ai"]
+        )
+        try:
+            resp = _send(PluginHandler(), ctx, {"type": "plugin", "action": "ls", "id": "s1"})
+            assert resp["plugins"] == [{"name": "ai", "version": "", "cli": True}]
+        finally:
+            session.stop()

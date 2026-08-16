@@ -1,11 +1,10 @@
-import logging
 import time
 from typing import Optional
 
 from ...protocol.message import Message
 from ...protocol.response import Response
 from .base import DaemonHandler, HandlerContext
-from .exec_handler import _run_no_trigger_flow, _run_snapshot_flow, _run_trigger_flow
+from .exec_handler import _run_snapshot_flow
 from .utils import (
     apply_client_defaults,
     attach_screen_buffer,
@@ -14,9 +13,11 @@ from .utils import (
     format_iso_ms,
     strip_if_needed,
     validate_request,
+    validate_trigger_regex,
 )
+from ...logging import get_logger
 
-_logger = logging.getLogger("pty-daemon")
+_logger = get_logger("pty-daemon")
 
 
 class MouseHandler(DaemonHandler):
@@ -34,6 +35,8 @@ class MouseHandler(DaemonHandler):
                 ("trigger", MAX_PATTERN_LEN),
             ],
         ):
+            return
+        if not validate_trigger_regex(trigger, conn):
             return
 
         if not session_id:
@@ -65,9 +68,6 @@ class MouseHandler(DaemonHandler):
             return
 
         if session.pty_type == "subprocess":
-            output = session.get_output(encoding=msg.get("encoding"))
-            output = strip_if_needed(output, msg)
-            stderr_output = session.get_stderr_output(encoding=msg.get("encoding"))
             _send_mouse_response(
                 ctx,
                 conn,
@@ -75,20 +75,7 @@ class MouseHandler(DaemonHandler):
                 session_id,
                 msg,
                 performed=False,
-                error="Mouse actions require PTY mode",
-                output=output,
-            )
-            return
-
-        if not session.snapshot_mode:
-            _send_mouse_response(
-                ctx,
-                conn,
-                session,
-                session_id,
-                msg,
-                performed=False,
-                error="Mouse actions require snapshot mode (--snapshot-mode for exec; --snapshot for send/read; or --default always-return-snapshot on)",
+                error="Mouse actions require PTY mode (subprocess session has no terminal)",
             )
             return
 
@@ -113,13 +100,10 @@ class MouseHandler(DaemonHandler):
                     hint=error or ("grep completed" if matches else "No match found"),
                 )
                 return
-            if session.snapshot_mode or msg.get("snapshot"):
-                keep_ansi = msg.get("keep_ansi", False)
-                output = session.get_snapshot(keep_ansi=keep_ansi)
-                if not keep_ansi:
-                    output = strip_if_needed(output, msg)
-            else:
-                output = session.get_output(encoding=msg.get("encoding"))
+            # pty 恒为快照
+            keep_ansi = msg.get("keep_ansi", False)
+            output = session.get_snapshot(keep_ansi=keep_ansi)
+            if not keep_ansi:
                 output = strip_if_needed(output, msg)
             stderr_output = ""
             resp_extra = {"performed": False}
@@ -140,8 +124,7 @@ class MouseHandler(DaemonHandler):
                 result_obj["matches"] = matches
             if error:
                 result_obj["message"] = error
-            if session.snapshot_mode or msg.get("snapshot"):
-                attach_screen_buffer(result_obj, session, msg)
+            attach_screen_buffer(result_obj, session, msg)
             Message.send(conn, result_obj)
             return
 
@@ -161,29 +144,10 @@ class MouseHandler(DaemonHandler):
                 cursor=cursor,
             )
             return
-        if session.snapshot_mode or msg.get("snapshot"):
-            _run_snapshot_flow(
-                ctx, conn, session, msg, result_type="mouse", extra_fields=extra
-            )
-        elif trigger:
-            trigger_offset = 0 if msg.get("full") else session.output_offset
-            _run_trigger_flow(
-                ctx,
-                conn,
-                session,
-                msg,
-                trigger_offset,
-                trigger,
-                msg.get("newline", False),
-                msg.get("fresh", False),
-                msg.get("timeout", 120),
-                result_type="mouse",
-                extra_fields=extra,
-            )
-        else:
-            _run_no_trigger_flow(
-                ctx, conn, session, msg, result_type="mouse", extra_fields=extra
-            )
+        # pty 恒为快照，trigger/idle-timeout 由快照流程内部处理
+        _run_snapshot_flow(
+            ctx, conn, session, msg, result_type="mouse", extra_fields=extra
+        )
 
 
 def _send_mouse_response(

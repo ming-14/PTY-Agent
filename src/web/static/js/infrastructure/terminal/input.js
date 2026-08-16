@@ -5,6 +5,7 @@
 import { state } from '../../domain/state.js';
 import { debug } from '../../domain/logger.js';
 import { showToast } from '../domUtils.js';
+import { t } from '../../domain/i18n.js';
 import { wsSend } from '../wsClient.js';
 import { isTermAtBottom, scrollTermToBottom } from './scroll.js';
 import { interceptKeyDown as rimeInterceptKeyDown, isKeyboardDisabled } from '../rimeManager.js';
@@ -14,13 +15,13 @@ export function copySelection(term) {
     const sel = term.getSelection();
     if (!sel) return false;
     navigator.clipboard.writeText(sel).catch(err => {
-      showToast('复制失败：请允许网站的剪贴板权限', 'error');
+      showToast(t('term.copyFailed'), 'error');
       debug('paste', 'copySelection failed: %s', err && err.message);
     });
     term.clearSelection();
     return true;
   } catch (e) {
-    showToast('复制失败：请允许网站的剪贴板权限', 'error');
+    showToast(t('term.copyFailed'), 'error');
     return false;
   }
 }
@@ -192,6 +193,6 @@ export async function doPaste(sid) {
     wsSend({ type: 'input', session_id: sid, data: cleaned });
   } catch (e) {
     debug('paste', 'doPaste failed: name=%s message=%s', e && e.name, e && e.message);
-    showToast('粘贴失败：请允许网站的剪贴板权限', 'error');
+    showToast(t('term.pasteFailed'), 'error');
   }
 }

@@ -8,7 +8,7 @@ web/static/
 ├── login.html             # 登录页面
 ├── service-worker.js      # Service Worker（PWA 离线缓存）
 
-├── css/                   # ═══ 样式（按功能拆分，13 个文件） ═══
+├── css/                   # ═══ 样式（按功能拆分，12 个文件） ═══
 │   ├── base.css           # 基础/重置样式
 │   ├── layout.css         # 布局
 │   ├── theme.css          # 主题变量
@@ -20,8 +20,7 @@ web/static/
 │   ├── components.css     # 通用组件
 │   ├── fastscreen.css     # 快速屏幕
 │   ├── vnc.css            # VNC
-│   ├── settings.css       # 设置
-│   └── devconsole.css     # 开发控制台
+│   └── settings.css       # 设置
 
 ├── js/                    # ═══ JavaScript（按干净架构分层） ═══
 │   ├── app.js             # 应用入口
@@ -39,6 +38,7 @@ web/static/
 │   │   ├── storage.js
 │   │   ├── auth.js
 │   │   ├── domUtils.js
+│   │   ├── logPanelAdapter.js
 │   │   ├── wsClient.js
 │   │   └── terminal/       # 终端基础设施（8 文件）
 │   │       ├── cursorDebug.js
@@ -54,7 +54,7 @@ web/static/
 │   │   ├── ports.js
 │   │   └── settingsStore.js
 │   └── presentation/       # ═══ 展示层 ═══
-│       ├── views/          # 视图（9 文件）
+│       ├── views/          # 视图（8 文件）
 │       │   ├── ui.js
 │       │   ├── sizeSelector.js
 │       │   ├── detail.js
@@ -62,7 +62,6 @@ web/static/
 │       │   ├── fastscreen.js
 │       │   ├── vnc.js
 │       │   ├── sessionHandlers.js
-│       │   ├── devConsole.js
 │       │   └── autohide.js
 │       └── controllers/    # 控制器（仅 events）
 │           └── events.js
@@ -70,7 +69,8 @@ web/static/
 └── vendor/                # ═══ 第三方库（外部依赖，不逐文件展开） ═══
     ├── xterm/             # xterm.js 终端前端 + 插件（fit / web-links）
     ├── novnc/             # noVNC 前端（含 core/ app/ vendor/pako）
-    ├── rime/              # Rime WASM 输入法（wasm / dict）
-    └── rikkajs/           # 桌面宠物 shimeji（img / shimeji.js / shimeji.css）
+    ├── rime/              # Rime WASM 输入法（wasm / dict / rime-plugin bundle）
+    ├── rikkajs/           # 桌面宠物 shimeji（img / shimeji.js / shimeji.css）
+    └── logpanel/          # 日志面板组件（LogPanel.js / defaultRules / styles）
                         # 注：字体不在此目录；前端字体由 fontLoader.js 从 CDN 加载，Rime 字体随 vendor/rime/dict 提供
 ```

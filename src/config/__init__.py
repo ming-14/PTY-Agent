@@ -8,9 +8,9 @@
 - 代码加载器位于 src/config/，按"每个被加载的 TOML 一个模块"划分：
 
     common.py   ← common.toml                全项目通用（路径 / 平台 / 输入限制 / 认证开关）
-    shared.py   ← common+shared.toml         跨侧共享（协议 / IPC / daemon 控制 / 日志格式）
-    daemon.py   ← common+daemon/+shared+logging+/web+ 守护进程侧
-    client.py   ← common+shared+client/      客户端侧
+    shared.py   ← common+shared+logging.toml 跨侧共享（协议 / IPC / daemon 控制 / 日志格式/归档/异步队列）
+    daemon.py   ← common+daemon/+shared+logging+daemon/logging+web  守护进程侧
+    client.py   ← common+shared+logging+client/+client/logging  客户端侧
     sandbox.py  ← daemon/sandbox.toml（可选）  沙箱域（Windows 专属，daemon 侧；文件不存在时 ENABLED=false）
     transfer.py ← transfer.toml              传输协议域（daemon/CLI 两端共享）
 
@@ -29,8 +29,21 @@
     from ..config.common import IS_WINDOWS
     from ..config.shared import AUTH_TOKEN_NAME
     from ..config.client import CONNECT_TIMEOUT, CONNECT_MODE
+
+子模块惰性加载：客户端进程 import src.config 不再急切解析 daemon-only 配置
+（daemon.toml / logging.toml / web.toml / sandbox.toml），仅在被访问时加载。
 """
 
-from . import client, common, daemon, sandbox, shared
+import importlib
 
-__all__ = ["client", "common", "daemon", "sandbox", "shared"]
+_LAZY_MODULES = ("client", "common", "daemon", "sandbox", "shared")
+
+__all__ = list(_LAZY_MODULES)
+
+
+def __getattr__(name):
+    if name in _LAZY_MODULES:
+        mod = importlib.import_module(f"{__name__}.{name}")
+        globals()[name] = mod
+        return mod
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

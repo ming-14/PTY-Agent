@@ -73,9 +73,9 @@ class TestTerminalSizeCLI:
             assert pty_type == "win-wezterm", f"Unexpected pty type: {pty_type}"
 
     def test_size_with_snapshot_mode(self):
-        """--size 与 --snapshot-mode 组合"""
+        """--size 组合"""
         out = _run(["exec", "s5", "-c", "cmd /c echo snap",
-                     "--snapshot-mode", "--size", "100x30", "--timeout", "10"])
+                     "--size", "100x30", "--timeout", "10"])
         resp = _parse_json(out)
         if resp and resp.get("commandType") == "exec":
             diag = resp.get("snapshotDiagnostics", {})

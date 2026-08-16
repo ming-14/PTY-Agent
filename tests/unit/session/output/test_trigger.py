@@ -10,6 +10,7 @@ class _MockOutputBuffer:
     def __init__(self, data=b""):
         self._data = bytearray(data)
         self._read_cycle = 1
+        self._trim_gen = 0
 
     @property
     def raw(self):
@@ -19,12 +20,25 @@ class _MockOutputBuffer:
     def read_cycle(self):
         return self._read_cycle
 
+    @property
+    def trim_gen(self):
+        """缓冲头部裁剪代次（与 OutputBuffer.trim_gen 语义一致）"""
+        return self._trim_gen
+
     def count_byte(self, b):
         return self._data.count(b)
 
 
 def _decode_utf8(data):
-    return data.decode("utf-8", errors="replace")
+    """(文本, 消费字节数) 契约的解码回调（消费量按严格解码成功的完整前缀）"""
+    return data.decode("utf-8", errors="replace"), len(data)
+
+
+def _decode_utf8_len(data):
+    """与 EncodingDetector.decode_only_len 等价：截尾后返回消费字节数"""
+    from src.encoding.codec import decode_strip_tail_len
+
+    return decode_strip_tail_len(data, "utf-8")
 
 
 class TestTriggerMatcherSet:
@@ -97,6 +111,86 @@ class TestTriggerMatcherCheck:
         assert result is True
 
 
+class TestTriggerMatcherRollingCache:
+    """滚动解码缓存：跨块匹配 / 裁剪失效 / 双缓冲切换"""
+
+    def test_match_in_second_chunk(self):
+        tm = TriggerMatcher(_decode_utf8)
+        tm.set("world", buffer_length=0)
+        buf = _MockOutputBuffer()
+        assert tm.check(buf) is False
+        buf._data.extend(b"hello ")
+        assert tm.check(buf) is False
+        buf._data.extend(b"world")
+        assert tm.check(buf) is True
+
+    def test_match_across_chunk_boundary(self):
+        tm = TriggerMatcher(_decode_utf8)
+        tm.set(r"hel\s*lo", buffer_length=0)
+        buf = _MockOutputBuffer()
+        buf._data.extend(b"hel")
+        assert tm.check(buf) is False
+        buf._data.extend(b"\nlo")
+        assert tm.check(buf) is True
+
+    def test_substring_match_across_chunk_boundary(self):
+        tm = TriggerMatcher(_decode_utf8)
+        # 非法正则 → 子串匹配路径
+        tm.set("[invalid", buffer_length=0)
+        buf = _MockOutputBuffer()
+        buf._data.extend(b"xx [inva")
+        assert tm.check(buf) is False
+        buf._data.extend(b"lid regex")
+        assert tm.check(buf) is True
+
+    def test_cache_invalidated_on_buffer_trim(self):
+        tm = TriggerMatcher(_decode_utf8)
+        tm.set(">>>", buffer_length=0)
+        buf = _MockOutputBuffer(b"old content")
+        assert tm.check(buf) is False
+        # 缓冲被头部裁剪（trim_gen 递增）→ 缓存重建，从新窗口起点重新扫描
+        buf._data = bytearray(b"tail >>>")
+        buf._trim_gen += 1
+        assert tm.check(buf) is True
+
+    def test_cache_switch_buffer(self):
+        tm = TriggerMatcher(_decode_utf8)
+        tm.set("match", buffer_length=0)
+        buf_a = _MockOutputBuffer(b"aaa")
+        buf_b = _MockOutputBuffer(b"bbb")
+        assert tm.check(buf_a) is False
+        assert tm.check(buf_b) is False
+        buf_b._data.extend(b" match")
+        assert tm.check(buf_b) is True
+
+    def test_start_offset_window_capped(self):
+        """等待窗口上限 MAX_TRIGGER_SCAN 内仍只增量解码新增部分"""
+        tm = TriggerMatcher(_decode_utf8)
+        tm.set("done", buffer_length=0)
+        buf = _MockOutputBuffer()
+        big = b"x" * (1 << 20)  # 超过 1MB 等待窗口
+        buf._data.extend(big)
+        assert tm.check(buf) is False
+        # 窗口已封顶，追加内容超出窗口不参与扫描
+        buf._data.extend(b"done")
+        assert tm.check(buf) is False
+
+    def test_multibyte_split_across_chunks(self):
+        """多字节字符跨块拆分：残缺尾部与下块合并解码补全，匹配不丢字"""
+        tm = TriggerMatcher(_decode_utf8_len)
+        tm.set("成完", buffer_length=0)
+        buf = _MockOutputBuffer()
+        buf._data.extend("已".encode())  # 完整字符
+        assert tm.check(buf) is False
+        buf._data.extend("成".encode()[:2])  # '成' 前两字节（不完整）
+        assert tm.check(buf) is False
+        buf._data.extend(b"\x90")  # '成' 末字节
+        assert tm.check(buf) is False
+        buf._data.extend("完".encode())  # 补全后 '成完' 命中
+        assert tm.check(buf) is True
+        assert tm._scan_text == "已成完"
+
+
 class TestTriggerMatcherIdleTimeout:
     def test_idle_timeout_not_set(self):
         tm = TriggerMatcher(_decode_utf8)
@@ -142,41 +236,41 @@ class TestSafeRegexSearch:
 
 class TestSnapshotTrigger:
     def test_check_snapshot_match(self):
-        tm = TriggerMatcher(decode_func=lambda x: x.decode("utf-8", errors="replace"))
+        tm = TriggerMatcher(decode_func=_decode_utf8)
         tm.set_snapshot_trigger(pattern=r"prompt>")
         assert tm.check_snapshot("hello prompt> world") is True
         assert tm.matched is True
 
     def test_check_snapshot_no_match(self):
-        tm = TriggerMatcher(decode_func=lambda x: x.decode("utf-8", errors="replace"))
+        tm = TriggerMatcher(decode_func=_decode_utf8)
         tm.set_snapshot_trigger(pattern=r"prompt>")
         assert tm.check_snapshot("hello world") is False
 
     def test_check_snapshot_substring_fallback(self):
-        tm = TriggerMatcher(decode_func=lambda x: x.decode("utf-8", errors="replace"))
+        tm = TriggerMatcher(decode_func=_decode_utf8)
         tm.set_snapshot_trigger(pattern="[invalid regex")
         assert tm.check_snapshot("text with [invalid regex inside") is True
 
     def test_check_snapshot_no_pattern(self):
-        tm = TriggerMatcher(decode_func=lambda x: x.decode("utf-8", errors="replace"))
+        tm = TriggerMatcher(decode_func=_decode_utf8)
         tm.set_snapshot_trigger(idle_timeout=1.0)
         assert tm.check_snapshot("anything") is False
 
     def test_snapshot_idle_timeout_not_elapsed(self):
-        tm = TriggerMatcher(decode_func=lambda x: x.decode("utf-8", errors="replace"))
+        tm = TriggerMatcher(decode_func=_decode_utf8)
         tm.set_snapshot_trigger(idle_timeout=5.0)
         tm.notify_snapshot_changed(time.monotonic())
         assert tm.check_idle_timeout() is False
 
     def test_snapshot_idle_timeout_elapsed(self):
-        tm = TriggerMatcher(decode_func=lambda x: x.decode("utf-8", errors="replace"))
+        tm = TriggerMatcher(decode_func=_decode_utf8)
         tm.set_snapshot_trigger(idle_timeout=0.01)
         tm.notify_snapshot_changed(time.monotonic())
         time.sleep(0.05)
         assert tm.check_idle_timeout() is True
 
     def test_snapshot_idle_after_first_output(self):
-        tm = TriggerMatcher(decode_func=lambda x: x.decode("utf-8", errors="replace"))
+        tm = TriggerMatcher(decode_func=_decode_utf8)
         tm.set_snapshot_trigger(idle_timeout=0.01, idle_after_first_output=True)
         assert tm.check_idle_timeout() is False
         tm.notify_snapshot_changed(time.monotonic())
@@ -184,7 +278,7 @@ class TestSnapshotTrigger:
         assert tm.check_idle_timeout() is True
 
     def test_snapshot_trigger_and_idle_combined(self):
-        tm = TriggerMatcher(decode_func=lambda x: x.decode("utf-8", errors="replace"))
+        tm = TriggerMatcher(decode_func=_decode_utf8)
         tm.set_snapshot_trigger(pattern=r"done", idle_timeout=5.0)
         assert tm.check_snapshot("working...") is False
         assert tm.check_snapshot("all done!") is True

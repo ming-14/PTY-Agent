@@ -10,10 +10,10 @@
   0xC0000005 — STATUS_ACCESS_VIOLATION
 """
 
-import logging
+from ..logging import get_logger
 import sys
 
-_logger = logging.getLogger("process-win32-error")
+_logger = get_logger("process-win32-error")
 
 # ── 在 Windows 上延迟加载 ctypes ──
 _IS_WINDOWS = sys.platform == "win32"

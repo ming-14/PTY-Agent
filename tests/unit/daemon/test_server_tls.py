@@ -1,13 +1,13 @@
 """服务端三监听器架构单元测试
 
-测试 _build_token_auth_context / _build_plain_auth_context / _build_pubkey_auth_context
-与 run() 三种监听器的独立启停（plain / token / tls）。
+测试 _build_token_auth_context / _build_basic_auth_context / _build_pubkey_auth_context
+与 run() 三种监听器的独立启停（basic / token / tls）。
 
 覆盖场景：
 1. _build_token_auth_context: Token + HMAC 对称认证上下文
-2. _build_plain_auth_context: 无认证上下文
+2. _build_basic_auth_context: 空密码无认证 / 非空密码密码 + HMAC 双向
 3. _build_pubkey_auth_context: 有/无授权公钥
-4. run() 三监听器: 仅 token / 仅 tls / 仅 plain / 多监听器同开
+4. run() 三监听器: 仅 token / 仅 tls / 仅 basic / 多监听器同开
 """
 
 import ssl
@@ -20,6 +20,7 @@ from src.daemon.server import DaemonServer
 from src.auth.context import AuthContext
 from src.auth.token import TokenAuthenticator
 from src.auth.token import HmacMessageSigner
+from src.auth.password import PasswordAuthenticator
 from src.auth.pubkey import Ed25519MessageSigner
 from src.auth.pubkey import PubkeyAuthenticator
 
@@ -69,20 +70,36 @@ class TestBuildTokenAuthContext:
         assert srv._token_authenticator is not None
 
 
-class TestBuildPlainAuthContext:
-    """_build_plain_auth_context 测试
+class TestBuildBasicAuthContext:
+    """_build_basic_auth_context 测试
 
-    plain Listener 使用的认证上下文：无认证。
+    basic Listener 使用的认证上下文：密码或空密码无认证。
     """
 
-    def test_returns_no_auth_context(self):
-        srv = DaemonServer()
-        ctx = srv._build_plain_auth_context()
+    def test_empty_password_returns_no_auth_context(self):
+        """BASIC_PASSWORD 为空 → 无认证上下文"""
+        with patch("src.daemon.server.BASIC_PASSWORD", ""):
+            srv = DaemonServer()
+            ctx = srv._build_basic_auth_context()
 
         assert isinstance(ctx, AuthContext)
         assert ctx.outbound_signer is None
         assert ctx.inbound_verifier is None
         assert ctx.authenticator is None
+        assert srv._hmac_key is None
+        assert srv._token_authenticator is None
+
+    def test_with_password_returns_hmac_and_password_auth(self):
+        """BASIC_PASSWORD 非空 → HMAC 双向 + PasswordAuthenticator"""
+        with patch("src.daemon.server.BASIC_PASSWORD", "secret"):
+            srv = DaemonServer()
+            ctx = srv._build_basic_auth_context()
+
+        assert isinstance(ctx, AuthContext)
+        assert isinstance(ctx.outbound_signer, HmacMessageSigner)
+        # HMAC 对称：出站签名器 == 入站验证器（密码即密钥）
+        assert ctx.inbound_verifier is ctx.outbound_signer
+        assert isinstance(ctx.authenticator, PasswordAuthenticator)
         assert srv._hmac_key is None
         assert srv._token_authenticator is None
 
@@ -96,7 +113,7 @@ class TestBuildPubkeyAuthContext:
     def test_with_authorized_keys_returns_ed25519_context(self):
         """有授权公钥 → 返回 Ed25519 verifier + PubkeyAuthenticator"""
         mock_keys = {"key_id": b"fake_public_key_bytes"}
-        with patch("src.daemon.server.load_authorized_keys", return_value=mock_keys):
+        with patch("src.auth.keys.load_authorized_keys", return_value=mock_keys):
             srv = DaemonServer()
             ctx = srv._build_pubkey_auth_context()
 
@@ -108,7 +125,7 @@ class TestBuildPubkeyAuthContext:
 
     def test_empty_authorized_keys_still_returns_context(self):
         """authorized_keys 为空 → 仍返回上下文（fail-closed 由认证器处理）"""
-        with patch("src.daemon.server.load_authorized_keys", return_value={}):
+        with patch("src.auth.keys.load_authorized_keys", return_value={}):
             srv = DaemonServer()
             ctx = srv._build_pubkey_auth_context()
 
@@ -128,13 +145,13 @@ class TestRunListeners:
     @pytest.fixture
     def mock_env(self):
         with patch("src.daemon.server.Listener") as mock_ls, \
-             patch("src.daemon.server.WebServer") as mock_ws, \
+             patch("src.optional.get_web_server_cls") as mock_ws, \
              patch("src.daemon.server.write_auth_token") as mock_auth, \
              patch("src.daemon.server.write_hmac_key") as mock_hmac, \
-             patch("src.daemon.server.CertificateManager") as mock_cm, \
-             patch("src.daemon.server.load_authorized_keys", return_value={"k": b"v"}), \
+             patch("src.auth.tls.cert_manager.CertificateManager") as mock_cm, \
+             patch("src.auth.keys.load_authorized_keys", return_value={"k": b"v"}), \
              patch("src.daemon.server.signal.signal"), \
-             patch.object(DaemonServer, "_schedule_rotate"):
+             patch.object(DaemonServer, "_start_token_rotator"):
             mock_ws.return_value.start_background = MagicMock()
             mock_auth.return_value = MagicMock()
             mock_hmac.return_value = MagicMock()
@@ -149,36 +166,36 @@ class TestRunListeners:
         }
 
     def test_token_only(self, mock_env):
-        """仅 token → 创建 1 个 plain Listener，SHM 凭据发布"""
+        """仅 token → 创建 1 个 tcp Listener，SHM 凭据发布"""
         mock_ls, mock_ws, mock_auth, mock_hmac, mock_cm = mock_env
         srv = DaemonServer()
         self._set_listeners(srv, {
-            "plain": (False, "0.0.0.0", 10521),
+            "basic": (False, "0.0.0.0", 10521),
             "token": (True, "127.0.0.1", 10520),
             "tls": (False, "0.0.0.0", 18767),
         })
         _run_with_mocks(srv)
 
         assert mock_ls.call_count == 1
-        assert mock_ls.call_args[1]["transport"] == "plain"
+        assert mock_ls.call_args[1]["transport"] == "tcp"
         assert mock_ls.call_args[1]["host"] == "127.0.0.1"
         assert mock_ls.call_args[1]["port"] == 10520
         mock_auth.assert_called_once()
         mock_hmac.assert_called_once()
 
-    def test_plain_only(self, mock_env):
-        """仅 plain → 创建 1 个 plain Listener（无认证），无 SHM 凭据发布"""
+    def test_basic_only(self, mock_env):
+        """仅 basic → 创建 1 个 tcp Listener（无认证），无 SHM 凭据发布"""
         mock_ls, mock_ws, mock_auth, mock_hmac, mock_cm = mock_env
         srv = DaemonServer()
         self._set_listeners(srv, {
-            "plain": (True, "0.0.0.0", 10521),
+            "basic": (True, "0.0.0.0", 10521),
             "token": (False, "127.0.0.1", 10520),
             "tls": (False, "0.0.0.0", 18767),
         })
         _run_with_mocks(srv)
 
         assert mock_ls.call_count == 1
-        assert mock_ls.call_args[1]["transport"] == "plain"
+        assert mock_ls.call_args[1]["transport"] == "tcp"
         assert mock_ls.call_args[1]["host"] == "0.0.0.0"
         assert mock_ls.call_args[1]["port"] == 10521
         mock_auth.assert_not_called()
@@ -189,7 +206,7 @@ class TestRunListeners:
         mock_ls, mock_ws, mock_auth, mock_hmac, mock_cm = mock_env
         srv = DaemonServer()
         self._set_listeners(srv, {
-            "plain": (False, "0.0.0.0", 10521),
+            "basic": (False, "0.0.0.0", 10521),
             "token": (False, "127.0.0.1", 10520),
             "tls": (True, "0.0.0.0", 18767),
         })
@@ -203,12 +220,12 @@ class TestRunListeners:
         mock_auth.assert_not_called()
         mock_hmac.assert_not_called()
 
-    def test_plain_plus_token(self, mock_env):
-        """plain + token 同开 → 创建 2 个 plain Listener，SHM 凭据发布"""
+    def test_basic_plus_token(self, mock_env):
+        """basic + token 同开 → 创建 2 个 tcp Listener，SHM 凭据发布"""
         mock_ls, mock_ws, mock_auth, mock_hmac, mock_cm = mock_env
         srv = DaemonServer()
         self._set_listeners(srv, {
-            "plain": (True, "0.0.0.0", 10521),
+            "basic": (True, "0.0.0.0", 10521),
             "token": (True, "127.0.0.1", 10520),
             "tls": (False, "0.0.0.0", 18767),
         })
@@ -217,17 +234,17 @@ class TestRunListeners:
         assert mock_ls.call_count == 2
         first = mock_ls.call_args_list[0][1]
         second = mock_ls.call_args_list[1][1]
-        assert (first["transport"], first["host"], first["port"]) == ("plain", "0.0.0.0", 10521)
-        assert (second["transport"], second["host"], second["port"]) == ("plain", "127.0.0.1", 10520)
+        assert (first["transport"], first["host"], first["port"]) == ("tcp", "0.0.0.0", 10521)
+        assert (second["transport"], second["host"], second["port"]) == ("tcp", "127.0.0.1", 10520)
         mock_auth.assert_called_once()
         mock_hmac.assert_called_once()
 
     def test_token_plus_tls(self, mock_env):
-        """token + tls 同开 → 创建 1 plain + 1 tls Listener"""
+        """token + tls 同开 → 创建 1 tcp + 1 tls Listener"""
         mock_ls, mock_ws, mock_auth, mock_hmac, mock_cm = mock_env
         srv = DaemonServer()
         self._set_listeners(srv, {
-            "plain": (False, "0.0.0.0", 10521),
+            "basic": (False, "0.0.0.0", 10521),
             "token": (True, "127.0.0.1", 10520),
             "tls": (True, "0.0.0.0", 18767),
         })
@@ -236,17 +253,17 @@ class TestRunListeners:
         assert mock_ls.call_count == 2
         first = mock_ls.call_args_list[0][1]
         second = mock_ls.call_args_list[1][1]
-        assert (first["transport"], first["host"]) == ("plain", "127.0.0.1")
+        assert (first["transport"], first["host"]) == ("tcp", "127.0.0.1")
         assert (second["transport"], second["host"]) == ("tls", "0.0.0.0")
         assert second["ssl_context"] is not None
         mock_auth.assert_called_once()
 
     def test_all_enabled(self, mock_env):
-        """三监听器同开 → 创建 3 个 Listener（plain/token/tls）"""
+        """三监听器同开 → 创建 3 个 Listener（basic/token/tls）"""
         mock_ls, mock_ws, mock_auth, mock_hmac, mock_cm = mock_env
         srv = DaemonServer()
         self._set_listeners(srv, {
-            "plain": (True, "0.0.0.0", 10521),
+            "basic": (True, "0.0.0.0", 10521),
             "token": (True, "127.0.0.1", 10520),
             "tls": (True, "0.0.0.0", 18767),
         })
@@ -254,7 +271,7 @@ class TestRunListeners:
 
         assert mock_ls.call_count == 3
         transports = [c[1]["transport"] for c in mock_ls.call_args_list]
-        assert transports == ["plain", "plain", "tls"]
+        assert transports == ["tcp", "tcp", "tls"]
         mock_auth.assert_called_once()
         mock_hmac.assert_called_once()
 
@@ -263,7 +280,7 @@ class TestRunListeners:
         mock_ls, mock_ws, mock_auth, mock_hmac, mock_cm = mock_env
         srv = DaemonServer()
         self._set_listeners(srv, {
-            "plain": (False, "0.0.0.0", 10521),
+            "basic": (False, "0.0.0.0", 10521),
             "token": (False, "127.0.0.1", 10520),
             "tls": (False, "0.0.0.0", 18767),
         })

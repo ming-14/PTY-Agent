@@ -3,7 +3,7 @@
 覆盖：manager 全链路（start/start_process/query/terminate/close）、
 SandboxPty 完整终端语义（回显/退出码/进程树终止）。
 非管理员环境：Low IL 无写保护（NO_WRITE_UP），系统目录只读可访问；
-隔离策略仅网络维度（Phase 16 schema：无路径白名单/能力集）。
+隔离策略仅网络维度（无路径白名单/能力集）。
 """
 
 import glob
@@ -13,22 +13,25 @@ import time
 
 import pytest
 
-sys.path.insert(0, r"C:\Users\rikka\Desktop\PTY-Agent")
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+# win-sandbox 为 Windows 原生组件；非 Windows 平台模块级跳过（import 前）
+if sys.platform != "win32":
+    pytest.skip("win-sandbox 仅支持 Windows", allow_module_level=True)
 
 from src.sandbox.manager import SandboxSessionManager
 from src.sandbox.tracker import SandboxProcessTreeTracker
 from src.sandbox.pty import SandboxPty
 
 # vendored 原生库存在性（win_sandbox 包 + pyd）
-_PKG_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "bin", "win_sandbox",
-)
+_PKG_DIR = os.path.join(_PROJECT_ROOT, "bin", "win_sandbox")
 _HAS_SANDBOX = os.path.isfile(os.path.join(_PKG_DIR, "__init__.py")) and bool(
     glob.glob(os.path.join(_PKG_DIR, "_native", "win_sandbox_native*.pyd"))
 )
 
-# Phase 16 隔离：无网络隔离 + 剪贴板不隔离
+# 沙箱隔离：无网络隔离 + 剪贴板不隔离
 _ISOLATION = {
     "net_policy": "unrestricted",
     "net_allowlist": [],

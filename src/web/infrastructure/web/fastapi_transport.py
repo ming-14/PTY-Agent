@@ -1,5 +1,6 @@
 """FastAPI / Starlette WebSocket 传输适配器。"""
 
+import json
 from typing import Optional
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
@@ -63,6 +64,13 @@ class FastAPIWebSocketTransport(OutboundMessageChannel):
 
     async def send(self, message: dict) -> None:
         await self._ws.send_json(message)
+
+    async def send_batch(self, messages: list) -> None:
+        """批量发送：多条消息合并为一条 JSON 数组文本帧
+
+        高频 output 推送时显著减少 WS 帧数（前端按数组逐条分发）。
+        """
+        await self._ws.send_text(json.dumps(messages, ensure_ascii=False))
 
     async def close(self, code: int = 1000) -> None:
         try:

@@ -8,9 +8,9 @@ from src.config.common import (
     IS_WINDOWS,
 )
 from src.config.daemon import (
-    PLAIN_ENABLED,
-    PLAIN_HOST,
-    PLAIN_PORT,
+    BASIC_ENABLED,
+    BASIC_HOST,
+    BASIC_PORT,
     TOKEN_ENABLED,
     TOKEN_HOST,
     TOKEN_PORT,
@@ -31,8 +31,8 @@ from src.config.daemon import (
 from src.config.client import (
     CONNECT_MODE,
     CONNECT_TIMEOUT,
-    PLAIN_HOST as CLIENT_PLAIN_HOST,
-    PLAIN_PORT as CLIENT_PLAIN_PORT,
+    BASIC_HOST as CLIENT_BASIC_HOST,
+    BASIC_PORT as CLIENT_BASIC_PORT,
     TOKEN_HOST as CLIENT_TOKEN_HOST,
     TOKEN_PORT as CLIENT_TOKEN_PORT,
     TLS_HOST as CLIENT_TLS_HOST,
@@ -43,11 +43,11 @@ from src.config.client import (
 class TestListenerConfig:
     """三监听器独立配置（daemon 侧）"""
 
-    def test_plain_listener(self):
-        assert isinstance(PLAIN_ENABLED, bool)
-        assert isinstance(PLAIN_HOST, str)
-        assert isinstance(PLAIN_PORT, int)
-        assert PLAIN_PORT > 0
+    def test_basic_listener(self):
+        assert isinstance(BASIC_ENABLED, bool)
+        assert isinstance(BASIC_HOST, str)
+        assert isinstance(BASIC_PORT, int)
+        assert BASIC_PORT > 0
 
     def test_token_listener(self):
         assert isinstance(TOKEN_ENABLED, bool)
@@ -66,11 +66,11 @@ class TestConnectionConfig:
     """客户端连接方式配置"""
 
     def test_connect_mode(self):
-        assert CONNECT_MODE in ("plain", "token", "tls")
+        assert CONNECT_MODE in ("basic", "token", "tls")
 
     def test_mode_targets(self):
-        assert CLIENT_PLAIN_HOST == "127.0.0.1"
-        assert CLIENT_PLAIN_PORT > 0
+        assert CLIENT_BASIC_HOST == "127.0.0.1"
+        assert CLIENT_BASIC_PORT > 0
         assert CLIENT_TOKEN_HOST == "127.0.0.1"
         assert CLIENT_TOKEN_PORT > 0
         assert isinstance(CLIENT_TLS_HOST, str)

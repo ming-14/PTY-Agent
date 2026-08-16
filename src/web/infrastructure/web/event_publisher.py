@@ -1,12 +1,12 @@
 """基于连接管理器的事件发布者实现。"""
 
 import asyncio
-import logging
 from typing import Any, Callable, Optional
 
 from ...application.ports import EventPublisher
+from ....logging import get_logger
 
-_logger = logging.getLogger("pty-web")
+_logger = get_logger("pty-web")
 
 
 class EventPublisherImpl(EventPublisher):

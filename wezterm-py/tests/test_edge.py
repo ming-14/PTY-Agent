@@ -39,10 +39,10 @@ def test_cjk_wide_width():
     assert t.text() == "我喜欢你", t.text()
     snap = t.snapshot()
     row0 = snap[0]
-    widths = [c[7] for c in row0]
+    widths = [c[9] for c in row0]
     assert sum(widths) == 8, widths
     # 首个 cell 依次为 我喜 欢 你；续 cell ch 为空
-    chars = [c[0] for c in row0 if c[0]]
+    chars = [c[1] for c in row0 if c[1]]
     assert chars == ["我", "喜", "欢", "你"], chars
 
 

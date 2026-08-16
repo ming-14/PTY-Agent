@@ -7,6 +7,7 @@
 
 import { state, saveTabState, getSessionSizeConfigBySid } from '../../domain/state.js';
 import { escHtml, escAttr } from '../../domain/formatters.js';
+import { t } from '../../domain/i18n.js';
 import { ICON_CLOSE } from '../../domain/constants.js';
 import { $, showConfirm, hideConfirm } from '../../infrastructure/domUtils.js';
 import { getHandlerBySid, removeTabAndSelectNext } from './sessionHandlers.js';
@@ -45,19 +46,32 @@ export function updateStatusInfo(sid) {
   if (state.activeTab !== sid) return;
   ptyEl.style.display = 'flex';
   ptyEl.textContent = formatPtyLabel(s);
-  sizeEl.style.display = 'flex';
-  sizeEl.textContent = getSizeStatusText(s);
-  // 仅自适应模式高亮（蓝色 + "(自适应)" 标签提示正在自适应）；
-  // 退出自适应后（fixed/custom/default）不高亮，避免蓝色文字干扰
-  const cfg = getSessionSizeConfigBySid(sid);
-  sizeEl.classList.toggle('size-active', !s.history && cfg.mode === 'adaptive');
+  // 子进程模式无终端尺寸/重绘概念，隐藏尺寸状态，disable 重设尺寸
+  if (s.mode === 'subprocess') {
+    sizeEl.style.display = 'none';
+  } else {
+    sizeEl.style.display = 'flex';
+    sizeEl.textContent = getSizeStatusText(s);
+    // 仅自适应模式高亮（蓝色 + "(自适应)" 标签提示正在自适应）；
+    // 退出自适应后（fixed/custom/default）不高亮，避免蓝色文字干扰
+    const cfg = getSessionSizeConfigBySid(sid);
+    sizeEl.classList.toggle('size-active', !s.history && cfg.mode === 'adaptive');
+  }
 }
 
 export function formatPtyLabel(s) {
   let label = '';
   if (s.ptyType && s.ptyType !== 'none') label = 'PTY';
-  if (!s.running) label += ' (已结束)';
+  if (!s.running) label += t('session.endedBadge');
   return label;
+}
+
+/** 会话运行模式徽标：仅子进程模式展示，PTY（默认）不占用空间 */
+export function modeBadge(s) {
+  if (s.mode === 'subprocess') {
+    return '<span class="mode-badge sub">' + t('session.subprocess') + '</span>';
+  }
+  return '';
 }
 
 /**
@@ -189,6 +203,7 @@ export function shouldShowMouseButton(sid) {
   const s = state.sessions[sid];
   if (!s) return false;
   if (s.history) return false;
+  if (s.mode === 'subprocess') return false;
   return true;
 }
 
@@ -196,7 +211,7 @@ export function updateMouseModeButton(sid) {
   const btn = $('btn-mouse-mode');
   if (!btn) return;
   const s = state.sessions[sid];
-  if (!s || s.history) {
+  if (!s || s.history || s.mode === 'subprocess') {
     btn.style.display = 'none';
     return;
   }
@@ -210,8 +225,8 @@ export function updateMouseModeButton(sid) {
   const override = inst ? inst.mouseInputOverride : true;
   btn.classList.toggle('active', override);
   btn.title = override
-    ? '鼠标输入已开启 (点击关闭，按住 Shift 可临时滚动/选择)'
-    : '鼠标输入已关闭 (点击开启)';
+    ? t('mouseMode.titleOn')
+    : t('mouseMode.titleOff');
 }
 
 export function openSessionInTab(sid) {
@@ -477,8 +492,9 @@ export function renderTabs() {
     tab.className = 'tab' + (state.activeTab === sid ? ' active' : '');
     tab.innerHTML =
       '<span class="tab-icon ' + (s.running ? 'running' : 'ended') + '"></span>' +
-      '<span class="tab-title" title="' + escHtml(s.command || s.id) + '">' + escHtml(s.id) + '</span>' +
-      '<span class="tab-close" data-sid="' + escHtml(s.id) + '" title="关闭标签">' + ICON_CLOSE + '</span>';
+      '<span class="tab-title" title="' + escHtml(s.command || s.id) + '">' + escHtml(s.id) +
+      modeBadge(s) + '</span>' +
+      '<span class="tab-close" data-sid="' + escHtml(s.id) + '" title="' + t('common.closeTab') + '">' + ICON_CLOSE + '</span>';
     tab.onclick = e => {
       if (e.target.closest('.tab-close')) return;
       openSessionInTab(s.id);
@@ -554,7 +570,7 @@ export function buildSidebarItem(s) {
     '<span class="sidebar-item-icon ' + (s.running ? 'running' : 'ended') + '"></span>' +
     '<span class="sidebar-item-initial">' + initial + '</span>' +
     '<div class="sidebar-item-text">' +
-      '<div class="sidebar-item-label">' + escHtml(s.id) + '</div>' +
+      '<div class="sidebar-item-label">' + escHtml(s.id) + modeBadge(s) + '</div>' +
       '<div class="sidebar-item-cmd">' + escHtml(s.command || '') + '</div>' +
       timeHtml +
     '</div>';
@@ -571,7 +587,7 @@ export function renderHistoryDropdown() {
   const dd = $('history-dropdown');
   const histSessions = Object.values(state.history).sort((a, b) => (b.endTime || 0) - (a.endTime || 0));
   if (histSessions.length === 0) {
-    dd.innerHTML = '<div class="history-empty">暂无历史会话</div>';
+    dd.innerHTML = '<div class="history-empty">' + t('session.noHistory') + '</div>';
     return;
   }
   dd.innerHTML = '';
@@ -586,7 +602,7 @@ export function renderHistoryDropdown() {
         '<div class="history-item-id">' + escHtml(s.id) + '</div>' +
         '<div class="history-item-cmd" title="' + escHtml(s.command || '') + '">' + escHtml(s.command || '') + '</div>' +
       '</span>' +
-      '<span class="history-item-delete" data-sid="' + escHtml(s.id) + '" title="删除历史记录">' + ICON_CLOSE + '</span>';
+      '<span class="history-item-delete" data-sid="' + escHtml(s.id) + '" title="' + t('session.deleteHistory') + '">' + ICON_CLOSE + '</span>';
     item.onclick = e => {
       if (e.target.closest('.history-item-delete')) return;
       openSessionInTab(s.id);
@@ -643,6 +659,8 @@ export function showNewSessionDialog() {
   const cmdEl = $('form-command');
   cmdEl.value = '';
   $('form-cwd').value = '';
+  const modeEl = $('form-mode');
+  if (modeEl) modeEl.value = 'pty';
   setTimeout(() => cmdEl.focus(), 0);
 }
 
@@ -655,14 +673,17 @@ export function submitNewSession() {
   }
   let sid = $('form-id').value.trim();
   if (!sid) sid = 's' + Date.now().toString(36);
+  const modeEl = $('form-mode');
+  const mode = (modeEl && modeEl.value) || 'pty';
   const msg = {
     type: 'create',
     session_id: sid,
     command: command,
+    mode: mode,
   };
   if ($('form-cwd').value.trim()) msg.cwd = $('form-cwd').value.trim();
 
-  info('session', 'create sid=%s cmd=%r', sid, command);
+  info('session', 'create sid=%s mode=%s cmd=%r', sid, mode, command);
   state.pendingCreates.add(sid);
   state.sessions[sid] = {
     id: sid,
@@ -670,7 +691,8 @@ export function submitNewSession() {
     running: true,
     subscribed: false,
     history: false,
-    ptyType: 'conpty',
+    ptyType: mode === 'subprocess' ? 'subprocess' : 'conpty',
+    mode: mode,
     pendingOutput: [],
     pendingSnapshot: null,
     startTime: Date.now() / 1000,
@@ -697,17 +719,17 @@ export function showContextMenu(e, sid, context) {
   menu.innerHTML = '';
   if (context === 'tab') {
     menu.innerHTML =
-      '<div class="context-menu-item" data-action="detail">详细信息</div>' +
-      '<div class="context-menu-item" data-action="close-tab">关闭标签</div>';
+      '<div class="context-menu-item" data-action="detail">' + t('session.detail') + '</div>' +
+      '<div class="context-menu-item" data-action="close-tab">' + t('common.closeTab') + '</div>';
   } else if (context === 'active-session') {
     menu.innerHTML =
-      '<div class="context-menu-item" data-action="detail">详细信息</div>' +
-      '<div class="context-menu-item danger" data-action="close-session">关闭会话</div>';
+      '<div class="context-menu-item" data-action="detail">' + t('session.detail') + '</div>' +
+      '<div class="context-menu-item danger" data-action="close-session">' + t('session.closeSession') + '</div>';
   } else if (context === 'history-session') {
     menu.innerHTML =
-      '<div class="context-menu-item" data-action="detail">详细信息</div>' +
-      '<div class="context-menu-item" data-action="restart-session">重新启动</div>' +
-      '<div class="context-menu-item danger" data-action="delete-session">删除会话</div>';
+      '<div class="context-menu-item" data-action="detail">' + t('session.detail') + '</div>' +
+      '<div class="context-menu-item" data-action="restart-session">' + t('session.restart') + '</div>' +
+      '<div class="context-menu-item danger" data-action="delete-session">' + t('session.delete') + '</div>';
   }
   menu.style.display = 'block';
   const menuRect = menu.getBoundingClientRect();
@@ -729,7 +751,7 @@ export function showRestartDialog(sid) {
   const h = state.history[sid];
   if (!h) return;
   state.restartTargetSid = sid;
-  $('restart-body').textContent = `确定要重新启动会话 "${sid}" 吗？`;
+  $('restart-body').textContent = t('session.restartBody', { sid });
   $('restart-reassign-sid').checked = true;
   $('restart-sid-group').style.display = 'none';
   $('restart-sid-input').value = sid;
@@ -748,7 +770,7 @@ export function checkRestartSidConflict() {
   const hint = $('restart-sid-hint');
   const sid = (input.value || '').trim();
   if (!sid) {
-    hint.textContent = 'SID 不能为空';
+    hint.textContent = t('session.sidEmpty');
     hint.style.display = 'block';
     hint.style.color = '#d13438';
     input.style.borderColor = '#d13438';
@@ -756,7 +778,7 @@ export function checkRestartSidConflict() {
   }
   const activeSession = state.sessions[sid];
   if (activeSession && !activeSession.history && activeSession.running) {
-    hint.textContent = '该 SID 与活跃会话冲突';
+    hint.textContent = t('session.sidActiveConflict');
     hint.style.display = 'block';
     hint.style.color = '#d13438';
     input.style.borderColor = '#d13438';
@@ -764,7 +786,7 @@ export function checkRestartSidConflict() {
   }
   const historySession = state.history[sid];
   if (historySession && sid !== state.restartTargetSid) {
-    hint.textContent = '该 SID 与已结束会话重复，提交时将关闭该会话';
+    hint.textContent = t('session.sidHistoryConflict');
     hint.style.display = 'block';
     hint.style.color = 'var(--wt-tab-text-muted)';
     input.style.borderColor = '';

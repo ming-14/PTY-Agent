@@ -13,5 +13,5 @@ RG_EXE = ""                     # rg 可执行文件路径；空 = 自动探测
 IGNORED_DIRS = [                # 搜索忽略的目录名（路径任意段命中即跳过）
     ".git", ".opencode", ".idea", ".vscode", "node_modules", "vendor",
     "dist", "build", "target", "__pycache__", "bin", "obj", "out",
-    "coverage", "tmp", "temp", "logs", "generated",
+    "coverage", "logs", "generated",
 ]

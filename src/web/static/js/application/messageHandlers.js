@@ -8,6 +8,7 @@
 import { state, saveTabState, getSessionSizeConfigBySid, setSessionSizeConfig, setLocalAdaptiveOwner, isLocalAdaptiveOwner } from '../domain/state.js';
 import { debug, info, warn } from '../domain/logger.js';
 import { DEFAULT_COLS, DEFAULT_ROWS } from '../domain/constants.js';
+import { t, i18nError } from '../domain/i18n.js';
 import { ports } from './ports.js';
 
 export function handleMsg(msg) {
@@ -90,7 +91,7 @@ export function handleMsg(msg) {
       handleFastScreenMessage(msg);
       break;
     case 'error':
-      handleError(msg.message);
+      handleError(msg);
       break;
   }
 }
@@ -187,11 +188,11 @@ export function handleSessionList(list) {
       ports.ui.applyReadonlyState(sid, true);
       const inst = state.termInstances[sid];
       if (inst) {
-        inst.term.write('\r\n\x1b[90m[会话已结束]\x1b[0m\r\n');
+        inst.term.write('\r\n\x1b[90m' + t('msg.sessionEnded') + '\x1b[0m\r\n');
       }
       if (!state.closedSessionToastSet.has(sid)) {
         state.closedSessionToastSet.add(sid);
-        ports.notification.showToast('会话已关闭: ' + sid, 'info');
+        ports.notification.showToast(t('msg.sessionClosedToast', { sid }), 'info');
       }
     }
   }
@@ -245,7 +246,11 @@ export function initSessionState(sid, msg, isHistory) {
   }
   const s = state.sessions[sid];
   s.running = msg.running;
-  s.ptyType = msg.ptyType;
+  // mode：子进程模式（subprocess）或 pty 模式（wezterm/conpty 等）
+  s.mode = msg.mode || (s.ptyType === 'subprocess' ? 'subprocess' : 'pty');
+  s.ptyType = msg.ptyType || s.ptyType;
+  // 子进程模式：stderr replay（首次订阅时后端返回）
+  if (msg.stderrReplay !== undefined) s.pendingStderrReplay = msg.stderrReplay || null;
   // 历史会话通过 history_detail 恢复 uid，使 zoomActiveSession /
   // applySessionFrameRatio 能按 uid 读写 localStorage 的 frameRatio 记忆
   if (msg.uid) s.uid = msg.uid;
@@ -372,8 +377,8 @@ export function handleSessionEnded(msg) {
   }
 
   const code = msg.exitCode;
-  let note = '\r\n\x1b[90m[会话已结束';
-  if (code !== null && code !== undefined) note += ' 退出码: ' + code;
+  let note = '\r\n\x1b[90m' + t('msg.sessionEndedNote');
+  if (code !== null && code !== undefined) note += t('msg.exitCode', { code });
   if (msg.errorMessage) note += ' ' + msg.errorMessage;
   note += ']\x1b[0m\r\n';
 
@@ -397,7 +402,7 @@ export function handleSessionEnded(msg) {
   ports.transport.send({ type: 'history' });
   if (!state.closedSessionToastSet.has(sid)) {
     state.closedSessionToastSet.add(sid);
-    ports.notification.showToast('会话已关闭: ' + sid, 'info');
+    ports.notification.showToast(t('msg.sessionClosedToast', { sid }), 'info');
   }
   if (state.closedSessionToastSet.size > 50) {
     const first = state.closedSessionToastSet.values().next().value;
@@ -477,7 +482,7 @@ export function handleSessionRemoved(msg) {
   ports.ui.applyReadonlyState(sid, true);
   if (s && !state.closedSessionToastSet.has(sid)) {
     state.closedSessionToastSet.add(sid);
-    ports.notification.showToast('会话已关闭: ' + sid, 'info');
+    ports.notification.showToast(t('msg.sessionClosedToast', { sid }), 'info');
   }
   if (state.closedSessionToastSet.size > 50) {
     const first = state.closedSessionToastSet.values().next().value;
@@ -485,7 +490,10 @@ export function handleSessionRemoved(msg) {
   }
 }
 
-export function handleError(message) {
+export function handleError(msg) {
+  // 后端分发/参数类错误：优先按错误码映射本地文案，其次透传 message。
+  // 兼容历史非错误码消息（message 为纯文本），及 "session 'x' not found" 启发式清理。
+  const message = i18nError(msg);
   for (const sid of state.pendingCreates) {
     ports.ui.removeSessionTab(sid, false);
   }
@@ -981,5 +989,5 @@ export function handleTakeoverAck(msg) {
   if (state.activeTab === sid) {
     try { ports.ui.updateStatusInfo(sid); } catch (_) {}
   }
-  ports.notification.showToast('已接管尺寸控制，请选择新模式', 'info');
+  ports.notification.showToast(t('msg.sizeTakeover'), 'info');
 }

@@ -8,7 +8,6 @@
 WebSocket→VNC TCP 代理由守护进程的 /vnc/websockify 端点实现，无需 websockify 子进程。
 """
 
-import logging
 from pathlib import Path
 from typing import Optional
 
@@ -16,8 +15,9 @@ from ..config.common import PROJECT_ROOT
 from ..config.daemon import ENABLE_VNC, VNC_WINVNC_PATH
 from .ports import VncServicePort
 from .process_manager import VncProcessConfig, VncProcessManager
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-vnc")
+_logger = get_logger("pty-vnc")
 
 
 def _resolve_vnc_module_dir() -> Path:

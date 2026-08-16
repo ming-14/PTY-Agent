@@ -4,13 +4,18 @@
 （Session._reader_loop）与 TriggerMatcher 在原子上下文中的协作。
 """
 
-import logging
 import threading
 from typing import Optional
 
 from ..config.daemon import MAX_OUTPUT_BUFFER
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-session")
+_logger = get_logger("pty-session")
+
+# 溢出裁剪 headroom 除数：缓冲超过 max_size + max_size//_TRIM_HEADROOM_DIVISOR
+# 才裁剪回 max_size。将持锁 del 的 O(n) memmove 从"每块一次"摊还为
+# "每 headroom 一次"（大缓冲下 memmove 约 10-30ms，每块触发不可接受）。
+_TRIM_HEADROOM_DIVISOR = 4
 
 
 class OutputBuffer:
@@ -19,6 +24,9 @@ class OutputBuffer:
     封装原始 bytearray，所有公开的读/写操作均通过内部锁保护。
     同时暴露 lock 与 raw 属性，供协调者在持锁上下文中直接访问
     原始缓冲区（例如与 TriggerMatcher 配合时避免二次加锁）。
+
+    缓冲上限为软上限：裁剪按固定块批量执行（见 _TRIM_HEADROOM_DIVISOR），
+    实际容量瞬时可达 max_size + headroom，裁剪后回落到 max_size。
     """
 
     def __init__(self, max_size: int = MAX_OUTPUT_BUFFER):
@@ -28,11 +36,19 @@ class OutputBuffer:
         self._max_size = max_size
         self._first_output_event = threading.Event()
         self._dropped_bytes = 0
+        # 头部裁剪代次：溢出裁剪时递增，供 TriggerMatcher 滚动缓存失效判定
+        self._trim_gen = 0
 
     @property
     def dropped_bytes(self) -> int:
         with self._lock:
             return self._dropped_bytes
+
+    @property
+    def trim_gen(self) -> int:
+        """头部裁剪代次（每次溢出裁剪递增；触发滚动缓存据此失效）"""
+        with self._lock:
+            return self._trim_gen
 
     def append(self, data: bytes) -> bool:
         """追加数据到缓冲区尾部
@@ -48,10 +64,11 @@ class OutputBuffer:
         """
         with self._lock:
             self._buffer.extend(data)
-            if len(self._buffer) > self._max_size:
+            if len(self._buffer) > self._max_size + self._max_size // _TRIM_HEADROOM_DIVISOR:
                 drop = len(self._buffer) - self._max_size
                 del self._buffer[:drop]
                 self._dropped_bytes += drop
+                self._trim_gen += 1
                 self._read_cycle += 1
                 self._first_output_event.set()
                 _logger.warning(

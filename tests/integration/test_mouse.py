@@ -3,6 +3,8 @@
 验证 Session.perform_mouse_action 能把 SGR 序列写入 PTY。
 """
 
+import sys
+
 import pytest
 
 from src.session.session import Session
@@ -23,7 +25,7 @@ class _FakePty:
 
 @pytest.fixture
 def fake_session():
-    sess = Session("mouse-test", ["python"])
+    sess = Session("mouse-test", [sys.executable])
     sess._pty = _FakePty()
     sess.running = True
     return sess

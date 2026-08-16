@@ -16,6 +16,7 @@ class _MockBuffer:
     def __init__(self, data=b"", read_cycle=0):
         self._data = bytearray(data)
         self._read_cycle = read_cycle
+        self._trim_gen = 0
 
     @property
     def raw(self):
@@ -25,12 +26,18 @@ class _MockBuffer:
     def read_cycle(self):
         return self._read_cycle
 
+    @property
+    def trim_gen(self):
+        """缓冲头部裁剪代次（与 OutputBuffer.trim_gen 语义一致）"""
+        return self._trim_gen
+
     def count_byte(self, b):
         return self._data.count(b)
 
 
-def _decode_utf8(data: bytes) -> str:
-    return data.decode("utf-8", errors="replace")
+def _decode_utf8(data: bytes) -> tuple:
+    """(文本, 消费字节数) 契约的解码回调"""
+    return data.decode("utf-8", errors="replace"), len(data)
 
 
 class TestSafeRegexSearch:

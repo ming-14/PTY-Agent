@@ -3,7 +3,7 @@
 三监听器架构（daemon.toml [listener]）+ 客户端连接方式（client.toml [connection]）：
 - token 监听器 → 明文 + Token/HMAC（SHM 分发凭据）
 - tls 监听器 → TLS + Ed25519 pubkey（TOFU 验证）
-- plain 监听器 → 明文无认证
+- basic 监听器 → 明文无认证
 
 覆盖场景：
 1. 只开 token+HMAC（回归，现有行为不变）
@@ -14,7 +14,7 @@
 6. token+tls，客户端选 pubkey → 通过（TLS 客户端）
 7. token+tls，客户端选 pubkey，未授权 → 拒绝（TLS 客户端）
 8. token+tls，客户端选 token，pubkey 未授权 → 仍通过
-9. 只开 plain，无认证 → 通过
+9. 只开 basic，无认证 → 通过
 10. 配置不一致：客户端选 token 但服务端只开 tls → 失败
 11. OpenSSH 兼容：ssh-keygen 生成的密钥走完整 daemon 链路 → 通过（需 ssh-keygen）
 
@@ -88,7 +88,7 @@ MAX_PATTERN_LEN    = 4096
 
 def _build_daemon_toml(
     *,
-    plain: bool,
+    basic: bool,
     token: bool,
     tls: bool,
     private_key_path: str,
@@ -97,11 +97,11 @@ def _build_daemon_toml(
 ) -> str:
     """构造测试用 daemon.toml 内容（三监听器配置）
 
-    [listener] 段：plain / token / tls 三段独立 enabled + 监听位置。
+    [listener] 段：basic / token / tls 三段独立 enabled + 监听位置。
     [auth] 段携带 TLS 服务端配置（证书路径与有效期）与授权公钥列表。
 
     Args:
-        plain: 明文无认证监听器 enabled
+        basic: 明文无认证监听器 enabled
         token: Token + HMAC 监听器 enabled
         tls: TLS + pubkey 监听器 enabled
         private_key_path: 客户端私钥路径（用于推导同级 certs/ 证书目录）
@@ -116,9 +116,10 @@ def _build_daemon_toml(
 SINGLE_INSTANCE = true
 
 [listener]
-PLAIN_ENABLED = {str(plain).lower()}
-PLAIN_HOST    = "0.0.0.0"
-PLAIN_PORT    = 10521
+BASIC_ENABLED  = {str(basic).lower()}
+BASIC_HOST     = "0.0.0.0"
+BASIC_PORT     = 10521
+BASIC_PASSWORD = ""
 
 TOKEN_ENABLED = {str(token).lower()}
 TOKEN_HOST    = "127.0.0.1"
@@ -144,6 +145,12 @@ JOB_OBJECT_NAME_PREFIX     = "Local\\\\PTYJob_"
 [input_limit]
 MAX_SESSIONS = 50
 
+[workflow]
+WORKFLOW_MAX_RUNS          = 50
+WORKFLOW_DEFAULT_PARALLEL  = 4
+WORKFLOW_STEP_OUTPUT_LIMIT = 4096
+WORKFLOW_MAX_FILE_SIZE     = 1048576
+
 [auth]
 AUTH_TOKEN_ROTATE_INTERVAL  = 1800
 AUTH_TOKEN_GRACE_PERIOD     = 120
@@ -166,11 +173,11 @@ def _build_client_toml(
 ) -> str:
     """构造测试用 client.toml 内容（连接方式 + 客户端认证）
 
-    [connection] 段：CONNECT_MODE 决定连接哪个监听器（plain/token/tls），
+    [connection] 段：CONNECT_MODE 决定连接哪个监听器（basic/token/tls），
     各模式监听位置独立配置。tls 模式还需 [auth] 段私钥与 TOFU。
 
     Args:
-        connect_mode: 客户端连接方式（"plain" / "token" / "tls"）
+        connect_mode: 客户端连接方式（"basic" / "token" / "tls"）
         private_key_path: 客户端私钥路径（tls 模式）
         known_hosts_path: TOFU 信任存储文件路径
         tls_port: 远程 daemon TLS 监听器端口
@@ -183,8 +190,9 @@ def _build_client_toml(
 
 [connection]
 CONNECT_MODE = "{connect_mode}"
-PLAIN_HOST = "127.0.0.1"
-PLAIN_PORT = 10521
+BASIC_HOST     = "127.0.0.1"
+BASIC_PORT     = 10521
+BASIC_PASSWORD = ""
 TOKEN_HOST = "127.0.0.1"
 TOKEN_PORT = 10520
 TLS_HOST = {tls_host}
@@ -272,7 +280,7 @@ def auth_env(tmp_path):
         旧认证开关语义映射到三监听器：
         - enable_token → daemon token 监听器；client CONNECT_MODE=token
         - enable_pubkey → daemon tls 监听器；client CONNECT_MODE=tls
-        - 两者都关 → daemon plain 监听器；client CONNECT_MODE=plain
+        - 两者都关 → daemon basic 监听器；client CONNECT_MODE=basic
 
         Args:
             enable_token: 是否启用 token 监听器
@@ -290,13 +298,13 @@ def auth_env(tmp_path):
         ak_path_str = authorized_keys_path.replace("\\", "/")
         kh_path = known_hosts_path.replace("\\", "/")
 
-        # 监听器 enabled 组合：token / tls / 都关=plain
-        plain = not enable_token and not enable_pubkey
-        # 客户端连接方式：token→token, pubkey→tls, none→plain
+        # 监听器 enabled 组合：token / tls / 都关=basic
+        basic = not enable_token and not enable_pubkey
+        # 客户端连接方式：token→token, pubkey→tls, none→basic
         connect_mode = {
             "token": "token",
             "pubkey": "tls",
-            "none": "plain",
+            "none": "basic",
         }[client_auth_method]
 
         # 写入 common.toml（共享配置）
@@ -307,7 +315,7 @@ def auth_env(tmp_path):
         # 写入 daemon.toml（三监听器 + 服务端认证配置）
         _DAEMON_TOML.write_text(
             _build_daemon_toml(
-                plain=plain,
+                basic=basic,
                 token=enable_token,
                 tls=enable_pubkey,
                 private_key_path=pk_path,
@@ -337,7 +345,7 @@ def auth_env(tmp_path):
         # 轮询等待 daemon 就绪（任一启用监听器 TCP 可达即就绪）
         import socket as _socket
         probe_ports = []
-        if plain:
+        if basic:
             probe_ports.append(10521)
         if enable_token:
             probe_ports.append(10520)
@@ -617,7 +625,7 @@ class TestBothDisabledNoAuth:
     """场景 9：都关，无认证 → 通过"""
 
     def test_both_disabled_list_passes(self, auth_env):
-        """plain 监听器开启，CONNECT_MODE=plain → list 通过"""
+        """basic 监听器开启，CONNECT_MODE=basic → list 通过"""
         auth_env.start(
             enable_token=False,
             enable_pubkey=False,

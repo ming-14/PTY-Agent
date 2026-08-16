@@ -4,6 +4,7 @@
 
 import { state, getSessionFontSize, clearSessionFontSize, isSizeUILocked } from '../../domain/state.js';
 import { debug } from '../../domain/logger.js';
+import { t } from '../../domain/i18n.js';
 import { $ } from '../domUtils.js';
 import { wsSend } from '../wsClient.js';
 import { DEFAULT_FONT_SIZE, DEFAULT_COLS, DEFAULT_ROWS } from '../../domain/constants.js';
@@ -375,6 +376,12 @@ export function replayPending(sid) {
     s.pendingSnapshot = null;
   }
 
+  // 子进程模式：首次订阅时后端返回 stderr 全文，以 ERR > 前缀写入
+  if (s.pendingStderrReplay) {
+    inst.term.write(formatStderrText(s.pendingStderrReplay));
+    s.pendingStderrReplay = null;
+  }
+
   if (Array.isArray(s.pendingOutput) && s.pendingOutput.length) {
     for (const text of s.pendingOutput) inst.term.write(text);
     s.pendingOutput = [];
@@ -390,12 +397,24 @@ export function queuePendingOutput(sid, text) {
   s.pendingOutput.push(text);
 }
 
+/** 子进程 stderr 文本：逐行加红色 ERR > 前缀（空行保留） */
+export function formatStderrText(text) {
+  return text
+    .split('\n')
+    .map(l => (l.trim() ? '\x1b[31m' + t('term.stderrPrefix') + l + '\x1b[0m' : l))
+    .join('\n');
+}
+
 export function handleOutput(msg) {
   const sid = msg.sessionId;
   const inst = state.termInstances[sid];
   let text = String(msg.data || '');
-  debug('terminal', 'handleOutput sid=%s inst=%s activeTab=%s len=%d',
-        sid, !!inst, state.activeTab, text.length);
+  // 子进程模式 stderr：以红色 ERR > 前缀逐行展示
+  if (msg.stream === 'stderr') {
+    text = formatStderrText(text);
+  }
+  debug('terminal', 'handleOutput sid=%s inst=%s activeTab=%s len=%d stream=%s',
+        sid, !!inst, state.activeTab, text.length, msg.stream || 'pty');
   if (inst) {
     // resize 进行中时缓冲 output，不直接写入 xterm.js。
     // 原因：ConPTY 在 resize 期间会发出针对旧/中间尺寸的 partial repaint

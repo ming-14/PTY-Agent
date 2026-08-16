@@ -58,8 +58,8 @@ python app.py plugin detach my-session state_check
 | 7 | 最后一行含 `-- INSERT --` / `-- NORMAL --` / `gnu nano` 等（6 种） | `Editor` | 编辑器模式 |
 | 8 | 最后一行含 `(END)` / `manual page` / `--more--` 等（5 种） | `Pager` | 分页器模式 |
 | 9 | 全文同时匹配 `("do you want", "yes")` 等（3 种组合） | `Confirm` | Agent 权限提示 |
-| 10 | 最近 3 行含 `password:` / `[sudo]` / `passphrase:` 等（8 种） | `Password` | 密码提示 |
-| 11 | 最近 3 行含 `[y/n]` / `continue?` / `are you sure` 等（12 种） | `Confirm` | 确认提示 |
+| 10 | 最后一行含 `password:` / `[sudo]` / `passphrase:` 等（8 种） | `Password` | 密码提示 |
+| 11 | 最后一行含 `[y/n]` / `continue?` / `are you sure` 等（12 种） | `Confirm` | 确认提示 |
 | 12 | 光标在行首（列 0） | `Running` | 命令执行中 |
 | 13 | 最近 3 行含 `error:` / `fatal:` / `traceback` / `panic:` 等（17 种） | `Error` | 错误 |
 

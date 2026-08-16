@@ -3,6 +3,7 @@
 测试请求处理器的认证、验证、消息派发、_build_result、_strip_if_needed 等。
 """
 
+import contextlib
 import json
 import time
 import socket
@@ -48,13 +49,19 @@ class _MockSession:
         self.pending_event_count = 0
         self.gui_windows = []
         self.processes = []
-        self.snapshot_mode = False
         self.client_config = {}
 
     def get_output(self, **kwargs):
         return "test output"
 
+    @contextlib.contextmanager
+    def hold(self):
+        yield self
+
     def get_snapshot(self, keep_ansi=False):
+        return "snapshot content"
+
+    def get_full_snapshot(self, keep_ansi=False):
         return "snapshot content"
 
     def get_snapshot_diagnostics(self):
@@ -460,7 +467,6 @@ class TestSnapshotFlowWithTrigger:
 
     def _make_snapshot_session(self, sid="snap-test"):
         session = _MockSession(sid)
-        session.snapshot_mode = True
         session._snapshot_text = ""
 
         from src.output.trigger import TriggerMatcher
@@ -523,7 +529,6 @@ class TestSnapshotFlowWithTrigger:
             "type": "exec", "id": "snap-test",
             "token": "test-token",
             "command": "echo test",
-            "snapshot_mode": True,
             "trigger": r"hello",
             "timeout": 5,
         })
@@ -568,7 +573,6 @@ class TestSnapshotFlowWithTrigger:
             "type": "exec", "id": "snap-test",
             "token": "test-token",
             "command": "echo test",
-            "snapshot_mode": True,
             "idle_timeout": 0.2,
             "timeout": 10,
         })
@@ -615,7 +619,6 @@ class TestSnapshotFlowWithTrigger:
             "type": "exec", "id": "snap-test",
             "token": "test-token",
             "command": "echo test",
-            "snapshot_mode": True,
             "timeout": 1,
         })
 
@@ -633,13 +636,13 @@ class TestSnapshotReadLines:
 
     def _make_multi_line_snapshot_session(self, sid="snap-read"):
         session = _MockSession(sid)
-        session.snapshot_mode = True
         session._snapshot_lines = ["line1", "line2", "line3", "line4", "line5"]
 
         def fake_get_snapshot(keep_ansi=False):
             return "\n".join(session._snapshot_lines)
 
         session.get_snapshot = fake_get_snapshot
+        session.get_full_snapshot = fake_get_snapshot
         session.get_snapshot_diff = fake_get_snapshot
         session.get_snapshot_diagnostics = lambda: {"pyte_available": True}
         session.export_screen_buffer = lambda: {}
@@ -674,7 +677,7 @@ class TestSnapshotReadLines:
         t.join(timeout=5)
         return resp
 
-    def test_snapshot_read_lines_single(self):
+    def test_snapshot_read_lines_last_n(self):
         session = self._make_multi_line_snapshot_session()
         mgr = _MockManager({"snap-read": session})
         handler = RequestHandler(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
@@ -683,7 +686,7 @@ class TestSnapshotReadLines:
             "snapshot": True, "lines": 3,
         })
         assert resp is not None
-        assert resp["outputStream"] == "line3"
+        assert resp["outputStream"] == "line3\nline4\nline5"
 
     def test_snapshot_read_lines_range(self):
         session = self._make_multi_line_snapshot_session()
@@ -696,7 +699,7 @@ class TestSnapshotReadLines:
         assert resp is not None
         assert resp["outputStream"] == "line2\nline3\nline4"
 
-    def test_snapshot_read_lines_out_of_range(self):
+    def test_snapshot_read_lines_larger_than_total(self):
         session = self._make_multi_line_snapshot_session()
         mgr = _MockManager({"snap-read": session})
         handler = RequestHandler(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
@@ -705,7 +708,7 @@ class TestSnapshotReadLines:
             "snapshot": True, "lines": 99,
         })
         assert resp is not None
-        assert resp["outputStream"] == ""
+        assert resp["outputStream"] == "line1\nline2\nline3\nline4\nline5"
 
     def test_snapshot_read_no_lines(self):
         session = self._make_multi_line_snapshot_session()

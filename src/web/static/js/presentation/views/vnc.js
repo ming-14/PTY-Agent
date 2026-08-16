@@ -12,6 +12,7 @@ import { VNC_TAB_ID } from '../../domain/constants.js';
 import { $, showToast } from '../../infrastructure/domUtils.js';
 import { wsSend } from '../../infrastructure/wsClient.js';
 import { debug, info, warn } from '../../domain/logger.js';
+import { t, i18nError } from '../../domain/i18n.js';
 import { initAutoHide, updateAutoHide } from './autohide.js';
 import { registerSessionHandler, removeTabAndSelectNext } from './sessionHandlers.js';
 
@@ -133,22 +134,22 @@ export function renderVncPanel() {
 
   // 状态指示
   let dotClass = 'stopped';
-  let text = '未启动';
+  let text = t('vnc.notStarted');
   if (v.disabled) {
     dotClass = 'disabled';
-    text = 'VNC 未启用';
+    text = t('vnc.disabled');
   } else if (v.starting) {
     dotClass = 'starting';
-    text = '启动中…';
+    text = t('vnc.starting');
   } else if (v.stopping) {
     dotClass = 'stopping';
-    text = '停止中…';
+    text = t('vnc.stopping');
   } else if (v.running) {
     dotClass = 'running';
-    text = '运行中';
+    text = t('vnc.running');
   } else if (v.error) {
     dotClass = 'error';
-    text = '错误';
+    text = t('vnc.error');
   }
   statusDot.className = 'vnc-status-dot ' + dotClass;
   statusText.textContent = text;
@@ -157,10 +158,10 @@ export function renderVncPanel() {
   // 密码/端口信息（仅运行中显示）
   if (v.running && v.password) {
     infoArea.style.display = 'flex';
-    infoPassword.textContent = '密码: ' + v.password;
-    infoPassword.title = '点击复制密码';
-    infoPort.textContent = 'VNC 端口: ' + v.vncPort;
-    infoPort.title = 'VNC 服务端口 ' + v.vncPort;
+    infoPassword.textContent = t('vnc.password', { pwd: v.password });
+    infoPassword.title = t('vnc.copyPassword');
+    infoPort.textContent = t('vnc.port', { port: v.vncPort });
+    infoPort.title = t('vnc.portTitle', { port: v.vncPort });
   } else {
     infoArea.style.display = 'none';
   }
@@ -197,9 +198,9 @@ export function renderVncPanel() {
     if (v.error) {
       placeholder.querySelector('.vnc-placeholder-text').textContent = v.error;
     } else if (v.disabled) {
-      placeholder.querySelector('.vnc-placeholder-text').textContent = 'VNC 功能未启用';
+      placeholder.querySelector('.vnc-placeholder-text').textContent = t('vnc.featureDisabled');
     } else {
-      placeholder.querySelector('.vnc-placeholder-text').textContent = '点击"启动"开启远程桌面连接';
+      placeholder.querySelector('.vnc-placeholder-text').textContent = t('vnc.clickStart');
     }
   }
 }
@@ -229,7 +230,7 @@ export function updateVncStatus(msg) {
       v.password = msg.password || null;
       v.vncPid = msg.vnc_pid || null;
       v.error = null;
-      showToast('远程桌面已启动', 'success');
+      showToast(t('vnc.startedToast'), 'success');
       break;
     case 'vnc_stopped':
       v.running = false;
@@ -237,13 +238,13 @@ export function updateVncStatus(msg) {
       v.vncPort = null;
       v.password = null;
       v.vncPid = null;
-      showToast('远程桌面已停止', 'info');
+      showToast(t('vnc.stoppedToast'), 'info');
       break;
     case 'vnc_error':
       v.starting = false;
       v.stopping = false;
-      v.error = msg.message || '未知错误';
-      showToast('远程桌面: ' + (msg.message || '错误'), 'error');
+      v.error = i18nError(msg) || t('vnc.unknownError');
+      showToast(t('vnc.errorToast', { msg: v.error }), 'error');
       break;
   }
   // VNC 功能可用性变化时刷新按钮入口显示
@@ -290,8 +291,8 @@ export function buildVncTabElement() {
   const dotClass = state.vnc.running ? 'running' : 'ended';
   tab.innerHTML =
     '<span class="tab-icon ' + dotClass + '"></span>' +
-    '<span class="tab-title" title="远程桌面">远程桌面</span>' +
-    '<span class="tab-close" data-sid="' + VNC_TAB_ID + '" title="关闭标签">' +
+    '<span class="tab-title" title="' + t('session.vncTitle') + '">' + t('session.vncTitle') + '</span>' +
+    '<span class="tab-close" data-sid="' + VNC_TAB_ID + '" title="' + t('common.closeTab') + '">' +
     '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>' +
     '</span>';
   tab.onclick = e => {
@@ -384,9 +385,9 @@ export function bindVncEvents() {
       if (state.vnc.password) {
         try {
           navigator.clipboard.writeText(state.vnc.password).then(() => {
-            showToast('密码已复制', 'success');
+            showToast(t('vnc.copySuccess'), 'success');
           }).catch(() => {
-            showToast('密码复制失败', 'error');
+            showToast(t('vnc.copyFailed'), 'error');
           });
         } catch (e) {
           warn('vnc', 'clipboard write failed: %s', e);

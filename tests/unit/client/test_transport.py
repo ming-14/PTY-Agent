@@ -9,6 +9,175 @@ import pytest
 from src.client.transport import Client, _has_shell_operators, _parse_iso_time
 
 
+class _FakeCliPlugins:
+    """模拟 CliPluginHost：仅 names()/activate()"""
+
+    def __init__(self, names):
+        self._names = names
+        self.active = []
+
+    def names(self):
+        return self._names
+
+    def activate(self, names):
+        self.active = list(names)
+
+
+class TestRoutePlugins:
+    """exec --plugin 按 kind 分流：CLI 插件客户端挂钩并记录会话，daemon 插件透传"""
+
+    def test_cli_plugin_hooked_and_recorded(self):
+        """CLI 形态插件：客户端 activate + 写入 msg['cliPlugins'] 供会话记录"""
+        client = Client(cli_plugins=_FakeCliPlugins(["ai"]))
+        msg = {"type": "exec"}
+        client._route_plugins(msg, ["ai"])
+        assert client._cli_plugins.active == ["ai"]
+        assert msg["cliPlugins"] == ["ai"]
+        assert "plugins" not in msg
+
+    def test_daemon_plugin_passed_on_exec(self):
+        """会话/进程形态插件：exec 时写入 msg['plugins'] 透传 daemon"""
+        client = Client(cli_plugins=None)
+        msg = {"type": "exec"}
+        client._route_plugins(msg, ["files", "state_check"])
+        assert msg["plugins"] == ["files", "state_check"]
+        assert "cliPlugins" not in msg
+
+    def test_mixed_kinds_routed_independently(self):
+        """CLI 与 daemon 插件混用时各自分流"""
+        client = Client(cli_plugins=_FakeCliPlugins(["ai"]))
+        msg = {"type": "exec"}
+        client._route_plugins(msg, ["ai", "files"])
+        assert client._cli_plugins.active == ["ai"]
+        assert msg["cliPlugins"] == ["ai"]
+        assert msg["plugins"] == ["files"]
+
+    def test_no_plugins_noop(self):
+        client = Client(cli_plugins=_FakeCliPlugins(["ai"]))
+        msg = {"type": "exec"}
+        client._route_plugins(msg, None)
+        client._route_plugins(msg, [])
+        assert client._cli_plugins.active == []
+        assert "plugins" not in msg
+        assert "cliPlugins" not in msg
+
+    def test_cmd_exec_routes_cli_plugin(self, monkeypatch):
+        """cmd_exec --plugin ai：客户端 activate + cliPlugins 记录，不写入 daemon plugins"""
+        sent = []
+        monkeypatch.setattr(
+            "src.client.transport.print_response",
+            lambda r: sent.append(r),
+        )
+        monkeypatch.setattr(
+            "src.client.transport.Client._send_recv",
+            lambda self, msg, **kwargs: sent.append(msg) or {"type": "result", "session_id": "s"},
+        )
+        cli = _FakeCliPlugins(["ai"])
+        client = Client(cli_plugins=cli)
+        client.cmd_exec(
+            session_id="s",
+            command="echo hi",
+            plugins=["ai"],
+        )
+        assert cli.active == ["ai"]
+        exec_msg = next(m for m in sent if isinstance(m, dict) and m.get("type") == "exec")
+        assert exec_msg["cliPlugins"] == ["ai"]
+        assert "plugins" not in exec_msg
+
+
+class TestSessionCliPlugins:
+    """read/send/mouse 自动挂载会话上的 CLI 插件（无需 --plugin）"""
+
+    def test_session_cli_plugins_intersects(self, monkeypatch):
+        """按会话挂载列表 ∩ CLI 插件名取 cli 钩子"""
+        cli = _FakeCliPlugins(["ai"])
+        monkeypatch.setattr(
+            "src.client.transport.Client._send_recv",
+            lambda self, msg, **kwargs: {
+                "type": "result",
+                "action": "ls",
+                "plugins": [
+                    {"name": "ai", "version": ""},
+                    {"name": "files", "version": "1.0"},
+                ],
+            }
+            if msg.get("type") == "plugin"
+            else {"type": "result"},
+        )
+        client = Client(cli_plugins=cli)
+        assert client._session_cli_plugins("s") == ["ai"]
+
+    def test_session_cli_plugins_error_returns_empty(self, monkeypatch):
+        """会话不存在（ls 报错）返回空列表"""
+        monkeypatch.setattr(
+            "src.client.transport.Client._send_recv",
+            lambda self, msg, **kwargs: {"type": "error", "message": "no session"},
+        )
+        client = Client(cli_plugins=_FakeCliPlugins(["ai"]))
+        assert client._session_cli_plugins("nope") == []
+
+    def test_cmd_send_activates_session_cli(self, monkeypatch):
+        """cmd_send 自动挂载会话上的 CLI 插件，请求不带 --plugin 相关字段"""
+        sent = []
+        monkeypatch.setattr(
+            "src.client.transport.print_response", lambda r: sent.append(r)
+        )
+
+        def fake_send_recv(self, msg, **kwargs):
+            if msg.get("type") == "plugin":
+                return {"type": "result", "action": "ls",
+                        "plugins": [{"name": "ai", "version": ""}]}
+            sent.append(msg)
+            return {"type": "result", "session_id": "s"}
+
+        monkeypatch.setattr("src.client.transport.Client._send_recv", fake_send_recv)
+        cli = _FakeCliPlugins(["ai"])
+        client = Client(cli_plugins=cli)
+        client.cmd_send(session_id="s", input_text="print(1)")
+        assert cli.active == ["ai"]
+        send_msg = next(m for m in sent if isinstance(m, dict) and m.get("type") == "send")
+        assert "plugins" not in send_msg
+        assert "cliPlugins" not in send_msg
+
+    def test_cmd_read_activates_session_cli(self, monkeypatch):
+        """cmd_read 自动挂载会话上的 CLI 插件"""
+        sent = []
+        monkeypatch.setattr(
+            "src.client.transport.print_response", lambda r: sent.append(r)
+        )
+
+        def fake_send_recv(self, msg, **kwargs):
+            if msg.get("type") == "plugin":
+                return {"type": "result", "action": "ls",
+                        "plugins": [{"name": "simple", "version": ""}]}
+            sent.append(msg)
+            return {"type": "result", "session_id": "s"}
+
+        monkeypatch.setattr("src.client.transport.Client._send_recv", fake_send_recv)
+        cli = _FakeCliPlugins(["simple"])
+        client = Client(cli_plugins=cli)
+        client.cmd_read(session_id="s")
+        assert cli.active == ["simple"]
+
+    def test_no_cli_plugins_no_query(self, monkeypatch):
+        """无 CLI 插件宿主时不发插件查询"""
+        called = []
+        monkeypatch.setattr(
+            "src.client.transport.print_response", lambda r: called.append(r)
+        )
+
+        def fake_send_recv(self, msg, **kwargs):
+            called.append(msg.get("type"))
+            return {"type": "result", "session_id": "s"}
+
+        monkeypatch.setattr("src.client.transport.Client._send_recv", fake_send_recv)
+        client = Client(cli_plugins=None)
+        client.cmd_read(session_id="s")
+        # 只发 read，不额外发 plugin ls 查询
+        assert called.count("plugin") == 0
+
+
+
 class TestHasShellOperators:
     """_has_shell_operators 测试"""
 
@@ -70,6 +239,13 @@ class TestParseIsoTime:
 
 class TestClientApplyConfigDefaults:
     """Client._apply_config_defaults 测试"""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_persistent_defaults(self, monkeypatch):
+        """隔离本机 ~/.pty-agent/client_defaults.json（set-default 持久化）"""
+        monkeypatch.setattr(
+            "src.client.config_manager.load_persistent_defaults", lambda: {}
+        )
 
     def test_defaults(self):
         """未传参数时使用配置默认值"""
@@ -144,7 +320,7 @@ class TestClientShellOperators:
         )
         monkeypatch.setattr(
             "src.client.transport.Client._send_recv",
-            lambda self, msg: {"type": "result", "session_id": "test"},
+            lambda self, msg, **kwargs: {"type": "result", "session_id": "test"},
         )
         client = Client()
         client.cmd_exec(
@@ -179,7 +355,7 @@ class TestClientCmdMouse:
         sent = []
         monkeypatch.setattr(
             "src.client.transport.Client._send_recv",
-            lambda self, msg: sent.append(msg) or {"commandType": "mouse", "performed": True},
+            lambda self, msg, **kwargs: sent.append(msg) or {"commandType": "mouse", "performed": True},
         )
         client = Client()
         client.cmd_mouse("test-id", {"action": "click", "coords": {"col": 10, "row": 5}, "button": "left"})
@@ -194,7 +370,7 @@ class TestClientCmdMouse:
         sent = []
         monkeypatch.setattr(
             "src.client.transport.Client._send_recv",
-            lambda self, msg: sent.append(msg) or {"commandType": "mouse", "performed": True},
+            lambda self, msg, **kwargs: sent.append(msg) or {"commandType": "mouse", "performed": True},
         )
         client = Client()
         client.cmd_mouse("test-id", {
@@ -212,7 +388,7 @@ class TestClientCmdMouse:
         sent = []
         monkeypatch.setattr(
             "src.client.transport.Client._send_recv",
-            lambda self, msg: sent.append(msg) or {"commandType": "mouse", "performed": True},
+            lambda self, msg, **kwargs: sent.append(msg) or {"commandType": "mouse", "performed": True},
         )
         client = Client()
         client.cmd_mouse(

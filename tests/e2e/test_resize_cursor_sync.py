@@ -89,8 +89,19 @@ def _parse_rows(snapshot: str) -> dict:
 
 # ── 测试体 ──────────────────────────────────────────────────
 
+# 平台化：Windows 用 cmd（> prompt），Unix 用 bash（$ prompt）
+_IS_WIN = sys.platform == "win32"
+_SHELL_CMD = "cmd.exe" if _IS_WIN else "bash"
+_PROMPT_CHAR = ">" if _IS_WIN else "$"
+_FILL_CMD = (
+    "for /l %i in (1,1,40) do @echo LINE%i-aaaaaaaaaaaaaaaaaaaa\r"
+    if _IS_WIN
+    else 'for i in $(seq 1 40); do echo LINE$i-aaaaaaaaaaaaaaaaaaaa; done\r'
+)
+
+
 class _Session:
-    """一个临时 cmd 会话：填充确定性内容（产生 scrollback）"""
+    """一个临时 shell 会话：填充确定性内容（产生 scrollback）"""
 
     def __init__(self):
         self.sid = "e2esync_" + uuid.uuid4().hex[:8]
@@ -100,7 +111,7 @@ class _Session:
         self.ws = await websockets.connect(
             _WS_URL, max_size=8 * 1024 * 1024, ping_interval=20)
         await self.ws.send(json.dumps({
-            "type": "create", "session_id": self.sid, "command": "cmd.exe",
+            "type": "create", "session_id": self.sid, "command": _SHELL_CMD,
             "pty": True, "cols": 80, "rows": 24}))
         sub = await _recv_until(
             self.ws, lambda m: m.get("type") == "subscribed"
@@ -109,8 +120,7 @@ class _Session:
         await asyncio.sleep(1.5)
         # 40 行确定性输出（< 60 列，不触发 rewrap）
         await self.ws.send(json.dumps({
-            "type": "input", "session_id": self.sid,
-            "data": "for /l %i in (1,1,40) do @echo LINE%i-aaaaaaaaaaaaaaaaaaaa\r"}))
+            "type": "input", "session_id": self.sid, "data": _FILL_CMD}))
         await asyncio.sleep(3.0)
         await _recv_until(self.ws, lambda m: False, timeout=0.5, collect=[])
         return self
@@ -160,7 +170,7 @@ class _Session:
         assert snap_pos == pty_pos, (
             f"[{tag}] snapshot 光标 {snap_pos} != ConPTY 实测 {pty_pos}，"
             f"按键会回显在显示内容中间")
-        assert ">" in cursor_line, (
+        assert _PROMPT_CHAR in cursor_line, (
             f"[{tag}] 光标行不是 prompt: {cursor_line!r}")
 
 

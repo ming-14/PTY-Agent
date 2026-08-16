@@ -19,15 +19,15 @@
 """
 
 import hashlib
-import logging
 import os
 
 from fastapi import APIRouter, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 
 from ...infrastructure.auth.session_store import SessionStore
+from ....logging import get_logger
 
-_logger = logging.getLogger("pty-web-auth")
+_logger = get_logger("pty-web-auth")
 
 _COOKIE_NAME = "pty_session"
 _TOKEN_HEADER = "x-auth-token"

@@ -9,14 +9,14 @@ TOFU (Trust On First Use) 信任模型：
 - 类似 SSH 的 StrictHostKeyChecking=accept-new
 """
 
-import logging
 import socket
 import ssl
 
 from ..auth.tls.cert_manager import CertificateManager
 from ..auth.tls.known_hosts import KnownHosts
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-daemonctl")
+_logger = get_logger("pty-daemonctl")
 
 
 class TLSClient:

@@ -1,12 +1,11 @@
 """TCP 监听器 — 封装单端口的 accept 循环
 
 每个 Listener 负责一个 (host, port, transport, auth_context) 组合。
-明文/TLS 传输层在此封装，accept 后派发给 RequestHandler。
+TCP/TLS 传输层在此封装，accept 后派发给 RequestHandler。
 
 依赖规则：框架层对象，依赖 AuthContext（框架层）和 RequestHandler（接口适配器层）。
 """
 
-import logging
 import socket
 import ssl
 import threading
@@ -14,15 +13,16 @@ from typing import Callable, Optional
 
 from ..auth.context import AuthContext
 from ..config.daemon import SOCKET_LISTEN_BACKLOG
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-daemon")
+_logger = get_logger("pty-daemon")
 
 
 class Listener:
     """TCP 监听器 — 封装单端口的 accept 循环
 
     每个 Listener 负责一个 (host, port, transport, auth_context) 组合。
-    明文/TLS 传输层在此封装，accept 后派发给 RequestHandler。
+    TCP/TLS 传输层在此封装，accept 后派发给 RequestHandler。
 
     生命周期：
         1. bind()  — 创建 socket 并绑定端口（检测端口冲突），返回实际端口
@@ -30,7 +30,7 @@ class Listener:
         3. stop()  — 停止 accept 线程，关闭 socket
 
     Attributes:
-        transport: 传输类型 "plain" 或 "tls"
+        transport: 传输类型 "tcp" 或 "tls"
     """
 
     def __init__(
@@ -43,7 +43,7 @@ class Listener:
     ):
         self._host = host
         self._port = port
-        self._transport = transport  # "plain" or "tls"
+        self._transport = transport  # "tcp" or "tls"
         self._auth_context = auth_context
         self._ssl_context = ssl_context
         self._sock: Optional[socket.socket] = None
@@ -87,6 +87,9 @@ class Listener:
                              在此调用一次，之后所有连接复用同一 handler。
         """
         self._sock.listen(SOCKET_LISTEN_BACKLOG)
+        # accept 超时定期唤醒：Unix 上另一线程 close() 不会中断阻塞中的
+        # accept（Windows closesocket 会），需超时醒来检查停止标志
+        self._sock.settimeout(0.5)
         self._handler = handler_factory(self._auth_context)
         self._running = True
         self._thread = threading.Thread(
@@ -105,11 +108,16 @@ class Listener:
     def _accept_loop(self):
         """accept 循环，每个连接创建处理线程
 
-        socket 无 timeout，靠 stop() 关闭 socket 触发 OSError 退出循环。
+        循环依赖 0.5s accept 超时退出：stop() 置 _running=False 后，
+        下一次超时醒来即退出（Unix 的 close 不中断阻塞中的 accept）。
+        TLS 握手在连接线程内执行（_handle_connection）：慢握手
+        （客户端延迟 ClientHello）不阻塞 accept 循环与其他连接。
         """
         while self._running:
             try:
                 conn, addr = self._sock.accept()
+            except socket.timeout:
+                continue
             except OSError:
                 if self._running:
                     _logger.warning(
@@ -119,27 +127,32 @@ class Listener:
 
             _logger.debug("Listener [%s] 接受连接: %s", self._transport, addr)
 
-            # TLS 包装（tls 传输且提供 ssl_context 时生效）
-            if self._transport == "tls" and self._ssl_context is not None:
-                try:
-                    conn = self._ssl_context.wrap_socket(conn, server_side=True)
-                except Exception:
-                    _logger.warning(
-                        "Listener [%s] TLS 握手失败: %s",
-                        self._transport,
-                        addr,
-                        exc_info=True,
-                    )
-                    conn.close()
-                    continue
-
             t = threading.Thread(
-                target=self._handler.handle,
+                target=self._handle_connection,
                 args=(conn, addr),
                 daemon=True,
                 name=f"conn-{addr}",
             )
             t.start()
+
+    def _handle_connection(self, conn, addr):
+        """连接线程入口：TLS 包装（慢握手在此执行）+ 派发给 handler"""
+        if self._transport == "tls" and self._ssl_context is not None:
+            try:
+                conn = self._ssl_context.wrap_socket(conn, server_side=True)
+            except Exception:
+                _logger.warning(
+                    "Listener [%s] TLS 握手失败: %s",
+                    self._transport,
+                    addr,
+                    exc_info=True,
+                )
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                return
+        self._handler.handle(conn, addr)
 
     def stop(self):
         """停止 accept 线程，关闭 socket"""

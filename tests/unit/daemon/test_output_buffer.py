@@ -66,10 +66,19 @@ class TestOutputBufferOverflow:
         """缓冲区满时裁剪头部旧数据，保留尾部新数据"""
         buf = OutputBuffer(max_size=16)
         buf.append(b"a" * 16)
-        buf.append(b"b")
+        buf.append(b"b" * 10)  # 26 > 16+headroom(4) → 裁剪回 16
         data = buf.get_slice()
         assert len(data) == 16
         assert data.endswith(b"b")
+
+    def test_overflow_headroom_defers_trim(self):
+        """headroom 内不触发裁剪（批量摊还 memmove）"""
+        buf = OutputBuffer(max_size=16)
+        buf.append(b"a" * 16)
+        buf.append(b"b")  # 17 ≤ 16+4 → 不裁剪
+        assert buf.dropped_bytes == 0
+        assert buf.trim_gen == 0
+        assert len(buf.get_slice()) == 17
 
     def test_append_truncated_to_room(self):
         """数据超过剩余空间时截断"""

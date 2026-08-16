@@ -122,8 +122,8 @@ class TestSessionEvents:
         def _mock_create_pty(*args, **kwargs):
             return _MockPty()
 
-        monkeypatch.setattr("src.session.session.create_pty", _mock_create_pty)
-        monkeypatch.setattr("src.session.session.create_process_tree_tracker",
+        monkeypatch.setattr("src.session.session.session.create_pty", _mock_create_pty)
+        monkeypatch.setattr("src.session.session.session.create_process_tree_tracker",
                             lambda: _MockTracker())
 
         sess = Session("test-sess", "echo hello")
@@ -380,8 +380,8 @@ class TestSessionDrain:
         def _mock_create_pty(*args, **kwargs):
             return mock_pty
 
-        monkeypatch.setattr("src.session.session.create_pty", _mock_create_pty)
-        monkeypatch.setattr("src.session.session.create_process_tree_tracker",
+        monkeypatch.setattr("src.session.session.session.create_pty", _mock_create_pty)
+        monkeypatch.setattr("src.session.session.session.create_process_tree_tracker",
                             lambda: _MockTracker())
 
         sess = Session("drain-test", "echo test")

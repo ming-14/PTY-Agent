@@ -4,13 +4,13 @@
 cursorlocator 是单例模块（_instance 全局唯一），本适配器保证不会重复启动。
 """
 
-import logging
 import os
 import sys
 
 from ..application.ports import CursorLocatorServicePort
+from ...logging import get_logger
 
-_logger = logging.getLogger("pty-web")
+_logger = get_logger("pty-web")
 
 _BIN_DIR = os.path.normpath(
     os.path.join(
@@ -33,7 +33,7 @@ class CursorLocatorAdapter(CursorLocatorServicePort):
         self._config = None
         try:
             if sys.platform != "win32":
-                self._import_error = "cursorlocator 仅支持 Windows"
+                self._import_error = "cursorlocator supports Windows only"
                 _logger.info("CursorLocator: not available (non-Windows platform)")
                 return
             if _BIN_DIR not in sys.path:
@@ -57,7 +57,7 @@ class CursorLocatorAdapter(CursorLocatorServicePort):
         if not self._available:
             return {
                 "running": False,
-                "error": self._import_error or "cursorlocator 不可用",
+                "error": self._import_error or "cursorlocator unavailable",
             }
         if self._running:
             return {"running": True}
@@ -74,7 +74,7 @@ class CursorLocatorAdapter(CursorLocatorServicePort):
         if not self._available:
             return {
                 "running": False,
-                "error": self._import_error or "cursorlocator 不可用",
+                "error": self._import_error or "cursorlocator unavailable",
             }
         if not self._running:
             return {"running": False}
@@ -100,7 +100,7 @@ class CursorLocatorAdapter(CursorLocatorServicePort):
 
     def update_config(self, **kwargs) -> dict:
         if not self._available:
-            return {"error": self._import_error or "cursorlocator 不可用"}
+            return {"error": self._import_error or "cursorlocator unavailable"}
         try:
             if self._running:
                 self._module.update_config(**kwargs)

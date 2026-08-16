@@ -49,6 +49,7 @@ const WINDOW_SIZES = {
  * @param {number} [opts.windowOpacity]     透明度 0-100
  * @param {object} [opts.features]          功能开关，默认全 true
  * @param {string} [opts.title]             标题栏文字，默认 '日志视窗'
+ * @param {function} [opts.t]               本地化函数 t(key, params)；未提供时回退内置中文
  */
 export class LogPanel {
   constructor(opts) {
@@ -57,6 +58,44 @@ export class LogPanel {
     if (!this._source || typeof this._source.subscribe !== 'function') {
       throw new Error('LogPanel: opts.source 必须提供 subscribe 方法');
     }
+    // 本地化：外部 t 优先，缺失回退内置中文（保持组件自包含）
+    this._FALLBACK = {
+      'logpanel.title': '日志视窗',
+      'logpanel.pauseToggle': '暂停/继续接收新日志',
+      'logpanel.autoScrollBottom': '自动滚到底部',
+      'logpanel.close': '关闭',
+      'logpanel.searchPlaceholder': '搜索日志（支持正则）…',
+      'logpanel.toggleRegex': '切换正则模式',
+      'logpanel.clearLog': '清空日志缓冲区',
+      'logpanel.clear': '清空',
+      'logpanel.copyFilter': '复制当前过滤结果到剪贴板',
+      'logpanel.copy': '复制',
+      'logpanel.exportTxt': '导出为 txt 文件',
+      'logpanel.export': '导出',
+      'logpanel.moduleFilter': '模块筛选',
+      'logpanel.selectAll': '全选',
+      'logpanel.selectNone': '取消全选',
+      'logpanel.stats': '统计',
+      'logpanel.resumeReceiving': '继续接收新日志',
+      'logpanel.pauseReceiving': '暂停接收新日志',
+      'logpanel.disableAutoScroll': '关闭自动滚动',
+      'logpanel.enableAutoScroll': '开启自动滚动',
+      'logpanel.logCleared': '日志已清空',
+      'logpanel.copied': '已复制 {n} 条',
+      'logpanel.copyFailed': '复制失败',
+      'logpanel.exported': '已导出 {fname}',
+      'logpanel.exportFailed': '导出失败: {err}',
+      'logpanel.closePanel': '关闭日志视窗',
+      'logpanel.pausedSuffix': ' · 暂停',
+      'logpanel.bufferLabel': '缓冲 {used} / {cap} 条 {pct}%',
+    };
+    this._t = this._opts.t || ((key, params) => {
+      let s = this._FALLBACK[key] !== undefined ? this._FALLBACK[key] : key;
+      if (params) {
+        for (const k of Object.keys(params)) s = s.split('{' + k + '}').join(String(params[k]));
+      }
+      return s;
+    });
 
     // 解析规则：默认 + 覆盖
     this._rules = Object.assign({}, DEFAULT_RULES, this._opts.rules || {});
@@ -241,12 +280,12 @@ export class LogPanel {
   _buildInnerHtml() {
     const f = this._features;
     let html = '<div class="lp-titlebar">' +
-      '<div class="lp-title">' + Icons.ICON_TITLE + '<span>日志视窗</span></div>' +
+      '<div class="lp-title">' + Icons.ICON_TITLE + '<span>' + this._t('logpanel.title') + '</span></div>' +
       '<span class="lp-status" id="lp-status">0 / 0</span>' +
       '<div class="lp-spacer"></div>';
-    if (f.pause)      html += '<button class="lp-iconbtn lp-pause" id="lp-pause" title="暂停/继续接收新日志">' + Icons.ICON_PAUSE + '</button>';
-    if (f.autoScroll) html += '<button class="lp-iconbtn lp-autoscroll" id="lp-autoscroll" title="自动滚到底部">' + Icons.ICON_AUTOSCROLL_ON + '</button>';
-    html += '<button class="lp-iconbtn lp-close" id="lp-close" title="关闭">' + Icons.ICON_CLOSE + '</button>';
+    if (f.pause)      html += '<button class="lp-iconbtn lp-pause" id="lp-pause" title="' + this._t('logpanel.pauseToggle') + '">' + Icons.ICON_PAUSE + '</button>';
+    if (f.autoScroll) html += '<button class="lp-iconbtn lp-autoscroll" id="lp-autoscroll" title="' + this._t('logpanel.autoScrollBottom') + '">' + Icons.ICON_AUTOSCROLL_ON + '</button>';
+    html += '<button class="lp-iconbtn lp-close" id="lp-close" title="' + this._t('logpanel.close') + '">' + Icons.ICON_CLOSE + '</button>';
     html += '</div>';
 
     // 工具栏
@@ -254,14 +293,14 @@ export class LogPanel {
     if (f.levelFilter) html += '<div class="lp-level-group" id="lp-level-group"></div><div class="lp-divider"></div>';
     if (f.search) {
       html += '<div class="lp-search" id="lp-search">' +
-        '<input type="text" id="lp-search-input" placeholder="搜索日志（支持正则）…" autocomplete="off" spellcheck="false">';
-      if (f.regex) html += '<button class="lp-regex-btn" id="lp-regex-btn" title="切换正则模式">.*</button>';
+        '<input type="text" id="lp-search-input" placeholder="' + this._t('logpanel.searchPlaceholder') + '" autocomplete="off" spellcheck="false">';
+      if (f.regex) html += '<button class="lp-regex-btn" id="lp-regex-btn" title="' + this._t('logpanel.toggleRegex') + '">.*</button>';
       html += '</div>';
     }
     html += '<div class="lp-actions">';
-    if (f.clear)  html += '<button class="lp-btn" id="lp-clear" title="清空日志缓冲区">' + Icons.ICON_CLEAR + '清空</button>';
-    if (f.copy)   html += '<button class="lp-btn" id="lp-copy" title="复制当前过滤结果到剪贴板">' + Icons.ICON_COPY + '复制</button>';
-    if (f.export) html += '<button class="lp-btn" id="lp-export" title="导出为 txt 文件">' + Icons.ICON_EXPORT + '导出</button>';
+    if (f.clear)  html += '<button class="lp-btn" id="lp-clear" title="' + this._t('logpanel.clearLog') + '">' + Icons.ICON_CLEAR + this._t('logpanel.clear') + '</button>';
+    if (f.copy)   html += '<button class="lp-btn" id="lp-copy" title="' + this._t('logpanel.copyFilter') + '">' + Icons.ICON_COPY + this._t('logpanel.copy') + '</button>';
+    if (f.export) html += '<button class="lp-btn" id="lp-export" title="' + this._t('logpanel.exportTxt') + '">' + Icons.ICON_EXPORT + this._t('logpanel.export') + '</button>';
     html += '</div></div>';
 
     // 主体
@@ -269,15 +308,15 @@ export class LogPanel {
     html += '<div class="lp-left" id="lp-left">';
     if (f.tagFilter) {
       html += '<div class="lp-left-section">' +
-        '<div class="lp-left-label">模块筛选</div>' +
-        '<div class="lp-left-tag-toggle" id="lp-left-tag-toggle">全选</div>' +
+        '<div class="lp-left-label">' + this._t('logpanel.moduleFilter') + '</div>' +
+        '<div class="lp-left-tag-toggle" id="lp-left-tag-toggle">' + this._t('logpanel.selectAll') + '</div>' +
         '<div class="lp-left-tags" id="lp-left-tags"></div>' +
       '</div>';
     }
     html += '<div class="lp-left-spacer"></div>';
     if (f.stats) {
       html += '<div class="lp-left-section">' +
-        '<div class="lp-left-label">统计</div>' +
+        '<div class="lp-left-label">' + this._t('logpanel.stats') + '</div>' +
         '<div class="lp-left-levels" id="lp-left-levels"></div>' +
         '<div class="lp-left-buffer" id="lp-left-buffer"></div>' +
         '<div class="lp-left-bar"><div class="lp-left-bar-fill" id="lp-left-bar-fill"></div></div>' +
@@ -389,7 +428,7 @@ export class LogPanel {
     const toggle = this._el.tagToggle;
     if (toggle) {
       const allHidden = tags.length > 0 && tags.every(t => this._tagFilter.has(t));
-      toggle.textContent = allHidden ? '全选' : '取消全选';
+      toggle.textContent = allHidden ? this._t('logpanel.selectAll') : this._t('logpanel.selectNone');
       toggle.style.display = tags.length > 1 ? '' : 'none';
     }
   }
@@ -608,7 +647,7 @@ export class LogPanel {
       pauseBtn.onclick = () => {
         this._paused = !this._paused;
         this._syncPauseIcon();
-        pauseBtn.title = this._paused ? '继续接收新日志' : '暂停接收新日志';
+        pauseBtn.title = this._paused ? this._t('logpanel.resumeReceiving') : this._t('logpanel.pauseReceiving');
         this._updateStatus();
       };
     }
@@ -619,7 +658,7 @@ export class LogPanel {
         this._autoScroll = !this._autoScroll;
         this._autoScrollUserEnabled = this._autoScroll;
         this._syncAutoScrollIcon();
-        autoBtn.title = this._autoScroll ? '关闭自动滚动' : '开启自动滚动';
+        autoBtn.title = this._autoScroll ? this._t('logpanel.disableAutoScroll') : this._t('logpanel.enableAutoScroll');
         this._saveBool('autoscroll', this._autoScroll);
         if (this._autoScroll) this._scrollToBottom();
       };
@@ -648,7 +687,7 @@ export class LogPanel {
     if (clearBtn) {
       clearBtn.onclick = () => {
         try { this._source.clear && this._source.clear(); } catch (_) {}
-        this._toast('日志已清空', 'success');
+        this._toast(this._t('logpanel.logCleared'), 'success');
       };
     }
 
@@ -658,7 +697,7 @@ export class LogPanel {
         const lines = this._filteredEntries().map((e) => this._formatEntryPlain(e));
         const text = lines.join('\n');
         this._copyToClipboard(text).then((ok) => {
-          this._toast(ok ? ('已复制 ' + lines.length + ' 条') : '复制失败', ok ? 'success' : 'error');
+          this._toast(ok ? this._t('logpanel.copied', { n: lines.length }) : this._t('logpanel.copyFailed'), ok ? 'success' : 'error');
         });
       };
     }
@@ -680,9 +719,9 @@ export class LogPanel {
           document.body.appendChild(a); a.click();
           document.body.removeChild(a);
           setTimeout(() => URL.revokeObjectURL(url), 1000);
-          this._toast('已导出 ' + fname, 'success');
+          this._toast(this._t('logpanel.exported', { fname }), 'success');
         } catch (e) {
-          this._toast('导出失败: ' + e, 'error');
+          this._toast(this._t('logpanel.exportFailed', { err: e }), 'error');
         }
       };
     }
@@ -709,7 +748,7 @@ export class LogPanel {
     this._unbindContextMenu();
     const menu = document.createElement('div');
     menu.className = 'lp-context-menu';
-    menu.innerHTML = '<div class="lp-context-menu-item danger" data-action="close">关闭日志视窗</div>';
+    menu.innerHTML = '<div class="lp-context-menu-item danger" data-action="close">this._t('logpanel.closePanel') + '</div>';
     this._shadow.appendChild(menu);
     menu.style.left = Math.min(x, window.innerWidth - menu.offsetWidth - 4) + 'px';
     menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 4) + 'px';
@@ -930,7 +969,7 @@ export class LogPanel {
     if (!el) return;
     const shown = this._el.body ? this._el.body.childElementCount : 0;
     const total = this._safeGetSize();
-    el.textContent = shown + ' / ' + total + (this._paused ? ' · 暂停' : '');
+    el.textContent = shown + ' / ' + total + (this._paused ? this._t('logpanel.pausedSuffix') : '');
     this._updateLeftPanel();
   }
 
@@ -958,7 +997,7 @@ export class LogPanel {
     const used = all.length;
     const pct = cap > 0 ? Math.min(100, Math.round(used / cap * 100)) : 0;
     const bufEl = this._el.buffer;
-    if (bufEl) bufEl.textContent = '缓冲 ' + used + ' / ' + cap + '（' + pct + '%）';
+    if (bufEl) bufEl.textContent = this._t('logpanel.bufferLabel', { used, cap, pct });
     const barFill = this._el.barFill;
     if (barFill) barFill.style.width = pct + '%';
   }

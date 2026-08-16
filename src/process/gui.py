@@ -5,15 +5,15 @@
 依赖 ProcessTreeTracker 抽象（poll_gui_windows / get_process_list）。
 """
 
-import logging
 import threading
 import time
-from typing import List
+from typing import List, Optional
 
 from ..output.events import PendingEvent
 from .base import ProcessTreeTracker
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-session")
+_logger = get_logger("pty-session")
 
 
 class GuiDetector:
@@ -40,12 +40,15 @@ class GuiDetector:
         self._last_poll_ms = 0.0
         self._event_sink = event_sink
 
-    def check(self, tracker: ProcessTreeTracker, session_id: str) -> None:
+    def check(self, tracker: ProcessTreeTracker, session_id: str,
+              pids: Optional[List[int]] = None) -> None:
         """轮询检测进程树中新增的 GUI 窗口（节流 2s）
 
         Args:
             tracker:   进程树追踪器（ProcessTreeTracker 抽象端口）。
             session_id: 会话 ID，用于日志。
+            pids:       调用方已获取的进程树 PID 列表（同一 tick 复用，
+                        避免与 get_process_list 重复扫描）；None 时自行查询。
         """
         now = time.monotonic()
         if now - self._last_poll_ms < 2.0:
@@ -55,7 +58,7 @@ class GuiDetector:
         if not tracker:
             return
         try:
-            new_windows = tracker.poll_gui_windows()
+            new_windows = tracker.poll_gui_windows(pids=pids)
             if new_windows:
                 with self._lock:
                     self.gui_windows.extend(new_windows)
@@ -78,8 +81,9 @@ class GuiDetector:
                             },
                         )
                     )
-            # 更新进程树信息
-            pids = tracker.get_process_list()
+            # 更新进程树信息（复用调用方传入的列表，避免二次查询）
+            if pids is None:
+                pids = tracker.get_process_list()
             if pids:
                 with self._lock:
                     self.processes = pids

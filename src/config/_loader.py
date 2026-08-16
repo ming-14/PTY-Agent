@@ -1,5 +1,6 @@
 """配置加载工具 —— TOML 文件读取、展平、合并"""
 
+import functools
 import os
 
 try:
@@ -18,8 +19,12 @@ _CONFIG_DIR = os.path.join(
 )
 
 
+@functools.lru_cache(maxsize=64)
 def load_toml(filename: str, domain: str = "") -> dict:
     """读取指定 TOML 文件
+
+    lru_cache：common.toml/shared.toml 被 common/shared/daemon/client 各加载一次，
+    冷启动时文件重复解析消除；返回 dict 仅被 flatten/只读消费（不原地修改）。
 
     Args:
         filename: 文件名（如 "common.toml"）。

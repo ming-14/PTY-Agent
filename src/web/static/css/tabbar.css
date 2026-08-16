@@ -89,6 +89,23 @@
   line-height: 30px;
 }
 
+/* ── 运行模式徽标（子进程） ── */
+.mode-badge {
+  display: inline-block;
+  flex-shrink: 0;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 600;
+  vertical-align: 1px;
+  background: rgba(90, 120, 255, 0.14);
+  color: var(--wt-accent, #5a78ff);
+  border: 1px solid rgba(90, 120, 255, 0.35);
+}
+.mode-badge.sub { background: rgba(90, 120, 255, 0.14); color: var(--wt-accent, #5a78ff); border-color: rgba(90, 120, 255, 0.35); }
+
 .tab-close {
   display: flex;
   align-items: center;

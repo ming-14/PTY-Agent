@@ -1,10 +1,11 @@
-"""WeztermPseudoTerminal 集成测试 — spawn/读写/退出码/close（真实 cmd 进程）
+"""WeztermPseudoTerminal 集成测试 — spawn/读写/退出码/close（真实进程）
 
 验证 wezterm-py PTY 后端满足 PseudoTerminal 契约：
 输出捕获、进程 pid、退出码、resize、close 清理。
 """
 
 import os
+import sys
 import time
 
 import pytest
@@ -12,6 +13,14 @@ import pytest
 from src.pty.wezterm_pty import WeztermPseudoTerminal, _HAS_WEZTERM
 
 pytestmark = pytest.mark.skipif(not _HAS_WEZTERM, reason="wezterm-py 不可用")
+
+# 平台化：Windows 用 cmd，Unix 用 /bin/sh（echo 语义一致）
+_E_SHELL = os.environ.get("COMSPEC", "cmd.exe") if sys.platform == "win32" else "/bin/sh"
+_E_ECHO = (_E_SHELL, "/c", "echo", "HELLO_WZ") if sys.platform == "win32" \
+    else (_E_SHELL, "-c", "echo HELLO_WZ")
+_E_ECHO2 = (_E_SHELL, "/c", "echo", "HI_AFTER_WRITE") if sys.platform == "win32" \
+    else (_E_SHELL, "-c", "echo HI_AFTER_WRITE")
+_INTERACTIVE_SHELL = _E_SHELL
 
 
 def _read_until(pty, marker, timeout=8.0):
@@ -28,8 +37,7 @@ def _read_until(pty, marker, timeout=8.0):
 
 
 def test_spawn_read_exit_code():
-    shell = os.environ.get("COMSPEC", "cmd.exe")
-    pty = WeztermPseudoTerminal([shell, "/c", "echo HELLO_WZ"])
+    pty = WeztermPseudoTerminal(list(_E_ECHO))
     try:
         assert pty.get_type() == "wezterm"
         assert pty.get_child_pid() is not None
@@ -49,11 +57,11 @@ def test_spawn_read_exit_code():
 
 
 def test_resize_and_write():
-    shell = os.environ.get("COMSPEC", "cmd.exe")
-    # 交互式 cmd 会话：验证写入与 resize
-    pty = WeztermPseudoTerminal([shell], cols=40, rows=10)
+    # 交互式 shell 会话：验证写入与 resize
+    pty = WeztermPseudoTerminal([_INTERACTIVE_SHELL], cols=40, rows=10)
     try:
-        pty.write(b"echo HI_AFTER_WRITE\r\n")
+        pty.write(("echo HI_AFTER_WRITE\r\n" if sys.platform == "win32"
+                   else "echo HI_AFTER_WRITE\n").encode())
         out = _read_until(pty, b"HI_AFTER_WRITE", timeout=8.0)
         assert b"HI_AFTER_WRITE" in out, out[:300]
         pty.resize(80, 24)

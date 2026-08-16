@@ -28,13 +28,17 @@ if _PROJECT_ROOT not in sys.path:
 
 import pytest  # noqa: E402
 
+# win-sandbox 为 Windows 原生组件；非 Windows 平台模块级跳过（import 前）
+if sys.platform != "win32":
+    pytest.skip("沙箱 ConPTY 仅支持 Windows", allow_module_level=True)
+
 from src.sandbox.manager import SandboxSessionManager  # noqa: E402
 from src.sandbox.pty import SandboxPty  # noqa: E402
 
 _HAS_SANDBOX = bool(glob.glob(os.path.join(
     _PROJECT_ROOT, "bin", "win_sandbox", "_native", "win_sandbox_native*.pyd")))
 
-# Phase 16 隔离：无网络隔离 + 剪贴板不隔离（无路径白名单/能力集）
+# 沙箱隔离：无网络隔离 + 剪贴板不隔离（无路径白名单/能力集）
 _ISOLATION = {
     "net_policy": "unrestricted",
     "net_allowlist": [],
@@ -153,6 +157,9 @@ def _run() -> int:
             mgr.close()
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="沙箱 ConPTY 仅支持 Windows"
+)
 @pytest.mark.skipif(not _HAS_SANDBOX, reason="win_sandbox_native 未构建")
 def test_sandbox_conpty_full_semantics():
     assert _run() == 0

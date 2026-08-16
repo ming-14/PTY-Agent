@@ -7,13 +7,13 @@
   鼠标动作执行（perform_mouse_action，CLI/daemon 特性，产生 SGR 字节直接写 pty）。
 """
 
-import logging
 import time
 from typing import Callable, Optional
 
 from .mouse import Coord, MouseActionEncoder, MouseError, grep_screen
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-session")
+_logger = get_logger("pty-session")
 
 
 class InputInterceptor:

@@ -96,6 +96,30 @@ def test_screen_scrollback_api():
     assert screen.scrollback_lines_count == 0
 
 
+def test_full_snapshot_combines_scrollback_and_visible():
+    """--full 语义：scrollback 历史 + 当前可见区 = 全部内容（纯文本与 ANSI 两种模式）"""
+    screen = TerminalScreen(cols=30, rows=5)
+    for i in range(12):
+        screen.feed(f"line {i}\r\n".encode())
+
+    # 纯文本：scrollback（行间 \n，无尾 \n）+ 可见区，中间补一个换行
+    sb = screen.capture_scrollback(keep_ansi=False)
+    snap = screen.snapshot(keep_ansi=False)
+    combined = sb + "\n" + snap
+    assert "line 0" in sb and "line 11" in snap
+    assert combined.splitlines() == [f"line {i}" for i in range(12)]
+
+    # ANSI：scrollback 以 \r\n 结尾，可见区直接拼接即可
+    screen2 = TerminalScreen(cols=30, rows=5)
+    for i in range(12):
+        screen2.feed(f"\x1b[31mline {i}\x1b[0m\r\n".encode())
+    sb2 = screen2.capture_scrollback(keep_ansi=True)
+    snap2 = screen2.snapshot(keep_ansi=True)
+    combined2 = sb2 + snap2
+    assert combined2.count("line") == 12
+    assert "\x1b[" in combined2
+
+
 def test_screen_resize():
     screen = TerminalScreen(cols=10, rows=5)
     screen.feed(b"hello")

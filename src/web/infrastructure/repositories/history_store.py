@@ -2,15 +2,15 @@
 
 import gzip
 import json
-import logging
 import os
 import sqlite3
 import threading
 from typing import Optional
 
 from ....config.common import DATA_DIR, DEFAULT_COLS, DEFAULT_ROWS, GZIP_COMPRESS_LEVEL
+from ....logging import get_logger
 
-_logger = logging.getLogger("pty-web")
+_logger = get_logger("pty-web")
 
 _DEFAULT_DB_PATH = os.path.join(DATA_DIR, "history.db")
 _MAX_OUTPUT_ARCHIVE_SIZE = 10 * 1024 * 1024
@@ -24,59 +24,69 @@ class HistoryStore:
         if self._db_path != ":memory:":
             os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
         self._lock = threading.Lock()
+        # 长连接：所有操作经 self._lock 串行化（check_same_thread=False），
+        # 避免每次操作新建连接 + 重复执行 PRAGMA 的开销
+        self._conn: Optional[sqlite3.Connection] = None
         self._init_db()
 
     def _init_db(self):
-        with self._connect() as conn:
-            conn.executescript(f"""
-                CREATE TABLE IF NOT EXISTS sessions (
-                    id TEXT PRIMARY KEY,
-                    command TEXT NOT NULL,
-                    pty_type TEXT NOT NULL,
-                    cols INTEGER DEFAULT {DEFAULT_COLS},
-                    rows INTEGER DEFAULT {DEFAULT_ROWS},
-                    start_time REAL NOT NULL,
-                    end_time REAL,
-                    exit_code INTEGER,
-                    error_message TEXT
-                );
-                CREATE TABLE IF NOT EXISTS session_output (
-                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-                    stream TEXT NOT NULL,
-                    data_gz BLOB NOT NULL,
-                    original_length INTEGER NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS session_screen (
-                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-                    buffer_json_gz BLOB,
-                    snapshot_text TEXT
-                );
-                CREATE TABLE IF NOT EXISTS session_events (
-                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-                    events_json TEXT NOT NULL
-                );
-            """)
-            try:
-                conn.execute(
-                    "ALTER TABLE sessions ADD COLUMN encoding TEXT DEFAULT 'utf-8'"
-                )
-            except sqlite3.OperationalError:
-                pass
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN tag TEXT DEFAULT 'ended'")
-            except sqlite3.OperationalError:
-                pass
-            # 添加 uid 列，持久化会话 uid 供历史会话恢复 frameRatio
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN uid TEXT DEFAULT ''")
-            except sqlite3.OperationalError:
-                pass
+        conn = self._connect()
+        conn.executescript(f"""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                command TEXT NOT NULL,
+                pty_type TEXT NOT NULL,
+                cols INTEGER DEFAULT {DEFAULT_COLS},
+                rows INTEGER DEFAULT {DEFAULT_ROWS},
+                start_time REAL NOT NULL,
+                end_time REAL,
+                exit_code INTEGER,
+                error_message TEXT
+            );
+            CREATE TABLE IF NOT EXISTS session_output (
+                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                stream TEXT NOT NULL,
+                data_gz BLOB NOT NULL,
+                original_length INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS session_screen (
+                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                buffer_json_gz BLOB,
+                snapshot_text TEXT
+            );
+            CREATE TABLE IF NOT EXISTS session_events (
+                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                events_json TEXT NOT NULL
+            );
+        """)
+        # 列表按 end_time 倒序，历史会话量大时走索引
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_end_time ON sessions(end_time)"
+        )
+        try:
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN encoding TEXT DEFAULT 'utf-8'"
+            )
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE sessions ADD COLUMN tag TEXT DEFAULT 'ended'")
+        except sqlite3.OperationalError:
+            pass
+        # 添加 uid 列，持久化会话 uid 供历史会话恢复 frameRatio
+        try:
+            conn.execute("ALTER TABLE sessions ADD COLUMN uid TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        return conn
+        """获取长连接（须在持锁上下文中调用；连接失效时重建）"""
+        if self._conn is None:
+            conn = sqlite3.connect(self._db_path, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            self._conn = conn
+        return self._conn
 
     def archive_session(self, session, tag: str = "ended") -> bool:
         try:
@@ -93,7 +103,11 @@ class HistoryStore:
             if isinstance(session.command, str)
             else " ".join(session.command)
         )
-        pty_type = session.pty_type
+        pty_type = (
+            "subprocess"
+            if getattr(session, "mode", "pty") == "subprocess"
+            else session.pty_type
+        )
         cols = session.cols
         rows = session.rows
         encoding = session.encoding or "utf-8"
@@ -127,10 +141,25 @@ class HistoryStore:
             if output_data:
                 trimmed = output_data[:_MAX_OUTPUT_ARCHIVE_SIZE]
                 data_gz = gzip.compress(trimmed, compresslevel=GZIP_COMPRESS_LEVEL)
+                stream_name = "stdout" if getattr(session, "mode", "pty") == "subprocess" else "pty"
                 conn.execute(
                     "INSERT INTO session_output (session_id,stream,data_gz,original_length) VALUES (?,?,?,?)",
-                    (sid, "pty", data_gz, len(output_data)),
+                    (sid, stream_name, data_gz, len(output_data)),
                 )
+
+            # 子进程模式：独立归档 stderr
+            if getattr(session, "mode", "pty") == "subprocess":
+                try:
+                    err_data = session._err_buf.get_slice(0) if session._err_buf else b""
+                    if err_data:
+                        err_trimmed = err_data[:_MAX_OUTPUT_ARCHIVE_SIZE]
+                        err_gz = gzip.compress(err_trimmed, compresslevel=GZIP_COMPRESS_LEVEL)
+                        conn.execute(
+                            "INSERT INTO session_output (session_id,stream,data_gz,original_length) VALUES (?,?,?,?)",
+                            (sid, "stderr", err_gz, len(err_data)),
+                        )
+                except Exception:
+                    _logger.debug("archive stderr failed for %s", sid, exc_info=True)
 
             try:
                 screen_buf = session.export_screen_buffer()
@@ -349,6 +378,8 @@ class HistoryStore:
                     (session_id,),
                 ).fetchone()
         enc = info["encoding"]
+        stdout_parts = []
+        stderr_parts = []
         for orow in output_rows:
             stream, data_gz = orow
             try:
@@ -356,7 +387,14 @@ class HistoryStore:
             except Exception:
                 data = b""
             text = data.decode(enc, errors="replace")
-            info["output"] = text
+            if stream == "stderr":
+                stderr_parts.append(text)
+            else:
+                stdout_parts.append(text)
+        if stdout_parts:
+            info["output"] = "".join(stdout_parts)
+        if stderr_parts:
+            info["stderrOutput"] = "".join(stderr_parts)
         if screen_row:
             info["snapshot"] = screen_row[0] or ""
         return info

@@ -36,7 +36,7 @@ class TestGenerateAuthToken:
 
     def test_token_length(self):
         token = generate_auth_token()
-        assert len(token) == 64
+        assert len(token) == 62  # 31 字节 hex，≤ SHM 数据区 63 字节（seq 布局）
 
     def test_unique_tokens(self):
         t1 = generate_auth_token()
@@ -98,8 +98,27 @@ class TestAuthTokenShm:
                 except Exception:
                     pass
 
+    def test_update_token_in_place(self, _no_shm_residue):
+        """update_auth_token 原地轮换（seqlock 发布），读者读到新令牌"""
+        if not IS_WINDOWS:
+            pytest.skip("Windows 共享内存测试")
+
+        from src.ipc.shm import update_auth_token
+
+        shm = write_auth_token(generate_auth_token())
+        try:
+            t2 = generate_auth_token()
+            update_auth_token(shm, t2)
+            assert read_auth_token() == t2
+        finally:
+            try:
+                shm.close()
+            except Exception:
+                pass
+
     def test_token_fits_shm_size(self):
-        assert AUTH_TOKEN_SIZE >= 64
+        # seqlock 布局：1 字节 seq + 63 字节数据区，62 字符令牌可容纳
+        assert AUTH_TOKEN_SIZE >= 1 + len(generate_auth_token())
 
 
 class TestHmacKeyShm:

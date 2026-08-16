@@ -7,9 +7,14 @@
   - 命令封装（terminate / signal / query_*）
 """
 
+import sys
 import threading
 
 import pytest
+
+# win-sandbox 为 Windows 原生组件；非 Windows 平台模块级跳过（import 前）
+if sys.platform != "win32":
+    pytest.skip("win-sandbox 仅支持 Windows", allow_module_level=True)
 
 from src.sandbox.manager import SandboxError, SandboxSessionManager
 from src.process.base import ProcessNotification, NOTIF_SPAWN, NOTIF_EXIT, NOTIF_CRASH

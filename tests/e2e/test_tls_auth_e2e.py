@@ -79,7 +79,7 @@ MAX_PATTERN_LEN    = 4096
 
 def _build_daemon_toml(
     *,
-    plain: bool,
+    basic: bool,
     token: bool,
     tls: bool,
     private_key_path: str,
@@ -89,17 +89,17 @@ def _build_daemon_toml(
 ) -> str:
     """构造测试用 daemon.toml 内容（三监听器配置）
 
-    [listener] 段：plain / token / tls 三段独立 enabled + 监听位置。
+    [listener] 段：basic / token / tls 三段独立 enabled + 监听位置。
     [auth] 段携带 TLS 服务端配置（证书路径与有效期）与授权公钥列表。
 
     Args:
-        plain: 明文无认证监听器 enabled
+        basic: 明文无认证监听器 enabled
         token: Token + HMAC 监听器 enabled
         tls: TLS + pubkey 监听器 enabled
         private_key_path: 客户端私钥路径（用于推导同级 certs/ 证书目录）
         tls_port: TLS Listener 监听端口
         authorized_keys_path: 服务端授权公钥列表路径
-        single_instance: 单实例互斥锁开关（false 仅 plain/tls 场景生效）
+        single_instance: 单实例互斥锁开关（false 仅 basic/tls 场景生效）
 
     Returns:
         daemon.toml 文本内容
@@ -109,9 +109,10 @@ def _build_daemon_toml(
 SINGLE_INSTANCE = {str(single_instance).lower()}
 
 [listener]
-PLAIN_ENABLED = {str(plain).lower()}
-PLAIN_HOST    = "0.0.0.0"
-PLAIN_PORT    = 10521
+BASIC_ENABLED  = {str(basic).lower()}
+BASIC_HOST     = "0.0.0.0"
+BASIC_PORT     = 10521
+BASIC_PASSWORD = ""
 
 TOKEN_ENABLED = {str(token).lower()}
 TOKEN_HOST    = "127.0.0.1"
@@ -137,6 +138,12 @@ JOB_OBJECT_NAME_PREFIX     = "Local\\\\PTYJob_"
 [input_limit]
 MAX_SESSIONS = 50
 
+[workflow]
+WORKFLOW_MAX_RUNS          = 50
+WORKFLOW_DEFAULT_PARALLEL  = 4
+WORKFLOW_STEP_OUTPUT_LIMIT = 4096
+WORKFLOW_MAX_FILE_SIZE     = 1048576
+
 [auth]
 AUTH_TOKEN_ROTATE_INTERVAL  = 1800
 AUTH_TOKEN_GRACE_PERIOD     = 120
@@ -159,11 +166,11 @@ def _build_client_toml(
 ) -> str:
     """构造测试用 client.toml 内容（连接方式 + 客户端认证）
 
-    [connection] 段：CONNECT_MODE 决定连接哪个监听器（plain/token/tls），
+    [connection] 段：CONNECT_MODE 决定连接哪个监听器（basic/token/tls），
     各模式监听位置独立配置。tls 模式还需 [auth] 段私钥与 TOFU。
 
     Args:
-        connect_mode: 客户端连接方式（"plain" / "token" / "tls"）
+        connect_mode: 客户端连接方式（"basic" / "token" / "tls"）
         private_key_path: 客户端私钥路径（tls 模式）
         known_hosts_path: TOFU 信任存储文件路径
         tls_port: 远程 daemon TLS 监听器端口
@@ -176,8 +183,9 @@ def _build_client_toml(
 
 [connection]
 CONNECT_MODE = "{connect_mode}"
-PLAIN_HOST = "127.0.0.1"
-PLAIN_PORT = 10521
+BASIC_HOST     = "127.0.0.1"
+BASIC_PORT     = 10521
+BASIC_PASSWORD = ""
 TOKEN_HOST = "127.0.0.1"
 TOKEN_PORT = 10520
 TLS_HOST = {tls_host}
@@ -289,7 +297,7 @@ def tls_env(tmp_path):
     backup_daemon = _DAEMON_TOML.read_bytes()
     backup_client = _CLIENT_TOML.read_bytes()
     daemon_running = [False]
-    listener_flags = {"plain": False, "token": False, "tls": False}
+    listener_flags = {"basic": False, "token": False, "tls": False}
 
     def write_config(
         *,
@@ -306,7 +314,7 @@ def tls_env(tmp_path):
         三监听器架构：daemon.toml [listener] 段独立 enabled，client.toml
         [connection] 段 CONNECT_MODE 选择连接。旧开关语义映射：
         enable_token → token 监听器；enable_pubkey → tls 监听器；
-        两者都关 → plain 监听器。连接方式 token/pubkey/none → token/tls/plain。
+        两者都关 → basic 监听器。连接方式 token/pubkey/none → token/tls/basic。
 
         路径参数使用正斜杠避免 TOML 转义。authorized_keys 空内容也会写入文件
         （触发 fail-closed 走 load_authorized_keys 路径）。
@@ -318,20 +326,20 @@ def tls_env(tmp_path):
             private_key_path: 客户端私钥绝对路径
             authorized_keys_path: 服务端 authorized_keys 绝对路径
             authorized_keys_content: authorized_keys 文件内容
-            single_instance: 单实例互斥锁开关（false 仅 plain/tls 场景生效）
+            single_instance: 单实例互斥锁开关（false 仅 basic/tls 场景生效）
         """
         known_hosts_path = str(Path(private_key_path).parent / "known_hosts")
         pk_path = private_key_path.replace("\\", "/")
         ak_path_str = authorized_keys_path.replace("\\", "/")
         kh_path = known_hosts_path.replace("\\", "/")
 
-        plain = not enable_token and not enable_pubkey
+        basic = not enable_token and not enable_pubkey
         connect_mode = {
             "token": "token",
             "pubkey": "tls",
-            "none": "plain",
+            "none": "basic",
         }[client_auth_method]
-        listener_flags["plain"] = plain
+        listener_flags["basic"] = basic
         listener_flags["token"] = enable_token
         listener_flags["tls"] = enable_pubkey
 
@@ -340,7 +348,7 @@ def tls_env(tmp_path):
         # 写入 daemon.toml（三监听器 + 服务端认证配置）
         _DAEMON_TOML.write_text(
             _build_daemon_toml(
-                plain=plain,
+                basic=basic,
                 token=enable_token,
                 tls=enable_pubkey,
                 private_key_path=pk_path,
@@ -377,7 +385,7 @@ def tls_env(tmp_path):
 
         import socket as _socket
         probe_ports = []
-        if listener_flags["plain"]:
+        if listener_flags["basic"]:
             probe_ports.append(10521)
         if listener_flags["token"]:
             probe_ports.append(10520)
@@ -644,7 +652,7 @@ class TestCrossMachineStop:
 # ═══════════════════════════════════════════════════════════════
 
 class TestNoSingleInstance:
-    """SINGLE_INSTANCE=false —— 无锁多实例并存（仅 plain/tls 场景）"""
+    """SINGLE_INSTANCE=false —— 无锁多实例并存（仅 basic/tls 场景）"""
 
     def test_tls_no_lock_multi_instance(self, tls_env):
         """无锁模式：不创建互斥锁，同机双实例并存

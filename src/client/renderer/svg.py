@@ -4,14 +4,47 @@
 字体依赖查看器，CJK 宽度按 2 格处理。
 """
 
-import logging
 import re
 from xml.sax.saxutils import escape as xml_escape
 
 from ...config.common import DEFAULT_COLS, DEFAULT_ROWS
 from .common import _char_width, _resolve_color, _expand_lines
+from ...logging import get_logger
 
-_logger = logging.getLogger("pty-client")
+_logger = get_logger("pty-client")
+
+# 空 <text> 元素正则（模块级编译；level 0 = 仅移除空标签）
+_EMPTY_TEXT_RE = re.compile(r"<text[^>]*>\s*</text>", flags=re.DOTALL)
+
+# scour 压缩选项（按等级固定，模块级常量避免每次调用重建）
+_SCOUR_OPTIONS_LEVEL1 = {
+    "strip_xml_prolog": False,
+    "remove_descriptive_elements": False,
+    "enable_comment_stripping": False,
+    "shorten_ids": False,
+    "create_groups": False,
+    "digits": 5,
+    "c_digits": 5,
+    "newlines": True,
+    "indent_type": "space",
+    "enable_viewboxing": False,
+    "renderer_workaround": True,
+    "strip_xml_space_attribute": False,
+}
+_SCOUR_OPTIONS_LEVEL2 = {
+    "strip_xml_prolog": True,
+    "remove_descriptive_elements": True,
+    "enable_comment_stripping": True,
+    "shorten_ids": True,
+    "create_groups": True,
+    "digits": 3,
+    "c_digits": 3,
+    "newlines": False,
+    "indent_type": "none",
+    "enable_viewboxing": False,
+    "renderer_workaround": True,
+    "strip_xml_space_attribute": False,
+}
 
 
 def _flush_svg_run(parts, run_chars, run_x, y, cell_h, run_fg, run_bold):
@@ -82,7 +115,7 @@ def render_svg_string(buf: dict) -> str:
 
 
 def _compress_svg(svg: str, level: int) -> str:
-    svg = re.sub(r"<text[^>]*>\s*</text>", "", svg, flags=re.DOTALL)
+    svg = _EMPTY_TEXT_RE.sub("", svg)
     if level <= 0:
         return svg
     try:
@@ -90,34 +123,5 @@ def _compress_svg(svg: str, level: int) -> str:
     except ImportError:
         _logger.warning("scour 未安装，SVG 压缩降级为 level 0。安装: pip install scour")
         return svg
-    if level == 1:
-        options = {
-            "strip_xml_prolog": False,
-            "remove_descriptive_elements": False,
-            "enable_comment_stripping": False,
-            "shorten_ids": False,
-            "create_groups": False,
-            "digits": 5,
-            "c_digits": 5,
-            "newlines": True,
-            "indent_type": "space",
-            "enable_viewboxing": False,
-            "renderer_workaround": True,
-            "strip_xml_space_attribute": False,
-        }
-    else:
-        options = {
-            "strip_xml_prolog": True,
-            "remove_descriptive_elements": True,
-            "enable_comment_stripping": True,
-            "shorten_ids": True,
-            "create_groups": True,
-            "digits": 3,
-            "c_digits": 3,
-            "newlines": False,
-            "indent_type": "none",
-            "enable_viewboxing": False,
-            "renderer_workaround": True,
-            "strip_xml_space_attribute": False,
-        }
+    options = _SCOUR_OPTIONS_LEVEL1 if level == 1 else _SCOUR_OPTIONS_LEVEL2
     return scour.scourString(svg, options=options)

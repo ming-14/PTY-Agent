@@ -31,6 +31,9 @@ _HEADER = struct.Struct(">IB")
 MAX_DATA_PAYLOAD = TRANSFER_CHUNK_SIZE
 MAX_CONTROL_PAYLOAD = TRANSFER_MAX_CONTROL
 
+# recv_frame 读游标 compact 阈值：已消费前缀超过该值才一次性丢弃
+_COMPACT_THRESHOLD = 1 << 20
+
 
 class TransferProtocolError(Exception):
     """帧协议错误：超限/截断/非法帧，接收方应中止传输并清理"""
@@ -79,6 +82,9 @@ def recv_frame(sock, timeout: Optional[float] = None) -> Optional[Tuple[int, byt
     deadline = None if timeout is None else _now() + timeout
     # 共享累积缓冲：先取残留，再按需 recv 补齐，天然处理粘包/拆包
     buf = bytearray(_buffered_bytes(sock))
+    # 读偏移游标：帧读取只推进游标，避免每帧 del buf[:n] 整体左移（O(n²)）；
+    # 游标超过阈值才一次性 compact 丢弃已消费前缀
+    pos = 0
 
     def fill(n: int) -> bool:
         """把缓冲补齐到至少 n 字节；连接关闭返回 False"""
@@ -92,17 +98,27 @@ def recv_frame(sock, timeout: Optional[float] = None) -> Optional[Tuple[int, byt
             buf += chunk
         return True
 
+    def compact() -> None:
+        """游标超过阈值时丢弃已消费前缀（防止缓冲无界膨胀）"""
+        nonlocal buf, pos
+        if pos >= _COMPACT_THRESHOLD:
+            del buf[:pos]
+            pos = 0
+
     if not fill(_HEADER.size):
         return None
-    payload_len, frame_type = decode_frame(bytes(buf[: _HEADER.size]))
-    del buf[: _HEADER.size]
-    if not fill(payload_len):
+    payload_len, frame_type = decode_frame(bytes(buf[pos : pos + _HEADER.size]))
+    pos += _HEADER.size
+    if not fill(pos + payload_len):
         return None
-    payload = bytes(buf[:payload_len])
+    payload = bytes(buf[pos : pos + payload_len])
+    pos += payload_len
     # 帧 payload 之后的字节留给下一帧（同一连接连读多帧场景）
-    del buf[:payload_len]
-    if buf:
-        _Msg._recv_buffers[sock] = bytes(buf)
+    compact()
+    if pos < len(buf):
+        _Msg._recv_buffers[sock] = bytes(buf[pos:])
+    else:
+        _Msg._recv_buffers.pop(sock, None)
     return frame_type, payload
 
 

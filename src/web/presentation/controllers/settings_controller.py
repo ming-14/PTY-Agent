@@ -19,7 +19,6 @@ ENABLE_VNC / ENABLE_FASTSCREEN 提供，守护进程启动时读取，前端不�
 auth_validator 非 None 时，每个端点先校验认证，未认证返回 401。
 """
 
-import logging
 from typing import Callable, Optional
 
 from fastapi import APIRouter, Request
@@ -29,8 +28,9 @@ from ...domain.settings_schema import (
     VALID_KEYS,
     get_defaults,
 )
+from ....logging import get_logger
 
-_logger = logging.getLogger("pty-web-settings")
+_logger = get_logger("pty-web-settings")
 
 
 def create_settings_router(

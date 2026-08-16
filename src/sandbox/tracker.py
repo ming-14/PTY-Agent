@@ -18,13 +18,13 @@ SandboxSessionManager 的原生能力：
 生命周期归属 Session（与 JobProcessTreeTracker 一致）：kill_tree → pty.close → tracker.close。
 """
 
-import logging
 from typing import List, Optional
 
 from ..process.base import ProcessNotification, ProcessTreeTracker
 from .manager import SandboxSessionManager
+from ..logging import get_logger
 
-_logger = logging.getLogger("sandbox-tracker")
+_logger = get_logger("sandbox-tracker")
 
 
 class SandboxProcessTreeTracker(ProcessTreeTracker):

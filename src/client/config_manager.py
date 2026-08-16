@@ -6,25 +6,67 @@
 配置优先级：命令行显式参数 > --default 覆盖值 > 代码内置默认值
 """
 
-import logging
+from ..logging import get_logger
+import json
+import os
 from typing import Any, Optional
 
-_logger = logging.getLogger("pty-client")
+_logger = get_logger("pty-client")
 
 _DEFAULTS: dict = {
     "timeout": 120.0,
     "newline": False,
     "encoding": None,
     "keep_ansi": False,
-    "debug": True,
+    "debug": False,
     "send_eol": "\r",
-    "always_return_snapshot": False,
     "response_format": "stream",
     "svg_compression_level": 1,
     "terminal_size": "80x24",
-    "ai_analyse": "none",
-    "ai_prompt": "全面分析该内容，只按内容说话，不给出下一步，不提建议",
 }
+
+# 会话级默认配置持久化文件（set-default 写入，所有 CLI 调用启动时加载）。
+# 路径直接用 expanduser 计算（与 config/common.py 的 DATA_DIR 一致），
+# 避免模块级相对导入 —— 本模块须可被独立加载（单元测试用 importlib）。
+
+
+def _persistent_defaults_file() -> str:
+    return os.path.join(
+        os.path.expanduser("~"), ".pty-agent", "client_defaults.json"
+    )
+
+
+def load_persistent_defaults() -> dict:
+    """读取会话级默认配置持久化文件（set-default 写入，启动时加载）
+
+    返回值在每次 CLI 调用经 client_defaults 随会话命令发送到守护进程
+    （与 --default 同一机制）。
+
+    Returns:
+        持久化配置字典；文件缺失/损坏时返回空字典。
+    """
+    try:
+        with open(_persistent_defaults_file(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_persistent_defaults(defaults: dict) -> None:
+    """写入会话级默认配置到持久化文件
+
+    Args:
+        defaults: 要持久化的配置字典（仅含用户 set-default 覆盖项）。
+    """
+    try:
+        path = _persistent_defaults_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(defaults, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        _logger.warning("写入默认配置失败: %s", e)
+
 
 _SEND_EOL_MAP: dict = {
     "lf": "\n",
@@ -37,15 +79,55 @@ _SEND_EOL_MAP: dict = {
 _ON_OFF = {"on": True, "off": False, "true": True, "false": False}
 
 
+def load_persistent_defaults() -> dict:
+    """读取全局默认配置持久化文件（set-default 写入，启动时加载）
+
+    Returns:
+        持久化配置字典；文件缺失/损坏时返回空字典。
+    """
+    try:
+        with open(_persistent_defaults_file(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_persistent_defaults(defaults: dict) -> None:
+    """写入会话级默认配置到持久化文件
+
+    Args:
+        defaults: 要持久化的配置字典（仅含用户 set-default 覆盖项）。
+    """
+    try:
+        path = _persistent_defaults_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(defaults, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        _logger.warning("写入默认配置失败: %s", e)
+
+
 class ConfigManager:
     """客户端配置管理器
 
-    支持 --default 设置会话级默认值，发送到守护进程按 session UID 存储。
-    配置优先级：命令行显式参数 > --default 覆盖值 > 代码内置默认值。
+    支持 --default / set-default 设置会话级默认值，经 client_defaults 发送到
+    守护进程按 session UID 存储（与 --default 同一机制）。set-default 额外
+    持久化到本地文件，后续所有 CLI 调用自动加载携带。
+    配置优先级：命令行显式参数 > set-default 持久化默认 > 代码内置默认值。
     """
 
     def __init__(self, overrides: Optional[dict] = None):
         self._config = dict(_DEFAULTS)
+        # 加载 set-default 持久化默认（与 --default 同一 client_defaults 机制），
+        # 再叠加单次调用覆盖
+        persistent = load_persistent_defaults()
+        for k, v in persistent.items():
+            if k in _DEFAULTS:
+                try:
+                    self.set(k, v)
+                except ValueError:
+                    _logger.warning("忽略无效的持久化默认配置 %s=%r", k, v)
         if overrides:
             self._config.update(overrides)
 
@@ -86,7 +168,7 @@ class ConfigManager:
             value = float(value)
 
         # newline/keep_ansi/debug 转为 bool
-        if key in ("newline", "keep_ansi", "debug", "always_return_snapshot"):
+        if key in ("newline", "keep_ansi", "debug"):
             if not isinstance(value, bool):
                 value = bool(value)
 
@@ -108,21 +190,6 @@ class ConfigManager:
                 raise ValueError(
                     f"Invalid svg-compression-level value: {value!r}, "
                     f"available: 0, 1, 2",
-                )
-
-        # ai_analyse: AI 分析模式（none/fileOutput/responseOutput）
-        if key == "ai_analyse":
-            if value not in ("none", "fileOutput", "responseOutput"):
-                raise ValueError(
-                    f"Invalid ai-analyse value: {value!r}, "
-                    f"available: none, fileOutput, responseOutput",
-                )
-
-        # ai_prompt: 分析提示词（非空字符串）
-        if key == "ai_prompt":
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError(
-                    f"Invalid ai-prompt value: {value!r}, expected non-empty string",
                 )
 
         # send_eol: 名称映射 -> 实际字符

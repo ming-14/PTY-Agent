@@ -13,7 +13,6 @@ WebSocket→VNC TCP 代理由守护进程的 /vnc/websockify 端点直接实现
 """
 
 import ctypes
-import logging
 import secrets
 import socket
 import string
@@ -25,8 +24,9 @@ from pathlib import Path
 from typing import Optional
 
 from .password_loader import load_vnc_password_module
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-vnc")
+_logger = get_logger("pty-vnc")
 
 # ── Windows Job Object 绑定（确保子进程随父进程退出）──
 # 64 位系统上 HANDLE 是 64 位指针，ctypes.windll 默认 restype=c_int（32 位）

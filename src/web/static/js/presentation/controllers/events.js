@@ -43,6 +43,7 @@ import {
 } from '../../domain/constants.js';
 import { getHandlerBySid } from '../views/sessionHandlers.js';
 import { debug, info } from '../../domain/logger.js';
+import { t } from '../../domain/i18n.js';
 import { applySidebarWidth } from '../../infrastructure/storage.js';
 import { cycleMode as rimeCycleMode } from '../../infrastructure/rimeManager.js';
 import * as settingsStore from '../../application/settingsStore.js';
@@ -94,7 +95,7 @@ export function bindGlobalEvents() {
     if (!inst || !inst.appMouseMode) return;
     const override = toggleMouseInputOverride(sid);
     updateMouseModeButton(sid);
-    showToast(override ? '鼠标输入已开启' : '鼠标输入已关闭，滚轮可正常滚动', 'info');
+    showToast(override ? t('status.mouseModeOn') : t('status.mouseModeOff'), 'info');
   };
 
   $('dialog-cancel').onclick = () => { $('dialog-overlay').style.display = 'none'; };
@@ -170,7 +171,7 @@ export function bindGlobalEvents() {
     const icon = $('win-max-icon');
     const btn = $('win-max');
     if (icon) icon.innerHTML = isFullscreen ? restoreIconSvg : maximizeIconSvg;
-    if (btn) btn.title = isFullscreen ? '退出全屏' : '全屏';
+    if (btn) btn.title = isFullscreen ? t('status.fullscreenExit') : t('status.fullscreen');
     debug('ui', 'fullscreenchange → isFullscreen=%s', isFullscreen);
   }
   document.addEventListener('fullscreenchange', syncMaximizeIcon);
@@ -310,12 +311,12 @@ document.addEventListener('keydown', e => {
     } else if (action === 'close-session') {
       const s = state.sessions[sid];
       const body = s && s.running
-        ? `会话 "${sid}" 仍在运行，确定要关闭吗？`
-        : `确定要关闭会话 "${sid}" 吗？`;
-      showConfirm('确认关闭会话', body, () => killSession(sid));
+        ? t('session.confirmCloseRunning', { sid })
+        : t('session.confirmClose', { sid });
+      showConfirm(t('session.confirmCloseTitle'), body, () => killSession(sid));
     } else if (action === 'delete-session') {
-      const body = `确定要永久删除历史会话 "${sid}" 吗？此操作不可恢复。`;
-      showConfirm('确认删除会话', body, () => {
+      const body = t('session.confirmDelete', { sid });
+      showConfirm(t('session.confirmDeleteTitle'), body, () => {
         removeSessionTab(sid, false);
         wsSend({ type: 'delete_history', session_id: sid });
       });

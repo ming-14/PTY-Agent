@@ -7,7 +7,7 @@
 本模块两个函数职责纯粹、互不依赖。
 """
 
-import logging
+import functools
 import os
 from typing import Optional
 
@@ -22,14 +22,17 @@ from .common import (
     _expand_lines,
 )
 from .box_drawing import _draw_block_element
+from ...logging import get_logger
 
-_logger = logging.getLogger("pty-client")
+_logger = get_logger("pty-client")
 
 
+@functools.lru_cache(maxsize=16)
 def _load_font_pair(ImageFont, size: int):
     """加载字体对 (ascii_font, cjk_font)
 
     ASCII 用 Consolas，CJK 用 Microsoft YaHei (msyh.ttc)。
+    lru_cache：按字号缓存，避免每次渲染重载字体文件（msyh.ttc 数百 KB）。
     """
     ascii_font = None
     for name in ("Consolas", "consola.ttf"):
@@ -118,7 +121,6 @@ def render_gdi(path: str, buf: dict, ext: str, PIL_Image) -> Optional[str]:
     """
     import ctypes
     import ctypes.wintypes as W
-    import struct
 
     gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
     user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -337,47 +339,74 @@ def render_gdi(path: str, buf: dict, ext: str, PIL_Image) -> Optional[str]:
     SetBkMode(hdc, OPAQUE)
     SetBkColor(hdc, 0x0C0C0C)
 
+    # 复用单个 rect 缓冲区（避免每格 struct.pack + create_string_buffer）
+    rect = (ctypes.c_long * 4)()
+
     for y, line in enumerate(lines):
         if y >= rows:
             break
+        yp = y * cell_h
+        # 第一遍：同 (fg, bg, bold) 的连续格合并为 run（一次 ExtTextOutW 绘制整段），
+        # block element 单独成项（矢量绘制，不并入文本 run）
+        runs = []
         col = 0
+        cur = None
         while col < cols and col < len(line):
             cell = line[col]
             d = cell.get("d", " ")
             cw = _char_width(d) if d != " " else 1
             x = col * cell_w
-            yp = y * cell_h
-
-            bg_hex = _resolve_color(cell.get("b", "default"), is_fg=False)
-            bg_colorref = _hex_to_colorref(bg_hex) if bg_hex else 0x0C0C0C
-
-            fg_hex = _resolve_color(cell.get("f", "default"), is_fg=True) or "#e5e5e5"
-            fg_colorref = _hex_to_colorref(fg_hex)
-
-            bold = cell.get("bo", False)
-
+            fg = _resolve_color(cell.get("f", "default"), is_fg=True) or "#e5e5e5"
+            bg = _resolve_color(cell.get("b", "default"), is_fg=False)
+            bold = bool(cell.get("bo", False))
             if _is_block_element(d):
-                _draw_block_element(
-                    gdi32,
-                    user32,
-                    hdc,
-                    x,
-                    yp,
-                    cw * cell_w,
-                    cell_h,
-                    ord(d),
-                    fg_colorref,
-                    bg_colorref,
+                if cur is not None:
+                    runs.append(cur)
+                    cur = None
+                runs.append(
+                    (
+                        "block",
+                        x,
+                        yp,
+                        cw * cell_w,
+                        cell_h,
+                        ord(d),
+                        _hex_to_colorref(fg),
+                        _hex_to_colorref(bg) if bg else 0x0C0C0C,
+                    )
                 )
             else:
-                SelectObject(hdc, hfont_bold if bold else hfont)
-                SetTextColor(hdc, fg_colorref)
-                SetBkColor(hdc, bg_colorref)
-                rect = struct.pack("llll", x, yp, x + cw * cell_w, yp + cell_h)
-                rect_buf = ctypes.create_string_buffer(rect)
-                ExtTextOutW(hdc, x, yp, OPAQUE, rect_buf, d, len(d), None)
-
+                if (
+                    cur is None
+                    or cur[2] != fg
+                    or cur[3] != bg
+                    or cur[4] != bold
+                ):
+                    if cur is not None:
+                        runs.append(cur)
+                    cur = [x, x + cw * cell_w, fg, bg, bold, [d]]
+                else:
+                    cur[1] = x + cw * cell_w
+                    cur[5].append(d)
             col += cw if cw > 1 and d != " " else 1
+        if cur is not None:
+            runs.append(cur)
+
+        # 第二遍：按 run 绘制（状态切换与 rect 填充每 run 一次）
+        for r in runs:
+            if r[0] == "block":
+                _, bx, by, bw, bh, cp, fg_cr, bg_cr = r
+                _draw_block_element(gdi32, user32, hdc, bx, by, bw, bh, cp, fg_cr, bg_cr)
+            else:
+                x0, x1, fg, bg, bold, text_chars = r
+                SelectObject(hdc, hfont_bold if bold else hfont)
+                SetTextColor(hdc, _hex_to_colorref(fg))
+                SetBkColor(hdc, _hex_to_colorref(bg) if bg else 0x0C0C0C)
+                rect[0] = x0
+                rect[1] = yp
+                rect[2] = x1
+                rect[3] = yp + cell_h
+                ExtTextOutW(hdc, x0, yp, OPAQUE, rect, "".join(text_chars), len(text_chars), None)
 
     buf_size = img_w * img_h * 4
     pixel_data = (ctypes.c_ubyte * buf_size).from_address(ppv_bits.value)

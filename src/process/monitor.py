@@ -15,7 +15,6 @@
 不感知具体实现（Job / pgid / 未来 sandbox 委派）。
 """
 
-import logging
 import time
 from threading import Event
 from typing import Callable, Dict, Optional, Set
@@ -23,14 +22,50 @@ from typing import Callable, Dict, Optional, Set
 from ..config.common import IS_WINDOWS
 from ..output.events import PendingEvent
 from .base import ProcessTreeTracker
-from .info import _get_process_detail, _get_process_name
+from .info import _get_process_detail, _get_process_name, _signal_name
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-session")
+_logger = get_logger("pty-session")
 
 if IS_WINDOWS:
     from .win32_error import (
         STILL_ACTIVE,
         translate_windows_error,
+    )
+else:
+    # Unix 无 STILL_ACTIVE 概念：退出码非 0（含负信号码）即崩溃
+    STILL_ACTIVE = None
+
+
+def _build_crash_event(name: str, pid: int, rc: int, timestamp: float) -> PendingEvent:
+    """构造进程崩溃事件（平台差异：Windows 翻译 NTSTATUS/Win32 错误码，Unix 用信号名）
+
+    Args:
+        name:      崩溃进程名称。
+        pid:       崩溃进程 PID。
+        rc:        退出码（非 0）。
+        timestamp: 事件时间戳（Unix 秒）。
+    """
+    detail = {"exitCode": rc}
+    if IS_WINDOWS:
+        crash_desc = translate_windows_error(rc)
+        info_msg = f"{name} crashed! exit={rc} (0x{rc & 0xFFFFFFFF:08X})"
+        if crash_desc:
+            detail["errorMessage"] = crash_desc
+            info_msg += f"\n  → {crash_desc}"
+    else:
+        # Unix：负退出码=信号终止（如 -11=SIGSEGV），正数为异常退出码
+        if rc < 0:
+            sig_name = _signal_name(-rc)
+            info_msg = f"{name} crashed! signal {sig_name} ({-rc})"
+        else:
+            info_msg = f"{name} crashed! exit={rc}"
+    return PendingEvent(
+        timestamp=timestamp,
+        type="process_crash",
+        pid=pid,
+        info=info_msg,
+        detail=detail,
     )
 
 
@@ -89,6 +124,9 @@ class ProcessMonitor:
                     name = detail.get("name") or _get_process_name(n.pid)
                     path = detail.get("path", "")
                 self._process_names[n.pid] = name
+                # IOCP spawn 已上报：同步进 PID 快照，避免 check_events
+                # diff 兜底把同一进程再报一次 spawn（重复上报 + 重复查询）
+                self._last_pid_snapshot.add(n.pid)
                 self._event_sink(
                     PendingEvent(
                         timestamp=now,
@@ -103,35 +141,10 @@ class ProcessMonitor:
                 self._iocp_exited_pids.add(n.pid)
                 rc = n.exit_code
                 if rc is not None and rc != 0 and rc != STILL_ACTIVE:
-                    crash_desc = translate_windows_error(rc)
                     _logger.info(
-                        "IOCP crash pid=%d rc=%d (0x%08X) desc=%s",
-                        n.pid,
-                        rc,
-                        rc & 0xFFFFFFFF,
-                        crash_desc,
+                        "IOCP crash pid=%d rc=%d", n.pid, rc
                     )
-                    detail = {"exitCode": rc}
-                    if crash_desc:
-                        detail["errorMessage"] = crash_desc
-                        info_msg = (
-                            f"{name} crashed!"
-                            f" exit={rc} (0x{rc & 0xFFFFFFFF:08X})"
-                            f"\n  → {crash_desc}"
-                        )
-                    else:
-                        info_msg = (
-                            f"{name} crashed! exit={rc} (0x{rc & 0xFFFFFFFF:08X})"
-                        )
-                    self._event_sink(
-                        PendingEvent(
-                            timestamp=now,
-                            type="process_crash",
-                            pid=n.pid,
-                            info=info_msg,
-                            detail=detail,
-                        )
-                    )
+                    self._event_sink(_build_crash_event(name, n.pid, rc, now))
                     self._crash_event.set()
                 elif rc is not None:
                     self._event_sink(
@@ -153,7 +166,7 @@ class ProcessMonitor:
                         )
                     )
 
-    def check_events(self, force=False):
+    def check_events(self, force=False, pids=None):
         """比较进程列表快照，检测新增/退出的进程
 
         性能：节流到最多每 2s 执行一次。
@@ -161,6 +174,8 @@ class ProcessMonitor:
 
         Args:
             force: 为 True 时绕过节流，确保在 reader 退出路径中不遗漏事件。
+            pids:  调用方已获取的进程树 PID 列表（同一 tick 复用，
+                   避免与 get_process_list 重复扫描）；None 时自行查询。
         """
         now_ms = time.monotonic()
         if not force and now_ms - self._last_process_check_ms < 2.0:
@@ -168,10 +183,13 @@ class ProcessMonitor:
                 return
         self._last_process_check_ms = now_ms
 
-        try:
-            current_pids = set(self._tracker.get_process_list())
-        except Exception:
-            return
+        if pids is None:
+            try:
+                current_pids = set(self._tracker.get_process_list())
+            except Exception:
+                return
+        else:
+            current_pids = set(pids)
         old_pids = self._last_pid_snapshot
         if not old_pids and not current_pids:
             return
@@ -185,8 +203,15 @@ class ProcessMonitor:
             )
 
         now = time.time()
+        if new_pids:
+            # 一次快照表供整批新进程复用（避免逐 pid 全量扫描）
+            snapshot = None
+            if IS_WINDOWS:
+                from .info import _get_process_snapshot_windows
+
+                snapshot = _get_process_snapshot_windows()
         for pid in new_pids:
-            detail = _get_process_detail(pid) or {}
+            detail = _get_process_detail(pid, snapshot) or {}
             name = detail.get("name") or _get_process_name(pid)
             self._process_names[pid] = name
             if detail:
@@ -213,38 +238,10 @@ class ProcessMonitor:
             except Exception:
                 pass
             if exit_code is not None and exit_code != 0 and exit_code != STILL_ACTIVE:
-                crash_desc = translate_windows_error(exit_code)
                 _logger.info(
-                    "ProcessMonitor: crash pid=%d exit_code=%d (0x%08X) desc=%s",
-                    pid,
-                    exit_code,
-                    exit_code & 0xFFFFFFFF,
-                    crash_desc,
+                    "ProcessMonitor: crash pid=%d exit_code=%d", pid, exit_code
                 )
-                detail = {"exitCode": exit_code}
-                if crash_desc:
-                    detail["errorMessage"] = crash_desc
-                    info_msg = (
-                        f"{name} crashed!"
-                        f" exit={exit_code}"
-                        f" (0x{exit_code & 0xFFFFFFFF:08X})"
-                        f"\n  → {crash_desc}"
-                    )
-                else:
-                    info_msg = (
-                        f"{name} crashed!"
-                        f" exit={exit_code}"
-                        f" (0x{exit_code & 0xFFFFFFFF:08X})"
-                    )
-                self._event_sink(
-                    PendingEvent(
-                        timestamp=now,
-                        type="process_crash",
-                        pid=pid,
-                        info=info_msg,
-                        detail=detail,
-                    )
-                )
+                self._event_sink(_build_crash_event(name, pid, exit_code, now))
                 self._crash_event.set()
             else:
                 exit_str = (

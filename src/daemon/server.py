@@ -4,12 +4,11 @@
 监听位置完全由 daemon.toml [listener] 段控制，支持三监听器同开或只开一个。
 
 多 Listener 架构：认证配置封装为 AuthContext，每个 Listener 独立持有。
-- plain Listener（明文，无认证，PLAIN_HOST:PLAIN_PORT）
+- basic Listener（明文，共享密码认证或空密码无认证，BASIC_HOST:BASIC_PORT）
 - token Listener（Token + HMAC 认证，TOKEN_HOST:TOKEN_PORT，同机认证凭据经 SHM 分发）
 - tls Listener（TLS + pubkey 认证，TLS_HOST:TLS_PORT，自签证书自动生成）
 """
 
-import logging
 import mmap
 import os
 import signal
@@ -18,17 +17,16 @@ import time
 from typing import Optional
 
 from ..auth.context import AuthContext
-from ..auth.keys import load_authorized_keys
-from ..auth.pubkey import Ed25519MessageSigner, PubkeyAuthenticator
-from ..auth.tls.cert_manager import CertificateManager
+from ..auth.password import PasswordAuthenticator
 from ..auth.token import HmacMessageSigner, TokenAuthenticator
 from ..config.daemon import (
     AUTH_TOKEN_ROTATE_INTERVAL,
+    BASIC_ENABLED,
+    BASIC_HOST,
+    BASIC_PASSWORD,
+    BASIC_PORT,
     ENABLE_WEB,
     IS_WINDOWS,
-    PLAIN_ENABLED,
-    PLAIN_HOST,
-    PLAIN_PORT,
     PUBKEY_AUTHORIZED_KEYS,
     TLS_CERT_DIR,
     TLS_CERT_FILE,
@@ -49,23 +47,24 @@ from ..config.plugins import ENABLED as PLUGINS_ENABLED
 from ..config.plugins import PLUGIN_PATHS
 from ..ipc.shm import (
     generate_auth_token,
+    update_auth_token,
     write_auth_token,
     write_hmac_key,
 )
 from ..plugins.registry import PluginRegistry
 from ..session.manager import SessionManager
-from ..web.server import WebServer
 from .handler import RequestHandler
 from .listener import Listener
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-daemon")
+_logger = get_logger("pty-daemon")
 
 
 class DaemonServer:
     """后台守护进程 TCP 服务器
 
     负责：
-    - 编排多个 Listener（plain / token / tls，按 [listener] 段独立启停）
+    - 编排多个 Listener（basic / token / tls，按 [listener] 段独立启停）
     - 信号注册与处理
     - 资源清理（会话停止、共享内存释放、Listener 停止）
     - 认证令牌定时轮换（仅 token 监听器启用时）
@@ -75,14 +74,19 @@ class DaemonServer:
     """
 
     def __init__(self):
+        # lazy import：server 装配 workflow manager，而 workflow 引擎依赖
+        # daemon.handlers 工具函数；模块级导入会与 daemon 包初始化成环
+        from ..workflow.manager import WorkflowManager
+
         # 监听器配置快照：三段各自独立（enabled/host/port），同开或只开一个
         self.listeners_config = {
-            "plain": (PLAIN_ENABLED, PLAIN_HOST, PLAIN_PORT),
+            "basic": (BASIC_ENABLED, BASIC_HOST, BASIC_PORT),
             "token": (TOKEN_ENABLED, TOKEN_HOST, TOKEN_PORT),
             "tls": (TLS_ENABLED, TLS_HOST, TLS_PORT),
         }
         # 插件注册表：守护进程启动时扫描加载一次（enabled=false 或加载异常时禁用）
         self.manager = SessionManager(plugin_registry=self._create_plugin_registry())
+        self.workflow_manager = WorkflowManager(self.manager)
         self._listeners: list = []
         self._shutdown_event = threading.Event()
         self._running = False
@@ -95,7 +99,7 @@ class DaemonServer:
         self._hmac_key: Optional[bytes] = None
         # Token 认证器引用，仅 token 监听器启用时创建，供 _rotate_token 调用
         self._token_authenticator: Optional[TokenAuthenticator] = None
-        self._rotate_timer: Optional[threading.Timer] = None
+        self._rotate_thread: Optional[threading.Thread] = None
         self._start_time: float = time.time()
 
     def _create_plugin_registry(self) -> Optional[PluginRegistry]:
@@ -111,44 +115,66 @@ class DaemonServer:
             _logger.exception("插件注册表初始化失败，插件系统禁用")
             return None
 
-    def _schedule_rotate(self):
-        """安排下一次令牌轮换"""
-        self._rotate_timer = threading.Timer(
-            AUTH_TOKEN_ROTATE_INTERVAL,
-            self._rotate_token,
+    def _start_token_rotator(self):
+        """启动常驻令牌轮换线程
+
+        替代 Timer 链：每次轮换新建 Timer 会累积清理竞态；
+        常驻线程按间隔 sleep，_running/_shutdown_event 驱动退出，无需取消逻辑。
+        """
+        self._rotate_thread = threading.Thread(
+            target=self._rotate_loop,
+            daemon=True,
+            name="token-rotator",
         )
-        self._rotate_timer.daemon = True
-        self._rotate_timer.start()
+        self._rotate_thread.start()
+
+    def _rotate_loop(self):
+        while self._running and not self._shutdown_event.wait(
+            AUTH_TOKEN_ROTATE_INTERVAL
+        ):
+            try:
+                self._rotate_token()
+            except Exception:
+                _logger.exception("令牌轮换异常")
 
     def _rotate_token(self):
         """生成新令牌并推送到共享内存和 TokenAuthenticator
 
-        仅 token 监听器启用时由 _schedule_timer 触发。
-        防御性检查 _token_authenticator：若运行时被清空则跳过轮换与下次调度。
+        仅 token 监听器启用时由轮换线程触发。
+        防御性检查 _token_authenticator 与 _running：运行时被清空/停止后跳过轮换。
         """
-        if not self._token_authenticator:
-            _logger.debug("_rotate_token: token 监听器未启用，跳过轮换")
+        if not self._token_authenticator or not self._running:
+            _logger.debug("_rotate_token: token 监听器未启用或已停止，跳过轮换")
             return
         old_token = self._auth_token
         self._auth_token = generate_auth_token()
         try:
-            self._auth_shm.close()
-        except Exception:
-            pass
-        self._auth_shm = write_auth_token(self._auth_token)
+            if self._auth_shm is not None:
+                # 令牌定长，原地覆写已创建的 SHM（免 close/重建）
+                update_auth_token(self._auth_shm, self._auth_token)
+            else:
+                self._auth_shm = write_auth_token(self._auth_token)
+        except Exception as e:
+            _logger.error("写入新认证令牌失败: %s", e)
         self._token_authenticator.rotate_token(self._auth_token, old_token)
         _logger.info("认证令牌已轮换")
-        self._schedule_rotate()
 
-    def _build_plain_auth_context(self) -> AuthContext:
-        """构建无认证上下文（plain Listener 使用）
+    def _build_basic_auth_context(self) -> AuthContext:
+        """构建 basic 认证上下文（basic Listener 使用）
 
-        明文无认证监听器：任意请求均不校验，仅适用于受信任网络/本地调试。
+        BASIC_PASSWORD 非空时启用密码认证：密码即 HMAC 密钥，
+        双向签名防伪造防篡改；密码为空时退化为无认证（仅受信任网络/本地调试）。
         """
-        _logger.warning(
-            "plain 监听器启用（无认证），任意请求均不校验，仅适用于受信任网络"
-        )
-        return AuthContext(None, None, None)
+        if not BASIC_PASSWORD:
+            _logger.warning(
+                "basic 监听器启用（无认证），任意请求均不校验，仅适用于受信任网络"
+            )
+            return AuthContext(None, None, None)
+        # 密码即 HMAC 密钥：对称双向签名 + 密码身份校验
+        hmac_signer = HmacMessageSigner(BASIC_PASSWORD.encode("utf-8"))
+        authenticator = PasswordAuthenticator(BASIC_PASSWORD)
+        _logger.info("basic 密码认证已启用（密码即 HMAC 密钥，双向签名）")
+        return AuthContext(hmac_signer, hmac_signer, authenticator)
 
     def _build_token_auth_context(self) -> AuthContext:
         """构建 Token 认证上下文（token Listener 使用）
@@ -176,6 +202,10 @@ class DaemonServer:
         Returns:
             AuthContext 封装出站签名器（None）、入站验证器、认证器
         """
+        # 惰性导入：keys/pubkey 顶层引入 cryptography，仅 TLS 监听器启用时加载
+        from ..auth.keys import load_authorized_keys
+        from ..auth.pubkey import Ed25519MessageSigner, PubkeyAuthenticator
+
         authorized_keys = load_authorized_keys(PUBKEY_AUTHORIZED_KEYS)
         if not authorized_keys:
             _logger.warning(
@@ -210,7 +240,7 @@ class DaemonServer:
         """启动服务器主循环
 
         三监听器架构（[listener] 段独立配置，同开或只开一个）：
-        - plain Listener（无认证，明文）
+        - basic Listener（明文，密码认证或空密码无认证）
         - token Listener（Token + HMAC 认证，明文，SHM 分发凭据）
         - tls Listener（pubkey 认证，TLS，跨机访问）
 
@@ -226,27 +256,27 @@ class DaemonServer:
         try:
             # 1. 按 [listener] 段逐个构建认证上下文 + 创建/绑定 Listener
             #    每段独立判断 enabled；同开或只开一个（配置见 self.listeners_config）
-            plain_enabled, plain_host, plain_port = self.listeners_config["plain"]
+            basic_enabled, basic_host, basic_port = self.listeners_config["basic"]
             token_enabled, token_host, token_port = self.listeners_config["token"]
             tls_enabled, tls_host, tls_port = self.listeners_config["tls"]
 
-            if plain_enabled:
-                plain_ctx = self._build_plain_auth_context()
-                plain_listener = Listener(
-                    host=plain_host,
-                    port=plain_port,
-                    transport="plain",
-                    auth_context=plain_ctx,
+            if basic_enabled:
+                basic_ctx = self._build_basic_auth_context()
+                basic_listener = Listener(
+                    host=basic_host,
+                    port=basic_port,
+                    transport="tcp",
+                    auth_context=basic_ctx,
                 )
-                plain_listener.bind()
-                listeners_to_start.append(plain_listener)
+                basic_listener.bind()
+                listeners_to_start.append(basic_listener)
 
             if token_enabled:
                 token_ctx = self._build_token_auth_context()
                 token_listener = Listener(
                     host=token_host,
                     port=token_port,
-                    transport="plain",
+                    transport="tcp",
                     auth_context=token_ctx,
                 )
                 token_listener.bind()
@@ -254,6 +284,9 @@ class DaemonServer:
 
             if tls_enabled:
                 pubkey_ctx = self._build_pubkey_auth_context()
+                # 惰性导入：cert_manager 顶层引入 cryptography，仅 TLS 监听器启用时加载
+                from ..auth.tls.cert_manager import CertificateManager
+
                 # 生成/加载 TLS 证书（首次启动自动生成自签证书）
                 cert_mgr = CertificateManager(
                     cert_dir=TLS_CERT_DIR,
@@ -321,15 +354,22 @@ class DaemonServer:
         # 4. 启动 Web 服务器（ENABLE_WEB=False 时跳过，同时禁用 VNC 和 FastScreen）
         self._web_server = None
         if ENABLE_WEB:
-            self._web_server = WebServer(
-                self.manager,
-                host=WEB_HOST,
-                port=WEB_PORT,
-                password_hash=WEB_PASSWORD_HASH,
-            )
-            self._web_server.start_background()
-            web_url = f"http://{WEB_HOST}:{WEB_PORT}/"
-            _logger.info("Web 服务器已启动，可通过 %s 访问", web_url)
+            # 惰性获取 WebServer：web.toml 缺失或 src/web 不可导入时返回 None（web 禁用）
+            from ..optional import get_web_server_cls
+
+            web_server_cls = get_web_server_cls()
+            if web_server_cls is None:
+                _logger.warning("ENABLE_WEB=True 但 web 模块不可用，跳过 Web 服务器")
+            else:
+                self._web_server = web_server_cls(
+                    self.manager,
+                    host=WEB_HOST,
+                    port=WEB_PORT,
+                    password_hash=WEB_PASSWORD_HASH,
+                )
+                self._web_server.start_background()
+                web_url = f"http://{WEB_HOST}:{WEB_PORT}/"
+                _logger.info("Web 服务器已启动，可通过 %s 访问", web_url)
         else:
             # Web 关闭时 VNC 和 FastScreen 无访问入口，强制禁用
             from ..config import daemon as _daemon_cfg
@@ -351,9 +391,9 @@ class DaemonServer:
             except Exception:
                 _logger.warning("标记 ended 会话为 history 时异常", exc_info=True)
 
-        # 仅在 token 监听器启用时启动令牌轮换（plain/tls 无对称令牌需轮换）
+        # 仅在 token 监听器启用时启动令牌轮换（basic/tls 无对称令牌需轮换）
         if self.listeners_config["token"][0]:
-            self._schedule_rotate()
+            self._start_token_rotator()
 
         # 信号处理
         def _signal_handler(signum, frame):
@@ -391,9 +431,9 @@ class DaemonServer:
             listener.stop()
         self._listeners.clear()
 
-        if self._rotate_timer:
-            self._rotate_timer.cancel()
-            self._rotate_timer = None
+        # 轮换线程随 _running=False + _shutdown_event 自然退出（无需 cancel）
+        if self._rotate_thread:
+            self._rotate_thread = None
         if hasattr(self, "_web_server") and self._web_server:
             try:
                 self._web_server.stop()

@@ -1,15 +1,26 @@
+import os
+import sys
+
 import pytest
 import time
 import struct
 
+# fastscreen.dll 为 Windows 编译产物；缺失（非 Windows 或未构建）时模块级跳过
+_FASTSCREEN_DLL = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "bin", "fastscreencore", "fastscreen.dll",
+)
+if sys.platform != "win32" or not os.path.isfile(_FASTSCREEN_DLL):
+    pytest.skip("依赖 fastscreen.dll（Windows 编译产物），跳过", allow_module_level=True)
+
 from fastscreencore import CaptureEngine
-from src.fastscreen.streamers.encoding.h264 import H264Encoder
-from src.fastscreen.streamers.encoding.mjpeg import frame_to_jpeg, frame_to_png, encode_bgra_to_jpeg
-from src.fastscreen.streamers.encoding.fmp4 import (
+from src.screenshare.streamers.encoding.h264 import H264Encoder
+from src.screenshare.streamers.encoding.mjpeg import frame_to_jpeg, frame_to_png, encode_bgra_to_jpeg
+from src.screenshare.streamers.encoding.fmp4 import (
     FMP4Muxer, annex_b_to_avcc, extract_sps_pps,
     nals_to_avcc, is_keyframe_annexb,
 )
-from src.fastscreen.streamers.manager import StreamManager, StreamKey, FrameData, SharedSession
+from src.screenshare.streamers.manager import StreamManager, StreamKey, FrameData, SharedSession
 
 
 class TestH264Encoder:

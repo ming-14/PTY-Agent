@@ -18,6 +18,7 @@ import { FASTSCREEN_TAB_ID } from '../../domain/constants.js';
 import { $, showToast } from '../../infrastructure/domUtils.js';
 import { wsSend } from '../../infrastructure/wsClient.js';
 import { debug, info, warn } from '../../domain/logger.js';
+import { t, i18nError } from '../../domain/i18n.js';
 import { updateScreenShareButtonVisibility } from './vnc.js';
 import { updateAutoHide } from './autohide.js';
 import { registerSessionHandler, removeTabAndSelectNext } from './sessionHandlers.js';
@@ -123,25 +124,25 @@ export function renderFastScreenPanel() {
   const statusText = $('fs-status-text');
   if (statusDot && statusText) {
     let dotClass = 'stopped';
-    let text = '未连接';
+    let text = t('fs.notConnected');
     if (fs.disabled) {
       dotClass = 'disabled';
-      text = 'FastScreen 未启用';
+      text = t('fs.disabled');
     } else if (!fs.available) {
       dotClass = 'error';
-      text = 'DLL 加载失败';
+      text = t('fs.dllLoadFailed');
     } else if (_activeStream) {
       // 本地有活跃流连接时显示已连接
       dotClass = 'running';
       const fmtLabel = _activeStream.format === 'mse' ? 'H264 MSE'
         : _activeStream.format === 'webcodecs' ? 'WebCodecs' : 'MJPEG';
-      text = '已连接 (' + fmtLabel;
-      if (fs.activeSessions > 1) text += ', 共享 ' + fs.activeSessions + ' 客户端';
+      text = t('fs.connected', { fmt: fmtLabel });
+      if (fs.activeSessions > 1) text += t('fs.sharingClients', { n: fs.activeSessions });
       text += ')';
     } else if (fs.activeSessions > 0) {
       // 本地无连接但后端有其他客户端的活跃会话
       dotClass = 'running';
-      text = '活跃会话: ' + fs.activeSessions;
+      text = t('fs.activeSessions', { n: fs.activeSessions });
     }
     statusDot.className = 'fs-status-dot ' + dotClass;
     statusText.textContent = text;
@@ -250,11 +251,11 @@ function _renderTargetSelector() {
     opt.value = String(id);
     let label;
     if (fs.targetType === 'window') {
-      label = item.title || ('窗口 ' + id);
+      label = item.title || t('fs.windowPrefix', { id });
       if (label.length > 40) label = label.slice(0, 38) + '…';
       label += ' (' + item.width + 'x' + item.height + ')';
     } else {
-      label = (item.name || '显示器 ' + id) + (item.primary ? ' [主]' : '');
+      label = (item.name || t('fs.monitorPrefix', { id })) + (item.primary ? t('fs.primarySuffix') : '');
       label += ' (' + item.width + 'x' + item.height + ')';
     }
     opt.textContent = label;
@@ -315,8 +316,8 @@ export function buildFastScreenTabElement() {
         dotClass, !!_activeStream, state.fastscreen.available, state.fastscreen.activeSessions);
   tab.innerHTML =
     '<span class="tab-icon ' + dotClass + '"></span>' +
-    '<span class="tab-title" title="屏幕查看">屏幕查看</span>' +
-    '<span class="tab-close" data-sid="' + FASTSCREEN_TAB_ID + '" title="关闭标签">' +
+    '<span class="tab-title" title="' + t('session.fastscreenTitle') + '">' + t('session.fastscreenTitle') + '</span>' +
+    '<span class="tab-close" data-sid="' + FASTSCREEN_TAB_ID + '" title="' + t('common.closeTab') + '">' +
     '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>' +
     '</span>';
   tab.onclick = e => {
@@ -393,8 +394,8 @@ export function handleFastScreenMessage(msg) {
       }
       break;
     case 'fs_error':
-      fs.error = msg.message || '未知错误';
-      showToast('屏幕查看: ' + (msg.message || '错误'), 'error');
+      fs.error = i18nError(msg) || t('common.unknown');
+      showToast(t('fs.errorToast', { msg: fs.error }), 'error');
       break;
     case 'cursor_locator_status':
       fs.cursorLocatorRunning = !!msg.running;
@@ -413,7 +414,7 @@ export function handleFastScreenMessage(msg) {
       _syncCursorLocatorToggle(false);
       break;
     case 'cursor_locator_error':
-      showToast('鼠标增强: ' + (msg.message || '错误'), 'error');
+      showToast(t('fs.cursorLocatorErrorToast', { msg: i18nError(msg) || t('common.error') }), 'error');
       _syncCursorLocatorToggle(fs.cursorLocatorRunning);
       break;
   }
@@ -505,12 +506,12 @@ function _stopTargetsPoll() {
 function _connectStream() {
   const fs = state.fastscreen;
   if (fs.disabled || !fs.available) {
-    _showPlaceholder('FastScreen 未启用或不可用');
+    _showPlaceholder(t('fs.placeholderDisabled'));
     return;
   }
   if ((fs.targetType === 'monitor' && fs.monitors.length === 0) ||
       (fs.targetType === 'window' && fs.windows.length === 0)) {
-    _showPlaceholder('正在获取目标列表…');
+    _showPlaceholder(t('fs.loadingTargets'));
     return;
   }
 
@@ -533,7 +534,7 @@ function _connectStream() {
     renderFastScreenTab();
   } catch (e) {
     warn('fastscreen', 'connectStream failed: %s', e);
-    _showPlaceholder('连接失败: ' + e);
+    _showPlaceholder(t('fs.connectFailed', { err: e }));
   }
 }
 
@@ -604,7 +605,7 @@ function _connectMjpeg() {
         stallCtx.drawImage(img, 0, 0);
         const pixel = stallCtx.getImageData(0, 0, 1, 1).data;
         if (pixel[0] >= 250 && pixel[1] <= 5 && pixel[2] <= 5) {
-          _showPlaceholder('窗口可能已最小化，等待恢复…', '置于前台', _bringWindowToFront);
+          _showPlaceholder(t('fs.windowMinimized'), t('fs.bringToFront'), _bringWindowToFront);
           debug('fastscreen', 'mjpeg stall frame detected (1x1 red)');
           return;
         }
@@ -644,7 +645,7 @@ function _connectMse() {
   video.style.display = 'block';
 
   if (!window.MediaSource) {
-    _showPlaceholder('浏览器不支持 MediaSource');
+    _showPlaceholder(t('fs.mseUnsupported'));
     return;
   }
 
@@ -734,14 +735,14 @@ function _connectMse() {
         try {
           const msg = JSON.parse(ev.data);
           if (msg.error) {
-            _showPlaceholder('MSE 错误: ' + msg.error);
+            _showPlaceholder(t('fs.mseError', { msg: msg.error }));
             cleanupMse();
           } else if (msg.closed === true) {
             // 窗口已关闭（句柄失效）：显示提示并停止流
-            _showPlaceholder(msg.message || '窗口已关闭');
+            _showPlaceholder(i18nError(msg) || t('fs.windowClosed'));
             cleanupMse();
           } else if (msg.stall === true) {
-            _showPlaceholder(msg.message || '窗口可能已最小化，等待恢复…', '置于前台', _bringWindowToFront);
+            _showPlaceholder(t('fs.windowMinimized'), t('fs.bringToFront'), _bringWindowToFront);
           } else if (msg.stall === false) {
             _hidePlaceholder();
           }
@@ -817,7 +818,7 @@ function _connectWebCodecs() {
   canvas.style.display = 'block';
 
   if (!('VideoDecoder' in window)) {
-    _showPlaceholder('浏览器不支持 WebCodecs VideoDecoder');
+    _showPlaceholder(t('fs.webcodecsUnsupported'));
     return;
   }
 
@@ -1006,14 +1007,14 @@ function _connectWebCodecs() {
       try {
         const msg = JSON.parse(ev.data);
         if (msg.error) {
-          _showPlaceholder('WebCodecs 错误: ' + msg.error);
+          _showPlaceholder(t('fs.mseError', { msg: msg.error }));
           cleanupWebCodecs();
         } else if (msg.closed === true) {
           // 窗口已关闭（句柄失效）：显示提示并停止流
-          _showPlaceholder(msg.message || '窗口已关闭');
+          _showPlaceholder(i18nError(msg) || t('fs.windowClosed'));
           cleanupWebCodecs();
         } else if (msg.stall === true) {
-          _showPlaceholder(msg.message || '窗口可能已最小化，等待恢复…', '置于前台', _bringWindowToFront);
+          _showPlaceholder(t('fs.windowMinimized'), t('fs.bringToFront'), _bringWindowToFront);
         } else if (msg.stall === false) {
           _hidePlaceholder();
         }

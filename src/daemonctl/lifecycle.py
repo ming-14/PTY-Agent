@@ -4,7 +4,7 @@
 属 client 侧控制能力，供 CLI 与 transport 使用；daemon 自身入口在 src/daemon/lifecycle.py。
 连接/停止按 client.toml [connection] 的 CONNECT_MODE 路由：
 - token：本机，经单实例锁判断存活 + SHM 发现端口，凭据经 SHM 交换
-- plain：明文无认证，直接连接目标端口
+- basic：明文，密码认证（空密码=无认证），直接连接目标端口
 - tls：  TLS + pubkey 认证，KnownHosts TOFU 验证，用于远程 daemon
 单实例锁定位于本机（Windows 命名互斥 / Unix flock），仅 token 模式使用。
 
@@ -13,7 +13,6 @@
 """
 
 import json
-import logging
 import os
 import socket
 import subprocess
@@ -25,11 +24,12 @@ from ..auth.token import HmacMessageSigner
 from ..common.process import pid_exists
 from ..common.shells import format_shell_info
 from ..config.client import (
+    BASIC_HOST,
+    BASIC_PASSWORD,
+    BASIC_PORT,
     CONNECT_MODE,
     IS_WINDOWS,
     KNOWN_HOSTS_FILE,
-    PLAIN_HOST,
-    PLAIN_PORT,
     PUBKEY_PRIVATE_KEY_PATH,
     TLS_HOST,
     TLS_PORT,
@@ -53,8 +53,9 @@ from ..ipc.shm import (
 )
 from ..ipc.single_instance import SingleInstanceLock
 from ..protocol.message import Message
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-daemonctl")
+_logger = get_logger("pty-daemonctl")
 
 
 def _safe_print(text: str):
@@ -86,7 +87,7 @@ def _ping_daemon(port: int) -> bool:
     ping 消息走 dispatcher 的 ping 豁免（不校验认证），且 send 时 skip_sign=True。
     连接地址取当前 CONNECT_MODE 对应的监听器 host。
     """
-    host = {"token": TOKEN_HOST, "plain": PLAIN_HOST}.get(CONNECT_MODE, TLS_HOST)
+    host = {"token": TOKEN_HOST, "basic": BASIC_HOST}.get(CONNECT_MODE, TLS_HOST)
     return Message.ping(host, port, PING_TIMEOUT)
 
 
@@ -94,13 +95,13 @@ def _find_daemon_port() -> Optional[int]:
     """查找正在运行的守护进程端口
 
     token 模式（本机）：单实例锁判断存活，返回 TOKEN_PORT。
-    plain/tls 模式：目标端口配置固定，是否有 daemon 由连接探测决定。
+    basic/tls 模式：目标端口配置固定，是否有 daemon 由连接探测决定。
 
     Returns:
         守护进程端口，未运行返回 None。
     """
     if CONNECT_MODE != "token":
-        return {"plain": PLAIN_PORT, "tls": TLS_PORT}[CONNECT_MODE]
+        return {"basic": BASIC_PORT, "tls": TLS_PORT}[CONNECT_MODE]
     if not is_running():
         return None
     return TOKEN_PORT
@@ -134,12 +135,12 @@ def _daemon_ready() -> bool:
     """daemon 就绪判定
 
     token 模式经单实例锁判断（同机唯一实例）；
-    plain/tls 模式直接探测配置目标端口 ping（跨机/无锁多实例场景）。
+    basic/tls 模式直接探测配置目标端口 ping（跨机/无锁多实例场景）。
     """
     if CONNECT_MODE == "token":
         return is_running()
-    host = {"plain": PLAIN_HOST, "tls": TLS_HOST}[CONNECT_MODE]
-    port = {"plain": PLAIN_PORT, "tls": TLS_PORT}[CONNECT_MODE]
+    host = {"basic": BASIC_HOST, "tls": TLS_HOST}[CONNECT_MODE]
+    port = {"basic": BASIC_PORT, "tls": TLS_PORT}[CONNECT_MODE]
     return _ping_daemon(port)  # 实连探测（ping 走 dispatcher 豁免认证）
 
 
@@ -147,7 +148,7 @@ def start_daemon():
     """启动守护进程（以子进程方式）
 
     监听位置完全由 daemon.toml [listener] 段控制，不传参数。
-    token 模式启动前经单实例锁做硬性检查；plain/tls 模式不做锁判断
+    token 模式启动前经单实例锁做硬性检查；basic/tls 模式不做锁判断
     （daemon 可按 SINGLE_INSTANCE=false 无锁多实例并存）。
     Windows: DETACHED_PROCESS 创建独立子进程。
     Unix:    双 fork 彻底守护化。
@@ -205,8 +206,9 @@ def start_daemon():
         with open(log_file, "a") as f:
             os.dup2(f.fileno(), 2)
         env = os.environ.copy()
+        # cwd 已切到 /，src 包只能经 PYTHONPATH 定位（execve 显式传入）
         env["PYTHONPATH"] = src_parent + os.pathsep + env.get("PYTHONPATH", "")
-        os.execv(sys.executable, [sys.executable, "-m", "src.daemon"])
+        os.execve(sys.executable, [sys.executable, "-m", "src.daemon"], env)
         os._exit(0)  # exec 失败兜底（守护进程未启动，start_daemon 轮询会超时）
 
     for _ in range(int(DAEMON_START_TIMEOUT / DAEMON_START_POLL_INTERVAL) + 1):
@@ -227,7 +229,7 @@ def stop_daemon(force: bool = False):
 
     按 CONNECT_MODE 路由：
     - tls：  通过 TLS 连接远程 daemon 停止（TLS_HOST:TLS_PORT）
-    - plain：直接明文连接目标端口停止（无认证）
+    - basic：直接明文连接目标端口停止（BASIC_PASSWORD 非空时带密码）
     - token：通过共享内存查找守护进程，TCP stop → 强制 kill。
     force=True 时：先尝试普通 stop，失败后通过互斥锁找到 PID 直接 kill（token 本机）。
 
@@ -237,8 +239,8 @@ def stop_daemon(force: bool = False):
     if CONNECT_MODE == "tls":
         _stop_via_tls(force)
         return
-    if CONNECT_MODE == "plain":
-        _stop_via_plain(PLAIN_HOST, PLAIN_PORT)
+    if CONNECT_MODE == "basic":
+        _stop_via_basic(BASIC_HOST, BASIC_PORT, force)
         return
 
     # token 模式：通过共享内存查找守护进程（本机）
@@ -257,15 +259,29 @@ def stop_daemon(force: bool = False):
         _cleanup_credentials()
         return
 
-    pid = _find_daemon_pid()
-    stopped = _try_stop_daemon(port, pid)
+    # 先协议停止（TCP stop 不需要 PID）；PID 定位走全系统句柄表扫描，
+    # 仅在 TCP 失败且 force 时惰性执行（正常路径完全避免扫描）
+    stopped = _try_stop_via_basic(TOKEN_HOST, port, use_shm_credentials=True)
 
-    if not stopped and force and pid is not None:
-        stopped = _force_kill_pid(pid)
-
-    if stopped and pid is not None:
+    if not stopped:
+        if force:
+            pid = _find_daemon_pid()
+            if pid is not None:
+                stopped = _force_kill_pid(pid)
+                if stopped:
+                    for _ in range(PROCESS_EXIT_WAIT_RETRIES):
+                        if not pid_exists(pid):
+                            break
+                        time.sleep(PROCESS_EXIT_WAIT_INTERVAL)
+        if not stopped:
+            _safe_print(
+                "[pty-agent] Daemon stop failed. 使用 stop --force 强制清理"
+            )
+    else:
+        # TCP 停止成功：轮询单实例锁等待 daemon 退出
+        # （token 模式锁与存活等价，免句柄表扫描）
         for _ in range(PROCESS_EXIT_WAIT_RETRIES):
-            if not pid_exists(pid):
+            if not is_running():
                 break
             time.sleep(PROCESS_EXIT_WAIT_INTERVAL)
 
@@ -275,10 +291,23 @@ def stop_daemon(force: bool = False):
         _safe_print("[pty-agent] Daemon stopped")
 
 
-def _stop_via_plain(host: str, port: int):
-    """停止 plain 监听器（无认证，直接明文连接）"""
-    if _try_stop_via_plain(host, port, use_shm_credentials=False):
+def _stop_via_basic(host: str, port: int, force: bool = False):
+    """停止 basic 监听器（BASIC_PASSWORD 非空时携带密码 + HMAC 签名）
+
+    force=True 且协议停止失败时，回退到本地强制终止（仅本机 daemon 存在时有效，
+    与 tls 模式回退逻辑一致）。
+    """
+    if _try_stop_via_basic(host, port, use_shm_credentials=False):
         _safe_print("[pty-agent] Daemon stopped")
+        return
+    if not force:
+        _safe_print("[pty-agent] Daemon stop failed. 使用 stop --force 强制清理")
+        return
+    _safe_print("[pty-agent] Daemon stop failed，尝试强制清理...")
+    if SingleInstanceLock().is_locked():
+        _stop_daemon_force()
+    else:
+        _safe_print("[pty-agent] Daemon not running")
 
 
 def _stop_via_tls(force: bool):
@@ -303,40 +332,37 @@ def _stop_via_tls(force: bool):
         _safe_print("[pty-agent] Daemon not running")
 
 
-def _try_stop_daemon(port, pid) -> bool:
-    """尝试通过 TCP stop 或 PID kill 停止守护进程（token 本机模式路由）
-
-    token 模式：调用 _try_stop_via_plain（SHM 凭据），失败后 force-kill。
-    """
-    stopped = _try_stop_via_plain(TOKEN_HOST, port, use_shm_credentials=True)
-
-    if not stopped and pid is not None:
-        stopped = _force_kill_pid(pid)
-
-    return stopped
-
-
-def _try_stop_via_plain(host: str, port: int, use_shm_credentials: bool) -> bool:
+def _try_stop_via_basic(host: str, port: int, use_shm_credentials: bool) -> bool:
     """通过明文 TCP 连接停止守护进程
 
-    仅 token 模式装配 HMAC 签名器（从 SHM 读取密钥）并携带 token 字段；
-    plain 模式无认证无签名，仅发送 stop 消息。
+    token 模式装配 HMAC 签名器（从 SHM 读取密钥）并携带 token 字段；
+    basic 模式密码认证时（BASIC_PASSWORD 非空）装配同一密码的 HMAC 签名器
+    并携带 password 字段，空密码时无认证无签名。
     函数返回前恢复原签名器：签名器为线程级隐式全局状态，
     若装配后不恢复会污染调用线程后续所有收发（如测试进程）。
     """
     prev_out = Message.get_outbound_signer()
     prev_in = Message.get_inbound_verifier()
     try:
-        if prev_out is None and use_shm_credentials:
-            key = read_hmac_key()
-            if key is not None:
-                Message.set_outbound_signer(HmacMessageSigner(key))
+        if prev_out is None:
+            if use_shm_credentials:
+                key = read_hmac_key()
+                if key is not None:
+                    Message.set_outbound_signer(HmacMessageSigner(key))
+            elif BASIC_PASSWORD:
+                # basic 密码认证：密码即 HMAC 密钥（与客户端连接装配一致）
+                Message.set_outbound_signer(
+                    HmacMessageSigner(BASIC_PASSWORD.encode("utf-8"))
+                )
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(STOP_TIMEOUT)
         sock.connect((host, port))
         token_field = read_auth_token() or "" if use_shm_credentials else ""
-        Message.send(sock, {"type": "stop", "token": token_field})
+        stop_msg = {"type": "stop", "token": token_field}
+        if BASIC_PASSWORD:
+            stop_msg["password"] = BASIC_PASSWORD
+        Message.send(sock, stop_msg)
         resp = Message.recv(sock)
         sock.close()
         if resp and resp.get("commandType") == "stop" and resp.get("code") == 0:

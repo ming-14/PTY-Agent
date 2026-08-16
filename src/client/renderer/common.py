@@ -4,11 +4,20 @@
 形成单向依赖底座，消除重复定义。
 """
 
+import functools
 import os
 import unicodedata
 from typing import Optional
 
 from ...config.common import DEFAULT_COLS, DEFAULT_ROWS
+
+try:
+    from wcwidth import wcwidth as _wcwidth
+
+    _HAS_WCWIDTH = True
+except ImportError:
+    _HAS_WCWIDTH = False
+    _wcwidth = None
 
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".svg"}
 
@@ -33,6 +42,7 @@ _ANSI_COLOR_MAP = {
 }
 
 
+@functools.lru_cache(maxsize=4096)
 def _resolve_color(color_str: str, is_fg: bool = True) -> Optional[str]:
     if not color_str or color_str == "default":
         return None
@@ -55,15 +65,14 @@ def _resolve_color(color_str: str, is_fg: bool = True) -> Optional[str]:
     return None
 
 
+@functools.lru_cache(maxsize=4096)
 def _char_width(c: str) -> int:
-    try:
-        from wcwidth import wcwidth
-
-        w = wcwidth(c)
+    """字符显示宽度（常见字符缓存，避免逐 cell 查 wcwidth/unicodedata）"""
+    if _HAS_WCWIDTH:
+        w = _wcwidth(c)
         return w if w > 0 else 1
-    except ImportError:
-        eaw = unicodedata.east_asian_width(c)
-        return 2 if eaw in ("W", "F") else 1
+    eaw = unicodedata.east_asian_width(c)
+    return 2 if eaw in ("W", "F") else 1
 
 
 def _is_cjk_char(c: str) -> bool:
@@ -108,42 +117,70 @@ def _is_block_element(c: str) -> bool:
     return 0x2500 <= cp < 0x25A0
 
 
+class _SparseLine:
+    """稀疏行视图：按列索引读取 cell（缺失返回默认空格），不展开全量网格
+
+    消费方仅按 `line[col]` 读取，视图惰性提供单元格，
+    避免稀疏行全量展开 rows×cols 的 dict 创建开销。
+    """
+
+    __slots__ = ("_by_col", "_default", "_length")
+
+    def __init__(self, cells: list, cols: int):
+        self._by_col = {c["c"]: c for c in cells}
+        self._default = {"d": " ", "f": "default", "b": "default", "bo": False}
+        self._length = cols
+
+    def __len__(self) -> int:
+        return self._length
+
+    def __getitem__(self, col: int) -> dict:
+        return self._by_col.get(col, self._default)
+
+
+# 空行共享：消费方仅按 line[col] 只读，空行按 cols 缓存单个行对象复用，
+# 避免每行分配 cols 个默认 cell dict（rows 行 × cols 列）
+_default_cell = {"d": " ", "f": "default", "b": "default", "bo": False}
+_EMPTY_ROWS: dict = {}
+
+
+def _empty_row(cols: int) -> list:
+    row = _EMPTY_ROWS.get(cols)
+    if row is None:
+        row = [dict(_default_cell) for _ in range(cols)]
+        _EMPTY_ROWS[cols] = row
+    return row
+
+
 def _expand_lines(buf: dict) -> list:
-    """将稀疏/全量 lines 统一展开为全量二维数组 [[cell_dict, ...], ...]
+    """将稀疏/全量 lines 统一展开为二维行序列 [[cell_dict, ...], ...]
 
     稀疏格式: lines[row] = [{"c":col, "d":..., "f":..., "b":..., "bo":...}, ...]
     全量格式: lines[row] = [{"d":..., "f":..., "b":..., "bo":...}, ...]
+
+    稀疏行以 _SparseLine 视图返回（按列索引读取，不展开全量网格），
+    消费方按 line[col] 访问即可，语义与原全量展开一致。
     """
     cols = buf.get("cols", DEFAULT_COLS)
     rows = buf.get("rows", DEFAULT_ROWS)
     lines = buf.get("lines", [])
-    default_cell = {"d": " ", "f": "default", "b": "default", "bo": False}
     expanded = []
     for row_idx in range(min(rows, len(lines))):
         raw_line = lines[row_idx]
         if not raw_line:
-            expanded.append([dict(default_cell) for _ in range(cols)])
+            expanded.append(_empty_row(cols))
             continue
         first = raw_line[0] if raw_line else None
         if first and "c" in first:
-            full = [dict(default_cell) for _ in range(cols)]
-            for cell in raw_line:
-                c = cell.get("c", 0)
-                if 0 <= c < cols:
-                    full[c] = {
-                        "d": cell.get("d", " "),
-                        "f": cell.get("f", "default"),
-                        "b": cell.get("b", "default"),
-                        "bo": cell.get("bo", False),
-                    }
-            expanded.append(full)
+            expanded.append(_SparseLine(raw_line, cols))
         else:
             expanded.append(raw_line)
     while len(expanded) < rows:
-        expanded.append([dict(default_cell) for _ in range(cols)])
+        expanded.append(_empty_row(cols))
     return expanded
 
 
+@functools.lru_cache(maxsize=4096)
 def _hex_to_colorref(hex_color: str) -> int:
     h = hex_color.lstrip("#")
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)

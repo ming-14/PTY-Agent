@@ -3,12 +3,12 @@
 提供输入文本的转义处理（自动追加换行）和安全打印（适配控制台编码）功能。
 """
 
+from ..logging import get_logger
 import json
-import logging
 import sys
 from typing import Optional
 
-_logger = logging.getLogger("pty-client")
+_logger = get_logger("pty-client")
 
 
 def unescape_json_string(text: str) -> str:

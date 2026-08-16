@@ -3,14 +3,14 @@
 管理所有 PTY 会话的创建、获取、列出、移除和批量停止。
 """
 
-import logging
 import threading
 from typing import Callable, Optional
 
 from ..config.daemon import MAX_SESSIONS
 from .session import Session
+from ..logging import get_logger, bind, unbind
 
-_logger = logging.getLogger("pty-session")
+_logger = get_logger("pty-session")
 
 
 class SessionManager:
@@ -44,70 +44,78 @@ class SessionManager:
         encoding: Optional[str] = None,
         cwd: Optional[str] = None,
         env: Optional[dict] = None,
-        snapshot_mode: bool = False,
         cols: Optional[int] = None,
         rows: Optional[int] = None,
         plugins: Optional[list] = None,
+        cli_plugins: Optional[list] = None,
+        mode: str = "pty",
     ) -> Session:
         if not session_id or not isinstance(session_id, str):
             raise ValueError("会话 ID 必须为非空字符串")
-        _logger.debug(
-            "create_session: sid=%r cmd=%r cwd=%r cols=%s rows=%s plugins=%s",
-            session_id,
-            command,
-            cwd,
-            cols,
-            rows,
-            plugins,
-        )
-        with self._lock:
-            if session_id in self._sessions:
-                _logger.warning(
-                    "create_session: session already exists sid=%r", session_id
-                )
-                raise KeyError(f"会话 '{session_id}' 已存在")
-            if len(self._sessions) >= MAX_SESSIONS:
-                _logger.warning(
-                    "create_session: max sessions reached (%d)", MAX_SESSIONS
-                )
-                raise ValueError(
-                    f"会话数已达上限 ({MAX_SESSIONS})，请先 kill 不需要的会话"
-                )
-            s = Session(
+        _ctx_token = bind(session_id=session_id)
+        try:
+            _logger.debug(
+                "create_session: sid=%r cmd=%r cwd=%r cols=%s rows=%s plugins=%s cli_plugins=%s mode=%s",
                 session_id,
                 command,
-                encoding=encoding,
-                cwd=cwd,
-                env=env,
-                snapshot_mode=snapshot_mode,
-                cols=cols,
-                rows=rows,
-            )
-            self._sessions[session_id] = s
-        if plugins:
-            self._attach_plugins(s, plugins)
-        s._publisher.add_on_end_callback(lambda sess: self._on_session_ended(sess))
-        _logger.info("create_session: starting sid=%r cmd=%r", session_id, command)
-        try:
-            s.start()
-        except Exception:
-            _logger.warning(
-                "create_session: start failed sid=%r, removing tombstone", session_id
+                cwd,
+                cols,
+                rows,
+                plugins,
+                cli_plugins,
+                mode,
             )
             with self._lock:
-                self._sessions.pop(session_id, None)
+                if session_id in self._sessions:
+                    _logger.warning(
+                        "create_session: session already exists sid=%r", session_id
+                    )
+                    raise KeyError(f"会话 '{session_id}' 已存在")
+                if len(self._sessions) >= MAX_SESSIONS:
+                    _logger.warning(
+                        "create_session: max sessions reached (%d)", MAX_SESSIONS
+                    )
+                    raise ValueError(
+                        f"会话数已达上限 ({MAX_SESSIONS})，请先 kill 不需要的会话"
+                    )
+                s = Session(
+                    session_id,
+                    command,
+                    encoding=encoding,
+                    cwd=cwd,
+                    env=env,
+                    cols=cols,
+                    rows=rows,
+                    cli_plugins=cli_plugins,
+                    mode=mode,
+                )
+                self._sessions[session_id] = s
+            if plugins:
+                self._attach_plugins(s, plugins)
+            s._publisher.add_on_end_callback(lambda sess: self._on_session_ended(sess))
+            _logger.info("create_session: starting sid=%r cmd=%r", session_id, command)
             try:
-                s.stop()
+                s.start()
             except Exception:
-                pass
-            raise
-        _logger.info("create_session: started sid=%r pty=%s", session_id, s.pty_type)
-        if self._on_session_created:
-            try:
-                self._on_session_created(session_id)
-            except Exception:
-                _logger.exception("on_session_created callback error")
-        return s
+                _logger.warning(
+                    "create_session: start failed sid=%r, removing tombstone", session_id
+                )
+                with self._lock:
+                    self._sessions.pop(session_id, None)
+                try:
+                    s.stop()
+                except Exception:
+                    pass
+                raise
+            _logger.info("create_session: started sid=%r pty=%s", session_id, s.pty_type)
+            if self._on_session_created:
+                try:
+                    self._on_session_created(session_id)
+                except Exception:
+                    _logger.exception("on_session_created callback error")
+            return s
+        finally:
+            unbind(_ctx_token)
 
     def _attach_plugins(self, session: Session, plugins: list) -> None:
         """按名解析并挂载插件到会话（未知插件名跳过并记日志，不影响会话）"""
@@ -166,7 +174,7 @@ class SessionManager:
         """会话自然结束时的回调：移除活跃列表、释放资源、归档、广播事件
 
         注意：此回调在读者线程（notify_end 同步广播）内执行，
-        session.stop 已支持由当前线程调用（见 SessionThreads.stop）。
+        session.stop 已支持由当前线程调用（见 threads.Threads.stop）。
         """
         with self._lock:
             if session.id not in self._sessions:
@@ -193,6 +201,9 @@ class SessionManager:
                 )
             except Exception:
                 _logger.exception("on_session_removed callback error")
+
+        # 最终移除：断开会话组件循环引用，让对象图可被引用计数立即回收
+        session.release_components()
 
     def remove_session(self, session_id: str):
         """移除并停止指定会话（移除前持久化到历史）
@@ -233,6 +244,8 @@ class SessionManager:
                     self._on_session_removed(session_id, s.exit_code, s.error_message)
                 except Exception:
                     _logger.exception("on_session_removed callback error")
+            # 最终移除：断开会话组件循环引用，让对象图可被引用计数立即回收
+            s.release_components()
             _logger.info(
                 "remove_session: done sid=%r total %.3fs on_removed %.3fs",
                 session_id,

@@ -16,7 +16,6 @@ HPCON），仅作为 ConPTY 的创建/IO/尺寸控制方。spawn 成功后立即
 经 tracker 控制。
 """
 
-import logging
 import subprocess
 from typing import List, Optional
 
@@ -24,8 +23,9 @@ from ..process.base import ProcessTreeTracker
 from ..pty.base import PseudoTerminal
 from ..pty.wezterm_pty import _HAS_WEZTERM, pywezterm
 from .manager import SandboxSessionManager
+from ..logging import get_logger
 
-_logger = logging.getLogger("sandbox-pty")
+_logger = get_logger("sandbox-pty")
 
 
 class SandboxPty(PseudoTerminal):

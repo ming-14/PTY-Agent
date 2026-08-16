@@ -9,9 +9,9 @@
 - authorized_keys 解析返回 指纹->PublicKey 映射，空文件返回空 dict（fail-closed 由调用方决定）
 """
 
+from ..logging import get_logger
 import base64
 import hashlib
-import logging
 import os
 from pathlib import Path
 from typing import Dict, Union
@@ -29,7 +29,7 @@ from cryptography.hazmat.primitives.serialization import (
     load_ssh_public_key,
 )
 
-_logger = logging.getLogger("pty-auth")
+_logger = get_logger("pty-auth")
 
 # OpenSSH 公钥指纹前缀，与 ssh-keygen -lf 一致
 _FINGERPRINT_PREFIX = "SHA256:"

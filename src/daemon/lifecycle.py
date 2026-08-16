@@ -5,33 +5,15 @@
 属客户端控制能力，位于 src/daemonctl。
 """
 
-import logging
 import os
 import sys
 
-from ..config.daemon import (
-    SINGLE_INSTANCE,
-    TOKEN_ENABLED,
-    AUTH_LOGGERS,
-    DAEMON_LOG_LEVEL,
-    DAEMON_LOGGERS,
-    FASTSCREEN_LOGGERS,
-    LOG_ARCHIVE_INTERVAL,
-    LOG_DATE_FORMAT,
-    LOG_DIR,
-    LOG_FORMAT,
-    PROTOCOL_LOGGERS,
-    PTY_LOGGERS,
-    SANDBOX_LOGGERS,
-    SESSION_LOGGERS,
-    WEB_LOG_LEVEL,
-    WEB_LOGGERS,
-)
+from ..config.daemon import SINGLE_INSTANCE, TOKEN_ENABLED, LOG_DIR, DAEMON_LOG_LEVEL, WEB_LOG_LEVEL
 from ..ipc.shm import cleanup_all_shm
 from ..ipc.single_instance import SingleInstanceLock
-from ..logging_setup import configure_log_files, start_log_archiver
+from ..logging import get_logger, setup_daemon_logging, shutdown
 
-_logger = logging.getLogger("pty-daemon")
+_logger = get_logger("pty-daemon")
 
 
 def _safe_print(text: str):
@@ -90,48 +72,13 @@ def _ignore_console_ctrl():
 
 
 def _setup_logging():
-    """配置日志系统：按模块分组写独立日志文件（带毫秒时间戳，无轮转）
+    """配置日志系统：按模块分组写独立日志文件 + 异步队列 + 归档线程
 
-    每组对应一个 {分组}-{YYYYMMDD-HHMMSS.mmm}.log 文件，防止单文件过大：
-    - 守护进程侧：daemon / session / pty / protocol / auth / sandbox（DAEMON_LOG_LEVEL）
-    - Web 侧：web / fastscreen（WEB_LOG_LEVEL）
-    同时启动后台线程将前一日（本地 0 点前）的日志自动 gzip 归档。
-    DAEMON_LOG_LEVEL / WEB_LOG_LEVEL 设为 None 则对应侧不落盘。
+    委托给 src/logging 子包的 setup_daemon_logging()。
     """
-    daemon_level = (
-        getattr(logging, DAEMON_LOG_LEVEL.upper(), logging.DEBUG)
-        if DAEMON_LOG_LEVEL
-        else None
-    )
-    web_level = (
-        getattr(logging, WEB_LOG_LEVEL.upper(), logging.DEBUG)
-        if WEB_LOG_LEVEL
-        else None
-    )
-
-    groups = {
-        "daemon": DAEMON_LOGGERS,
-        "session": SESSION_LOGGERS,
-        "pty": PTY_LOGGERS,
-        "protocol": PROTOCOL_LOGGERS,
-        "auth": AUTH_LOGGERS,
-        "sandbox": SANDBOX_LOGGERS,
-        "web": WEB_LOGGERS,
-        "fastscreen": FASTSCREEN_LOGGERS,
-    }
-    levels = {
-        g: daemon_level
-        for g in ("daemon", "session", "pty", "protocol", "auth", "sandbox")
-    }
-    levels.update({g: web_level for g in ("web", "fastscreen")})
-
-    formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
-    files = configure_log_files(LOG_DIR, groups, levels, formatter)
-
+    files = setup_daemon_logging()
     for group, path in files.items():
         _safe_print(f"[pty-agent] {group} log: {path}")
-    if files:
-        start_log_archiver(LOG_DIR, LOG_ARCHIVE_INTERVAL)
 
 
 # ============================================================
@@ -176,7 +123,7 @@ def main():
             sys.exit(0)
         _logger.info("已获取单实例锁")
     else:
-        # 仅 plain/tls 监听器：跳过单实例锁，允许同机多实例并存（各实例独立端口配置）
+        # 仅 basic/tls 监听器：跳过单实例锁，允许同机多实例并存（各实例独立端口配置）
         _logger.warning(
             "SINGLE_INSTANCE=false 且无 token 监听器，跳过单实例互斥锁（允许多实例并存）"
         )
@@ -210,4 +157,5 @@ def main():
         except Exception:
             _logger.exception("守护进程清理异常")
         single_lock.release()
+        shutdown()
         _logger.info("守护进程已退出")

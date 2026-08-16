@@ -6,13 +6,13 @@
 """
 
 import importlib.util
-import logging
 import os
 from typing import List, Optional
 
-from .base import VALID_TRIGGERS, Plugin
+from .base import VALID_KINDS, VALID_TRIGGERS, Plugin
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-plugins")
+_logger = get_logger("pty-plugins")
 
 
 def resolve_plugin_paths(plugin_paths: List[str]) -> List[str]:
@@ -64,9 +64,42 @@ def extract_plugin_class(module, module_path: str) -> Optional[type]:
     return cls
 
 
+def resolve_kind(cls: type) -> str:
+    """解析插件形态：显式声明优先，否则按 message_types 推断"""
+    if cls.kind:
+        return cls.kind
+    return "process" if cls.message_types else "session"
+
+
 def validate_plugin(cls: type) -> bool:
     """校验插件声明；非法时记录 error 日志并返回 False"""
     name = cls.name or "<未命名>"
+
+    kind = resolve_kind(cls)
+    if kind not in VALID_KINDS:
+        _logger.error(
+            "插件 %s: kind 非法 %r (合法: %s)", name, kind, VALID_KINDS
+        )
+        return False
+
+    # CLI 形态钩子校验：必须实现至少一个 CLI 钩子
+    if kind == "cli":
+        has_cli_hook = any(
+            getattr(cls, hook) is not getattr(Plugin, hook)
+            for hook in ("before_request", "transform_response", "render_response")
+        )
+        if not has_cli_hook:
+            _logger.error(
+                "插件 %s: kind=cli 但未实现任何 CLI 钩子 "
+                "(before_request/transform_response/render_response)",
+                name,
+            )
+            return False
+        if not isinstance(cls.commands, (list, tuple)):
+            _logger.error("插件 %s: commands 必须为列表", name)
+            return False
+        # CLI 形态不参与 daemon 挂载/消息路由，跳过 daemon 侧钩子声明校验
+        return True
 
     # triggers 可为空（无事件/定时触发的纯钩子插件：inspect_state/handle_command）
     if not isinstance(cls.triggers, (list, tuple)):

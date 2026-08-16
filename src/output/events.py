@@ -8,15 +8,15 @@
 - 线程安全（内部锁）
 """
 
-import logging
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, List, Optional
 
 from ..config.common import IS_WINDOWS
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-session")
+_logger = get_logger("pty-session")
 
 
 @dataclass
@@ -90,17 +90,15 @@ class EventHistoryManager:
         with self._lock:
             all_ev = list(self._history) + list(self._pending)
 
+        # 先按 raw 事件过滤/切尾，再转换（strftime 是热操作，避免全量转换后丢弃）
         if since is not None:
             all_ev = [e for e in all_ev if e.timestamp >= since]
         if until is not None:
             all_ev = [e for e in all_ev if e.timestamp <= until]
-
-        dicts = _events_to_dicts(all_ev)
-
         if last is not None and last > 0:
-            dicts = dicts[-last:]
+            all_ev = all_ev[-last:]
 
-        return dicts
+        return _events_to_dicts(all_ev)
 
     def check_existence(self, ev: dict, tracker_provider: Callable) -> bool:
         ev_type = ev.get("type", "")

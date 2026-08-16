@@ -10,11 +10,11 @@
 - 终止顺序由 Session 显式控制：kill_tree() → pty.close() → tracker.close()
 """
 
-import logging
+from ..logging import get_logger
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
-_logger = logging.getLogger("process-base")
+_logger = get_logger("process-base")
 
 # 通知类型（跨平台统一字符串）
 NOTIF_SPAWN = "spawn"
@@ -139,8 +139,13 @@ class ProcessTreeTracker(ABC):
         """获取已检测到的 GUI 窗口列表"""
         return []
 
-    def poll_gui_windows(self) -> List[dict]:
-        """轮询检测本轮新增的 GUI 窗口"""
+    def poll_gui_windows(self, pids: Optional[List[int]] = None) -> List[dict]:
+        """轮询检测本轮新增的 GUI 窗口
+
+        Args:
+            pids: 调用方已获取的进程树 PID 列表（同一 tick 复用，
+                  避免与 get_process_list 重复扫描）；None 时自行查询。
+        """
         return []
 
     def close_gui_window(self, hwnd: int) -> bool:

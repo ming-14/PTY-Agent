@@ -65,8 +65,4 @@ pproxy -r ss://aes-256-gcm:PASSWORD@SERVER_IP:8388 -l socks5://127.0.0.1:8080 -v
 
 Then point your browser/app at SOCKS5 `127.0.0.1:8080`.
 
-Smoke test / demo client using the pproxy Python client API:
-
-```bash
-python test_client.py ss://aes-256-gcm:PASSWORD@127.0.0.1:8388 --host 127.0.0.1 --port 9000
-```
+本目录未附带测试客户端；用上述 pproxy CLI（或任意 `ss://` 客户端）即可联调验证。

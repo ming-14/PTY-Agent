@@ -44,7 +44,8 @@ class TestKeypairGeneration:
         kp = generate_keypair()
         key_path = tmp_path / "id_ed25519"
         key_path.write_bytes(kp.to_openssh_bytes())
-        # Windows 无 Unix 权限位，跳过 0600 校验
+        # Unix 权限校验要求 0600（from_file 加载前提）
+        key_path.chmod(0o600)
         reloaded = PrivateKey.from_file(key_path)
         assert reloaded.fingerprint == kp.fingerprint
 
@@ -237,6 +238,8 @@ class TestPrivateKeyLoading:
                 Encoding.PEM, PrivateFormat.OpenSSH, NoEncryption()
             )
         )
+        # Unix 权限校验要求 0600，否则 from_file 先抛权限错误
+        key_path.chmod(0o600)
         with pytest.raises(ValueError, match="不是 Ed25519"):
             PrivateKey.from_file(key_path)
 

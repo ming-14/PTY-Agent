@@ -6,25 +6,36 @@ OutputBuffer / Session 协作。
 关键设计:
 - 匹配逻辑在持锁路径（OutputBuffer.lock）中执行，通过传入的
   OutputBuffer 引用直接读取原始字节。
-- 解码依赖外部的 decode_func 回调（Session._decode_only），
+- 解码依赖外部的 decode_func 回调（Session._decode_only_len），
   避免引入编码探测的循环依赖。
-- ReDoS 防护: safe_regex_search 在独立 daemon 线程中执行，
-  超时自动降级返回 False。
+- 滚动解码缓存：等待窗口内的已解码文本跨 check 复用，每块只增量
+  解码新增字节并 append，避免对整段窗口重复解码+重扫（O(窗口)→O(块长)）。
+- ReDoS 防护: safe_regex_search 对无风险模式在调用线程直接搜索，
+  仅存在 ReDoS 风险的模式提交独立 daemon 线程限时执行，超时降级返回 False。
 """
 
 import atexit
 import concurrent.futures
-import logging
+import functools
 import re
 import threading
 import time
 from typing import Callable, Optional
 
 from ..config.daemon import MAX_TRIGGER_SCAN
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-session")
+_logger = get_logger("pty-session")
 
 _RE_SEARCH_TIMEOUT = 2.0
+
+# 跨块匹配尾部重叠字符数：搜索只覆盖新增文本 + 此前最近一段尾部，
+# 旧文本在之前的 check 中已全量搜索无命中（重叠区仅供跨块模式命中）。
+_SCAN_TAIL_OVERLAP = 4096
+
+# 残缺尾部字节封顶：合法的不完整多字节序列 ≤ 4 字节，更大说明是
+# 持续无法解码的异常字节流，封顶防止尾部无限累积导致逐块 O(n)。
+_MAX_TAIL_BYTES = 16
 
 _EXECUTOR = concurrent.futures.ThreadPoolExecutor(
     max_workers=4,
@@ -33,11 +44,13 @@ _EXECUTOR = concurrent.futures.ThreadPoolExecutor(
 atexit.register(_EXECUTOR.shutdown, False)
 
 
+@functools.lru_cache(maxsize=256)
 def _check_regex_complexity(pattern: str) -> bool:
     """检查正则表达式是否存在 ReDoS 风险
 
     拒绝嵌套量词超过 2 层的正则（如 (a+)+b）。
     返回 True 表示安全，False 表示可能存在 ReDoS 风险。
+    按 pattern 缓存判定结果（safe_regex_search 每块输出调用）。
     """
     depth = 0
     max_depth = 0
@@ -64,15 +77,31 @@ def _check_regex_complexity(pattern: str) -> bool:
 
 
 def safe_regex_search(
-    pattern: re.Pattern, text: str, timeout: float = _RE_SEARCH_TIMEOUT
+    pattern: re.Pattern,
+    text: str,
+    timeout: float = _RE_SEARCH_TIMEOUT,
+    pos: int = 0,
 ) -> bool:
-    """在共享线程池中执行正则搜索，超时安全降级返回 False
+    """执行正则搜索，超时安全降级返回 False
 
-    使用 ThreadPoolExecutor 复用线程，避免每次创建/销毁开销。
-    超时后调用 future.cancel() 提示中断（实际正则运行无法立即停止，
+    无 ReDoS 风险的模式（_check_regex_complexity 通过）在调用线程直接
+    pattern.search，避免每块输出都做一次线程池队列往返（future 提交 +
+    同步阻塞）；仅存在风险的模式才提交共享线程池限时执行，
+    超时后 future.cancel() 提示中断（实际正则运行无法立即停止，
     但线程数被 max_workers 限制，不会无限增长）。
+
+    Args:
+        pattern: 预编译正则。
+        text:    待搜索文本。
+        timeout: 线程池路径超时（秒）。
+        pos:     搜索起始偏移（匹配必须从 pos 起；旧文本已搜索时可跳过）。
     """
-    future = _EXECUTOR.submit(pattern.search, text)
+    if _check_regex_complexity(pattern.pattern):
+        try:
+            return pattern.search(text, pos) is not None
+        except re.error:
+            return False
+    future = _EXECUTOR.submit(pattern.search, text, pos)
     try:
         return future.result(timeout=timeout) is not None
     except concurrent.futures.TimeoutError:
@@ -92,11 +121,11 @@ class TriggerMatcher:
     不直接持有 IO 资源，通过回调与 OutputBuffer 协作。
     """
 
-    def __init__(self, decode_func: Callable[[bytes], str]):
+    def __init__(self, decode_func: Callable[[bytes], tuple]):
         """
         Args:
-            decode_func: 解码回调，接收 bytes 返回 str。
-                         通常为 Session._decode_only。
+            decode_func: 解码回调，接收 bytes 返回 (文本, 被消费的字节长度)。
+                         通常为 Session._decode_only_len（EncodingDetector.decode_only_len）。
         """
         self._decode_func = decode_func
 
@@ -112,6 +141,19 @@ class TriggerMatcher:
         self._newline_first_ok = False
         self._fresh = False
         self._fresh_cycle = 0
+
+        # 滚动解码缓存（check 持锁路径使用）：
+        # 等待窗口 [start_offset, start_offset+MAX_TRIGGER_SCAN) 的已解码文本，
+        # 每块只增量解码新增字节。缓冲裁剪（trim_gen 变化）或切换缓冲
+        # （out/err 双流）时重建；set/clear 通过 _scan_version 使缓存失效。
+        # 跨块拆分的多字节字符：解码回调返回被消费的字节长度，被丢弃的
+        # 残缺尾部（≤3 字节）留待与下块合并解码补全，无需字节对齐假设。
+        self._scan_buf: Optional[object] = None
+        self._scan_gen = -1
+        self._scan_end = 0
+        self._scan_text = ""
+        self._scan_tail = b""  # 上一块解码被丢弃的残缺尾部字节（待补全）
+        self._scan_version = 0
 
         # 输出静默超时触发条件
         self._idle_timeout: Optional[float] = None
@@ -161,6 +203,9 @@ class TriggerMatcher:
             )
             self._on_newline = newline
 
+            # 等待窗口起始变化，滚动解码缓存失效
+            self._reset_scan_cache_locked()
+
             self._idle_timeout = idle_timeout
             self._idle_after_first = idle_after_first_output
             now = time.monotonic()
@@ -209,6 +254,9 @@ class TriggerMatcher:
         需在 OutputBuffer.lock 已获取的线程上下文中调用。
         内部通过快照读取 _state_lock 保护的状态字段，避免与 set/clear 竞争。
 
+        性能：等待窗口内的解码文本跨 check 复用（滚动缓存），每块只
+        增量解码新增字节；搜索只覆盖新增文本 + 尾部重叠，避免整窗重扫。
+
         Args:
             output_buffer: OutputBuffer 实例（持锁状态下）。
 
@@ -223,6 +271,12 @@ class TriggerMatcher:
             on_newline = self._on_newline
             fresh = self._fresh
             fresh_cycle = self._fresh_cycle
+            scan_buf = self._scan_buf
+            scan_gen = self._scan_gen
+            scan_end = self._scan_end
+            scan_text = self._scan_text
+            scan_tail = self._scan_tail
+            scan_version = self._scan_version
 
         if not pattern or matched:
             return False
@@ -243,28 +297,85 @@ class TriggerMatcher:
                 else:
                     return False
 
-        start = min(start_offset, len(output_buffer.raw))
-        end = min(start + MAX_TRIGGER_SCAN, len(output_buffer.raw))
-        raw = bytes(memoryview(output_buffer.raw)[start:end])
-        text = self._decode_func(raw)
+        raw = output_buffer.raw
+        start = min(start_offset, len(raw))
+        end = min(start + MAX_TRIGGER_SCAN, len(raw))
+
+        # ── 滚动解码缓存：仅增量解码新增字节 ──
+        # 缓冲被头部裁剪（trim_gen 变化）或切换缓冲（子进程模式 out/err 双流）
+        # 时缓存失效重建；首次 check 从等待窗口起点整段解码一次。
+        # 上一块解码丢弃的残缺尾部与新增字节合并解码（跨块拆分的多字节字符
+        # 在此补全）；新增字节整体残缺时尾部继续累积，封顶防止异常流膨胀。
+        prev_len = len(scan_text)
+        if scan_buf is not output_buffer or scan_gen != output_buffer.trim_gen:
+            scan_buf = output_buffer
+            scan_gen = output_buffer.trim_gen
+            scan_end = start
+            scan_text = ""
+            scan_tail = b""
+            prev_len = 0
+        if end > scan_end:
+            new_bytes = bytes(memoryview(raw)[scan_end:end])
+            joined = scan_tail + new_bytes
+            joined_text, joined_len = self._decode_func(joined)
+            if joined_text:
+                scan_text += joined_text
+            # 未消费的尾部字节：残缺多字节序列，留待下块补全（封顶防膨胀）
+            scan_tail = joined[joined_len:]
+            if len(scan_tail) > _MAX_TAIL_BYTES:
+                scan_tail = scan_tail[-_MAX_TAIL_BYTES:]
+            scan_end = end
 
         if regex:
-            if safe_regex_search(regex, text):
+            # 新增文本 + 尾部重叠区；旧文本在之前 check 已全量搜索无命中
+            pos = max(0, prev_len - _SCAN_TAIL_OVERLAP)
+            if safe_regex_search(regex, scan_text, pos=pos):
                 _logger.info("TriggerMatcher.check: MATCHED pattern=%r", pattern)
                 with self._state_lock:
                     self._matched = True
                 self._event.set()
+                self._commit_scan_cache(
+                    scan_buf, scan_gen, scan_end, scan_text, scan_tail, scan_version,
+                )
                 return True
         else:
-            if pattern in text:
+            pos = max(0, prev_len - (len(pattern) - 1))
+            if pattern in scan_text[pos:]:
                 _logger.info(
                     "TriggerMatcher.check: substring MATCHED pattern=%r", pattern
                 )
                 with self._state_lock:
                     self._matched = True
                 self._event.set()
+                self._commit_scan_cache(
+                    scan_buf, scan_gen, scan_end, scan_text, scan_tail, scan_version,
+                )
                 return True
+        self._commit_scan_cache(
+            scan_buf, scan_gen, scan_end, scan_text, scan_tail, scan_version,
+        )
         return False
+
+    def _commit_scan_cache(
+        self, scan_buf, scan_gen, scan_end, scan_text, scan_tail, scan_version
+    ):
+        """提交滚动解码缓存（仅在 set/clear 未并发失效时写入）"""
+        with self._state_lock:
+            if self._scan_version == scan_version:
+                self._scan_buf = scan_buf
+                self._scan_gen = scan_gen
+                self._scan_end = scan_end
+                self._scan_text = scan_text
+                self._scan_tail = scan_tail
+
+    def _reset_scan_cache_locked(self):
+        """清空滚动解码缓存（须持有 _state_lock）"""
+        self._scan_buf = None
+        self._scan_gen = -1
+        self._scan_end = 0
+        self._scan_text = ""
+        self._scan_tail = b""
+        self._scan_version += 1
 
     def check_idle_timeout(self) -> bool:
         """检查输出静默是否超时
@@ -295,6 +406,7 @@ class TriggerMatcher:
             self._idle_after_first = False
             self._idle_had_output = False
             self._idle_last_activity = 0.0
+            self._reset_scan_cache_locked()
         self._event.clear()
 
     def set_snapshot_trigger(
@@ -329,6 +441,7 @@ class TriggerMatcher:
             self._idle_after_first = idle_after_first_output
             self._idle_had_output = False
             self._idle_last_activity = time.monotonic()
+            self._reset_scan_cache_locked()
 
     def check_snapshot(self, text: str) -> bool:
         """对快照文本直接匹配（不依赖 OutputBuffer）

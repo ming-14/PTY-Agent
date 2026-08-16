@@ -46,16 +46,36 @@ class TestOutputBufferOverflow:
     def test_overflow_returns_true_and_trims(self):
         buf = OutputBuffer(max_size=16)
         buf.append(b"x" * 16)
-        assert buf.append(b"y") is True
+        # 超过 max + headroom(4) 才触发批量裁剪
+        assert buf.append(b"y" * 8) is True
         assert buf.dropped_bytes > 0
+        assert buf.trim_gen == 1
 
     def test_overflow_trims_front_keeps_new_data(self):
         buf = OutputBuffer(max_size=16)
         buf.append(b"a" * 16)
-        buf.append(b"b")
+        buf.append(b"b" * 10)  # 26 > 20 → 裁剪回 16
         data = buf.get_slice()
         assert len(data) <= 16
         assert b"b" in data
+
+    def test_overflow_headroom_defers_trim(self):
+        """headroom 内不触发裁剪（批量摊还 memmove）"""
+        buf = OutputBuffer(max_size=16)
+        buf.append(b"a" * 16)
+        buf.append(b"b")  # 17 ≤ 16+4 → 不裁剪
+        assert buf.dropped_bytes == 0
+        assert buf.trim_gen == 0
+        assert len(buf.get_slice()) == 17
+
+    def test_trim_gen_increments_on_trim_only(self):
+        buf = OutputBuffer(max_size=16)
+        for _ in range(4):
+            buf.append(b"x" * 4)  # 16 字节，未超阈值
+        assert buf.trim_gen == 0
+        buf.append(b"y" * 16)  # 32 > 20 → 触发一次批量裁剪
+        assert buf.trim_gen == 1
+        assert buf.dropped_bytes == 16
 
     def test_append_trims_to_max_size(self):
         buf = OutputBuffer(max_size=10)

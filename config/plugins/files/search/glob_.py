@@ -37,26 +37,37 @@ def _mtime_or_min(path: str) -> float:
         return 0.0
 
 
-def _match_glob(pattern: str, rel_path: str) -> bool:
+def _match_glob(pat_segs: List[str], rel_path: str) -> bool:
     """逐段递归 glob 匹配（相对路径统一 / 分隔）
 
     - `**` 匹配任意层段（含 0 层）
     - `*`/`?` 等按 fnmatch 段内语义，不跨 /（标准 glob 行为）
+
+    Args:
+        pat_segs: 预切分的 pattern 段（由调用方一次性切分，避免每文件重复 split）
+        rel_path: 相对路径（/ 分隔）
     """
-    pat_segs = [s for s in pattern.split("/") if s]
     path_segs = [s for s in rel_path.split("/") if s]
+    # 记忆化 (段下标, 路径下标)：`**` 分支的指数回溯退化为多项式
+    memo = {}
 
     def rec(pi: int, si: int) -> bool:
+        key = (pi, si)
+        cached = memo.get(key)
+        if cached is not None:
+            return cached
         if pi == len(pat_segs):
-            return si == len(path_segs)
-        seg = pat_segs[pi]
-        if seg == "**":
-            return any(rec(pi + 1, s) for s in range(si, len(path_segs) + 1))
-        if si >= len(path_segs):
-            return False
-        if fnmatch.fnmatchcase(path_segs[si], seg):
-            return rec(pi + 1, si + 1)
-        return False
+            result = si == len(path_segs)
+        else:
+            seg = pat_segs[pi]
+            if seg == "**":
+                result = any(rec(pi + 1, s) for s in range(si, len(path_segs) + 1))
+            elif si < len(path_segs) and fnmatch.fnmatchcase(path_segs[si], seg):
+                result = rec(pi + 1, si + 1)
+            else:
+                result = False
+        memo[key] = result
+        return result
 
     return rec(0, 0)
 
@@ -87,6 +98,8 @@ def _run_fallback_engine(pattern: str, path: str) -> List[str]:
     if "/" not in norm:
         # 对齐 rg gitignore 语义：不含 / 的 pattern 匹配任意深度
         norm = "**/" + norm
+    # pattern 段只切分一次（_match_glob 每文件复用）
+    pat_segs = [s for s in norm.split("/") if s]
 
     files: List[str] = []
     for dirpath, dirnames, filenames in os.walk(path):
@@ -97,7 +110,7 @@ def _run_fallback_engine(pattern: str, path: str) -> List[str]:
             if is_ignored(full):
                 continue
             rel = os.path.relpath(full, path).replace(os.sep, "/")
-            if _match_glob(norm, rel):
+            if _match_glob(pat_segs, rel):
                 files.append(full)
     return files
 

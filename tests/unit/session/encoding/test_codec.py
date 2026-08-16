@@ -1,5 +1,7 @@
 """session/encoding/codec.py 单元测试"""
 
+import locale
+
 import pytest
 
 from src.encoding.codec import (
@@ -11,6 +13,10 @@ from src.encoding.codec import (
     check_encoding_ok,
     detect_decode,
 )
+
+# 自动探测仅回退到系统默认编码：GBK 系 locale（Windows cp936）才有 GBK 回退
+_is_gbk_locale = "gbk" in locale.getpreferredencoding().lower() or \
+    "cp936" in locale.getpreferredencoding().lower()
 
 
 class TestUtf8TrimTail:
@@ -108,6 +114,8 @@ class TestAutoDetect:
         assert text == "Hello World"
         assert enc == "utf-8"
 
+    @pytest.mark.skipif(not _is_gbk_locale,
+                    reason="系统编码非 GBK 类（自动探测无 GBK 回退语义）")
     def test_gbk(self):
         data = "你好世界".encode("gbk")
         text, enc = auto_detect(data)

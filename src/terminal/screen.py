@@ -12,12 +12,16 @@
 - wezterm-term: 完整 VT 解析 + 光标/scrollback 语义
 """
 
-import logging
 import re
 import threading
 
 from ..config.common import DEFAULT_COLS, DEFAULT_ROWS
 from .backends import (
+    _CELL_DATA,
+    _CELL_BG,
+    _CELL_BOLD,
+    _CELL_COL,
+    _CELL_FG,
     _HAS_WEZTERM,
     build_cursor_seq,
     create_backend,
@@ -25,8 +29,9 @@ from .backends import (
     render_ansi,
     render_plain,
 )
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-session")
+_logger = get_logger("pty-session")
 
 # 备用屏幕切换序列（vim/htop/less 等 TUI 应用）
 _ALT_ON_RE = re.compile(rb"\x1b\[\?(1049|1047|47|1048)h")
@@ -79,6 +84,11 @@ class TerminalScreen:
         self._cursor_visible = True
         self._bracketed_paste = False
         self._sgr_mouse = False
+        # 渲染缓存：屏幕内容仅随 feed（feed_count）或 resize（cols/rows）变化，
+        # 版本键一致时直接复用渲染结果（snapshot 为不可变 str；export_buffer
+        # 返回只读 dict，调用方仅序列化/压缩，不原地修改）
+        self._snapshot_cache: Optional[tuple] = None
+        self._export_cache: Optional[tuple] = None
 
     @property
     def available(self) -> bool:
@@ -218,15 +228,23 @@ class TerminalScreen:
             return ""
         with self._lock:
             try:
+                # 版本键：内容仅随 feed/resize 变化（与快照渲染脏检查同源），
+                # 键一致直接返回缓存，避免整屏重渲染（render_ansi 含 CUP 定位）
+                key = (self._feed_count, self._cols, self._rows, keep_ansi, include_cursor)
+                cached = self._snapshot_cache
+                if cached is not None and cached[0] == key:
+                    return cached[1]
                 cells = self._backend.cells()
                 if keep_ansi:
                     cursor = self._backend.cursor() if include_cursor else None
-                    return render_ansi(
+                    text = render_ansi(
                         cells, include_cursor=include_cursor, cursor=cursor
                     )
-                text = render_plain(cells)
-                if include_cursor:
-                    text += build_cursor_seq(*self._backend.cursor())
+                else:
+                    text = render_plain(cells)
+                    if include_cursor:
+                        text += build_cursor_seq(*self._backend.cursor())
+                self._snapshot_cache = (key, text)
                 return text
             except Exception as e:
                 _logger.warning("snapshot 渲染失败: %s", e)
@@ -247,7 +265,7 @@ class TerminalScreen:
                 line = ""
                 cells = self._backend.cells()
                 if 0 <= y < len(cells):
-                    line = "".join(c.data for c in cells[y]).rstrip()
+                    line = "".join(c[_CELL_DATA] for c in cells[y]).rstrip()
                 return {"col": x + 1, "row": y + 1, "line": line}
             except Exception:
                 return {"col": 0, "row": 0, "line": ""}
@@ -323,19 +341,20 @@ class TerminalScreen:
             parts.append("\x1b[?25l")
         return "".join(parts)
 
-    def capture_scrollback(self) -> str:
-        """捕获 scrollback 历史区为 ANSI 字符串（带 SGR 颜色）
+    def capture_scrollback(self, keep_ansi: bool = False) -> str:
+        """捕获 scrollback 历史区
 
-        用于 subscribe 响应时前端恢复 scrollback 历史。
+        keep_ansi=True: 每行 ANSI 内容 + \\r\\n（供前端恢复 scrollback）。
+        keep_ansi=False: 纯文本（行间 \\n）。
 
         Returns:
-            每行 ANSI 内容 + \\r\\n 的字符串；无 scrollback 时返回 ""。
+            字符串；无 scrollback 时返回 ""。
         """
         if not self.available:
             return ""
         with self._lock:
             try:
-                return self._backend.capture_scrollback()
+                return self._backend.capture_scrollback(keep_ansi=keep_ansi)
             except Exception as e:
                 _logger.debug("capture_scrollback 异常: %s", e)
                 return ""
@@ -382,7 +401,7 @@ class TerminalScreen:
             try:
                 cells = self._backend.cells()
                 if 0 <= row < len(cells):
-                    return "".join(c.data for c in cells[row]).rstrip()
+                    return "".join(c[_CELL_DATA] for c in cells[row]).rstrip()
             except Exception:
                 pass
         return ""
@@ -398,6 +417,10 @@ class TerminalScreen:
             return {}
         with self._lock:
             try:
+                key = (self._feed_count, self._cols, self._rows)
+                cached = self._export_cache
+                if cached is not None and cached[0] == key:
+                    return cached[1]
                 cells_rows = self._backend.cells()
                 sparse_lines = []
                 for cells in cells_rows:
@@ -407,15 +430,17 @@ class TerminalScreen:
                             continue
                         line_cells.append(
                             {
-                                "c": cell.col,
-                                "d": cell.data if cell.data else " ",
-                                "f": cell.fg if cell.fg else "default",
-                                "b": cell.bg if cell.bg else "default",
-                                "bo": bool(cell.bold),
+                                "c": cell[_CELL_COL],
+                                "d": cell[_CELL_DATA] if cell[_CELL_DATA] else " ",
+                                "f": cell[_CELL_FG] if cell[_CELL_FG] else "default",
+                                "b": cell[_CELL_BG] if cell[_CELL_BG] else "default",
+                                "bo": bool(cell[_CELL_BOLD]),
                             }
                         )
                     sparse_lines.append(line_cells)
-                return {"cols": self._cols, "rows": self._rows, "lines": sparse_lines}
+                result = {"cols": self._cols, "rows": self._rows, "lines": sparse_lines}
+                self._export_cache = (key, result)
+                return result
             except Exception as e:
                 _logger.warning("export_buffer 失败: %s", e)
                 return {}
@@ -451,13 +476,13 @@ class TerminalScreen:
                 info["cursor_error"] = str(e)
             try:
                 if cells:
-                    first_text = "".join(c.data for c in cells[0]).rstrip()
+                    first_text = "".join(c[_CELL_DATA] for c in cells[0]).rstrip()
                     info["first_line_preview"] = (
                         first_text[:80] if first_text else "(empty)"
                     )
                     if non_empty > 0:
                         for row in cells:
-                            text = "".join(c.data for c in row).rstrip()
+                            text = "".join(c[_CELL_DATA] for c in row).rstrip()
                             if text.strip():
                                 info["first_content_line"] = text[:120]
                                 break

@@ -6,7 +6,7 @@
 import os
 
 from src.config.common import DATA_DIR
-from src.config.daemon import TOKEN_ENABLED, TOKEN_HOST, TOKEN_PORT, PLAIN_ENABLED, TLS_ENABLED
+from src.config.daemon import TOKEN_ENABLED, TOKEN_HOST, TOKEN_PORT, BASIC_ENABLED, TLS_ENABLED
 
 
 class TestDaemonConfig:
@@ -18,7 +18,7 @@ class TestDaemonConfig:
 
     def test_listener_enabled_flags(self):
         assert isinstance(TOKEN_ENABLED, bool)
-        assert isinstance(PLAIN_ENABLED, bool)
+        assert isinstance(BASIC_ENABLED, bool)
         assert isinstance(TLS_ENABLED, bool)
 
     def test_data_dir_under_home(self):

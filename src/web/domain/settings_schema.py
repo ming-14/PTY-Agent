@@ -18,12 +18,12 @@ ENABLE_VNC / ENABLE_FASTSCREEN 提供，守护进程启动时读取，前端不�
 故不在此映射中。
 """
 
-import logging
 from typing import Any, Dict, Set
 
 from ...config import daemon as _daemon_config
+from ...logging import get_logger
 
-_logger = logging.getLogger("pty-web-settings")
+_logger = get_logger("pty-web-settings")
 
 # settings key → config 常量名 的映射
 # config 常量在 config.daemon 模块中以扁平大写名导出（来自 web.toml flatten 后的顶层 key）

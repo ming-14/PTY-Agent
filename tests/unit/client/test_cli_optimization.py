@@ -5,6 +5,15 @@
 import json
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _isolate_persistent_defaults(monkeypatch):
+    """隔离本机 ~/.pty-agent/client_defaults.json（set-default 持久化）"""
+    monkeypatch.setattr(
+        "src.client.config_manager.load_persistent_defaults", lambda: {}
+    )
+
+
 # ---- ConfigManager 测试 ----
 
 
@@ -24,9 +33,8 @@ class TestConfigManager:
         assert cfg.get("newline") is False
         assert cfg.get("encoding") is None
         assert cfg.get("keep_ansi") is False
-        assert cfg.get("debug") is True
+        assert cfg.get("debug") is False
         assert cfg.get("send_eol") == "\r"
-        assert cfg.get("always_return_snapshot") is False
 
     def test_set_and_get(self, cfg):
         """测试设置值并读取"""
@@ -88,9 +96,9 @@ class TestConfigManager:
         assert cfg.get("timeout") == 60.0
         assert isinstance(cfg.get("timeout"), float)
 
-    def test_debug_default_on(self, cfg):
-        """测试 debug 默认开启"""
-        assert cfg.get("debug") is True
+    def test_debug_default_off(self, cfg):
+        """测试 debug 默认关闭"""
+        assert cfg.get("debug") is False
 
     def test_debug_set_off(self, cfg):
         """测试 debug 设置为 off"""
@@ -115,10 +123,10 @@ class TestConfigManager:
         """测试 show 展示 debug 配置"""
         text = cfg.show("debug")
         assert "debug" in text
-        assert "on" in text
-        cfg.set("debug", "off")
-        text = cfg.show("debug")
         assert "off" in text
+        cfg.set("debug", "on")
+        text = cfg.show("debug")
+        assert "on" in text
 
 
 # ---- Formatter 测试 ----
@@ -209,11 +217,11 @@ class TestFormatter:
 
 
 class TestConfigParserIntegration:
-    """配置解析集成测试（测试 __main__.py 的 _parse_default_key）"""
+    """配置解析集成测试（测试 cli.common_args 的 _parse_default_key）"""
 
     def test_key_conversion(self):
         """测试 CLI 键名到内部键名的转换"""
-        from src.__main__ import _parse_default_key, _format_config_key
+        from src.cli.common_args import _parse_default_key, _format_config_key
 
         assert _parse_default_key("output-by-natural-language") == "output_by_natural_language"
         assert _format_config_key("output_by_natural_language") == "output-by-natural-language"

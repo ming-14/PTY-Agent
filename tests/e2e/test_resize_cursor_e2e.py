@@ -44,8 +44,8 @@ except ImportError:
 
 # CSI 光标定位序列：\x1b[row;colH  （row/col 为数字）
 CSI_CUP_RE = re.compile(rb"\x1b\[(\d+);(\d+)H")
-# 简化 prompt 检测：盘符:\\...> 或 盘符:\\>
-PROMPT_RE = re.compile(rb"[A-Za-z]:\\.*?>")
+# 简化 prompt 检测：Windows 盘符:\\...> 或 盘符:\\>；Unix shell 提示符 $
+PROMPT_RE = re.compile(rb"(?:[A-Za-z]:\\.*?>)|\$")
 
 
 async def _recv_until(ws, predicate, timeout=5.0, collect_output=True):
@@ -262,8 +262,8 @@ async def main_async():
     parser = argparse.ArgumentParser(description="E2E 测试：resize + 光标位置")
     parser.add_argument("--url", default="ws://localhost:18766/ws",
                         help="守护进程 WS URL（默认 ws://localhost:18766/ws）")
-    parser.add_argument("--command", default="cmd.exe",
-                        help="测试命令（默认 cmd.exe）")
+    parser.add_argument("--command", default=None,
+                        help="测试命令（默认按平台：Windows cmd.exe / Unix bash）")
     parser.add_argument("--initial-cols", type=int, default=80, help="初始 cols")
     parser.add_argument("--initial-rows", type=int, default=24, help="初始 rows")
     parser.add_argument("--resize-cols", type=int, default=60, help="resize 后 cols")
@@ -276,7 +276,7 @@ async def main_async():
 
     rc = await run_test(
         url=args.url,
-        command=args.command,
+        command=args.command or ("cmd.exe" if sys.platform == "win32" else "bash"),
         initial_cols=args.initial_cols,
         initial_rows=args.initial_rows,
         resize_cols=args.resize_cols,

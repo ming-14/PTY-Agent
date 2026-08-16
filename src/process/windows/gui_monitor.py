@@ -13,7 +13,6 @@ winsandbox 客户端可复用（见 design/process-manager-refactor.md §4.5）�
 """
 
 import ctypes
-import logging
 from ctypes import wintypes as W
 from dataclasses import dataclass
 from threading import Lock
@@ -30,8 +29,9 @@ from .api import (
     _IsWindowVisible,
     _SendMessageW,
 )
+from ...logging import get_logger
 
-_logger = logging.getLogger("process-gui-monitor")
+_logger = get_logger("process-gui-monitor")
 
 _WINDOW_TITLE_MAX = 256
 _WINDOW_CLASS_MAX = 256
@@ -93,11 +93,15 @@ class GuiWindowMonitor:
         self._temp_target_pids: Set[int] = set()
         self._temp_new_windows: List[GuiWindowInfo] = []
 
-    def poll(self) -> List[GuiWindowInfo]:
+    def poll(self, pids: Optional[List[int]] = None) -> List[GuiWindowInfo]:
         """轮询检测新增 GUI 窗口
 
         枚举当前所有可见顶层窗口，将 PID 属于进程树且
         尚未上报的窗口返回。
+
+        Args:
+            pids: 调用方已获取的进程树 PID 列表（同一 tick 复用，
+                  避免重复查询）；None 时自行获取。
 
         Returns:
             新检测到的窗口列表（仅包含本轮新增的）。
@@ -105,7 +109,10 @@ class GuiWindowMonitor:
         if not self._tracker:
             return []
 
-        target_pids = set(self._tracker.get_process_list())
+        if pids is None:
+            target_pids = set(self._tracker.get_process_list())
+        else:
+            target_pids = set(pids)
         if not target_pids:
             return []
 

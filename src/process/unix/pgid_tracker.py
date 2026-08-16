@@ -10,12 +10,11 @@
 仅 POSIX 平台被导入。
 """
 
-import logging
 import os
 import signal
 import threading
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from ..base import (
     NOTIF_CRASH,
@@ -24,8 +23,10 @@ from ..base import (
     ProcessNotification,
     ProcessTreeTracker,
 )
+from ..info import _get_process_name, _get_process_path
+from ...logging import get_logger
 
-_logger = logging.getLogger("process-pgid-tracker")
+_logger = get_logger("process-pgid-tracker")
 
 
 class PgidProcessTreeTracker(ProcessTreeTracker):
@@ -45,6 +46,8 @@ class PgidProcessTreeTracker(ProcessTreeTracker):
         self._exit_code: Optional[int] = None
         self._last_pids: List[int] = []
         self._notifications: List[ProcessNotification] = []
+        # 进程名/路径缓存：spawn 时进程存活可查询，exit 时进程已消失只能用缓存
+        self._process_info: Dict[int, Tuple[str, str]] = {}
         self._lock = threading.Lock()
 
     @property
@@ -185,7 +188,7 @@ class PgidProcessTreeTracker(ProcessTreeTracker):
             return notifications
 
     def _detect_process_changes(self):
-        """进程列表 diff 生成 spawn / exit 通知"""
+        """进程列表 diff 生成 spawn / exit 通知（带进程名/路径）"""
         current = set(self.get_process_list())
         with self._lock:
             previous = set(self._last_pids)
@@ -193,9 +196,28 @@ class PgidProcessTreeTracker(ProcessTreeTracker):
         gone_pids = previous - current
         with self._lock:
             for pid in new_pids:
-                self._notifications.append(ProcessNotification(NOTIF_SPAWN, pid=pid))
+                # spawn 时进程存活，立即查询名字/路径供 exit 时使用
+                name = _get_process_name(pid)
+                path = _get_process_path(pid)
+                if path.startswith("PID "):
+                    path = ""
+                self._process_info[pid] = (name, path)
+                self._notifications.append(
+                    ProcessNotification(
+                        NOTIF_SPAWN, pid=pid, process_name=name, process_path=path
+                    )
+                )
             for pid in gone_pids:
-                self._notifications.append(ProcessNotification(NOTIF_EXIT, pid=pid))
+                if pid == self._root_pid and self._reaped:
+                    # root 退出已由 _check_crash_internal 经 waitpid 收尸并通知，
+                    # diff 不再重复产生 exit 通知
+                    continue
+                name, path = self._process_info.pop(pid, ("", ""))
+                self._notifications.append(
+                    ProcessNotification(
+                        NOTIF_EXIT, pid=pid, process_name=name, process_path=path
+                    )
+                )
             self._last_pids = list(current)
 
     def _check_crash_internal(self):
@@ -205,19 +227,29 @@ class PgidProcessTreeTracker(ProcessTreeTracker):
         exit_code = self.get_root_exit_code()
         if exit_code is None:
             return
+        # root 退出后不可再查询名字/路径，从缓存取（无则按 PID 标识）
+        name, path = self._process_info.pop(self._root_pid, ("", ""))
         if exit_code != 0:
             _logger.info("root crash: pid=%d exit=%s", self._root_pid, exit_code)
             with self._lock:
                 self._notifications.append(
                     ProcessNotification(
-                        NOTIF_CRASH, pid=self._root_pid, exit_code=exit_code
+                        NOTIF_CRASH,
+                        pid=self._root_pid,
+                        exit_code=exit_code,
+                        process_name=name,
+                        process_path=path,
                     )
                 )
         else:
             with self._lock:
                 self._notifications.append(
                     ProcessNotification(
-                        NOTIF_EXIT, pid=self._root_pid, exit_code=exit_code
+                        NOTIF_EXIT,
+                        pid=self._root_pid,
+                        exit_code=exit_code,
+                        process_name=name,
+                        process_path=path,
                     )
                 )
 
@@ -276,5 +308,6 @@ class PgidProcessTreeTracker(ProcessTreeTracker):
     def close(self):
         """清理内部状态（进程组由内核回收）"""
         self._last_pids = []
+        self._process_info.clear()
         with self._lock:
             self._notifications.clear()

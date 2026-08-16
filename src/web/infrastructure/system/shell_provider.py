@@ -1,10 +1,10 @@
 """可用 Shell 列表提供者实现。"""
 
-import logging
 
 from ...application.ports import ShellProvider
+from ....logging import get_logger
 
-_logger = logging.getLogger("pty-web")
+_logger = get_logger("pty-web")
 
 
 class ShellProviderImpl(ShellProvider):
