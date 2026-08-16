@@ -13,7 +13,7 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib
 
-from src.config.common import PROJECT_ROOT
+from src.config.common import IS_WINDOWS, PROJECT_ROOT
 
 # 插件目录内 files.toml：基于 __file__ 定位（与运行 cwd 无关）
 _FILES_TOML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "files.toml")
@@ -37,12 +37,14 @@ MAX_GLOB_FILES = _cfg["MAX_GLOB_FILES"]
 # 忽略目录清单
 IGNORED_DIRS = tuple(_cfg["IGNORED_DIRS"])
 
-# rg 可执行文件：配置值优先，空则自动探测项目根 bin/rg/ 与 PATH
+# rg 可执行文件：配置值优先，空则自动探测项目根 bin/rg/ 与 PATH；
+# 平台后缀差异：Windows 携带 rg.exe，Unix 携带 rg（无扩展名）
 _RG_CONFIGURED = _cfg["RG_EXE"]
 if _RG_CONFIGURED:
     RG_EXE = os.path.expandvars(os.path.expanduser(_RG_CONFIGURED))
 else:
-    _project_rg = os.path.join(PROJECT_ROOT, "bin", "rg", "rg.exe")
+    _rg_name = "rg.exe" if IS_WINDOWS else "rg"
+    _project_rg = os.path.join(PROJECT_ROOT, "bin", "rg", _rg_name)
     RG_EXE = _project_rg if os.path.isfile(_project_rg) else shutil.which("rg")
 
 __all__ = [

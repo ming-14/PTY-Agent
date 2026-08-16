@@ -13,13 +13,13 @@
   编码（如 gbk）时启用传统字节模式；Unix 侧无此语义，不设这些变量。
 """
 
-import logging
 import os
 import sys
 from typing import List, Optional
 
 from ..config.common import DEFAULT_COLS, DEFAULT_ROWS, IS_WINDOWS
 from .base import PseudoTerminal
+from ..logging import get_logger
 
 # 加载 vendored pywezterm（bin/pywezterm，BUILD.ps1 编译产出），先注入 sys.path
 _here = os.path.dirname(os.path.abspath(__file__))
@@ -36,7 +36,7 @@ except ImportError:
     _HAS_WEZTERM = False
     pywezterm = None  # type: ignore[assignment]
 
-_logger = logging.getLogger("pty-wezterm")
+_logger = get_logger("pty-wezterm")
 
 
 class WeztermPseudoTerminal(PseudoTerminal):
@@ -68,6 +68,20 @@ class WeztermPseudoTerminal(PseudoTerminal):
         self._rows = rows
         self._tracker = tracker
         self._child_pid: Optional[int] = None
+        # 缓解：构造前快照 ConPTY 宿主（OpenConsole），构造后 diff 定位本次新增，
+        # 并入命令树 Job（KILL_ON_JOB_CLOSE），宿主异常死亡时连带清理，规避 conhost
+        # 对死 server 管道不自旋退出时的残留。
+        # 注意：OpenConsole 在 Pty 构造（CreatePseudoConsole）时即创建，须在构造
+        # 之前快照，否则 diff 为空。
+        before_cons: set = set()
+        if IS_WINDOWS and tracker is not None:
+            try:
+                from ..process.windows.api import enum_console_host_children
+
+                before_cons = set(enum_console_host_children(os.getpid()))
+            except Exception:
+                before_cons = set()
+
         self._pty = pywezterm.Pty(cols=cols, rows=rows)
 
         # 环境：合并 + Windows 编码语义（对齐原生 ConPTY 后端）
@@ -95,6 +109,23 @@ class WeztermPseudoTerminal(PseudoTerminal):
                 self._tracker.register_root(pid, handle)
             except Exception as e:
                 _logger.warning("register_root 失败: pid=%d err=%s", pid, e)
+
+        # 把本次新增的 OpenConsole 并入 tracker Job（缓解，见上）
+        if IS_WINDOWS and self._tracker is not None:
+            try:
+                from ..process.windows.api import enum_console_host_children
+
+                after_cons = set(enum_console_host_children(os.getpid()))
+                for cpid in after_cons - before_cons:
+                    try:
+                        if self._tracker.assign_extra_process(cpid):
+                            _logger.debug("OpenConsole %d 并入 Job", cpid)
+                    except Exception as e:
+                        _logger.warning(
+                            "OpenConsole %d 并入 Job 失败: %s", cpid, e
+                        )
+            except Exception as e:
+                _logger.warning("枚举 OpenConsole 并入 Job 失败: %s", e)
 
     # ── PseudoTerminal 接口 ──────────────────────────────────────
 

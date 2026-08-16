@@ -13,13 +13,13 @@
 PubkeyAuthenticator 是显式的身份认证层，二者职责分离但数据一致。
 """
 
-import logging
 from typing import Dict
 
 from ..base import Authenticator, CredentialProvider
 from ..keys import PrivateKey, PublicKey
+from ...logging import get_logger
 
-_logger = logging.getLogger("pty-auth")
+_logger = get_logger("pty-auth")
 
 
 class PubkeyAuthenticator(Authenticator):

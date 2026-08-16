@@ -23,16 +23,16 @@ class TestListenerConstruction:
         ctx = AuthContext()
         listener = Listener(
             host="127.0.0.1", port=12345,
-            transport="plain", auth_context=ctx,
+            transport="tcp", auth_context=ctx,
         )
-        assert listener.transport == "plain"
+        assert listener.transport == "tcp"
 
     def test_construction_defaults(self):
         """默认值：ssl_context=None"""
         ctx = AuthContext()
         listener = Listener(
             host="127.0.0.1", port=0,
-            transport="plain", auth_context=ctx,
+            transport="tcp", auth_context=ctx,
         )
         assert listener._ssl_context is None
 
@@ -50,7 +50,7 @@ class TestListenerConstruction:
         ctx = AuthContext()
         listener = Listener(
             host="127.0.0.1", port=54321,
-            transport="plain", auth_context=ctx,
+            transport="tcp", auth_context=ctx,
         )
         assert listener.port == 54321
 
@@ -63,7 +63,7 @@ class TestListenerBind:
         ctx = AuthContext()
         listener = Listener(
             host="127.0.0.1", port=0,
-            transport="plain", auth_context=ctx,
+            transport="tcp", auth_context=ctx,
         )
         actual_port = listener.bind()
         assert actual_port > 0
@@ -74,7 +74,7 @@ class TestListenerBind:
         ctx = AuthContext()
         listener = Listener(
             host="127.0.0.1", port=0,
-            transport="plain", auth_context=ctx,
+            transport="tcp", auth_context=ctx,
         )
         listener.bind()
         assert listener.port > 0
@@ -93,7 +93,7 @@ class TestListenerBind:
         ctx = AuthContext()
         listener = Listener(
             host="127.0.0.1", port=free_port,
-            transport="plain", auth_context=ctx,
+            transport="tcp", auth_context=ctx,
         )
         actual_port = listener.bind()
         assert actual_port == free_port
@@ -104,7 +104,7 @@ class TestListenerBind:
         ctx = AuthContext()
         listener = Listener(
             host="127.0.0.1", port=0,
-            transport="plain", auth_context=ctx,
+            transport="tcp", auth_context=ctx,
         )
         listener.bind()
         # 通过 port 属性间接验证 socket 存在（port 依赖 _sock.getsockname）
@@ -120,7 +120,7 @@ class TestListenerStartStop:
         ctx = AuthContext()
         listener = Listener(
             host="127.0.0.1", port=0,
-            transport="plain", auth_context=ctx,
+            transport="tcp", auth_context=ctx,
         )
         listener.bind()
 
@@ -139,7 +139,7 @@ class TestListenerStartStop:
         ctx = AuthContext()
         listener = Listener(
             host="127.0.0.1", port=0,
-            transport="plain", auth_context=ctx,
+            transport="tcp", auth_context=ctx,
         )
         listener.bind()
         listener.start(lambda ac: MagicMock())
@@ -150,7 +150,7 @@ class TestListenerStartStop:
         ctx = AuthContext()
         listener = Listener(
             host="127.0.0.1", port=0,
-            transport="plain", auth_context=ctx,
+            transport="tcp", auth_context=ctx,
         )
         listener.bind()
         listener.start(lambda ac: MagicMock())
@@ -162,7 +162,7 @@ class TestListenerStartStop:
         ctx = AuthContext()
         listener = Listener(
             host="127.0.0.1", port=0,
-            transport="plain", auth_context=ctx,
+            transport="tcp", auth_context=ctx,
         )
         listener.bind()
         listener.stop()
@@ -172,7 +172,7 @@ class TestListenerStartStop:
         ctx = AuthContext()
         listener = Listener(
             host="127.0.0.1", port=0,
-            transport="plain", auth_context=ctx,
+            transport="tcp", auth_context=ctx,
         )
         listener.stop()
 
@@ -185,7 +185,7 @@ class TestListenerAcceptLoop:
         ctx = AuthContext()
         listener = Listener(
             host="127.0.0.1", port=0,
-            transport="plain", auth_context=ctx,
+            transport="tcp", auth_context=ctx,
         )
         listener.bind()
         actual_port = listener.port
@@ -216,7 +216,7 @@ class TestListenerAcceptLoop:
         ctx = AuthContext()
         listener = Listener(
             host="127.0.0.1", port=0,
-            transport="plain", auth_context=ctx,
+            transport="tcp", auth_context=ctx,
         )
         listener.bind()
         listener.start(lambda ac: MagicMock())

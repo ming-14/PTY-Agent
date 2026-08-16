@@ -13,14 +13,14 @@
 被调用，宿主不做额外加锁，插件实现需保证自身线程安全。
 """
 
-import logging
 import threading
 import time
 from typing import Dict, List, Optional
 
 from .base import Plugin, PluginContext
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-plugins")
+_logger = get_logger("pty-plugins")
 
 
 class PluginHost:

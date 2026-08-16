@@ -9,7 +9,6 @@ Unix 统一使用 wezterm-py（portable-pty openpty）。
 工厂入口统一归一化命令：str 按 shell 语义拆分（shlex.split），后端统一消费 List[str]。
 """
 
-import logging
 import shlex
 from typing import List, Optional
 
@@ -17,8 +16,9 @@ from ..config.common import DEFAULT_COLS, DEFAULT_ROWS, IS_WINDOWS
 from ..process.base import ProcessTreeTracker
 from .base import PseudoTerminal
 from .wezterm_pty import _HAS_WEZTERM, WeztermPseudoTerminal
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-factory")
+_logger = get_logger("pty-factory")
 
 
 def create_pty(

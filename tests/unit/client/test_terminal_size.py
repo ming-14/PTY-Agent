@@ -9,6 +9,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from src.client.config_manager import ConfigManager, parse_terminal_size, _DEFAULTS
 from src.config.common import DEFAULT_COLS, DEFAULT_ROWS
 
+# spawn 探测用命令：Windows 用 cmd wrapper，Unix 直接 echo
+_SHELL_CMD = ["cmd", "/c", "echo", "hi"] if sys.platform == "win32" else ["echo", "hi"]
+
 
 class TestParseTerminalSize:
     def test_standard(self):
@@ -149,7 +152,7 @@ class TestManagerTerminalSize:
         from src.session.manager import SessionManager
         mgr = SessionManager()
         with patch.object(mgr, '_on_session_ended'):
-            s = mgr.create_session("t1", ["cmd", "/c", "echo", "hi"], cols=100, rows=30)
+            s = mgr.create_session("t1", _SHELL_CMD, cols=100, rows=30)
             assert s.cols == 100
             assert s.rows == 30
 
@@ -158,7 +161,7 @@ class TestManagerTerminalSize:
         from src.session.manager import SessionManager
         mgr = SessionManager()
         with patch.object(mgr, '_on_session_ended'):
-            s = mgr.create_session("t2", ["cmd", "/c", "echo", "hi"])
+            s = mgr.create_session("t2", _SHELL_CMD)
             assert s.cols == DEFAULT_COLS
             assert s.rows == DEFAULT_ROWS
 
@@ -167,6 +170,6 @@ class TestManagerTerminalSize:
         from src.session.manager import SessionManager
         mgr = SessionManager()
         with patch.object(mgr, '_on_session_ended'):
-            s = mgr.create_session("t3", ["cmd", "/c", "echo", "hi"], cols=None, rows=None)
+            s = mgr.create_session("t3", _SHELL_CMD, cols=None, rows=None)
             assert s.cols == DEFAULT_COLS
             assert s.rows == DEFAULT_ROWS

@@ -22,23 +22,23 @@
   <div id="app">
     <!-- Sidebar -->
     <aside id="sidebar" class="sidebar">
-      <div class="sidebar-resizer" id="sidebar-resizer" title="拖拽调整宽度"></div>
+      <div class="sidebar-resizer" id="sidebar-resizer" title="拖拽调整宽度" data-i18n-title="sidebar.resize"></div>
       <div class="sidebar-header">
-        <button id="btn-sidebar-toggle" class="sidebar-toggle" title="收起/展开">
+        <button id="btn-sidebar-toggle" class="sidebar-toggle" title="收起/展开" data-i18n-title="sidebar.toggle">
           <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M2 3h12M2 8h12M2 13h12" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
         </button>
-        <span class="sidebar-title">会话</span>
+        <span class="sidebar-title" data-i18n="session.sessions">会话</span>
       </div>
       <div class="sidebar-content">
-        <div class="sidebar-section-title">活跃</div>
+        <div class="sidebar-section-title" data-i18n="session.active">活跃</div>
         <div id="sidebar-active" class="sidebar-list"></div>
-        <div class="sidebar-section-title">历史</div>
+        <div class="sidebar-section-title" data-i18n="session.history">历史</div>
         <div id="sidebar-history" class="sidebar-list"></div>
       </div>
       <div class="sidebar-footer">
-        <button id="btn-settings" class="sidebar-footer-btn" title="设置">
+        <button id="btn-settings" class="sidebar-footer-btn" title="设置" data-i18n-title="session.settings">
           <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 1.375C8.58386 1.375 9.12929 1.66661 9.45312 2.15234L9.7041 2.5293C9.93056 2.86888 10.3434 3.03299 10.7412 2.94141L10.9893 2.88379C11.585 2.74631 12.2093 2.92608 12.6416 3.3584C13.0739 3.7907 13.2537 4.41501 13.1162 5.01074L13.0586 5.25879C12.967 5.65656 13.1311 6.06946 13.4707 6.2959L13.8477 6.54688C14.3334 6.87071 14.625 7.41615 14.625 8C14.625 8.58385 14.3334 9.12929 13.8477 9.45312L13.4707 9.7041C13.1311 9.93055 12.967 10.3434 13.0586 10.7412L13.1162 10.9893L13.1523 11.2139C13.2042 11.7384 13.0198 12.2634 12.6416 12.6416C12.2093 13.0739 11.585 13.2537 10.9893 13.1162L10.7412 13.0586C10.3434 12.967 9.93055 13.1311 9.7041 13.4707L9.45312 13.8477C9.12929 14.3334 8.58385 14.625 8 14.625C7.41615 14.625 6.87071 14.3334 6.54688 13.8477L6.2959 13.4707C6.06946 13.1311 5.65656 12.967 5.25879 13.0586L5.01074 13.1162C4.41501 13.2537 3.7907 13.0739 3.3584 12.6416C2.92608 12.2093 2.74631 11.585 2.88379 10.9893L2.94141 10.7412C3.03299 10.3434 2.86888 9.93056 2.5293 9.7041L2.15234 9.45312C1.6666 9.12929 1.375 8.58386 1.375 8C1.375 7.41614 1.6666 6.87071 2.15234 6.54688L2.5293 6.2959C2.86887 6.06945 3.03299 5.65655 2.94141 5.25879L2.88379 5.01074C2.74631 4.41501 2.92608 3.79072 3.3584 3.3584C3.79072 2.92608 4.41502 2.74631 5.01074 2.88379L5.25879 2.94141C5.65655 3.03299 6.06945 2.86887 6.2959 2.5293L6.54688 2.15234C6.87071 1.6666 7.41614 1.375 8 1.375ZM8 2.625C7.83413 2.625 7.67895 2.70766 7.58691 2.8457L7.33594 3.22266C6.82102 3.99493 5.88197 4.36778 4.97754 4.15918L4.72949 4.10254C4.55371 4.06197 4.36975 4.11463 4.24219 4.24219C4.11463 4.36975 4.06197 4.5537 4.10254 4.72949L4.15918 4.97754C4.36778 5.88197 3.99493 6.82102 3.22266 7.33594L2.8457 7.58691C2.70766 7.67895 2.625 7.83413 2.625 8C2.625 8.16587 2.70766 8.32105 2.8457 8.41309L3.22266 8.66406C3.99493 9.17898 4.36779 10.118 4.15918 11.0225L4.10254 11.2705C4.06198 11.4463 4.11463 11.6303 4.24219 11.7578C4.36977 11.8854 4.55371 11.938 4.72949 11.8975L4.97754 11.8408C5.88195 11.6322 6.82101 12.005 7.33594 12.7773L7.58691 13.1543C7.67894 13.2923 7.83412 13.375 8 13.375C8.16588 13.375 8.32106 13.2923 8.41309 13.1543L8.66406 12.7773C9.17899 12.005 10.118 11.6322 11.0225 11.8408L11.2695 11.8975C11.4453 11.938 11.6302 11.8854 11.7578 11.7578C11.8854 11.6302 11.938 11.4463 11.8975 11.2705V11.2695L11.8408 11.0225C11.6322 10.118 12.005 9.17899 12.7773 8.66406L13.1543 8.41309C13.2923 8.32106 13.375 8.16588 13.375 8C13.375 7.83412 13.2923 7.67894 13.1543 7.58691L12.7773 7.33594C12.005 6.82101 11.6322 5.88195 11.8408 4.97754L11.8975 4.72949C11.938 4.55372 11.8854 4.36977 11.7578 4.24219C11.6303 4.11463 11.4463 4.06198 11.2705 4.10254L11.0225 4.15918C10.118 4.36779 9.17898 3.99493 8.66406 3.22266L8.41309 2.8457C8.32105 2.70767 8.16587 2.625 8 2.625ZM8 5.375C9.44978 5.375 10.625 6.55022 10.625 8C10.625 9.44978 9.44978 10.625 8 10.625C6.55022 10.625 5.375 9.44978 5.375 8C5.375 6.55022 6.55022 5.375 8 5.375ZM8 6.625C7.24058 6.625 6.625 7.24058 6.625 8C6.625 8.75942 7.24058 9.375 8 9.375C8.75942 9.375 9.375 8.75942 9.375 8C9.375 7.24058 8.75942 6.625 8 6.625Z" fill="currentColor"/></svg>
-          <span class="sidebar-footer-label">设置</span>
+          <span class="sidebar-footer-label" data-i18n="session.settings">设置</span>
         </button>
       </div>
     </aside>
@@ -49,34 +49,34 @@
       <div id="tab-bar" class="tab-bar">
         <div id="tab-scroll" class="tab-scroll"></div>
         <div class="tab-bar-actions">
-          <button id="btn-new-tab" class="tab-bar-btn" title="新建会话 (Ctrl+Shift+T)">
+          <button id="btn-new-tab" class="tab-bar-btn" title="新建会话 (Ctrl+Shift+T)" data-i18n-title="session.newSessionShortcut">
             <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
           </button>
-          <button id="btn-vnc-tab" class="tab-bar-btn" title="屏幕共享" style="display:none">
+          <button id="btn-vnc-tab" class="tab-bar-btn" title="屏幕共享" style="display:none" data-i18n-title="session.screenShare">
             <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="9" rx="1" stroke="currentColor" stroke-width="1.5" fill="none"/><line x1="5" y1="14.5" x2="11" y2="14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="8" y1="11.5" x2="8" y2="14.5" stroke="currentColor" stroke-width="1.5"/></svg>
           </button>
           <!-- 屏幕共享下拉菜单：点击电脑图标弹出，选择 VNC 连接 或 仅查看（FastScreen） -->
           <div id="screen-share-dropdown" class="screen-share-dropdown" style="display:none">
             <div class="screen-share-item" id="ss-option-vnc" data-action="vnc">
               <span class="ss-item-icon"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="9" rx="1" stroke="currentColor" stroke-width="1.5" fill="none"/><line x1="5" y1="14.5" x2="11" y2="14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="8" y1="11.5" x2="8" y2="14.5" stroke="currentColor" stroke-width="1.5"/></svg></span>
-              <span class="ss-item-text">VNC 连接</span>
-              <span class="ss-item-desc">交互式远程桌面</span>
+              <span class="ss-item-text" data-i18n="session.vncConnect">VNC 连接</span>
+              <span class="ss-item-desc" data-i18n="session.vncInteractive">交互式远程桌面</span>
             </div>
             <div class="screen-share-item" id="ss-option-fastscreen" data-action="fastscreen">
               <span class="ss-item-icon"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linejoin="round"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg></span>
-              <span class="ss-item-text">仅查看</span>
-              <span class="ss-item-desc">FastScreen 屏幕查看</span>
+              <span class="ss-item-text" data-i18n="session.viewOnly">仅查看</span>
+              <span class="ss-item-desc" data-i18n="session.fastScreenView">FastScreen 屏幕查看</span>
             </div>
           </div>
         </div>
         <div class="window-controls">
-          <button id="win-min" class="win-btn" title="关闭当前标签">
+          <button id="win-min" class="win-btn" title="关闭当前标签" data-i18n-title="common.closeTab">
             <svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M2 8h12" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
           </button>
-          <button id="win-max" class="win-btn" title="全屏">
+          <button id="win-max" class="win-btn" title="全屏" data-i18n-title="status.fullscreen">
             <svg id="win-max-icon" viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
           </button>
-          <button id="win-close" class="win-btn close" title="关闭当前标签">
+          <button id="win-close" class="win-btn close" title="关闭当前标签" data-i18n-title="common.closeTab">
             <svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
           </button>
         </div>
@@ -94,9 +94,9 @@
           <div class="empty-state-icon">
             <svg viewBox="0 0 48 48" width="48" height="48" aria-hidden="true"><rect x="6" y="8" width="36" height="28" rx="2" stroke="currentColor" stroke-width="2.5" fill="none"/><path d="M6 16h36M12 26h6M12 32h10" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg>
           </div>
-          <div class="empty-state-text">打开新会话开始使用</div>
-          <div class="empty-state-shortcut"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> 新建会话</div>
-          <button id="empty-new-btn" class="btn btn-primary empty-new-btn">新建会话</button>
+          <div class="empty-state-text" data-i18n="session.openSessionStart">打开新会话开始使用</div>
+          <div class="empty-state-shortcut"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> <span data-i18n="session.newSession">新建会话</span></div>
+          <button id="empty-new-btn" class="btn btn-primary empty-new-btn" data-i18n="session.newSession">新建会话</button>
         </div>
         <div id="terminal-frame" class="terminal-frame" style="display:none">
           <div id="terminal-container" class="terminal-container"></div>
@@ -106,15 +106,15 @@
           <div id="vnc-toolbar" class="vnc-toolbar">
             <div class="vnc-status-area">
               <span id="vnc-status-dot" class="vnc-status-dot stopped"></span>
-              <span id="vnc-status-text" class="vnc-status-text">未启动</span>
+              <span id="vnc-status-text" class="vnc-status-text" data-i18n="vnc.notStarted">未启动</span>
             </div>
             <div class="vnc-info-area" id="vnc-info-area" style="display:none">
               <span class="vnc-info-item" id="vnc-info-password" title="VNC 连接密码"></span>
               <span class="vnc-info-item" id="vnc-info-port" title="WebSocket 端口"></span>
             </div>
             <div class="vnc-action-area">
-              <button id="btn-vnc-start" class="btn btn-primary btn-vnc-action" title="启动远程桌面">启动</button>
-              <button id="btn-vnc-stop" class="btn btn-vnc-action" style="display:none" title="停止远程桌面">停止</button>
+              <button id="btn-vnc-start" class="btn btn-primary btn-vnc-action" title="启动远程桌面" data-i18n-title="vnc.start" data-i18n="vnc.start">启动</button>
+              <button id="btn-vnc-stop" class="btn btn-vnc-action" style="display:none" title="停止远程桌面" data-i18n-title="vnc.stop" data-i18n="vnc.stop">停止</button>
             </div>
           </div>
           <div id="vnc-viewer-container" class="vnc-viewer-container">
@@ -122,7 +122,7 @@
               <div class="vnc-placeholder-icon">
                 <svg viewBox="0 0 48 48" width="48" height="48" aria-hidden="true"><rect x="6" y="8" width="36" height="26" rx="2" stroke="currentColor" stroke-width="2.5" fill="none"/><line x1="16" y1="40" x2="32" y2="40" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><line x1="24" y1="34" x2="24" y2="40" stroke="currentColor" stroke-width="2.5"/></svg>
               </div>
-              <div class="vnc-placeholder-text">点击"启动"开启远程桌面连接</div>
+              <div class="vnc-placeholder-text" data-i18n="vnc.clickStart">点击"启动"开启远程桌面连接</div>
             </div>
             <iframe id="vnc-iframe" class="vnc-iframe" style="display:none" allow="clipboard-read; clipboard-write"></iframe>
           </div>
@@ -132,22 +132,22 @@
           <div id="fs-toolbar" class="fs-toolbar">
             <div class="fs-status-area">
               <span id="fs-status-dot" class="fs-status-dot stopped"></span>
-              <span id="fs-status-text" class="fs-status-text">未连接</span>
+              <span id="fs-status-text" class="fs-status-text" data-i18n="fs.notConnected">未连接</span>
             </div>
             <div class="fs-target-type-group">
-              <button class="fs-target-type-btn active" data-type="monitor">桌面</button>
-              <button class="fs-target-type-btn" data-type="window">窗口</button>
+              <button class="fs-target-type-btn active" data-type="monitor" data-i18n="fs.targetDesktop">桌面</button>
+              <button class="fs-target-type-btn" data-type="window" data-i18n="fs.targetWindow">窗口</button>
             </div>
-            <select id="fs-target-select" class="fs-target-select" title="选择捕获目标"></select>
-            <label id="fs-cursor-locator-btn" class="fs-cursor-locator-btn" title="开启鼠标增强显示" style="display:none"><input type="checkbox" id="fs-cursor-locator-cb"><span>增强鼠标显示</span></label>
+            <select id="fs-target-select" class="fs-target-select" title="选择捕获目标" data-i18n-title="fs.selectTarget"></select>
+            <label id="fs-cursor-locator-btn" class="fs-cursor-locator-btn" title="开启鼠标增强显示" style="display:none"><input type="checkbox" id="fs-cursor-locator-cb"><span data-i18n="fs.enhancedCursor">增强鼠标显示</span></label>
           </div>
           <div class="fs-viewer-container">
             <div id="fs-placeholder" class="fs-placeholder">
               <div class="fs-placeholder-icon">
                 <svg viewBox="0 0 48 48" width="48" height="48" aria-hidden="true"><path d="M4 24s7-13 20-13 20 13 20 13-7 13-20 13S4 24 4 24z" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linejoin="round"/><circle cx="24" cy="24" r="6" stroke="currentColor" stroke-width="2.5" fill="none"/></svg>
               </div>
-              <div class="fs-placeholder-text">正在加载屏幕查看…</div>
-              <button id="fs-placeholder-action" class="fs-placeholder-action" style="display:none">置于前台</button>
+              <div class="fs-placeholder-text" data-i18n="fs.loadingTargets">正在加载屏幕查看…</div>
+              <button id="fs-placeholder-action" class="fs-placeholder-action" style="display:none" data-i18n="fs.bringToFront">置于前台</button>
             </div>
             <img id="fs-mjpeg-img" class="fs-mjpeg-img" style="display:none" alt="">
             <video id="fs-video" class="fs-video" style="display:none" autoplay muted playsinline></video>
@@ -168,7 +168,7 @@
         <div class="status-left">
           <div class="status-item">
             <div id="status-dot" class="status-dot disconnected"></div>
-            <span id="status-text">未连接</span>
+            <span id="status-text" data-i18n="status.notConnected">未连接</span>
           </div>
           <div class="status-item" id="status-pty" style="display:none"></div>
           <div class="status-item" id="status-size" style="display:none"></div>
@@ -180,7 +180,7 @@
             <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M8 1.5c-2.5 0-4.5 2-4.5 4.5v4c0 2.5 2 4.5 4.5 4.5s4.5-2 4.5-4.5v-4c0-2.5-2-4.5-4.5-4.5z" stroke="currentColor" stroke-width="1.5" fill="none"/><line x1="8" y1="3" x2="8" y2="6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </button>
           <button id="btn-ime" class="tab-bar-btn ime-btn" data-mode="system" title="输入法：系统（单击切换）">中</button>
-          <button id="btn-theme" class="tab-bar-btn" title="切换主题">
+          <button id="btn-theme" class="tab-bar-btn" title="切换主题" data-i18n-title="theme.toggle">
             <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3 3l1 1M12 12l1 1M3 13l1-1M12 4l1-1" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
           </button>
         </div>
@@ -192,33 +192,42 @@
       <div class="dialog">
         <div class="sheet-handle"></div>
         <div class="dialog-header">
-          <div class="dialog-title">新建会话</div>
+          <div class="dialog-title" data-i18n="dialog.newSession">新建会话</div>
         </div>
         <div class="dialog-body">
           <div class="section">
-            <div class="section-label">基本信息</div>
+            <div class="section-label" data-i18n="dialog.basicInfo">基本信息</div>
             <div class="form-group">
-              <label class="form-label">会话 ID</label>
-              <input id="form-id" class="form-input" placeholder="自动生成" autocomplete="off">
+              <label class="form-label" data-i18n="session.sessionId">会话 ID</label>
+              <input id="form-id" class="form-input" placeholder="自动生成" autocomplete="off" data-i18n-placeholder="session.autoGenerate">
             </div>
             <div class="form-group">
-              <label class="form-label">命令 *</label>
-              <input id="form-command" class="form-input" type="text" placeholder="例如: cmd, python, bash" autocomplete="off">
+              <label class="form-label" data-i18n="dialog.commandLabel">命令 *</label>
+              <input id="form-command" class="form-input" type="text" placeholder="例如: cmd, python, bash" autocomplete="off" data-i18n-placeholder="dialog.commandPh">
             </div>
           </div>
           <div class="section">
-            <div class="section-label">高级选项</div>
+            <div class="section-label" data-i18n="dialog.advanced">高级选项</div>
             <div class="form-row">
               <div class="form-group">
-                <label class="form-label">工作目录</label>
-                <input id="form-cwd" class="form-input" placeholder="默认" autocomplete="off">
+                <label class="form-label" data-i18n="session.workdir">工作目录</label>
+                <input id="form-cwd" class="form-input" placeholder="默认" autocomplete="off" data-i18n-placeholder="dialog.cwdPh">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label" data-i18n="session.mode">运行模式</label>
+                <select id="form-mode" class="form-input">
+                  <option value="pty" data-i18n="session.modePty">PTY 终端（快照，TUI 程序）</option>
+                  <option value="subprocess" data-i18n="session.modeSubprocess">子进程（增量输出，普通命令）</option>
+                </select>
               </div>
             </div>
           </div>
         </div>
         <div class="dialog-actions">
-          <button id="dialog-cancel" class="btn">取消</button>
-          <button id="dialog-ok" class="btn btn-primary">创建</button>
+          <button id="dialog-cancel" class="btn" data-i18n="common.cancel">取消</button>
+          <button id="dialog-ok" class="btn btn-primary" data-i18n="dialog.create">创建</button>
         </div>
       </div>
     </div>
@@ -228,25 +237,25 @@
       <div class="dialog dialog-sm">
         <div class="sheet-handle"></div>
         <div class="dialog-header">
-          <div class="dialog-title">重新启动会话</div>
+          <div class="dialog-title" data-i18n="session.restartTitle">重新启动会话</div>
         </div>
         <div class="dialog-body">
           <div class="confirm-text" id="restart-body"></div>
           <div class="form-group">
             <label class="form-check">
               <input id="restart-reassign-sid" type="checkbox" checked>
-              重新分配 SID
+              <span data-i18n="session.reassignSid">重新分配 SID</span>
             </label>
           </div>
           <div class="form-group" id="restart-sid-group" style="display:none">
-            <label class="form-label">会话 ID</label>
+            <label class="form-label" data-i18n="session.sessionId">会话 ID</label>
             <input id="restart-sid-input" class="form-input" autocomplete="off">
             <div id="restart-sid-hint" class="form-hint" style="display:none"></div>
           </div>
         </div>
         <div class="dialog-actions">
-          <button id="restart-cancel" class="btn">取消</button>
-          <button id="restart-ok" class="btn btn-primary">重新启动</button>
+          <button id="restart-cancel" class="btn" data-i18n="common.cancel">取消</button>
+          <button id="restart-ok" class="btn btn-primary" data-i18n="session.restart">重新启动</button>
         </div>
       </div>
     </div>
@@ -256,14 +265,14 @@
       <div class="dialog dialog-sm">
         <div class="sheet-handle"></div>
         <div class="dialog-header">
-          <div class="dialog-title" id="confirm-title">确认关闭会话</div>
+          <div class="dialog-title" id="confirm-title" data-i18n="session.confirmCloseTitle">确认关闭会话</div>
         </div>
         <div class="dialog-body">
-          <div class="confirm-text" id="confirm-body">会话仍在运行，确定要关闭吗？</div>
+          <div class="confirm-text" id="confirm-body" data-i18n="session.confirmCloseRunning">会话仍在运行，确定要关闭吗？</div>
         </div>
         <div class="dialog-actions">
-          <button id="confirm-cancel" class="btn">取消</button>
-          <button id="confirm-ok" class="btn btn-primary">关闭会话</button>
+          <button id="confirm-cancel" class="btn" data-i18n="common.cancel">取消</button>
+          <button id="confirm-ok" class="btn btn-primary" data-i18n="session.closeSession">关闭会话</button>
         </div>
       </div>
     </div>
@@ -273,18 +282,18 @@
       <div class="dialog dialog-sm">
         <div class="sheet-handle"></div>
         <div class="dialog-header">
-          <div class="dialog-title">自定义服务端地址</div>
+          <div class="dialog-title" data-i18n="settings.serverAddress">自定义服务端地址</div>
         </div>
         <div class="dialog-body">
-          <div class="confirm-text" style="margin-bottom:12px">设置后页面将刷新并连接到指定服务端，留空则恢复默认</div>
+          <div class="confirm-text" style="margin-bottom:12px" data-i18n="serverAddr.hint">设置后页面将刷新并连接到指定服务端，留空则恢复默认</div>
           <div class="form-group">
-            <label class="form-label">服务端地址</label>
-            <input id="server-addr-input" class="form-input" placeholder="如 192.168.1.100:18766" autocomplete="off">
+            <label class="form-label" data-i18n="serverAddr.label">服务端地址</label>
+            <input id="server-addr-input" class="form-input" placeholder="如 192.168.1.100:18766" autocomplete="off" data-i18n-placeholder="settings.ph.serverAddr">
           </div>
         </div>
         <div class="dialog-actions">
-          <button id="server-addr-cancel" class="btn">取消</button>
-          <button id="server-addr-ok" class="btn btn-primary">确定</button>
+          <button id="server-addr-cancel" class="btn" data-i18n="common.cancel">取消</button>
+          <button id="server-addr-ok" class="btn btn-primary" data-i18n="common.ok">确定</button>
         </div>
       </div>
     </div>
@@ -293,8 +302,8 @@
     <div id="detail-overlay" class="dialog-overlay" style="display:none">
       <div class="dialog detail-dialog">
         <div class="dialog-header detail-dialog-header">
-          <div class="dialog-title" id="detail-title">会话详情</div>
-          <button id="detail-close" class="detail-close" title="关闭 (Esc)">
+          <div class="dialog-title" id="detail-title" data-i18n="detail.dialogTitle">会话详情</div>
+          <button id="detail-close" class="detail-close" title="关闭 (Esc)" data-i18n-title="detail.close">
             <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
           </button>
         </div>
@@ -306,8 +315,8 @@
 
   <!-- Context Menu -->
   <div id="context-menu" class="context-menu" style="display:none">
-    <div class="context-menu-item" data-action="close-tab">关闭标签</div>
-    <div class="context-menu-item danger" data-action="close-session">关闭会话</div>
+    <div class="context-menu-item" data-action="close-tab" data-i18n="common.closeTab">关闭标签</div>
+    <div class="context-menu-item danger" data-action="close-session" data-i18n="session.closeSession">关闭会话</div>
   </div>
 
   <!-- Toast Notifications -->

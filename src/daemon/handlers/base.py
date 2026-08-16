@@ -1,11 +1,11 @@
-import logging
 from abc import ABC, abstractmethod
 from typing import Optional
 
 from ...auth.base import Authenticator
 from ...session.manager import SessionManager
+from ...logging import get_logger
 
-_logger = logging.getLogger("pty-daemon")
+_logger = get_logger("pty-daemon")
 
 
 class HandlerContext:

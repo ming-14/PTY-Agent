@@ -7,10 +7,10 @@
 进程树追踪通过 `register_root` 委托给 Session 注入的 tracker。
 """
 
-import logging
+from ..logging import get_logger
 from typing import Optional
 
-_logger = logging.getLogger("pty-factory")
+_logger = get_logger("pty-factory")
 
 
 class PseudoTerminal:

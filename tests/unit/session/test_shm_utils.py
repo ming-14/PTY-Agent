@@ -10,9 +10,10 @@ class TestGenerateAuthToken:
         token = generate_auth_token()
         assert isinstance(token, str)
 
-    def test_length_is_64(self):
+    def test_length_is_62(self):
+        # 31 字节 hex（62 字符）≤ SHM 数据区 63 字节（seqlock 布局：1 字节 seq）
         token = generate_auth_token()
-        assert len(token) == 64
+        assert len(token) == 62
 
     def test_is_hex(self):
         token = generate_auth_token()

@@ -4,17 +4,46 @@
 
 ```
 src/
-├── __main__.py              # CLI 入口（argparse 参数解析 + 命令派发）
+├── __main__.py              # CLI 入口（瘦身：转调 cli/main.py）
+
+├── cli/                     # ═══════ CLI 命令子系统（命令注册/解析/派发） ═══════
+│   ├── __init__.py          # 导出 main()（CLI 入口）
+│   ├── main.py              # CLI 入口：注册表装配 + 公共管线 + 派发 + 异常处理
+│   ├── base.py              # Command 基类（add_arguments/validate/run）+ CommandContext
+│   ├── registry.py          # CommandRegistry（注册/构建解析器/派发，构建期选项冲突检测）+ _HintParser
+│   ├── common_args.py       # 共享参数组（common/session_io/output）+ 配置键转换/idle 警告
+│   ├── pipeline.py          # 公共管线（config ops / debug / cli_plugins / 通用冲突校验）
+│   ├── windows.py           # Windows exec -c 命令引号修复
+│   └── commands/            # ═══ 每命令一个文件（与 daemon/handlers/ 对称） ═══
+│       ├── __init__.py      # 注册清单 register_all（顺序 = 帮助显示顺序）
+│       ├── start.py         # start 命令
+│       ├── stop.py          # stop 命令（--force 强制清理）
+│       ├── status.py        # status 命令
+│       ├── list_.py         # list 命令
+│       ├── exec.py          # exec 命令（-c 必填校验 / idle 警告）
+│       ├── send.py          # send 命令（idle 警告）
+│       ├── read.py          # read 命令（--offset 与 --full 冲突检测）
+│       ├── kill.py          # kill 命令
+│       ├── events.py        # events 命令（时间补全 _maybe_expand_time）
+│       ├── closewin.py      # closewin 命令
+│       ├── mouse.py         # mouse 命令（坐标解析 + 动作构建/参数校验）
+│       ├── wait.py          # wait 命令
+│       ├── keygen.py        # keygen 命令（本地命令，生成 Ed25519 密钥对）
+│       ├── set_default.py   # set-default 命令（本地命令，持久化默认配置）
+│       ├── plugin.py        # plugin 命令（list/ls/attach/detach/cmd）
+│       ├── workflow.py      # workflow 命令（run/list/show/cancel + --vars 解析）
+│       └── file.py          # file 命令（read/write/edit/grep/glob/upload/download + 内容解析）
 
 ├── config/                  # ═══════ 配置中心（TOML 加载器，数据文件在 <项目根>/config/） ═══════
 │   ├── __init__.py          # 包导出 + 配置域归档说明
 │   ├── _loader.py           # TOML 加载/展平/合并工具（load_toml(filename, domain) / flatten / merge）
 │   ├── common.py            # 共有配置加载（common.toml + IS_WINDOWS / DATA_DIR / PROJECT_ROOT）
 │   ├── shared.py            # 跨侧共享配置加载（common + shared.toml + PORT_FILE / LOG_DIR）
-│   ├── daemon.py            # 守护进程配置加载（common + shared + daemon/ + logging/ + web/）
+│   ├── daemon.py            # 守护进程配置加载（common + shared + daemon/ + logging/ + web/；web.toml 可选，缺失即 web 禁用）
+│   ├── plugins.py           # 插件系统配置加载（config/plugins/plugins.json，可选，缺失即插件系统禁用）
 │   ├── client.py            # 客户端配置加载（common + shared + client/ + PORT_FILE / LOG_DIR）
 │   ├── transfer.py          # 传输协议配置加载（transfer.toml）
-│   └── sandbox.py           # 沙箱配置加载（daemon/sandbox.toml）
+│   └── sandbox.py           # 沙箱配置加载（daemon/sandbox.toml，可选，缺失即沙箱关闭）
 │
 │   # TOML 数据文件（config/ 根：common/shared/transfer；
 │   # config/daemon/：daemon/logging/web/sandbox/vnc/vnc.example；
@@ -22,10 +51,16 @@ src/
 │   # config/plugins/plugins.json 为 daemon 侧插件注册；
 │   # vnc*.toml 为 winvnc.exe 外部配置，Python 不加载），
 │   # 清单见 <项目根>/config/README.md
+│
+├── optional.py              # ═══════ 可选模块惰性导入网关 ═══════
+│   # 集中探测并缓存 web/vnc/screenshare/cursorlocator/sandbox/plugins 可用性；
+│   # 提供 *available() 与 get_*_cls() 工厂函数，缺失模块返回 None/False 不抛 ImportError；
+│   # 供 daemon/（惰性获取 WebServer）与 web/（惰性获取 Vnc/Screenshare/CursorLocator adapter）使用
 
 ├── protocol/                # ═══════ 通信协议层 ═══════
 │   ├── __init__.py
 │   ├── message.py           # Message 类（JSON 换行分隔协议：编码/解码/收发 + ping 探测）
+│   ├── transfer.py          # 文件传输二进制帧协议（file upload/download 专用，零业务编解码）
 │   ├── signing.py           # MessageSigner 签名抽象（协议域，auth 包实现）
 │   ├── ansi.py              # ANSI 转义序列过滤（strip_ansi）
 │   └── response.py          # Response 类（统一响应构建器，CLI/TCP/WS 共用）
@@ -43,6 +78,9 @@ src/
 │   │   ├── __init__.py
 │   │   ├── authenticator.py # PubkeyAuthenticator + PubkeyCredentialProvider
 │   │   └── signer.py        # Ed25519MessageSigner
+│   ├── password/            # ═══ 共享密码认证（basic 监听器，密码即 HMAC 密钥） ═══
+│   │   ├── __init__.py
+│   │   └── authenticator.py # PasswordAuthenticator + PasswordCredentialProvider
 │   └── tls/                 # ═══ TLS 基础设施 ═══
 │       ├── __init__.py
 │       ├── cert_manager.py  # CertificateManager（自签证书生成/加载/指纹计算）
@@ -63,18 +101,23 @@ src/
 │   ├── lifecycle.py         # 客户端日志配置（setup_client_logging；daemon 控制见 daemonctl 包）
 │   ├── transport.py         # TCP/TLS 连接管理 + Client 类（自动启动守护进程，按 CONNECT_MODE 三路路由）
 │   ├── formatter.py         # 响应格式化输出（JSON 模式）
-│   ├── renderer.py          # 终端快照渲染器（GDI+BuiltinGlyphs / SVG / Pillow 回退 / 纯文本）
+│   ├── renderer/            # ═══ 终端快照渲染器（SVG / Pillow / GDI / box-drawing） ═══
+│   │   ├── __init__.py      # 包导出（render_to_file / render_svg_string / is_image_ext）
+│   │   ├── common.py        # 渲染共享基础（颜色映射 / 字符宽度 / 行格式展开）
+│   │   ├── svg.py           # SVG 矢量渲染 + scour 压缩
+│   │   ├── image.py         # 像素渲染后端（Pillow 跨平台 / Windows GDI 原生）
+│   │   └── box_drawing.py   # Box Drawing 字符的 GDI 几何绘制原语
 │   ├── config_manager.py    # 纯内存客户端配置管理（--default 临时覆盖）
-│   ├── ai_analyser.py       # AI 分析器（--ai-analyse 调用 aichat 做二次分析，按 uid 续聊）
 │   └── input.py             # 输入文本处理（process_input / unescape_json_string / safe_print）
 
 ├── daemon/                  # ═══════ 守护进程层 ═══════
 │   ├── __init__.py
 │   ├── __main__.py          # 入口（python -m src.daemon），转调 lifecycle.main()
 │   ├── lifecycle.py         # 守护进程入口（main + 日志/控制台处理 + 单实例获取）
-│   ├── server.py            # DaemonServer（多 Listener 编排 + 认证上下文构建 + 生命周期）
-│   ├── listener.py          # Listener（单端口 accept 循环，封装 plain/tls 传输 + AuthContext）
+│   ├── server.py            # DaemonServer（多 Listener 编排 + 认证上下文构建 + WorkflowManager 装配）
+│   ├── listener.py          # Listener（单端口 accept 循环，封装 tcp/tls 传输 + AuthContext）
 │   ├── handler.py           # RequestHandler（委托 handlers/ 子包）
+│   ├── execution.py         # 执行原语（快照/子进程执行流程，exec/send/read handler 与 workflow 共用）
 │   └── handlers/            # ═══ 命令处理器子包（每命令一文件 + 派发器） ═══
 │       ├── __init__.py
 │       ├── base.py          # DaemonHandler 基类 + HandlerContext
@@ -88,9 +131,19 @@ src/
 │       ├── stop_handler.py  # stop 命令处理
 │       ├── closewin_handler.py # closewin 命令处理
 │       ├── mouse_handler.py # mouse 命令处理
+│       ├── plugin_handler.py # plugin 命令处理（list/ls/attach/detach/cmd 插件管理）
+│       ├── workflow_handler.py # workflow 命令处理（run/list/show/cancel）
 │       ├── status_handler.py # status 命令处理
 │       ├── wait_handler.py  # wait 命令处理
 │       └── utils.py         # 处理器工具函数（含 Git-Bash 路径提示）
+
+├── workflow/                # ═══════ workflow 脚本编排子系统（YAML + DAG 并行调度） ═══════
+│   ├── __init__.py
+│   ├── definition.py        # YAML 定义解析与校验（步骤 schema/依赖环检测/隐式依赖显式化）
+│   ├── expr.py              # 安全表达式求值（AST 白名单）：if 条件 + {{...}} 插值
+│   ├── engine.py            # DAG 调度引擎（依赖图 + 线程池并行 + 失败传播/重试/取消）
+│   ├── runner.py            # WorkflowRun（单次运行状态机 + 事件日志）
+│   └── manager.py           # WorkflowManager（运行注册表：启动/查询/取消/容量淘汰）
 
 ├── transfer/                # ═══════ 文件传输核心层（客户端驱动 + 双端共享） ═══════
 │   ├── __init__.py
@@ -111,17 +164,16 @@ src/
 
 ├── pty/                     # ═══════ 伪终端后端层 ═══════
 │   ├── __init__.py
-│   ├── pty_factory.py       # 工厂函数 create_pty + 平台检测
 │   ├── base.py              # PseudoTerminal 抽象基类
-│   ├── unix/                # ═══ Unix 子包 ═══
-│   │   ├── __init__.py
-│   │   ├── pty_impl.py      # UnixPseudoTerminal（os.openpty + fork + termios）
-│   │   └── process.py       # Unix 进程管理
-│   │   # Shell 探测见 common/shells.py（跨侧共享）
-│   └── windows/             # ═══ Windows 子包（仅 Win32 加载） ═══
-│       ├── __init__.py
-│       └── wezterm_pty.py   # WeztermPseudoTerminal（wezterm-py Pty，OpenConsole 宿主）
-│       # Shell 探测见 common/shells.py（跨侧共享）
+│   ├── pty_factory.py       # 工厂函数 create_pty + 平台检测
+│   └── wezterm_pty.py       # WeztermPseudoTerminal（wezterm-py Pty 跨平台统一，OpenConsole 宿主）
+│   # Shell 探测见 common/shells.py（跨侧共享）
+
+├── sandbox/                 # ═══════ 沙箱会话层（win_sandbox 原生进程内封装） ═══════
+│   ├── __init__.py
+│   ├── manager.py           # SandboxSessionManager（win_sandbox_native 封装：启停/命令/通知队列）
+│   ├── pty.py               # SandboxPty（沙箱 ConPTY 后端，HPCON 外部传入）
+│   └── tracker.py           # SandboxProcessTreeTracker（进程树追踪委托原生能力）
 
 ├── ipc/                     # ═══════ 进程间通信层 ═══════
 │   ├── __init__.py
@@ -138,9 +190,16 @@ src/
 ├── session/                 # ═══════ 会话管理层 ═══════
 │   ├── __init__.py
 │   ├── manager.py           # SessionManager（会话 CRUD + stop_all）
-│   ├── session.py           # Session 协调器（组合各子组件，委托线程管理）
-│   ├── session_threads.py   # SessionThreads + SessionComponents（后台读者/监控线程管理）
-│   └── publisher.py         # 会话状态发布器
+│   ├── publisher.py         # SessionPublisher（会话状态发布器）
+│   └── session/             # Session 类实现子包
+│       ├── __init__.py      # 导出 Session / InputMixin / OutputMixin / TriggerMixin / EventsMixin / Threads / Components
+│       ├── session.py       # Session 协调器基类（子组件装配 + start/stop + 状态代理，组合 *Mixin）
+│       ├── io.py            # InputMixin（输入写入/信号/鼠标动作）
+│       ├── output.py        # OutputMixin（输出读取/屏幕快照/resize/终端状态）
+│       ├── trigger.py       # TriggerMixin（触发条件与等待）
+│       ├── events.py        # EventsMixin（事件接收/历史/退出回调）
+│       ├── threads.py       # Threads + Components（后台读者/监控线程管理）
+│       └── _win_console.py  # Windows Ctrl+C 控制台辅助（AttachConsole + 控制台处理器）
 
 ├── encoding/                # ═══════ 编码探测层 ═══════
 │   ├── __init__.py
@@ -219,12 +278,12 @@ src/
 │   │   └── controllers/     # ═══ 控制器 ═══
 │   │       ├── __init__.py
 │   │       ├── websocket_controller.py  # WebSocket 控制器
-│   │       ├── fastscreen_controller.py # FastScreen 控制器
+│   │       ├── screenshare_controller.py # Screenshare 控制器
 │   │       ├── settings_controller.py   # 设置控制器
 │   │       └── auth_controller.py       # 登录/认证控制器
 │   └── static/              # ═══ 前端静态资源（完整结构见 [web-static.md](web-static.md)） ═══
 
-├── fastscreen/              # ═══════ 快速屏幕流层 ═══════
+├── screenshare/             # ═══════ 屏幕查看流层 ═══════
 │   ├── __init__.py
 │   ├── adapter.py           # 适配器
 │   ├── ports.py             # 端口定义

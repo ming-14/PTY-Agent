@@ -214,7 +214,7 @@ impl PyPty {
                     return vec![];
                 }
             }
-            py.allow_threads(|| std::thread::sleep(std::time::Duration::from_millis(2)));
+            py.detach(|| std::thread::sleep(std::time::Duration::from_millis(2)));
         }
     }
 

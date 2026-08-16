@@ -12,15 +12,15 @@ attach/detach 作用于运行中的会话；list 列出进程级已加载插件�
 cmd 路由到会话挂载插件的 handle_command（未处理返回错误）。
 """
 
-import logging
 
 from ...config.common import MAX_COMMAND_LEN, MAX_SESSION_ID_LEN
 from ...protocol.message import Message
 from ...protocol.response import Response
 from .base import DaemonHandler, HandlerContext
 from .utils import validate_field
+from ...logging import get_logger
 
-_logger = logging.getLogger("pty-daemon")
+_logger = get_logger("pty-daemon")
 
 _MAX_PLUGIN_NAME_LEN = 64
 
@@ -68,6 +68,10 @@ class PluginHandler(DaemonHandler):
             Message.send(conn, Response.error(f"会话 '{session_id}' 不存在"))
             return
         plugins = session.plugin_host.snapshot_info() or []
+        # CLI 形态插件：daemon 不加载实例，仅按会话记录名单回显（客户端据此自动挂钩）
+        for name in getattr(session, "cli_plugin_names", None) or []:
+            if not any(p.get("name") == name for p in plugins):
+                plugins.append({"name": name, "version": "", "cli": True})
         Message.send(
             conn,
             Response.command_result("plugin", session_id, action="ls", plugins=plugins),

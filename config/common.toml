@@ -1,4 +1,5 @@
-# 共有配置 —— Daemon 与 Client 均需使用的常量
+# 共有配置 —— daemon 与 client 均需使用的常量
+# 消费方：src/config/common.py（两侧合并加载的公共部分）
 
 [terminal]
 DEFAULT_COLS = 80
@@ -12,8 +13,3 @@ MAX_SESSION_ID_LEN = 128
 MAX_COMMAND_LEN    = 65536
 MAX_INPUT_LEN      = 65536
 MAX_PATTERN_LEN    = 4096
-
-[ai]
-# AI 分析（aichat 二次分析）调用超时秒数
-# exec/send/read/mouse 的 --ai-analyse 启用后，phase-2 调用 aichat 的最大等待时间
-AICHAT_TIMEOUT = 120

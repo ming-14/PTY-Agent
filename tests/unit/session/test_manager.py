@@ -2,9 +2,15 @@
 
 import sys
 import time
+
 import pytest
 
 from src.session.manager import SessionManager
+
+# spawn 探测命令：Windows 用 cmd wrapper（echo 为内建命令），Unix 直接 echo
+_SPAWN_CMD = "cmd /c echo hello" if sys.platform == "win32" else "echo hello"
+_SPAWN1 = "cmd /c echo 1" if sys.platform == "win32" else "echo 1"
+_SPAWN2 = "cmd /c echo 2" if sys.platform == "win32" else "echo 2"
 
 
 class _MockSession:
@@ -24,31 +30,31 @@ class _MockSession:
 class TestSessionManagerCreate:
     def test_create_session(self):
         mgr = SessionManager()
-        s = mgr.create_session("test", "cmd /c echo hello")
+        s = mgr.create_session("test", _SPAWN_CMD)
         assert s is not None
         assert s.id == "test"
 
     def test_create_duplicate_raises(self):
         mgr = SessionManager()
-        mgr.create_session("test", "cmd /c echo hello")
+        mgr.create_session("test", _SPAWN_CMD)
         with pytest.raises(KeyError, match="已存在"):
-            mgr.create_session("test", "cmd /c echo hello")
+            mgr.create_session("test", _SPAWN_CMD)
 
     def test_create_empty_id_raises(self):
         mgr = SessionManager()
         with pytest.raises(ValueError, match="非空字符串"):
-            mgr.create_session("", "cmd /c echo hello")
+            mgr.create_session("", _SPAWN_CMD)
 
     def test_create_none_id_raises(self):
         mgr = SessionManager()
         with pytest.raises(ValueError, match="非空字符串"):
-            mgr.create_session(None, "cmd /c echo hello")
+            mgr.create_session(None, _SPAWN_CMD)
 
 
 class TestSessionManagerGet:
     def test_get_existing_session(self):
         mgr = SessionManager()
-        mgr.create_session("test", "cmd /c echo hello")
+        mgr.create_session("test", _SPAWN_CMD)
         s = mgr.get_session("test")
         assert s is not None
         assert s.id == "test"
@@ -65,8 +71,8 @@ class TestSessionManagerList:
 
     def test_list_sessions(self):
         mgr = SessionManager()
-        mgr.create_session("s1", "cmd /c echo 1")
-        mgr.create_session("s2", "cmd /c echo 2")
+        mgr.create_session("s1", _SPAWN1)
+        mgr.create_session("s2", _SPAWN2)
         sessions = mgr.list_sessions()
         ids = [s["id"] for s in sessions]
         assert "s1" in ids
@@ -74,7 +80,7 @@ class TestSessionManagerList:
 
     def test_list_includes_ended_sessions(self):
         mgr = SessionManager()
-        s = mgr.create_session("test", "cmd /c echo hello")
+        s = mgr.create_session("test", _SPAWN_CMD)
         s.running = False
         sessions = mgr.list_sessions()
         assert len(sessions) == 1
@@ -83,7 +89,7 @@ class TestSessionManagerList:
     def test_list_includes_startTime(self):
         mgr = SessionManager()
         before = time.time()
-        mgr.create_session("s1", "cmd /c echo 1")
+        mgr.create_session("s1", _SPAWN1)
         after = time.time()
         sessions = mgr.list_sessions()
         assert len(sessions) == 1
@@ -92,7 +98,7 @@ class TestSessionManagerList:
 
     def test_list_startTime_is_float(self):
         mgr = SessionManager()
-        mgr.create_session("s1", "cmd /c echo 1")
+        mgr.create_session("s1", _SPAWN1)
         sessions = mgr.list_sessions()
         assert isinstance(sessions[0]["startTime"], float)
 
@@ -118,7 +124,7 @@ class TestSessionManagerList:
 class TestSessionManagerRemove:
     def test_remove_session(self):
         mgr = SessionManager()
-        mgr.create_session("test", "cmd /c echo hello")
+        mgr.create_session("test", _SPAWN_CMD)
         mgr.remove_session("test")
         assert mgr.get_session("test") is None
 
@@ -130,8 +136,8 @@ class TestSessionManagerRemove:
 class TestSessionManagerStopAll:
     def test_stop_all(self):
         mgr = SessionManager()
-        mgr.create_session("s1", "cmd /c echo 1")
-        mgr.create_session("s2", "cmd /c echo 2")
+        mgr.create_session("s1", _SPAWN1)
+        mgr.create_session("s2", _SPAWN2)
         mgr.stop_all()
         assert mgr.get_session("s1") is None
         assert mgr.get_session("s2") is None

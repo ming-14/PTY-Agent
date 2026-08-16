@@ -7,6 +7,7 @@
  */
 
 import { state } from '../../domain/state.js';
+import { t } from '../../domain/i18n.js';
 import { debug } from '../../domain/logger.js';
 import { $, showToast } from '../domUtils.js';
 import { wsSend } from '../wsClient.js';
@@ -369,7 +370,7 @@ export function bindTerminalEvents(term, inst, sid) {
     if (selection) {
       debug('paste', 'right-click copy');
       navigator.clipboard.writeText(selection).catch(err => {
-        showToast('复制失败：请允许网站的剪贴板权限', 'error');
+        showToast(t('term.copyFailed'), 'error');
         debug('paste', 'right-click copy failed: %s', err && err.message);
       });
       term.clearSelection();
@@ -442,7 +443,7 @@ export function bindTerminalEvents(term, inst, sid) {
     const btn = document.createElement('button');
     btn.className = 'term-copy-btn';
     btn.type = 'button';
-    btn.textContent = '复制';
+    btn.textContent = t('term.copy');
     // 使用 touchstart 而非 click：移动端 click 在 touchstart 之后触发，
     // 而终端 div 的 touchstart 会先移除按钮。stopPropagation 阻止冒泡到终端。
     btn.addEventListener('touchstart', ev => {

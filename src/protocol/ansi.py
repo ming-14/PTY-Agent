@@ -8,10 +8,10 @@
   不会被过滤。过滤仅针对 \x1b 开头的转义序列。
 """
 
-import logging
+from ..logging import get_logger
 import re
 
-_logger = logging.getLogger("pty-protocol")
+_logger = get_logger("pty-protocol")
 
 # 匹配规则（仅过滤格式化信息，保留语义控制）:
 #   1. CSI SGR: ESC [ ... m   → 颜色/样式码（如 \x1b[31m, \x1b[1m, \x1b[0m）

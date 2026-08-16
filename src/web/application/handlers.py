@@ -4,10 +4,11 @@
 所有处理器只依赖应用端口和领域实体，不依赖具体框架或基础设施。
 """
 
-import logging
+from __future__ import annotations
+
 import shlex
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from ...config.common import (
     DEFAULT_COLS,
@@ -17,9 +18,7 @@ from ...config.common import (
     MAX_INPUT_LEN,
     MAX_SESSION_ID_LEN,
 )
-from ...fastscreen.ports import FastScreenServicePort
 from ...protocol.response import Response
-from ...vnc.ports import VncServicePort
 from ..domain.entities import SessionDetail
 from .adaptive_lock import AdaptiveLockService
 from .ports import (
@@ -34,38 +33,71 @@ from .ports import (
     ThreadExecutor,
 )
 from .services import MessageEncoderService, SubscriptionService
+from ...logging import get_logger
 
-_logger = logging.getLogger("pty-web")
+if TYPE_CHECKING:
+    from ...screenshare.ports import ScreenshareServicePort
+    from ...vnc.ports import VncServicePort
+
+_logger = get_logger("pty-web")
 
 
 def _split_windows_command(cmd: str) -> list:
-    """按 Windows 命令行规则拆分字符串，正确处理引号。
+    """按 Windows CommandLineToArgvW 规则拆分字符串，正确处理引号与反斜杠转义。
 
     与 shlex.split(posix=False) 不同，本函数会去掉参数两端的引号，
     避免 PTY 模式下把引号当作路径的一部分传给子进程。
+    反斜杠仅在其紧邻引号时参与转义（偶数个每对产生一个字面反斜杠，
+    奇数个时剩余一个转义该引号），否则按字面保留。
     """
     args = []
     current = []
     in_quotes = False
+    arg_started = False  # 当前参数是否已显式开始（含空引号），用于保留空参数
     i = 0
     n = len(cmd)
     while i < n:
         c = cmd[i]
-        if c == '"':
-            # 连续的引号在 Windows 命令行里表示一个转义引号
-            if i + 1 < n and cmd[i + 1] == '"':
+        if c == "\\":
+            # 统计连续反斜杠
+            backslashes = 0
+            while i < n and cmd[i] == "\\":
+                backslashes += 1
+                i += 1
+            if i < n and cmd[i] == '"':
+                # 反斜杠紧邻引号：每对反斜杠产生一个字面反斜杠
+                current.append("\\" * (backslashes // 2))
+                if backslashes % 2 == 1:
+                    # 奇数个：剩余一个转义该引号，引号作为字面量写入
+                    current.append('"')
+                    i += 1
+                else:
+                    # 偶数个：引号作为普通分隔符
+                    in_quotes = not in_quotes
+                    i += 1
+            else:
+                current.append("\\" * backslashes)
+            arg_started = True
+        elif c == '"':
+            # 引号内连续双引号表示一个字面引号；引号外连续双引号则成对开闭（空串）
+            if in_quotes and i + 1 < n and cmd[i + 1] == '"':
                 current.append('"')
                 i += 2
                 continue
             in_quotes = not in_quotes
+            arg_started = True
+            i += 1
         elif c in (" ", "\t") and not in_quotes:
-            if current:
+            if arg_started:
                 args.append("".join(current))
                 current = []
+                arg_started = False
+            i += 1
         else:
             current.append(c)
-        i += 1
-    if current:
+            arg_started = True
+            i += 1
+    if arg_started:
         args.append("".join(current))
     return args
 
@@ -93,7 +125,7 @@ class HandlerContext:
         enqueue: Callable[[dict], None],
         adaptive_lock: Optional[AdaptiveLockService] = None,
         vnc_service: Optional[VncServicePort] = None,
-        fastscreen_service: Optional[FastScreenServicePort] = None,
+        screenshare_service: Optional[ScreenshareServicePort] = None,
         cursor_locator_service: Optional[CursorLocatorServicePort] = None,
     ):
         self.session_repo = session_repo
@@ -109,7 +141,7 @@ class HandlerContext:
         self.enqueue = enqueue
         self.adaptive_lock = adaptive_lock
         self.vnc_service = vnc_service
-        self.fastscreen_service = fastscreen_service
+        self.screenshare_service = screenshare_service
         self.cursor_locator_service = cursor_locator_service
 
 
@@ -246,6 +278,7 @@ class CreateSessionHandler(MessageHandler):
 
         cwd = msg.get("cwd")
         env = msg.get("env")
+        mode = msg.get("mode", "pty")
 
         parsed_command = command
         if isinstance(command, str):
@@ -268,6 +301,7 @@ class CreateSessionHandler(MessageHandler):
                 env=env,
                 cols=msg.get("cols"),
                 rows=msg.get("rows"),
+                mode=mode,
             )
         except Exception as e:
             _logger.exception("create failed: sid=%s", session_id)
@@ -300,6 +334,7 @@ class SubscribeSessionHandler(MessageHandler):
         # 多订阅模式：不再 unsubscribe 之前的订阅，支持多会话同时订阅
         # 切换标签时前端不再重新 subscribe（已订阅的会话直接切显示）
         # 只有首次打开该会话时才会 subscribe
+        is_subprocess = getattr(session, "mode", "pty") == "subprocess"
         if session_id in ctx.connection.subscribed_session_ids:
             # 已订阅：返回已订阅状态，不重新注册回调
             _logger.info(
@@ -312,6 +347,7 @@ class SubscribeSessionHandler(MessageHandler):
                     snapshot=None,
                     scrollback="",  # 已订阅不返回 scrollback，前端 xterm.js 实例已保留
                     ptyType=session.pty_type,
+                    mode=session.mode if hasattr(session, "mode") else "pty",
                     cols=session.cols,
                     rows=session.rows,
                     outputOffset=session.output_offset,
@@ -320,7 +356,7 @@ class SubscribeSessionHandler(MessageHandler):
                     errorMessage=session.error_message,
                     encoding=session.encoding or "utf-8",
                     startTime=session.start_time,
-                    appMouseMode=session.is_mouse_tracking(),
+                    appMouseMode=session.is_mouse_tracking() if not is_subprocess else False,
                     adaptiveOwnerActive=adaptive_owner_active,
                     adaptiveOwnerUid=adaptive_owner_uid,
                 )
@@ -340,42 +376,54 @@ class SubscribeSessionHandler(MessageHandler):
         replay_text = sub_data["replay"]
         scrollback_ansi = sub_data["scrollback"]
 
-        # 在 replay 末尾追加光标定位 VT 序列
-        # 前端 replayPending 会 term.clear()+write(replay)，replay 为终端模型 snapshot，
-        # 可能不以光标定位序列结尾（如最后输出是 prompt 文本而非 CUP 序列），
-        # 导致前端写入后光标停在 replay 末尾而非 PTY 真实位置。
-        # 追加终端模型当前光标位置序列，强制光标定位到正确位置。
-        try:
-            cursor_seq = session.get_cursor_seq()
-            if cursor_seq:
-                replay_text = replay_text + cursor_seq
-                _logger.debug(
-                    "subscribed: appended cursor seq sid=%s seq=%r",
-                    session_id,
-                    cursor_seq,
+        # 子进程模式：无终端光标/模式语义，跳过 cursor_seq 与 mode_restore_seq
+        if not is_subprocess:
+            # 在 replay 末尾追加光标定位 VT 序列
+            # 前端 replayPending 会 term.clear()+write(replay)，replay 为终端模型 snapshot，
+            # 可能不以光标定位序列结尾（如最后输出是 prompt 文本而非 CUP 序列），
+            # 导致前端写入后光标停在 replay 末尾而非 PTY 真实位置。
+            # 追加终端模型当前光标位置序列，强制光标定位到正确位置。
+            try:
+                cursor_seq = session.get_cursor_seq()
+                if cursor_seq:
+                    replay_text = replay_text + cursor_seq
+                    _logger.debug(
+                        "subscribed: appended cursor seq sid=%s seq=%r",
+                        session_id,
+                        cursor_seq,
+                    )
+            except Exception as e:
+                _logger.warning(
+                    "subscribed: append cursor seq failed sid=%s: %s", session_id, e
                 )
-        except Exception as e:
-            _logger.warning(
-                "subscribed: append cursor seq failed sid=%s: %s", session_id, e
-            )
 
-        # 在 replay 前拼接终端模式恢复序列（鼠标追踪/光标可见/备用屏幕等）
-        # 网页刷新后 xterm 实例重建，replay 只含屏幕内容不含模式状态，
-        # 会导致鼠标模式丢失、备用屏幕状态错乱。前端从 replay 写入路径
-        # 自动检测 DECSET 序列并恢复鼠标模式（mouseMode.js detectAppMouseModeFromOutput）。
-        try:
-            mode_prefix = session.mode_restore_seq()
-            if mode_prefix:
-                replay_text = mode_prefix + replay_text
-                _logger.debug(
-                    "subscribed: prepend mode restore seq sid=%s seq=%r",
-                    session_id,
-                    mode_prefix,
+            # 在 replay 前拼接终端模式恢复序列（鼠标追踪/光标可见/备用屏幕等）
+            # 网页刷新后 xterm 实例重建，replay 只含屏幕内容不含模式状态，
+            # 会导致鼠标模式丢失、备用屏幕状态错乱。前端从 replay 写入路径
+            # 自动检测 DECSET 序列并恢复鼠标模式（mouseMode.js detectAppMouseModeFromOutput）。
+            try:
+                mode_prefix = session.mode_restore_seq()
+                if mode_prefix:
+                    replay_text = mode_prefix + replay_text
+                    _logger.debug(
+                        "subscribed: prepend mode restore seq sid=%s seq=%r",
+                        session_id,
+                        mode_prefix,
+                    )
+            except Exception as e:
+                _logger.warning(
+                    "subscribed: mode restore seq failed sid=%s: %s", session_id, e
                 )
-        except Exception as e:
-            _logger.warning(
-                "subscribed: mode restore seq failed sid=%s: %s", session_id, e
-            )
+
+        # 子进程模式：附带 stderr 全文（前端以 ERR > 前缀单独展示）
+        stderr_replay = ""
+        if is_subprocess:
+            try:
+                stderr_replay = session.get_err_output(encoding=session.encoding or "utf-8")
+            except Exception as e:
+                _logger.warning(
+                    "subscribed: get stderr replay failed sid=%s: %s", session_id, e
+                )
 
         # 注册输出回调（每个会话独立回调）
         def _on_data(data: bytes, stream: str):
@@ -445,6 +493,8 @@ class SubscribeSessionHandler(MessageHandler):
                 snapshot=None,
                 scrollback=scrollback_ansi,
                 ptyType=pty_type,
+                mode=session.mode if hasattr(session, "mode") else "pty",
+                stderrReplay=stderr_replay,
                 cols=session.cols,
                 rows=session.rows,
                 outputOffset=output_offset,
@@ -453,7 +503,7 @@ class SubscribeSessionHandler(MessageHandler):
                 errorMessage=session.error_message,
                 encoding=session.encoding or "utf-8",
                 startTime=session.start_time,
-                appMouseMode=session.is_mouse_tracking(),
+                appMouseMode=session.is_mouse_tracking() if not is_subprocess else False,
                 # 携带自适应锁状态，前端刷新后据此恢复 UI
                 adaptiveOwnerActive=adaptive_owner_active,
                 adaptiveOwnerUid=adaptive_owner_uid,
@@ -521,10 +571,12 @@ class InputHandler(MessageHandler):
             return []
 
         def _write():
-            tail = session.output_buffer.get_slice(
-                max(0, session.output_buffer.length - 4096)
-            )
-            session.detect_encoding(tail)
+            # 编码已锁定（手动指定或探测成功）时无需每键重探测
+            if not session._encoding_locked:
+                tail = session.output_buffer.get_slice(
+                    max(0, session.output_buffer.length - 4096)
+                )
+                session.detect_encoding(tail)
             session.write_input(data)
 
         try:
@@ -555,6 +607,8 @@ class KeyInputHandler(MessageHandler):
         session = ctx.session_repo.get_session(session_id)
         if not session or not session.running:
             return []
+        if getattr(session, "mode", "pty") == "subprocess":
+            return [Response.ws_error("subprocess mode has no terminal", code="subprocess_no_terminal_key")]
         if len(key) > 16:
             return [Response.error("key too long")]
 
@@ -592,6 +646,8 @@ class MouseInputHandler(MessageHandler):
         session = ctx.session_repo.get_session(session_id)
         if not session or not session.running:
             return []
+        if getattr(session, "mode", "pty") == "subprocess":
+            return [Response.ws_error("subprocess mode has no terminal", code="subprocess_no_terminal_mouse")]
         if not isinstance(kind, str) or not isinstance(button, str):
             return [Response.error("kind/button must be strings")]
 
@@ -647,6 +703,10 @@ class ResizeHandler(MessageHandler):
             _logger.warning("resize: session not found sid=%s", session_id)
             return []
 
+        # 子进程模式无终端，禁止 resize
+        if getattr(session, "mode", "pty") == "subprocess":
+            return [Response.ws_error("subprocess mode does not support resize", code="subprocess_no_resize")]
+
         # 自适应排他锁：存在自适应持有者且当前连接不是持有者时拒绝 resize，
         # 避免非持有者的自适应调整抢占持有者的尺寸控制权；
         # 持有者以 client_uid 标识（localStorage 持久化），同一 client_uid 的
@@ -661,7 +721,7 @@ class ResizeHandler(MessageHandler):
                     initiator_uid,
                     owner,
                 )
-                return [Response.error("另一端正在自适应控制尺寸，请先接管")]
+                return [Response.ws_error("adaptive size control held by another client", code="adaptive_locked")]
 
         try:
             # session.resize() 按 ConPTY 语义重排并返回终端模型 snapshot
@@ -954,9 +1014,9 @@ class VncStartHandler(MessageHandler):
 
     async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
         if not ctx.vnc_service:
-            return [Response.ws_vnc_error("VNC service not available")]
+            return [Response.ws_vnc_error("VNC service not available", code="vnc.service_unavailable")]
         if not ctx.vnc_service.is_available():
-            return [Response.ws_vnc_error("VNC 不可用：未启用或 winvnc.exe 缺失")]
+            return [Response.ws_vnc_error("VNC unavailable", code="vnc.unavailable")]
         try:
             connection_info = await ctx.executor.run(ctx.vnc_service.start)
             _logger.info(
@@ -966,7 +1026,7 @@ class VncStartHandler(MessageHandler):
             return [Response.ws_vnc_started(connection_info)]
         except Exception as e:
             _logger.exception("VNC start failed")
-            return [Response.ws_vnc_error(f"VNC 启动失败：{e}")]
+            return [Response.ws_vnc_error("VNC start failed", code="vnc.start_failed", params={"error": str(e)})]
 
 
 class VncStopHandler(MessageHandler):
@@ -974,14 +1034,14 @@ class VncStopHandler(MessageHandler):
 
     async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
         if not ctx.vnc_service:
-            return [Response.ws_vnc_error("VNC service not available")]
+            return [Response.ws_vnc_error("VNC service not available", code="vnc.service_unavailable")]
         try:
             await ctx.executor.run(ctx.vnc_service.stop)
             _logger.info("VNC stopped")
             return [Response.ws_vnc_stopped()]
         except Exception as e:
             _logger.exception("VNC stop failed")
-            return [Response.ws_vnc_error(f"VNC 停止失败：{e}")]
+            return [Response.ws_vnc_error("VNC stop failed", code="vnc.stop_failed", params={"error": str(e)})]
 
 
 # --------------------------------------------------------------------------- #
@@ -997,14 +1057,14 @@ class FsStatusHandler(MessageHandler):
     """
 
     async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
-        if not ctx.fastscreen_service:
+        if not ctx.screenshare_service:
             status = {
                 "disabled": True,
                 "available": False,
                 "active_sessions": 0,
             }
         else:
-            status = await ctx.executor.run(ctx.fastscreen_service.get_status)
+            status = await ctx.executor.run(ctx.screenshare_service.get_status)
         if ctx.cursor_locator_service:
             cl_status = await ctx.executor.run(ctx.cursor_locator_service.get_status)
             status["cursor_locator_running"] = cl_status.get("running", False)
@@ -1022,7 +1082,7 @@ class FsListTargetsHandler(MessageHandler):
     """
 
     async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
-        if not ctx.fastscreen_service:
+        if not ctx.screenshare_service:
             return [
                 Response.ws_fs_targets(
                     {
@@ -1033,11 +1093,11 @@ class FsListTargetsHandler(MessageHandler):
                 )
             ]
         try:
-            targets = await ctx.executor.run(ctx.fastscreen_service.list_targets)
+            targets = await ctx.executor.run(ctx.screenshare_service.list_targets)
             return [Response.ws_fs_targets(targets)]
         except Exception as e:
             _logger.exception("FastScreen list_targets failed")
-            return [Response.ws_fs_error(f"列出目标失败：{e}")]
+            return [Response.ws_fs_error("list targets failed", code="fs.list_targets_failed", params={"error": str(e)})]
 
 
 class FsBringToFrontHandler(MessageHandler):
@@ -1049,20 +1109,20 @@ class FsBringToFrontHandler(MessageHandler):
 
     async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
         if not IS_WINDOWS:
-            return [Response.ws_fs_error("仅 Windows 支持置于前台")]
+            return [Response.ws_fs_error("bring to front supported on Windows only", code="fs.windows_only")]
 
         target_type = msg.get("target_type", "monitor")
         if target_type != "window":
-            return [Response.ws_fs_error("仅窗口模式支持置于前台")]
+            return [Response.ws_fs_error("bring to front supported in window mode only", code="fs.window_mode_only")]
 
         hwnd = msg.get("target_id", 0)
         try:
             hwnd = int(hwnd)
         except (TypeError, ValueError):
-            return [Response.ws_fs_error("无效的窗口句柄")]
+            return [Response.ws_fs_error("invalid window handle", code="fs.invalid_hwnd")]
 
         if hwnd == 0:
-            return [Response.ws_fs_error("无效的窗口句柄")]
+            return [Response.ws_fs_error("invalid window handle", code="fs.invalid_hwnd")]
 
         try:
             import ctypes
@@ -1076,7 +1136,7 @@ class FsBringToFrontHandler(MessageHandler):
             return []
         except Exception as e:
             _logger.exception("FastScreen bring to front failed: hwnd=%d", hwnd)
-            return [Response.ws_fs_error(f"置于前台失败：{e}")]
+            return [Response.ws_fs_error("bring to front failed", code="fs.bring_to_front_failed", params={"error": str(e)})]
 
 
 # --------------------------------------------------------------------------- #
@@ -1093,22 +1153,20 @@ class CursorLocatorStartHandler(MessageHandler):
 
     async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
         if not ctx.cursor_locator_service:
-            return [Response.ws_cursor_locator_error("光标定位器服务不可用")]
+            return [Response.ws_cursor_locator_error("service unavailable", code="locator.service_unavailable")]
         if not ctx.cursor_locator_service.is_available():
             return [
-                Response.ws_cursor_locator_error(
-                    "光标定位器不可用：仅支持 Windows 平台"
-                )
+                Response.ws_cursor_locator_error("cursor locator unavailable, Windows only", code="locator.windows_only")
             ]
         try:
             result = await ctx.executor.run(ctx.cursor_locator_service.start)
             if result.get("running"):
                 _logger.info("CursorLocator started")
                 return [Response.ws_cursor_locator_started()]
-            return [Response.ws_cursor_locator_error(result.get("error", "启动失败"))]
+            return [Response.ws_cursor_locator_error("start failed", code="locator.start_failed", params={"error": result.get("error", "")})]
         except Exception as e:
             _logger.exception("CursorLocator start failed")
-            return [Response.ws_cursor_locator_error(f"启动失败：{e}")]
+            return [Response.ws_cursor_locator_error("start failed", code="locator.start_failed", params={"error": str(e)})]
 
 
 class CursorLocatorStopHandler(MessageHandler):
@@ -1116,16 +1174,16 @@ class CursorLocatorStopHandler(MessageHandler):
 
     async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
         if not ctx.cursor_locator_service:
-            return [Response.ws_cursor_locator_error("光标定位器服务不可用")]
+            return [Response.ws_cursor_locator_error("service unavailable", code="locator.service_unavailable")]
         try:
             result = await ctx.executor.run(ctx.cursor_locator_service.stop)
             if not result.get("running"):
                 _logger.info("CursorLocator stopped")
                 return [Response.ws_cursor_locator_stopped()]
-            return [Response.ws_cursor_locator_error(result.get("error", "停止失败"))]
+            return [Response.ws_cursor_locator_error("stop failed", code="locator.stop_failed", params={"error": result.get("error", "")})]
         except Exception as e:
             _logger.exception("CursorLocator stop failed")
-            return [Response.ws_cursor_locator_error(f"停止失败：{e}")]
+            return [Response.ws_cursor_locator_error("stop failed", code="locator.stop_failed", params={"error": str(e)})]
 
 
 class CursorLocatorUpdateConfigHandler(MessageHandler):
@@ -1137,28 +1195,28 @@ class CursorLocatorUpdateConfigHandler(MessageHandler):
 
     async def handle(self, ctx: HandlerContext, msg: dict) -> list[dict]:
         if not ctx.cursor_locator_service:
-            return [Response.ws_cursor_locator_error("光标定位器服务不可用")]
+            return [Response.ws_cursor_locator_error("service unavailable", code="locator.service_unavailable")]
         params = {}
         for key in ("outer_radius", "inner_radius", "alpha"):
             if key in msg:
                 try:
                     params[key] = int(msg[key])
                 except (TypeError, ValueError):
-                    return [Response.ws_cursor_locator_error(f"参数 {key} 无效")]
+                    return [Response.ws_cursor_locator_error("invalid parameter", code="locator.invalid_param", params={"key": key})]
         if not params:
-            return [Response.ws_cursor_locator_error("未指定任何参数")]
+            return [Response.ws_cursor_locator_error("no parameters specified", code="locator.no_params")]
         try:
             result = await ctx.executor.run(
                 ctx.cursor_locator_service.update_config, **params
             )
             if "error" in result:
-                return [Response.ws_cursor_locator_error(result["error"])]
+                return [Response.ws_cursor_locator_error("update failed", code="locator.update_failed", params={"error": result["error"]})]
             _logger.info("CursorLocator config updated: %s", params)
             status = await ctx.executor.run(ctx.cursor_locator_service.get_status)
             return [Response.ws_cursor_locator_status(status)]
         except Exception as e:
             _logger.exception("CursorLocator update_config failed")
-            return [Response.ws_cursor_locator_error(f"配置更新失败：{e}")]
+            return [Response.ws_cursor_locator_error("update failed", code="locator.update_failed", params={"error": str(e)})]
 
 
 # --------------------------------------------------------------------------- #

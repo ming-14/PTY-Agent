@@ -13,7 +13,6 @@ TransferTimeoutError，调用方清理中止。
 
 import hashlib
 import json
-import logging
 import os
 import sys
 import time
@@ -42,8 +41,9 @@ from .common import (
     TransferTimeoutError,
 )
 from .scan import scan_tree
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-client")
+_logger = get_logger("pty-client")
 
 
 class ProgressReporter:

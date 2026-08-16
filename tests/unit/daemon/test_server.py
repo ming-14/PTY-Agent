@@ -26,11 +26,12 @@ def _listener_patches():
     mocks = {}
     for key, p in (
         ("listener", patch("src.daemon.server.Listener")),
-        ("web", patch("src.daemon.server.WebServer")),
+        # WebServer 经 src.optional 网关惰性获取：mock 网关返回替身，避免真正启动 web
+        ("web", patch("src.optional.get_web_server_cls")),
         ("auth", patch("src.daemon.server.write_auth_token")),
         ("hmac", patch("src.daemon.server.write_hmac_key")),
         ("signal", patch("src.daemon.server.signal.signal")),
-        ("rotate", patch.object(DaemonServer, "_schedule_rotate")),
+        ("rotate", patch.object(DaemonServer, "_start_token_rotator")),
     ):
         mocks[key] = stack.enter_context(p)
     return stack, mocks
@@ -39,9 +40,9 @@ def _listener_patches():
 class TestDaemonServerInit:
     def test_listeners_config_three_entries(self):
         server = DaemonServer()
-        assert set(server.listeners_config) == {"plain", "token", "tls"}
+        assert set(server.listeners_config) == {"basic", "token", "tls"}
         # 每段 (enabled, host, port) 三元组
-        for name in ("plain", "token", "tls"):
+        for name in ("basic", "token", "tls"):
             enabled, host, port = server.listeners_config[name]
             assert isinstance(enabled, bool)
             assert isinstance(host, str)
@@ -52,8 +53,8 @@ class TestDaemonServerInit:
         server = DaemonServer()
         assert server.listeners_config["token"][0] is True
         assert server.listeners_config["token"][1] == "127.0.0.1"
-        # plain/tls 默认关闭
-        assert server.listeners_config["plain"][0] is False
+        # basic/tls 默认关闭
+        assert server.listeners_config["basic"][0] is False
         assert server.listeners_config["tls"][0] is False
 
     def test_initial_state(self):
@@ -150,13 +151,20 @@ class TestDaemonServerCleanup:
         srv._cleanup()
         mock_mgr.stop_all.assert_called_once()
 
-    def test_cleanup_cancels_rotate_timer(self):
+    def test_cleanup_clears_rotate_thread(self):
         srv = DaemonServer()
-        mock_timer = MagicMock()
-        srv._rotate_timer = mock_timer
+        mock_thread = MagicMock()
+        srv._rotate_thread = mock_thread
         srv._cleanup()
-        mock_timer.cancel.assert_called_once()
-        assert srv._rotate_timer is None
+        assert srv._rotate_thread is None
+
+    def test_rotate_token_skipped_after_cleanup(self):
+        """清理后（_running=False）轮换不再执行"""
+        srv = DaemonServer()
+        srv._token_authenticator = MagicMock()
+        srv._cleanup()
+        srv._rotate_token()
+        srv._token_authenticator.rotate_token.assert_not_called()
 
 
 class TestDaemonServerStop:

@@ -10,8 +10,8 @@
 
 子包自身的文件树文档位于各子包的 `docs/FILESTREE.md`：
 - `tests/docs/FILESTREE.md` —— `tests/` 测试套件
-- `fastscreen/docs/FILESTREE.md` —— `fastscreen/` C++ 屏幕捕获
 - `web_rime/docs/FILESTREE.md` —— `web_rime/` Rime 输入法
+- `win-sandbox/docs/FILESTREE.md` —— `win-sandbox/` C++ 沙箱（win_sandbox_native pybind11）
 
 > 后续若有新的子包，可以创建新的 md 文件（本目录或子包 `docs/` 下）
 

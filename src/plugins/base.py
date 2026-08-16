@@ -10,13 +10,17 @@
 声明触发方式却未实现对应方法等，均在加载期校验失败并跳过该插件。
 """
 
-import logging
+from ..logging import get_logger
 from typing import List, Optional
 
-_logger = logging.getLogger("pty-plugins")
+_logger = get_logger("pty-plugins")
 
 # 合法触发方式
 VALID_TRIGGERS = ("event", "poll")
+
+# 合法插件形态：process=进程级（daemon 常驻）、session=会话级（挂载到会话）、
+# cli=CLI 侧（客户端进程内执行，daemon 不加载）
+VALID_KINDS = ("process", "session", "cli")
 
 # handle_message 返回值哨兵：插件已自行完成响应（多帧协议，如 upload/download），
 # 调度器不再发送任何消息
@@ -34,6 +38,9 @@ class Plugin:
         poll_interval:  "poll" 触发的轮询间隔（秒，声明 poll 时必填）。
         auto_load:      自动加载条件（exec 时按 command/cwd/env 匹配，命中自动挂载）。
 
+    形态（kind）：process（进程级）/ session（会话级）/ cli（CLI 侧）。
+    未显式声明时按 message_types 推断：非空 → process，空 → session。
+
     钩子（宿主自动在正确时机调用，实现即生效）：
         on_attach / on_detach: 挂载/卸载生命周期（detach 含会话结束）。
         on_input / on_output / on_snapshot: 输入/输出/快照变换链。
@@ -41,7 +48,7 @@ class Plugin:
         on_poll:    定时回调（需声明 "poll" + poll_interval）。
         handle_command: 自定义命令（外部经 plugin cmd 触发，未处理返回 None）。
 
-    进程级插件（message_types 非空 = 进程级）：
+    进程级插件（kind=process，message_types 非空）：
         message_types: 声明要接管的 daemon 消息类型列表（如 ["file_read"]）；
                       非空时插件为进程级：守护进程启动时单例实例化，
                       对应消息类型由 dispatcher 路由到 handle_message。
@@ -49,6 +56,15 @@ class Plugin:
                       如 file upload/download；session 级插件忽略）。
         handle_message(ctx, msg): 进程级命令处理；返回 dict 原样作为响应
                       发送（保持既有消息协议契约），返回 None 表示未处理。
+
+    CLI 侧插件（kind=cli，客户端进程内）：
+        commands:       生效命令名列表（如 ["exec","send"]）；空=全部命令。
+        before_request: 请求发送前调用；返回 dict 替换 msg，None 放行。
+        transform_response: 响应收到后调用；返回 dict 替换 resp，None 不变。
+        render_response: 响应打印前调用；返回 str 则打印该文本，None 走默认 JSON。
+
+    CLI 插件经 exec --plugin 挂载到会话（或会话在 daemon 上记录的 CLI 挂载列表），
+    宿主按钩子自动派发回调，与 daemon 侧挂载同语义，无启用/禁用概念。
 
     约束：
         - on_output 在 reader 线程被调用，禁止慢操作/阻塞。
@@ -64,6 +80,8 @@ class Plugin:
     auto_load: Optional[dict] = None
     message_types: List[str] = []
     needs_io: bool = False
+    kind: str = ""
+    commands: List[str] = []
 
     def on_attach(self, ctx) -> None:
         """挂载到会话时调用（exec 注入或动态 attach；会话可能尚未启动）"""
@@ -106,6 +124,28 @@ class Plugin:
 
         返回 dict 将作为 terminalState 附加到命令响应（exec/send/read/mouse），
         返回 None 表示不提供状态。适用于一次性检查当前终端状态并随响应返回。
+        """
+        return
+
+    def before_request(self, ctx, msg: dict):
+        """CLI 钩子（kind=cli）：请求发送前调用
+
+        返回 dict 替换将被发送的 msg；返回 None 表示不修改。
+        """
+        return
+
+    def transform_response(self, ctx, resp: dict):
+        """CLI 钩子（kind=cli）：响应收到后、业务后处理前调用
+
+        返回 dict 替换 resp；返回 None 表示不修改。
+        """
+        return
+
+    def render_response(self, ctx, resp: dict):
+        """CLI 钩子（kind=cli）：响应打印前调用
+
+        返回 str 则直接打印该文本（替代默认 JSON 输出）；
+        返回 None 表示交由后续插件或默认 JSON 打印。
         """
         return
 

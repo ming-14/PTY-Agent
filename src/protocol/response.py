@@ -25,9 +25,27 @@ class Response:
 
         Args:
             message: 错误描述。
-            **extra: 额外字段（如 suggest）。
+            **extra: 额外字段（如 code / params / suggest）。
         """
         return {"type": "error", "message": message, **extra}
+
+    @staticmethod
+    def ws_error(message: str, code=None, params=None) -> dict:
+        """WebSocket 错误响应（带 i18n 错误码）。
+
+        Web 前端根据 code 映射本地文案；message 保留给非网页端消费者读取。
+
+        Args:
+            message: 错误描述（后端语言无关，通常为英文或空）。
+            code:    i18n 错误码，前端字典 key。
+            params:  插值参数（如 {error: <原始异常>}）。
+        """
+        resp = {"type": "error", "message": message}
+        if code:
+            resp["code"] = code
+        if params:
+            resp["params"] = params
+        return resp
 
     @staticmethod
     def warning(message: str) -> dict:
@@ -293,9 +311,20 @@ class Response:
         return {"type": "vnc_stopped"}
 
     @staticmethod
-    def ws_vnc_error(message: str) -> dict:
-        """VNC 错误响应。"""
-        return {"type": "vnc_error", "message": message}
+    def ws_vnc_error(message: str = "", code=None, params=None) -> dict:
+        """VNC 错误响应（带 i18n 错误码）。
+
+        Args:
+            message: 错误描述（后端语言无关，通常为英文或空）。
+            code:    i18n 错误码，前端字典 key。
+            params:  插值参数（如 {error: <原始异常>}）。
+        """
+        resp = {"type": "vnc_error", "message": message}
+        if code:
+            resp["code"] = code
+        if params:
+            resp["params"] = params
+        return resp
 
     # ════════════════════════════════════════════════════════════
     #  WebSocket 响应 — FastScreen 屏幕查看
@@ -303,26 +332,37 @@ class Response:
 
     @staticmethod
     def ws_fs_status(status: dict) -> dict:
-        """FastScreen 状态响应（包含可用性 + 活跃会话数）。
+        """Screenshare 状态响应（包含可用性 + 活跃会话数）。
 
         Args:
-            status: FastScreenAdapter.get_status() 返回的字典。
+            status: ScreenshareAdapter.get_status() 返回的字典。
         """
         return {"type": "fs_status", **status}
 
     @staticmethod
     def ws_fs_targets(targets: dict) -> dict:
-        """FastScreen 目标列表响应（显示器 + 窗口）。
+        """Screenshare 目标列表响应（显示器 + 窗口）。
 
         Args:
-            targets: FastScreenAdapter.list_targets() 返回的字典。
+            targets: ScreenshareAdapter.list_targets() 返回的字典。
         """
         return {"type": "fs_targets", **targets}
 
     @staticmethod
-    def ws_fs_error(message: str) -> dict:
-        """FastScreen 错误响应。"""
-        return {"type": "fs_error", "message": message}
+    def ws_fs_error(message: str = "", code=None, params=None) -> dict:
+        """FastScreen 错误响应（带 i18n 错误码）。
+
+        Args:
+            message: 错误描述（后端语言无关，通常为英文或空）。
+            code:    i18n 错误码，前端字典 key。
+            params:  插值参数（如 {error: <原始异常>}）。
+        """
+        resp = {"type": "fs_error", "message": message}
+        if code:
+            resp["code"] = code
+        if params:
+            resp["params"] = params
+        return resp
 
     # ════════════════════════════════════════════════════════════
     #  WebSocket 响应 — 鼠标增强光标定位器
@@ -348,6 +388,17 @@ class Response:
         return {"type": "cursor_locator_stopped"}
 
     @staticmethod
-    def ws_cursor_locator_error(message: str) -> dict:
-        """光标定位器错误响应。"""
-        return {"type": "cursor_locator_error", "message": message}
+    def ws_cursor_locator_error(message: str = "", code=None, params=None) -> dict:
+        """光标定位器错误响应（带 i18n 错误码）。
+
+        Args:
+            message: 错误描述（后端语言无关，通常为英文或空）。
+            code:    i18n 错误码，前端字典 key。
+            params:  插值参数（如 {error: <原始异常>}）。
+        """
+        resp = {"type": "cursor_locator_error", "message": message}
+        if code:
+            resp["code"] = code
+        if params:
+            resp["params"] = params
+        return resp

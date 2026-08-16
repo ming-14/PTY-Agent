@@ -174,7 +174,7 @@ class TestGuiDetectorCheck:
 
         class _MockTracker:
             _call_count = 0
-            def poll_gui_windows(self):
+            def poll_gui_windows(self, pids=None):
                 self._call_count += 1
                 return []
             def get_process_list(self):
@@ -192,7 +192,7 @@ class TestGuiDetectorCheck:
         det._last_poll_ms = 0
 
         class _MockTracker:
-            def poll_gui_windows(self):
+            def poll_gui_windows(self, pids=None):
                 return [{"hwnd": 0x1234, "pid": 100, "title": "Test"}]
             def get_process_list(self):
                 return [100]

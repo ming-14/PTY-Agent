@@ -1,6 +1,9 @@
 """config/plugins/files/state.py 单元测试 — 读写状态机"""
 
+import sys
 import time
+
+import pytest
 
 from config.plugins.files.state import FileRecordStore
 from config.plugins.files.paths import normalize_key
@@ -27,6 +30,7 @@ class TestFileRecordStore:
         store.reset()
         assert store.last_read("C:/x/a.txt") is None
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows 路径大小写语义")
     def test_key_normalization_windows_case(self):
         store = FileRecordStore()
         store.record_read("C:/X/A.TXT")

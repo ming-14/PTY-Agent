@@ -19,20 +19,21 @@
 
 import { state } from '../domain/state.js';
 import { debug, info, error } from '../domain/logger.js';
+import { t } from '../domain/i18n.js';
 import { wsSend } from './wsClient.js';
 import { showToast } from './domUtils.js';
 import * as settingsStore from '../application/settingsStore.js';
 
 const RIME_MODE_KEY = 'pty_ime_mode';
 const MODES = ['system', 'web', 'disabled', 'nokeyboard'];
-const MODE_LABELS = { system: '中', web: '中', disabled: '—', nokeyboard: '' };
+const MODE_LABELS = { system: t('ime.system'), web: t('ime.web'), disabled: '—', nokeyboard: '' };
 const MODE_TITLES = {
-  system: '输入法：系统（单击切换至 Web RIME）',
-  web: '输入法：Web RIME（单击切换至禁用弹出）',
-  disabled: '输入法：已禁用弹出（单击切换至禁用键盘）',
-  nokeyboard: '输入法：已禁用键盘（单击切换至系统）',
+  system: t('ime.tipSystem'),
+  web: t('ime.tipWeb'),
+  disabled: t('ime.tipDisabledPopup'),
+  nokeyboard: t('ime.tipDisabledKeyboard'),
 };
-const MODE_TOAST = { system: '系统输入法', web: 'Web RIME 输入法', disabled: '已禁用输入法弹出', nokeyboard: '已禁用键盘输入' };
+const MODE_TOAST = { system: t('ime.toastSystem'), web: t('ime.toastWeb'), disabled: t('ime.toastDisabledPopup'), nokeyboard: t('ime.toastDisabledKeyboard') };
 const NOKEYBOARD_SVG = '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5" fill="none"/><line x1="3.5" y1="3.5" x2="12.5" y2="12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
 
 // 与 RimePanel.RIME_KEY_MAP 同步（见 rime-plugin.js）
@@ -718,7 +719,7 @@ export async function setMode(mode) {
       if (currentMode === 'web') {
         const msg = err && err.message || String(err);
         error('rime', 'ensurePanel failed: %s', msg);
-        showToast('Web RIME 初始化失败：' + msg, 'error');
+        showToast(t('ime.initFailed', { msg }), 'error');
         currentMode = 'system';
         localStorage.setItem(RIME_MODE_KEY, 'system');
         updateButton();
@@ -915,7 +916,7 @@ function setupShiftToggle() {
       if (newMode && panel.editing) {
         panel.handleKey('{Escape}');
       }
-      showToast(newMode ? '英文输入' : '中文输入', 'info');
+      showToast(newMode ? t('ime.toastEnglish') : t('ime.toastChinese'), 'info');
     }).catch((err) => {
       error('rime', 'shift toggle failed: %s', err && err.message || err);
     });

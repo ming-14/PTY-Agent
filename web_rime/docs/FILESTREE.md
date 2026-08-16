@@ -5,8 +5,8 @@
 ```
 web_rime/                    # Rime WASM 输入法插件源码
 ├── .gitignore
-├── AGENTS.md
 ├── README.md
+├── docs/                    # 文档（文件树文档见 [FILESTREE.md](FILESTREE.md)）
 ├── plugin/                  # 前端插件（TypeScript + Webpack）
 │   ├── package.json / package-lock.json
 │   ├── tsconfig.json

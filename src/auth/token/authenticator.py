@@ -6,14 +6,14 @@
 - TokenCredentialProvider:  客户端令牌凭证提供者（从 SHM 读取令牌）
 """
 
-import logging
 import threading
 import time
 
 from ...config.daemon import AUTH_TOKEN_GRACE_PERIOD
 from ..base import Authenticator, CredentialProvider
+from ...logging import get_logger
 
-_logger = logging.getLogger("pty-auth")
+_logger = get_logger("pty-auth")
 
 
 class TokenAuthenticator(Authenticator):

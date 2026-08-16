@@ -12,15 +12,15 @@ Pubkey 认证方式的消息签名实现，基于 Ed25519 非对称签名。
 """
 
 import json
-import logging
 from typing import Dict, Optional
 
 from cryptography.exceptions import InvalidSignature
 
 from ...protocol.signing import MessageSigner
 from ..keys import PrivateKey, PublicKey
+from ...logging import get_logger
 
-_logger = logging.getLogger("pty-auth")
+_logger = get_logger("pty-auth")
 
 # Ed25519 签名字段名（与 HMAC 的 _sig 区分，二者可共存）
 SIG_FIELD = "_sig_ed25519"
@@ -93,6 +93,27 @@ class Ed25519MessageSigner(MessageSigner):
         sig = self._compute_signature(obj)
         obj[SIG_FIELD] = sig
         return obj
+
+    def sign_bytes(self, obj: dict) -> bytes:
+        """签名并直接产出 wire 字节：单次序列化
+
+        规范 JSON 排除指纹与签名字段；wire 在其上拼接 pubkey_fp 与
+        _sig_ed25519（均为 ASCII），免二次 json.dumps 与消息整 dict 拷贝。
+        """
+        if self._private_key is None:
+            raise RuntimeError("服务端模式不支持 sign()，请用客户端模式构造")
+        filtered = {k: v for k, v in obj.items() if k not in _EXCLUDED_FIELDS}
+        canonical = self._canonical_json(filtered)
+        sig = self._private_key.key.sign(canonical).hex()
+        fp = self._private_key.fingerprint
+        return (
+            canonical[:-1]
+            + b',"pubkey_fp":"'
+            + fp.encode("ascii")
+            + b'","_sig_ed25519":"'
+            + sig.encode("ascii")
+            + b'"}\n'
+        )
 
     def verify(self, obj: dict, signature: str) -> bool:
         """验证消息签名

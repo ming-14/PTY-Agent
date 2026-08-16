@@ -32,6 +32,7 @@ import { TERMINAL_SIZE_PRESETS, ADAPTIVE_MIN_COLS, ADAPTIVE_MIN_ROWS } from '../
 import { $, showToast } from '../../infrastructure/domUtils.js';
 import { getHandlerBySid } from './sessionHandlers.js';
 import { debug, info } from '../../domain/logger.js';
+import { t } from '../../domain/i18n.js';
 import { wsSend } from '../../infrastructure/wsClient.js';
 import {
   reapplyAllTerminalSizes,
@@ -65,7 +66,7 @@ export function renderSizeDropdown() {
   // 模式选项区
   const modeSection = document.createElement('div');
   modeSection.className = 'size-dropdown-section';
-  modeSection.textContent = '尺寸模式';
+  modeSection.textContent = t('size.mode');
   dd.appendChild(modeSection);
 
   // 默认
@@ -76,9 +77,9 @@ export function renderSizeDropdown() {
   // 优先使用该会话缓存的守护进程默认尺寸，其次使用会话当前尺寸
   const defaultDesc = (cfg.daemonCols && cfg.daemonRows)
     ? cfg.daemonCols + 'x' + cfg.daemonRows
-    : (s ? (s.cols || '?') + 'x' + (s.rows || '?') : '守护进程配置');
+    : (s ? (s.cols || '?') + 'x' + (s.rows || '?') : t('size.daemonConfig'));
   defaultItem.innerHTML =
-    '<span>默认</span>' +
+    '<span>' + t('common.default') + '</span>' +
     '<span class="size-item-value">' + defaultDesc + '</span>';
   if (!locked) defaultItem.onclick = () => selectMode('default');
   dd.appendChild(defaultItem);
@@ -89,7 +90,7 @@ export function renderSizeDropdown() {
     + (cfg.mode === 'adaptive' ? ' selected' : '')
     + (locked ? ' disabled' : '');
   adaptiveItem.innerHTML =
-    '<span>自适应</span>' +
+    '<span>' + t('size.adaptive') + '</span>' +
     '<span class="size-item-value">≥' + ADAPTIVE_MIN_COLS + 'x' + ADAPTIVE_MIN_ROWS + '</span>';
   if (!locked) adaptiveItem.onclick = () => selectMode('adaptive');
   dd.appendChild(adaptiveItem);
@@ -102,7 +103,7 @@ export function renderSizeDropdown() {
   // 固定预设区
   const presetSection = document.createElement('div');
   presetSection.className = 'size-dropdown-section';
-  presetSection.textContent = '固定尺寸';
+  presetSection.textContent = t('size.fixedSize');
   dd.appendChild(presetSection);
 
   TERMINAL_SIZE_PRESETS.forEach(preset => {
@@ -132,9 +133,9 @@ export function renderSizeDropdown() {
     + (isCustomSelected ? ' selected' : '')
     + (locked ? ' disabled' : '');
   customItem.innerHTML =
-    '<span>自定义</span>' +
+    '<span>' + t('size.custom') + '</span>' +
     '<span class="size-item-value">' +
-      (isCustomSelected ? cfg.customCols + 'x' + cfg.customRows : '输入尺寸') +
+      (isCustomSelected ? cfg.customCols + 'x' + cfg.customRows : t('size.inputSize')) +
     '</span>';
   if (!locked) {
     customItem.onclick = () => {
@@ -154,10 +155,10 @@ export function renderSizeDropdown() {
   const customInput = document.createElement('div');
   customInput.className = 'size-custom-input' + (locked ? ' disabled' : '');
   customInput.innerHTML =
-    '<input type="number" id="size-custom-cols" min="' + ADAPTIVE_MIN_COLS + '" max="400" value="' + cfg.customCols + '" placeholder="列"' + (locked ? ' disabled' : '') + '>' +
+    '<input type="number" id="size-custom-cols" min="' + ADAPTIVE_MIN_COLS + '" max="400" value="' + cfg.customCols + '" placeholder="' + t('size.colsPh') + '"' + (locked ? ' disabled' : '') + '>' +
     '<span class="size-x">x</span>' +
-    '<input type="number" id="size-custom-rows" min="' + ADAPTIVE_MIN_ROWS + '" max="120" value="' + cfg.customRows + '" placeholder="行"' + (locked ? ' disabled' : '') + '>' +
-    '<button id="size-custom-apply"' + (locked ? ' disabled' : '') + '>应用</button>';
+    '<input type="number" id="size-custom-rows" min="' + ADAPTIVE_MIN_ROWS + '" max="120" value="' + cfg.customRows + '" placeholder="' + t('size.rowsPh') + '"' + (locked ? ' disabled' : '') + '>' +
+    '<button id="size-custom-apply"' + (locked ? ' disabled' : '') + '>' + t('common.apply') + '</button>';
   dd.appendChild(customInput);
 
   if (!locked) {
@@ -169,15 +170,15 @@ export function renderSizeDropdown() {
       const cols = parseInt(colsInput.value, 10);
       const rows = parseInt(rowsInput.value, 10);
       if (!Number.isFinite(cols) || !Number.isFinite(rows)) {
-        showToast('请输入有效的数字', 'error');
+        showToast(t('size.invalidNumber'), 'error');
         return;
       }
       if (cols < ADAPTIVE_MIN_COLS || rows < ADAPTIVE_MIN_ROWS) {
-        showToast('尺寸不能小于 ' + ADAPTIVE_MIN_COLS + 'x' + ADAPTIVE_MIN_ROWS, 'error');
+        showToast(t('size.tooSmall', { min: ADAPTIVE_MIN_COLS + 'x' + ADAPTIVE_MIN_ROWS }), 'error');
         return;
       }
       if (cols > 400 || rows > 120) {
-        showToast('尺寸不能超过 400x120', 'error');
+        showToast(t('size.tooLarge'), 'error');
         return;
       }
       selectCustomSize(cols, rows);
@@ -198,7 +199,7 @@ export function renderSizeDropdown() {
     const takeoverBtn = document.createElement('button');
     takeoverBtn.id = 'size-takeover-btn';
     takeoverBtn.className = 'size-takeover-btn';
-    takeoverBtn.textContent = '接管尺寸控制';
+    takeoverBtn.textContent = t('size.takeover');
     takeoverBtn.onclick = () => requestTakeover(sid);
     dd.appendChild(takeoverBtn);
   }
@@ -298,7 +299,7 @@ function selectMode(mode) {
     updateSizeStatusDisplay();
   });
 
-  showToast(getModeLabel(mode) + ' 模式', 'info');
+  showToast(t('size.modeToast', { mode: getModeLabel(mode) }), 'info');
 }
 
 /**
@@ -322,7 +323,7 @@ function selectFixedPreset(cols, rows) {
   // 等一帧后初始化/应用 frameRatio（非 adaptive 模式按 ratio 反算字号）
   requestAnimationFrame(() => { applySessionFrameRatio(state.activeTab); });
 
-  showToast('已切换到 ' + cols + 'x' + rows, 'info');
+  showToast(t('size.switchedToast', { size: cols + 'x' + rows }), 'info');
 }
 
 /**
@@ -346,7 +347,7 @@ function selectCustomSize(cols, rows) {
   // 等一帧后初始化/应用 frameRatio（非 adaptive 模式按 ratio 反算字号）
   requestAnimationFrame(() => { applySessionFrameRatio(state.activeTab); });
 
-  showToast('已切换到 ' + cols + 'x' + rows, 'info');
+  showToast(t('size.switchedToast', { size: cols + 'x' + rows }), 'info');
 }
 
 // ── 自适应排他锁通信辅助 ──
@@ -402,7 +403,7 @@ export function getSizeStatusText(s) {
   // 所有模式统一显示实际尺寸，确保被动跟随时状态栏同步
   const sizeStr = (s.cols || '?') + 'x' + (s.rows || '?');
   if (cfg.mode === 'adaptive') {
-    return sizeStr + ' (自适应)';
+    return sizeStr + t('size.adaptiveSuffix');
   }
   // fixed / custom / default 不带标签，仅显示实际尺寸
   return sizeStr;
@@ -431,9 +432,9 @@ export function updateSizeStatusDisplay() {
 }
 
 function getModeLabel(mode) {
-  if (mode === 'default') return '默认';
-  if (mode === 'adaptive') return '自适应';
-  if (mode === 'fixed') return '固定';
-  if (mode === 'custom') return '自定义';
+  if (mode === 'default') return t('common.default');
+  if (mode === 'adaptive') return t('size.adaptive');
+  if (mode === 'fixed') return t('size.fixed');
+  if (mode === 'custom') return t('size.custom');
   return mode;
 }

@@ -15,6 +15,7 @@ import { state, saveTabState } from '../../domain/state.js';
 import { SETTINGS_TAB_ID } from '../../domain/constants.js';
 import { $ } from '../../infrastructure/domUtils.js';
 import { debug, info, warn } from '../../domain/logger.js';
+import { t } from '../../domain/i18n.js';
 import { updateAutoHide } from './autohide.js';
 import { registerSessionHandler } from './sessionHandlers.js';
 import {
@@ -97,8 +98,8 @@ export function buildSettingsTabElement() {
   tab.dataset.sid = SETTINGS_TAB_ID;
   tab.innerHTML =
     '<span class="tab-icon running"></span>' +
-    '<span class="tab-title" title="设置">设置</span>' +
-    '<span class="tab-close" data-sid="' + SETTINGS_TAB_ID + '" title="关闭标签">' +
+    '<span class="tab-title" title="' + t('session.settingsTitle') + '">' + t('session.settingsTitle') + '</span>' +
+    '<span class="tab-close" data-sid="' + SETTINGS_TAB_ID + '" title="' + t('common.closeTab') + '">' +
     '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>' +
     '</span>';
   tab.onclick = e => {
@@ -134,7 +135,7 @@ export function renderSettingsView() {
     item.dataset.cat = cat.id;
     item.innerHTML = cat.icon +
       '<span>' + cat.label + '</span>' +
-      (cat.future ? '<span class="nav-badge-future">未来</span>' : '');
+      (cat.future ? '<span class="nav-badge-future">' + t('settings.futureBadge') + '</span>' : '');
     item.onclick = () => {
       _activeCategory = cat.id;
       _renderNavActive();
@@ -168,8 +169,8 @@ function _renderContent() {
           '<path d="M24 4l16 6v14c0 10-7 18-16 22-9-4-16-12-16-22V10l16-6z" stroke-linejoin="round"/>' +
           '<path d="M16 24l6 6 12-12" stroke-linecap="round" stroke-linejoin="round"/>' +
         '</svg>' +
-        '<div>安全设置正在开发中，敬请期待</div>' +
-        '<div style="margin-top:8px;font-size:11px">计划支持：执行沙箱、操作审批、命令白名单、审计日志</div>' +
+        '<div>' + t('settings.securityPlaceholder') + '</div>' +
+        '<div style="margin-top:8px;font-size:11px">' + t('settings.securityPlanned') + '</div>' +
       '</div>';
     return;
   }
@@ -222,7 +223,7 @@ function _renderRow(item) {
       controlHtml = _renderAction(item, value, enabled);
       break;
     default:
-      controlHtml = '<span style="color:var(--wt-tab-text-muted)">未实现的控件类型: ' + item.type + '</span>';
+      controlHtml = '<span style="color:var(--wt-tab-text-muted)">' + t('settings.unimplementedType', { type: item.type }) + '</span>';
   }
   const label = item.key === 'rikka.enabled' ? _rikkaLabel() : _escHtml(item.label);
   return (
@@ -280,7 +281,7 @@ function _renderTextarea(item, value, enabled) {
 }
 
 function _renderAction(item, value, enabled) {
-  const display = value ? _escHtml(value) : '<span style="color:var(--wt-tab-text-muted)">默认</span>';
+  const display = value ? _escHtml(value) : '<span style="color:var(--wt-tab-text-muted)">' + t('common.default') + '</span>';
   return '<div class="settings-action" data-key="' + item.key + '"' + (enabled ? '' : ' data-disabled="1"') + '>' + display + '</div>';
 }
 
@@ -382,13 +383,10 @@ function _bindContentEvents() {
 }
 
 // ── 内部：rikka label 动态生成 ──
-function _rikkaCnNum(n) {
-  const map = { 1: '一', 2: '两', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '十' };
-  return map[n] || String(n);
-}
 function _rikkaLabel() {
   const n = parseInt(localStorage.getItem('pty_rikka_count'), 10) || 1;
-  return n === 1 ? '获取一只rikka' : '获取' + _rikkaCnNum(n) + '只rikka';
+  if (n === 1) return t('settings.rikkaLabel');
+  return t('settings.rikkaLabelN', { num: n });
 }
 
 // ── 内部：HTML 转义（避免引入 formatters 循环依赖，本地实现） ──

@@ -1,24 +1,22 @@
 # 客户端配置 —— 仅 Client 进程使用的常量
+# 消费方：src/config/client.py
 
 [connection]
-# 客户端连接方式，三选一，必须与 daemon 侧 [listener] 对应监听器 enabled 匹配：
-# - "plain": 连明文无认证监听器（PLAIN_HOST:PLAIN_PORT），无认证无签名
-# - "token": 连本机 token 监听器（TOKEN_HOST:TOKEN_PORT），Token + HMAC 对称认证
-#            （令牌与 HMAC 密钥经同机 SHM 分发，仅本机可用）
-# - "tls":   连远程 TLS 监听器（TLS_HOST:TLS_PORT），TLS + Ed25519 公私钥认证
-CONNECT_MODE = "token"
+# 客户端连接方式，三选一，必须与 daemon 侧 [listener] 对应监听器 enabled 匹配
+CONNECT_MODE = "token"        # basic / token / tls
 
-# plain 模式连接位置（CONNECT_MODE=plain 时生效）
-PLAIN_HOST = "127.0.0.1"     # 明文无认证监听器地址
-PLAIN_PORT = 10521           # 明文无认证监听器端口
+# basic 模式连接位置（CONNECT_MODE=basic 时生效）
+BASIC_HOST     = "127.0.0.1"    # 明文监听器地址
+BASIC_PORT     = 10521          # 明文监听器端口
+BASIC_PASSWORD = ""             # 明文监听器共享密码（空=无认证；须与 daemon 侧一致）
 
 # token 模式连接位置（CONNECT_MODE=token 时生效，本机）
-TOKEN_HOST = "127.0.0.1"     # 本机 token 监听器地址
-TOKEN_PORT = 10520           # 本机 token 监听器端口
+TOKEN_HOST = "127.0.0.1"      # 本机 token 监听器地址
+TOKEN_PORT = 10520
 
 # tls 模式连接位置（CONNECT_MODE=tls 时生效）
-TLS_HOST = ""                # 远程 daemon TLS 监听器地址
-TLS_PORT = 18767             # 远程 daemon TLS 监听器端口
+TLS_HOST = ""                 # 远程 daemon TLS 监听器地址
+TLS_PORT = 18767
 
 [timeout]
 CONNECT_TIMEOUT         = 30.0
@@ -28,9 +26,4 @@ DEFAULT_TRIGGER_TIMEOUT = 120.0
 # 公私钥认证（CONNECT_MODE=tls 时生效）
 PUBKEY_PRIVATE_KEY_PATH = "~/.pty-agent/keys/id_ed25519"  # 客户端私钥
 KNOWN_HOSTS_FILE        = "~/.pty-agent/known_hosts"      # TOFU 信任存储文件
-TOFU_STRICT             = true                            # TOFU 严格模式（true=指纹不匹配拒绝，false=仅警告）
-
-[logging]
-# 客户端日志（日志格式见 shared.toml [logging]）
-CLIENT_LOG_LEVEL = "DEBUG"
-CLIENT_LOGGERS   = ["pty-client", "pty-daemonctl"]
+TOFU_STRICT             = true                            # true=指纹不匹配拒绝，false=仅警告

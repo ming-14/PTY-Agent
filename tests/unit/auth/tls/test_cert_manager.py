@@ -233,6 +233,9 @@ class TestCertManagerCustomParams:
         with open(cert_file, "rb") as f:
             cert = x509.load_pem_x509_certificate(f.read())
 
-        # 证书有效期应约为 30 天（使用 _utc 变体避免 cryptography 弃用警告）
-        delta = cert.not_valid_after_utc - cert.not_valid_before_utc
+        # 证书有效期应约为 30 天（_utc 变体为 cryptography>=42 新 API，旧版回退非 _utc）
+        get_valid = lambda c, name: getattr(c, name + "_utc", getattr(c, name))
+        not_after = get_valid(cert, "not_valid_after")
+        not_before = get_valid(cert, "not_valid_before")
+        delta = not_after - not_before
         assert 29 <= delta.days <= 31, f"有效期应约 30 天，实际 {delta.days} 天"

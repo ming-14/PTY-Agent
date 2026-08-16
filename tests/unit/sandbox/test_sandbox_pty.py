@@ -1,6 +1,12 @@
 """src/sandbox/pty.py 单元测试（mock manager / wezterm Pty）"""
 
+import sys
+
 import pytest
+
+# win-sandbox 为 Windows 原生组件；非 Windows 平台模块级跳过（import 前）
+if sys.platform != "win32":
+    pytest.skip("win-sandbox 仅支持 Windows", allow_module_level=True)
 
 import src.sandbox.pty as pty_mod
 from src.sandbox.pty import SandboxPty

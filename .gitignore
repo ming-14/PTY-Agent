@@ -80,7 +80,11 @@ bin/ultravnc/
 bin/terminal_injector/
 bin/fastscreencore/fastscreen.dll
 bin/cursorlocator/cursorlocator_config.json
-bin/aichat/
+# ai 插件（aichat）仅忽略运行时产物（下载的 exe / 生成的 config.yaml / 个人备注），
+# 桥接脚本（common.py/talk.py/config_manager.py/_finderror.py）与配置模板须入库
+config/plugins/ai/bin/
+config/plugins/ai/config/config.yaml
+config/plugins/ai/*.txt
 bin/rg/
 bin/win_sandbox/
 bin/openconsole/

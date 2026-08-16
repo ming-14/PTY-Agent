@@ -31,17 +31,18 @@ Python 3.8+，核心依赖：
 | `uvicorn[standard]>=0.30` | ASGI 服务器 |
 | `starlette>=0.37` | FastAPI 依赖 |
 | `websockets>=12.0` | WebSocket 支持 |
-| `aiohttp>=3.9` | FastScreen HTTP/WS 服务 |
 | `numpy>=1.24` | H.264 帧数据处理 |
 | `av>=11.0` | PyAV 视频编码/解码 |
 | `tomli` | Python < 3.11 的 TOML 解析（3.11+ 用内置 `tomllib`） |
 
-可选依赖：`PySide6`（GUI）、`pyte`（终端快照）、`wcwidth`（CJK 宽度）、`scour`（SVG 压缩）、`Pillow`（PNG/JPG/BMP）、`psutil`（系统统计）。
+可选依赖（缺失时自动降级，按需安装）：`wcwidth`（终端字符显示宽度计算）、`scour`（SVG 压缩，`--svg-compression-level` 1/2）、`Pillow`（PNG/JPG/BMP 位图渲染）、`psutil`（Web 系统 CPU/内存统计）。
+
+**可选功能模块**（`src/optional.py` 集中管理，缺失即功能禁用、主流程正常）：Web 界面（`web.toml` 缺失即关闭）、VNC 远程桌面（`bin/ultravnc` 缺失即禁用）、Screenshare 屏幕串流（`bin/fastscreencore` 缺失即禁用）、沙箱（`sandbox.toml` 缺失即关闭）、插件系统（`plugins.json` 缺失即禁用）。这些模块经惰性导入网关按需加载，文件可安全移除。
 
 ```powershell
 git clone <repo-url>
 cd pty-agent
-pip install cryptography tomli
+pip install -r requirements.txt
 ```
 
 ## 命令概览
@@ -52,12 +53,17 @@ pip install cryptography tomli
 | `send <id> -i "<input>"` | 发送输入到运行中的会话（`-i` 必填） |
 | `read <id>` | 读取会话输出 |
 | `list` | 列出所有会话 |
+| `status` | 查看守护进程运行状态 |
 | `kill <id>` | 终止会话 |
 | `events <id>` | 查看会话事件 |
-| `start` / `stop` | 手动启停守护进程 |
+| `start` / `stop` | 手动启停守护进程（`stop` 支持 `--force`） |
+| `wait [--timeout <seconds>]` | 恒等待指定秒数 |
 | `closewin <id> <hwnd>` | 关闭 GUI 窗口 |
 | `mouse <id> <action>` | 发送鼠标动作 |
-| `file <read\|write\|edit\|grep\|glob>` | 文件工具（读/写/唯一匹配替换/内容搜索/文件名匹配） |
+| `workflow <run\|list\|show\|cancel>` | workflow 脚本编排（YAML 定义，DAG 并行 + 条件/变量/重试，后台执行） |
+| `set-default <key> <value>` | 覆盖默认配置（会话级） |
+| `plugin <list\|ls\|attach\|detach\|cmd>` | 插件管理 |
+| `file <read\|write\|edit\|grep\|glob\|upload\|download>` | 文件工具（读/写/唯一匹配替换/内容搜索/文件名匹配/上传/下载） |
 | `keygen` | 生成 Ed25519 密钥对 |
 
 ## 连接方式
@@ -67,7 +73,7 @@ daemon 支持三种独立监听器（`daemon.toml [listener]` 段），可同开
 
 | 监听器 | 连接方式 `CONNECT_MODE` | 认证 | 默认位置 |
 |--------|------------------------|------|----------|
-| `plain` | `plain` | 无认证 | `0.0.0.0:10521`（关闭） |
+| `basic` | `basic` | 共享密码（密码即 HMAC 密钥；空密码=无认证） | `0.0.0.0:10521`（关闭） |
 | `token` | `token` | Token + HMAC（同机 SHM） | `127.0.0.1:10520`（开启） |
 | `tls` | `tls` | TLS + Ed25519 / authorized_keys | `0.0.0.0:18767`（关闭） |
 

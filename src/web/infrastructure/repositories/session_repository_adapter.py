@@ -37,9 +37,10 @@ class SessionRepositoryAdapter(SessionRepository):
         env: Optional[dict] = None,
         cols: Optional[int] = None,
         rows: Optional[int] = None,
+        mode: str = "pty",
     ) -> Any:
         return self._manager.create_session(
-            session_id, command, cwd=cwd, env=env, cols=cols, rows=rows
+            session_id, command, cwd=cwd, env=env, cols=cols, rows=rows, mode=mode
         )
 
     def remove_session(self, session_id: str) -> Optional[SessionEndedInfo]:

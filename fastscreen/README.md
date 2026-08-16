@@ -30,13 +30,13 @@ python build.py test    # 运行 pytest 测试
 python build.py all     # 构建 DLL + 启动 GUI
 
 # 或走 PTY-Agent 整体发布构建
-# 项目根目录执行 .\BUILD.ps1
+# 项目根目录执行 python BUILD.py
 ```
 
 ## 快速开始
 
 ```python
-# 需将 PTY-Agent/bin 加入 sys.path（或安装 fastscreencore）
+# 需将项目根 bin/ 加入 sys.path（或安装 fastscreencore）
 from fastscreencore import CaptureEngine, CaptureMethod
 
 engine = CaptureEngine()
@@ -112,7 +112,7 @@ fastscreen/
 └── tests/                # pytest 测试（依赖 bin/fastscreencore）
 ```
 
-Python 绑定层（`fastscreencore`：`_core.py` + `capture.py` + `fastscreen.dll`）为构建产物，位于 `bin/fastscreencore/`；上游流服务层在 `src/fastscreen/`（见父项目文档）。
+Python 绑定层（`fastscreencore`：`_core.py` + `capture.py` + `fastscreen.dll`）为构建产物，位于 `bin/fastscreencore/`；上游流服务层在 `src/screenshare/`（见父项目文档）。
 
 ## 测试
 

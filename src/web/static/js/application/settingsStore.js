@@ -20,6 +20,7 @@
 
 import { buildDefaults } from '../domain/settingsSchema.js';
 import { debug, info, warn } from '../domain/logger.js';
+import { t } from '../domain/i18n.js';
 import { ports } from './ports.js';
 
 // 内存中的当前设置值
@@ -182,7 +183,7 @@ function _doAutoSave() {
     // 成功静默，不打扰用户
   } catch (e) {
     warn('settings', 'auto-save failed: %s', e);
-    _toast('设置保存失败: ' + e, 'error');
+    _toast(t('msg.settingsSaveFailed', { err: e }), 'error');
   }
 }
 

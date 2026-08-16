@@ -7,6 +7,7 @@
 import { $ } from '../../infrastructure/domUtils.js';
 import { escHtml, formatAbsoluteTime, formatRelativeTime } from '../../domain/formatters.js';
 import { state } from '../../domain/state.js';
+import { t } from '../../domain/i18n.js';
 import { wsSend } from '../../infrastructure/wsClient.js';
 import { DEFAULT_COLS, DEFAULT_ROWS } from '../../domain/constants.js';
 
@@ -43,7 +44,7 @@ export function showDetailDialog(sid, data) {
   const overlay = $('detail-overlay');
   if (!overlay) return;
   overlay.style.display = 'flex';
-  $('detail-title').textContent = '会话详情 — ' + sid;
+  $('detail-title').textContent = t('detail.title', { sid });
   renderTabs();
   renderContent();
   if (!alreadyOpen) startRefresh();
@@ -149,9 +150,9 @@ function renderTabs() {
   tabs.innerHTML = '';
   const isHistory = detailData && (detailData.source === 'history' || !detailData.running);
   const tabDefs = [
-    { key: 'info', label: '基本信息' },
-    { key: 'process', label: '进程树', hidden: isHistory },
-    { key: 'events', label: '事件列表' },
+    { key: 'info', label: t('detail.basic') },
+    { key: 'process', label: t('detail.processTree'), hidden: isHistory },
+    { key: 'events', label: t('detail.events') },
   ].filter(t => !t.hidden);
   tabDefs.forEach(t => {
     const el = document.createElement('div');
@@ -191,31 +192,31 @@ function renderInfoTab(container) {
   const isHistory = d.source === 'history' || !d.running;
 
   const rows = [
-    { label: '会话 ID', value: d.id },
-    { label: '命令', value: d.command },
-    { label: 'PTY 类型', value: d.ptyType },
-    { label: '编码', value: d.encoding },
-    { label: '终端尺寸', value: (d.cols || DEFAULT_COLS) + ' x ' + (d.rows || DEFAULT_ROWS) },
+    { label: t('detail.sessionId'), value: d.id },
+    { label: t('detail.command'), value: d.command },
+    { label: t('detail.ptyType'), value: d.ptyType },
+    { label: t('detail.encoding'), value: d.encoding },
+    { label: t('detail.terminalSize'), value: (d.cols || DEFAULT_COLS) + ' x ' + (d.rows || DEFAULT_ROWS) },
   ];
 
   if (d.cwd) {
-    rows.push({ label: '工作目录', value: d.cwd });
+    rows.push({ label: t('detail.workdir'), value: d.cwd });
   }
 
-  rows.push({ label: '状态', value: d.running ? '运行中' : '已结束' });
-  rows.push({ label: '启动时间', value: d.startTime ? formatAbsoluteTime(d.startTime) : '-' });
+  rows.push({ label: t('detail.status'), value: d.running ? t('detail.statusRunning') : t('detail.statusEnded') });
+  rows.push({ label: t('detail.startTime'), value: d.startTime ? formatAbsoluteTime(d.startTime) : '-' });
 
   if (!d.running && d.endTime) {
-    rows.push({ label: '结束时间', value: formatAbsoluteTime(d.endTime) });
+    rows.push({ label: t('detail.endTime'), value: formatAbsoluteTime(d.endTime) });
   }
   if (d.exitCode !== null && d.exitCode !== undefined) {
-    rows.push({ label: '退出码', value: String(d.exitCode) });
+    rows.push({ label: t('detail.exitCode'), value: String(d.exitCode) });
   }
   if (d.errorMessage) {
-    rows.push({ label: '错误信息', value: d.errorMessage });
+    rows.push({ label: t('detail.errorInfo'), value: d.errorMessage });
   }
   if (d.outputSize !== undefined) {
-    rows.push({ label: '输出大小', value: formatBytes(d.outputSize) });
+    rows.push({ label: t('detail.outputSize'), value: formatBytes(d.outputSize) });
   }
 
   const table = document.createElement('div');
@@ -234,7 +235,7 @@ function renderInfoTab(container) {
 function renderProcessTab(container) {
   const tree = detailData.processTree;
   if (!tree || tree.length === 0) {
-    container.innerHTML = '<div class="detail-empty">暂无进程信息</div>';
+    container.innerHTML = '<div class="detail-empty">' + t('detail.noProcess') + '</div>';
     return;
   }
 
@@ -253,7 +254,7 @@ function renderProcessTab(container) {
   const detailPanel = document.createElement('div');
   detailPanel.className = 'detail-process-detail';
   detailPanel.id = 'process-detail-panel';
-  detailPanel.innerHTML = '<div class="detail-empty">单击进程查看详情</div>';
+  detailPanel.innerHTML = '<div class="detail-empty">' + t('detail.clickProcessHint') + '</div>';
   wrapper.appendChild(detailPanel);
 
   container.appendChild(wrapper);
@@ -305,19 +306,19 @@ function showProcessDetail(pid) {
   if (!panel) return;
   const details = detailData.processDetails;
   if (!details || !details[String(pid)]) {
-    panel.innerHTML = '<div class="detail-empty">无法获取进程详情</div>';
+    panel.innerHTML = '<div class="detail-empty">' + t('detail.noProcessDetail') + '</div>';
     return;
   }
   const d = details[String(pid)];
   const rows = [
     { label: 'PID', value: d.pid },
-    { label: '进程名', value: d.name },
-    { label: '完整路径', value: d.path || '-' },
-    { label: '命令行', value: d.commandLine || '-' },
-    { label: '父 PID', value: d.ppid || '-' },
-    { label: '内存使用', value: d.memoryMb !== null && d.memoryMb !== undefined ? d.memoryMb + ' MB' : '-' },
-    { label: 'CPU 时间', value: d.cpuSeconds !== null && d.cpuSeconds !== undefined ? d.cpuSeconds + ' 秒' : '-' },
-    { label: '创建时间', value: d.createTime ? formatAbsoluteTime(d.createTime) : '-' },
+    { label: t('detail.processName'), value: d.name },
+    { label: t('detail.fullPath'), value: d.path || '-' },
+    { label: t('detail.cmdline'), value: d.commandLine || '-' },
+    { label: t('detail.parentPid'), value: d.ppid || '-' },
+    { label: t('detail.memory'), value: d.memoryMb !== null && d.memoryMb !== undefined ? d.memoryMb + ' MB' : '-' },
+    { label: t('detail.cpuTime'), value: d.cpuSeconds !== null && d.cpuSeconds !== undefined ? d.cpuSeconds + t('detail.secondsSuffix') : '-' },
+    { label: t('detail.createdTime'), value: d.createTime ? formatAbsoluteTime(d.createTime) : '-' },
   ];
 
   const table = document.createElement('div');
@@ -337,7 +338,7 @@ function showProcessDetail(pid) {
 function renderEventsTab(container) {
   const events = detailData.events;
   if (!events || events.length === 0) {
-    container.innerHTML = '<div class="detail-empty">暂无事件</div>';
+    container.innerHTML = '<div class="detail-empty">' + t('detail.noEvents') + '</div>';
     return;
   }
 
@@ -392,11 +393,11 @@ function buildEventItem(ev) {
 
 function getEventTypeLabel(type) {
   const map = {
-    'process_spawn': '进程启动',
-    'process_exit': '进程退出',
-    'process_crash': '进程崩溃',
-    'gui_window': 'GUI窗口',
-    'encoding_change': '编码变更',
+    'process_spawn': t('detail.eventSpawn'),
+    'process_exit': t('detail.eventExit'),
+    'process_crash': t('detail.eventCrash'),
+    'gui_window': t('detail.eventGuiWindow'),
+    'encoding_change': t('detail.eventEncodingChange'),
   };
   return map[type] || type;
 }

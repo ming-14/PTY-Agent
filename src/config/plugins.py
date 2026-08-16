@@ -29,19 +29,23 @@ def _load_plugins_json() -> dict:
     return data
 
 
-_config = _load_plugins_json()
+try:
+    _config = _load_plugins_json()
+except FileNotFoundError:
+    # plugins.json 缺失：视为插件系统禁用（ENABLED=False，无插件路径）
+    _config = None
 
 # JSON 中显式指定的插件位置（相对项目根展开为绝对路径）
 _json_paths = [
     os.path.join(_common.PROJECT_ROOT, p)
     for p in (_config.get("plugins") or [])
     if isinstance(p, str) and p
-]
+] if _config is not None else []
 
 # 环境变量 PTY_PLUGIN_DIRS（os.pathsep 分隔）追加额外位置，供部署/测试隔离
 _env_paths = [p for p in os.environ.get("PTY_PLUGIN_DIRS", "").split(os.pathsep) if p]
 
-ENABLED = bool(_config.get("enabled", True))
+ENABLED = bool(_config.get("enabled", True)) if _config is not None else False
 PLUGIN_PATHS = _json_paths + _env_paths
 
 __all__ = ["ENABLED", "PLUGIN_PATHS"]

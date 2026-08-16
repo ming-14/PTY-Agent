@@ -5,6 +5,7 @@ recv 时调用 verify_and_strip() 验签。抽象定义在协议层（被依赖�
 具体实现（HMAC-SHA256 / Ed25519）在 auth 包实现，依赖方向 auth → protocol。
 """
 
+import json
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -27,6 +28,22 @@ class MessageSigner(ABC):
             带签名字段的消息副本（不修改原 dict）。
         """
         ...
+
+    def sign_bytes(self, obj: dict) -> bytes:
+        """签名并直接产出完整 wire 字节（含签名字段的 JSON 行 + \\n）
+
+        默认实现：sign() 后按与 Message.encode 一致的格式编码。
+        子类覆写为单次序列化（签名器内部已产出规范 JSON，
+        在规范字节上拼接签名字段，避免 send 侧二次 dumps——MB 级消息成本翻倍）。
+
+        Args:
+            obj: 待签名的消息字典。
+
+        Returns:
+            可直接 sendall 的完整 wire 字节。
+        """
+        signed = self.sign(obj)
+        return (json.dumps(signed, ensure_ascii=False) + "\n").encode("utf-8")
 
     @abstractmethod
     def verify(self, obj: dict, signature: str) -> bool:

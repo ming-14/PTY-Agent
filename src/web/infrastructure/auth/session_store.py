@@ -5,12 +5,12 @@ token 由 secrets.token_hex(32) 生成，存储为 dict[token → expiry_timesta
 线程安全（threading.Lock），懒清理（validate 时顺带清除过期项）。
 """
 
-import logging
+from ....logging import get_logger
 import secrets
 import threading
 import time
 
-_logger = logging.getLogger("pty-web-auth")
+_logger = get_logger("pty-web-auth")
 
 _DEFAULT_MAX_AGE = 86400  # 24h
 

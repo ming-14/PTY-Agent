@@ -7,6 +7,7 @@
 import { state } from '../domain/state.js';
 import { setStatus, updateSystemStatsUI } from './domUtils.js';
 import { debug, info, warn, error } from '../domain/logger.js';
+import { t } from '../domain/i18n.js';
 import { handleUnauthorized, getAuthToken } from './auth.js';
 
 let messageHandler = null;
@@ -23,7 +24,7 @@ export function connect() {
     return;
   }
   info('ws', 'connecting...');
-  setStatus('connecting', '连接中...');
+  setStatus('connecting', t('status.connecting'));
   const customAddr = localStorage.getItem(LS_SERVER_ADDR_KEY);
   let wsUrl;
   if (customAddr) {
@@ -46,14 +47,14 @@ export function connect() {
     state.ws = new WebSocket(wsUrl);
   } catch (e) {
     error('ws', 'connect failed:', e.message);
-    setStatus('disconnected', '连接失败');
+    setStatus('disconnected', t('status.connectFailed'));
     scheduleReconnect();
     return;
   }
 
   state.ws.onopen = () => {
     info('ws', 'connected');
-    setStatus('connected', '已连接');
+    setStatus('connected', t('status.connected'));
     state.restoreState = { pending: true, gotList: false, gotHistory: false };
     wsSend({ type: 'list' });
     wsSend({ type: 'history' });
@@ -63,14 +64,18 @@ export function connect() {
 
   state.ws.onmessage = e => {
     try {
-      const msg = JSON.parse(e.data);
-      debug('ws', 'recv type=%s sid=%s', msg.type, msg.sessionId || msg.session_id || '');
-      if (msg.type === 'auth_required') {
-        warn('ws', 'auth required, redirecting to login');
-        handleUnauthorized();
-        return;
+      const data = JSON.parse(e.data);
+      // 支持批量合并帧：JSON 数组 = 多条消息逐条分发
+      const msgs = Array.isArray(data) ? data : [data];
+      for (const msg of msgs) {
+        debug('ws', 'recv type=%s sid=%s', msg.type, msg.sessionId || msg.session_id || '');
+        if (msg.type === 'auth_required') {
+          warn('ws', 'auth required, redirecting to login');
+          handleUnauthorized();
+          return;
+        }
+        if (messageHandler) messageHandler(msg);
       }
-      if (messageHandler) messageHandler(msg);
     } catch (err) {
       error('ws', 'parse error:', err);
     }
@@ -82,14 +87,14 @@ export function connect() {
       handleUnauthorized();
       return;
     }
-    setStatus('disconnected', '已断开');
+    setStatus('disconnected', t('status.disconnected'));
     _stopSystemStatsTimer();
     scheduleReconnect();
   };
 
   state.ws.onerror = e => {
     error('ws', 'error:', e && e.message ? e.message : 'unknown');
-    setStatus('disconnected', '连接失败');
+    setStatus('disconnected', t('status.connectFailed'));
   };
 }
 

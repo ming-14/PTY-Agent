@@ -2,6 +2,9 @@
 
 # ===================== 运行时核心依赖 =====================
 
+# TOML 配置解析（Python <3.11 回退，3.11+ 用标准库 tomllib）
+tomli>=2.0; python_version < "3.11"
+
 # 认证：Ed25519 公私钥签名、OpenSSH 密钥格式解析（CONNECT_MODE=tls 时需要）
 cryptography>=41.0
 
@@ -11,10 +14,13 @@ uvicorn[standard]>=0.30
 starlette>=0.37
 websockets>=12.0
 
-# 屏幕捕获测试服务器 (src/fastscreen/server.py)：aiohttp 流端点（tests/web/ e2e 测试与手动调试用）
-aiohttp>=3.9
+# Workflow 编排 (src/workflow/definition.py)：YAML 定义文件解析
+pyyaml>=6.0
 
-# H.264 视频流编码 (src/fastscreen/streamers/encoding/h264.py)
+# MCP Server 封装 (mcp_server.py)：把 CLI 暴露为 MCP 工具
+mcp>=1.0
+
+# H.264 视频流编码 (src/screenshare/streamers/encoding/h264.py)
 #   av    — PyAV，封装 ffmpeg 做视频编码/解码
 #   numpy — 帧数据数值处理
 numpy>=1.24
@@ -38,3 +44,4 @@ psutil>=5.9
 
 # ===================== 测试依赖 =====================
 pytest>=7.0
+pytest-timeout>=2.0

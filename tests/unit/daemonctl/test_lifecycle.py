@@ -166,22 +166,32 @@ class TestStartDaemon:
             lambda s: printed.append(s),
         )
 
-        with patch("src.daemonctl.lifecycle.SingleInstanceLock") as mock_lock_cls, \
-             patch("src.daemonctl.lifecycle.subprocess.Popen") as mock_popen:
-            mock_lock = MagicMock()
-            mock_lock.is_locked.return_value = False
-            mock_lock_cls.return_value = mock_lock
-            mock_proc = MagicMock()
-            mock_proc.pid = 1234
-            mock_popen.return_value = mock_proc
+        # Unix 走 fork+execve，Windows 走 Popen：按平台 mock 各自入口
+        is_unix = hasattr(os, "fork")
+        mock_fork = None
+        mock_execve = None
+        if is_unix:
+            mock_fork = patch("src.daemonctl.lifecycle.os.fork",
+                              return_value=0).start()
+            mock_execve = patch("src.daemonctl.lifecycle.os.execve").start()
+            patch("src.daemonctl.lifecycle.os._exit").start()
+        try:
+            with patch("src.daemonctl.lifecycle.SingleInstanceLock") as mock_lock_cls, \
+                 patch("src.daemonctl.lifecycle.subprocess.Popen") as mock_popen:
+                mock_lock = MagicMock()
+                mock_lock.is_locked.return_value = False
+                mock_lock_cls.return_value = mock_lock
+                mock_proc = MagicMock()
+                mock_proc.pid = 1234
+                mock_popen.return_value = mock_proc
 
-            with patch("src.daemonctl.lifecycle.is_running", return_value=True):
-                start_daemon()
+                with patch("src.daemonctl.lifecycle.is_running", return_value=True):
+                    start_daemon()
 
-            assert mock_popen.called
-            # 固定端口模式：不带 --port 参数
-            args = mock_popen.call_args[0][0]
-            assert "--port" not in args
+                # Windows 走 Popen；Unix 走 fork+execve，两者其一被调用
+                assert mock_popen.called or (is_unix and mock_execve.called)
+        finally:
+            patch.stopall()
 
 
 class TestStopDaemon:

@@ -12,7 +12,6 @@
 
 import hashlib
 import json
-import logging
 import os
 import random
 import time
@@ -39,8 +38,9 @@ from .common import (
     TransferError,
     TransferTimeoutError,
 )
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-client")
+_logger = get_logger("pty-client")
 
 
 def _local_dst(

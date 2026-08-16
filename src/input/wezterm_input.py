@@ -12,9 +12,9 @@
          button ∈ left/middle/right/wheel_up/wheel_down
 """
 
-import logging
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-session")
+_logger = get_logger("pty-session")
 
 # wezterm KeyModifiers 位定义（与 wezterm-input-types Modifiers 一致）
 MOD_SHIFT = 1 << 1

@@ -12,6 +12,7 @@
 
 import { state, loadTabState } from './domain/state.js';
 import { warn, setLogLevel, setBufferSize } from './domain/logger.js';
+import { t, applyStaticText } from './domain/i18n.js';
 import { setBodyTheme, applySidebarWidth } from './infrastructure/storage.js';
 import { connect, wsSend, setMessageHandler } from './infrastructure/wsClient.js';
 import { checkAuthStatus } from './infrastructure/auth.js';
@@ -89,14 +90,9 @@ let _rikkaCount = parseInt(localStorage.getItem(_RIKKA_COUNT_LS_KEY), 10) || 1;
 let _rikkaLastDisabledTime = 0;
 let _rikkaResetTimer = null;
 
-function _rikkaCnNum(n) {
-  const map = { 1: '一', 2: '两', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '十' };
-  return map[n] || String(n);
-}
-
 function _rikkaLabel() {
   const n = _rikkaCount;
-  return n === 1 ? '获取一只rikka' : '获取' + _rikkaCnNum(n) + '只rikka';
+  return n === 1 ? t('settings.rikkaLabel') : t('settings.rikkaLabelN', { num: n });
 }
 
 function _updateRikkaDesc() {
@@ -259,6 +255,9 @@ function _levelNameToNum(name) {
 }
 
 async function init() {
+  // 应用静态 HTML 文案（index.html 中 data-i18n 标注的初始文本）
+  applyStaticText();
+
   // 先检查认证状态：若启用认证且未登录，跳转登录页
   const authStatus = await checkAuthStatus();
   if (authStatus.enabled && !authStatus.authenticated) {
@@ -394,6 +393,7 @@ async function init() {
     source: loggerSource,
     storageKeyPrefix: 'pty_logpanel_',
     theme: 'auto',
+    t,
     initialVisible: !!settingsStore.get('developer.logPanelEnabled'),
     windowSize: settingsStore.get('developer.windowSize'),
     windowOpacity: settingsStore.get('developer.windowOpacity'),

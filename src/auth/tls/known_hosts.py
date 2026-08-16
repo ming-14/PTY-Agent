@@ -12,12 +12,12 @@
     # 注释行以 # 开头
 """
 
-import logging
+from ...logging import get_logger
 import os
 import threading
 from typing import Dict, Optional, Tuple
 
-_logger = logging.getLogger("pty-auth-tls")
+_logger = get_logger("pty-auth-tls")
 
 
 class KnownHosts:

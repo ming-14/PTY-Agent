@@ -7,14 +7,14 @@
 该类只负责"是否已有实例在运行"的判断，不替代共享内存的端口/令牌传递。
 """
 
-import logging
 import os
 from typing import Optional
 
 from ..config.common import DATA_DIR, IS_WINDOWS
 from ..config.shared import SINGLE_INSTANCE_MUTEX_NAME
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-ipc")
+_logger = get_logger("pty-ipc")
 
 _ERROR_ALREADY_EXISTS = 183
 
@@ -231,22 +231,33 @@ class SingleInstanceLock:
         import ctypes
         import os
         import struct
+        from ctypes import wintypes
 
         kernel32 = ctypes.windll.kernel32
         ntdll = ctypes.windll.ntdll
 
         SYNCHRONIZE = 0x00100000
         STATUS_INFO_LENGTH_MISMATCH = 0xC0000004
-        PROCESS_DUP_HANDLE = 0x0040
         SystemExtendedHandleInformation = 64
 
+        # restype 必须为无符号：NTSTATUS 失败码高位置 1（0xC0000004），
+        # 有符号 c_long 会得到负数，与 STATUS_* 常量永不相等 → 长度不足的
+        # 重试分支永远走不进去，句柄多的系统上恒返回 None（force kill 失效）
+        kernel32.OpenMutexW.argtypes = [
+            wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR,
+        ]
+        kernel32.OpenMutexW.restype = wintypes.HANDLE
+        kernel32.CreateMutexW.argtypes = [
+            wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR,
+        ]
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
         ntdll.NtQuerySystemInformation.argtypes = [
             ctypes.c_ulong,
             ctypes.c_void_p,
             ctypes.c_ulong,
             ctypes.POINTER(ctypes.c_ulong),
         ]
-        ntdll.NtQuerySystemInformation.restype = ctypes.c_long
+        ntdll.NtQuerySystemInformation.restype = ctypes.c_ulong
 
         mutex_name = _windows_mutex_name()
         my_pid = os.getpid()

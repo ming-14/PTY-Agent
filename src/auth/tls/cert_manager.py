@@ -10,13 +10,13 @@ daemon 首次启动自动生成自签证书，后续启动加载已有证书。
 - 私钥文件权限限制为仅所有者可读写
 """
 
+from ...logging import get_logger
 import datetime
-import logging
 import os
 import ssl
 from typing import Tuple
 
-_logger = logging.getLogger("pty-auth-tls")
+_logger = get_logger("pty-auth-tls")
 
 
 class CertificateManager:

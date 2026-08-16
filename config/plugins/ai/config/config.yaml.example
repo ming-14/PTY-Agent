@@ -1,0 +1,6 @@
+model: openai:deepseek-v4-flash-free
+clients:
+  - type: openai
+    name: openai
+    api_base: https://opencode.ai/zen/v1
+    api_key: public

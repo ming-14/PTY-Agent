@@ -1,10 +1,17 @@
-"""编码模块单元测试 — encoding"""
-
+import locale
 import sys
 import os
+
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from src.encoding import detect_decode, decode_strip_tail
+
+# 自动探测仅回退到系统默认编码（Windows cp936 / 其他 GBK 系 locale）：
+# 系统编码为 UTF-8 的环境（现代 Linux）无 GBK 回退语义，无法自动识别
+_is_gbk_locale = "gbk" in locale.getpreferredencoding().lower() or "cp936" in \
+    locale.getpreferredencoding().lower()
 
 
 def test_decode_empty():
@@ -26,8 +33,10 @@ def test_decode_utf8_strip_tail():
     assert result == "你", f"got {result!r}"
 
 
+@pytest.mark.skipif(not _is_gbk_locale,
+                    reason="系统编码非 GBK 类（自动探测无 GBK 回退语义）")
 def test_decode_gbk():
-    """GBK 解码"""
+    """GBK 解码（系统编码回退语义，仅 GBK 系 locale 生效）"""
     data = "中文".encode("gbk")
     result = detect_decode(data)
     assert result == "中文"

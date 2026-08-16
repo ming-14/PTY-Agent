@@ -1,0 +1,11 @@
+# 客户端日志配置 — client 侧专属
+#
+# 消费方：src/config/client.py
+# 跨侧共享配置（格式/归档/异步）→ config/logging.toml
+
+[level]
+# 客户端日志级别：DEBUG / INFO / WARNING / ERROR / None（不落盘）
+CLIENT_LOG_LEVEL = "DEBUG"
+
+[loggers]
+CLIENT_LOGGERS = ["pty-client", "pty-daemonctl"]

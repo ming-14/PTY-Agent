@@ -1,6 +1,12 @@
 """src/sandbox/tracker.py 单元测试（mock manager）"""
 
+import sys
+
 import pytest
+
+# win-sandbox 为 Windows 原生组件；非 Windows 平台模块级跳过（import 前）
+if sys.platform != "win32":
+    pytest.skip("win-sandbox 仅支持 Windows", allow_module_level=True)
 
 from src.sandbox.tracker import SandboxProcessTreeTracker
 from src.process.base import ProcessNotification, NOTIF_SPAWN

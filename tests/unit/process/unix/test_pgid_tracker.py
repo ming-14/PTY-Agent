@@ -63,10 +63,18 @@ class TestKillTree:
         assert t.is_root_alive() is False
 
     def test_get_root_exit_code_after_kill(self, tracker):
-        """kill_tree 后 waitpid 收尸应返回退出码"""
+        """kill_tree 后 waitpid 收尸应返回退出码
+
+        注意：不得调用 proc.wait()/poll()（会抢先 waitpid 收尸，
+        与 tracker 为唯一收尸点的约定冲突），用 os.kill 探测存活。
+        """
         t, proc = tracker
         t.kill_tree(timeout=5.0)
-        proc.wait(timeout=5)
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            if not t.is_root_alive():
+                break
+            time.sleep(0.1)
         deadline = time.time() + 5.0
         while t.get_root_exit_code() is None and time.time() < deadline:
             time.sleep(0.1)
@@ -101,7 +109,7 @@ class TestNotifications:
         return t
 
     def test_spawn_notification(self):
-        """进程列表新增 → spawn 通知"""
+        """进程列表新增 → 每个新 pid 一个 spawn 通知"""
         t = self._make_tracker()
         t._last_pids = []
         t._notifications = []
@@ -109,7 +117,11 @@ class TestNotifications:
         with mock.patch.object(t, "get_process_list", return_value=[100, 200]):
             t._detect_process_changes()
         types = [n.type for n in t._notifications]
-        assert types == ["spawn"]
+        assert types == ["spawn", "spawn"]
+        # spawn 通知带进程名/路径（进程存活时尽力查询，失败则按 PID 标识）
+        for n in t._notifications:
+            assert isinstance(n.process_name, str)
+            assert isinstance(n.process_path, str)
 
     def test_exit_notification(self):
         """进程列表消失 → exit 通知"""

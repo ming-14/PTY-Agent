@@ -44,6 +44,7 @@ _CloseHandle = _api("CloseHandle", W.BOOL, [W.HANDLE])
 
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 PROCESS_TERMINATE = 0x0001
+PROCESS_SET_QUOTA = 0x0100
 PROCESS_ALL_ACCESS = 0x1F0FFF
 
 _OpenProcess = _api("OpenProcess", W.HANDLE, [W.DWORD, W.BOOL, W.DWORD])
@@ -215,3 +216,67 @@ _SendMessageW = _uapi(
 )
 
 WM_CLOSE = 0x0010
+
+# ============================================================
+#  Toolhelp32 进程快照（定位 ConPTY 宿主 OpenConsole 子进程）
+# ============================================================
+
+_TH32CS_SNAPPROCESS = 0x00000002
+_MAX_PATH = 260
+
+
+class PROCESSENTRY32W(ctypes.Structure):
+    """CreateToolhelp32Snapshot 的 PROCESSENTRY32W 结构"""
+
+    _fields_ = [
+        ("dwSize", W.DWORD),
+        ("cntUsage", W.DWORD),
+        ("th32ProcessID", W.DWORD),
+        ("th32DefaultHeapID", ctypes.c_size_t),
+        ("th32ModuleID", W.DWORD),
+        ("cntThreads", W.DWORD),
+        ("th32ParentProcessID", W.DWORD),
+        ("pcPriClassBase", W.DWORD),
+        ("dwFlags", W.DWORD),
+        ("szExeFile", W.WCHAR * _MAX_PATH),
+    ]
+
+
+_CreateToolhelp32Snapshot = _api(
+    "CreateToolhelp32Snapshot", W.HANDLE, [W.DWORD, W.DWORD]
+)
+_Process32FirstW = _api(
+    "Process32FirstW", W.BOOL, [W.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+)
+_Process32NextW = _api(
+    "Process32NextW", W.BOOL, [W.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+)
+
+
+def enum_console_host_children(parent_pid: int):
+    """枚举父进程为 parent_pid 的 ConPTY 宿主（OpenConsole/conhost）子进程 PID
+
+    ConPTY 宿主由 CreatePseudoConsole 内部 spawn，父进程即宿主进程（daemon）。
+    定位到这些进程后由上层 Assign 进 Job Object，保证宿主死亡时连带清理
+    （绕开 conhost 对死 server 管道 ReadFile 不自旋退出时的残留）。
+
+    Returns:
+        匹配的 PID 列表；无则空列表。
+    """
+    snap = _CreateToolhelp32Snapshot(_TH32CS_SNAPPROCESS, 0)
+    if not snap or snap == W.HANDLE(-1).value:
+        return []
+    result = []
+    try:
+        pe = PROCESSENTRY32W()
+        pe.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        ok = _Process32FirstW(snap, ctypes.byref(pe))
+        while ok:
+            if pe.th32ParentProcessID == parent_pid:
+                exe = pe.szExeFile.lower()
+                if exe.startswith("openconsole") or exe.startswith("conhost"):
+                    result.append(pe.th32ProcessID)
+            ok = _Process32NextW(snap, ctypes.byref(pe))
+    finally:
+        _CloseHandle(snap)
+    return result

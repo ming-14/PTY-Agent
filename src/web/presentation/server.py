@@ -1,12 +1,11 @@
 """Web 服务器入口（展示层）。"""
 
 import asyncio
-import logging
 import os
 import socket
 import threading
 import time
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 from urllib.parse import urlparse
 
 import uvicorn
@@ -15,23 +14,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from ...fastscreen.ports import FastScreenServicePort
-from ...vnc import get_novnc_web_dir
-from ...vnc.ports import VncServicePort
+from ...optional import (
+    get_cursor_locator_adapter_cls,
+    get_screenshare_adapter_cls,
+    get_vnc_adapter_cls,
+)
 from ..application.adaptive_lock import AdaptiveLockService
 from ..application.ports import EventPublisher, HistoryRepository, SessionRepository
 from ..history import HistoryStore
 from ..infrastructure import (
-    CursorLocatorAdapter,
     EventPublisherImpl,
     FastAPIWebSocketTransport,
-    FastScreenAdapter,
     HistoryRepositoryAdapter,
     SessionRepositoryAdapter,
     ShellProviderImpl,
     SystemStatsProviderImpl,
     ThreadExecutorImpl,
-    VncAdapter,
     WebSocketConnectionContext,
 )
 from ..infrastructure.auth import SessionStore
@@ -40,11 +38,17 @@ from .controllers.auth_controller import (
     validate_request_auth,
     validate_ws_auth,
 )
-from .controllers.fastscreen_controller import create_fastscreen_router
+from .controllers.screenshare_controller import create_screenshare_router
 from .controllers.settings_controller import create_settings_router
 from .controllers.websocket_controller import WebSocketController
+from ...logging import get_logger
 
-_logger = logging.getLogger("pty-web")
+if TYPE_CHECKING:
+    from ...screenshare.ports import ScreenshareServicePort
+    from ...vnc import get_novnc_web_dir
+    from ...vnc.ports import VncServicePort
+
+_logger = get_logger("pty-web")
 
 _STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 
@@ -101,29 +105,33 @@ class WebServer:
         self._adaptive_lock = AdaptiveLockService()
         self._register_manager_callbacks()
 
-        # VNC 远程桌面适配器（无条件实例化，由 is_available() 决定是否可用；
-        # ENABLE_VNC=False 时 get_status() 返回 disabled 状态，前端据此隐藏入口）
-        self._vnc_service: Optional[VncServicePort] = None
-        try:
-            self._vnc_service = VncAdapter()
-        except Exception:
-            _logger.exception("VncAdapter init failed, VNC disabled")
+        # VNC 远程桌面适配器（仅当 web + vnc 均可用时实例化；否则为 None，前端隐藏入口）
+        self._vnc_service: Optional[object] = None
+        vnc_adapter_cls = get_vnc_adapter_cls()
+        if vnc_adapter_cls is not None:
+            try:
+                self._vnc_service = vnc_adapter_cls()
+            except Exception:
+                _logger.exception("VncAdapter init failed, VNC disabled")
 
-        # FastScreen 屏幕查看适配器（纯库调用，无子进程；
-        # ENABLE_FASTSCREEN=False 或 DLL 加载失败时 is_available() 返回 False）
-        self._fastscreen_service: Optional[FastScreenServicePort] = None
-        try:
-            self._fastscreen_service = FastScreenAdapter()
-        except Exception:
-            _logger.exception("FastScreenAdapter init failed, FastScreen disabled")
+        # Screenshare 屏幕查看适配器（仅当 web + screenshare 可用时实例化；DLL 缺失时 is_available() 返回 False）
+        self._screenshare_service: Optional[object] = None
+        screenshare_adapter_cls = get_screenshare_adapter_cls()
+        if screenshare_adapter_cls is not None:
+            try:
+                self._screenshare_service = screenshare_adapter_cls()
+            except Exception:
+                _logger.exception("ScreenshareAdapter init failed, Screenshare disabled")
 
         self._cursor_locator_service = None
-        try:
-            self._cursor_locator_service = CursorLocatorAdapter()
-        except Exception:
-            _logger.exception(
-                "CursorLocatorAdapter init failed, cursor locator disabled"
-            )
+        cursor_locator_adapter_cls = get_cursor_locator_adapter_cls()
+        if cursor_locator_adapter_cls is not None:
+            try:
+                self._cursor_locator_service = cursor_locator_adapter_cls()
+            except Exception:
+                _logger.exception(
+                    "CursorLocatorAdapter init failed, cursor locator disabled"
+                )
 
         # 控制器
         self._controller = WebSocketController(
@@ -135,7 +143,7 @@ class WebServer:
             publisher=self._publisher,
             adaptive_lock=self._adaptive_lock,
             vnc_service=self._vnc_service,
-            fastscreen_service=self._fastscreen_service,
+            screenshare_service=self._screenshare_service,
             cursor_locator_service=self._cursor_locator_service,
             # 注入 connections 字典，_cleanup 据此检查同 client_uid 是否还有
             # 其他活跃连接订阅了该 sid（多标签页/刷新场景锁继承）
@@ -476,6 +484,8 @@ class WebServer:
         # 路径示例：/static/novnc/vnc.html → src/web/static/vendor/novnc/vnc.html
         if self._vnc_service is not None:
             try:
+                from ...vnc import get_novnc_web_dir
+
                 novnc_web_dir = get_novnc_web_dir()
                 if novnc_web_dir.exists():
                     app.mount(
@@ -493,22 +503,22 @@ class WebServer:
             except Exception:
                 _logger.exception("noVNC static mount failed")
 
-        # FastScreen 流媒体端点（HTTP MJPEG + WS H264 MSE + WS WebCodecs）
+        # Screenshare 流媒体端点（HTTP MJPEG + WS H264 MSE + WS WebCodecs）
         # 复用 StreamManager 多客户端共享会话；按需连接，断开即停止捕获
-        if self._fastscreen_service is not None:
+        if self._screenshare_service is not None:
             try:
-                fs_router = create_fastscreen_router(
-                    self._fastscreen_service,
+                fs_router = create_screenshare_router(
+                    self._screenshare_service,
                     auth_validator=_http_auth,
                     session_store=self._session_store,
                 )
                 app.include_router(fs_router)
                 _logger.info(
-                    "FastScreen router mounted: available=%s",
-                    self._fastscreen_service.is_available(),
+                    "Screenshare router mounted: available=%s",
+                    self._screenshare_service.is_available(),
                 )
             except Exception:
-                _logger.exception("FastScreen router mount failed")
+                _logger.exception("Screenshare router mount failed")
 
         # VNC WebSocket 代理端点（替代 websockify 子进程）
         # noVNC iframe 连接 ws://host:port/vnc/websockify，本端点代理到 localhost:vnc_port
@@ -730,10 +740,10 @@ class WebServer:
                 self._vnc_service.cleanup()
             except Exception:
                 _logger.exception("VNC cleanup error during stop")
-        # 清理 FastScreen 捕获会话
-        if self._fastscreen_service is not None:
+        # 清理 Screenshare 捕获会话
+        if self._screenshare_service is not None:
             try:
-                self._fastscreen_service.cleanup()
+                self._screenshare_service.cleanup()
             except Exception:
-                _logger.exception("FastScreen cleanup error during stop")
+                _logger.exception("Screenshare cleanup error during stop")
         _logger.info("WebServer _stop_coro exit requested")

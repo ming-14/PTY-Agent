@@ -9,17 +9,17 @@
 对外接口 (transport.py 使用): is_image_ext, render_to_file, render_svg_string, _compress_svg
 """
 
-import logging
 import os
 from typing import Optional
 
 from ...config.common import IS_WINDOWS
 from .common import _IMAGE_EXTS, is_image_ext, _expand_lines
 from .svg import render_svg_string, _compress_svg
+from ...logging import get_logger
 
 __all__ = ["render_to_file", "render_svg_string", "_compress_svg", "is_image_ext", "_expand_lines"]
 
-_logger = logging.getLogger("pty-client")
+_logger = get_logger("pty-client")
 
 
 def render_to_file(
@@ -32,7 +32,7 @@ def render_to_file(
     if is_img and ext == ".svg":
         if not screen_buffer:
             return (
-                "SVG output requires screen buffer (use --snapshot or --snapshot-mode)"
+                "SVG output requires a screen buffer"
             )
         svg = render_svg_string(screen_buffer)
         svg = _compress_svg(svg, svg_compression_level)
@@ -47,7 +47,7 @@ def render_to_file(
 
     if is_img and ext in (".png", ".jpg", ".jpeg", ".bmp"):
         if not screen_buffer:
-            return "Image output requires screen buffer (use --snapshot or --snapshot-mode)"
+            return "Image output requires a screen buffer"
         return _render_image(path, screen_buffer, ext)
 
     text = response.get("outputStream") or response.get("stdout") or ""

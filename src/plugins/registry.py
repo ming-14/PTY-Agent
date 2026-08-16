@@ -6,14 +6,14 @@
 - 自动加载条件匹配（auto_load：exec 请求按 command/cwd/env 判定命中）
 """
 
-import logging
 import re
 from typing import Dict, List, Optional
 
 from .base import Plugin
-from .loader import load_plugins
+from .loader import load_plugins, resolve_kind
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-plugins")
+_logger = get_logger("pty-plugins")
 
 
 def _match_cwd(pattern: str, cwd: str) -> bool:
@@ -74,8 +74,15 @@ class PluginRegistry:
         self._classes: Dict[str, type] = {}
         self._source: Dict[str, str] = {}
         self._process_instances: Dict[str, Plugin] = {}
+        # auto_load 规则子集：match_auto_load 只遍历声明了规则的分片，
+        # 避免每次 exec 请求全量遍历所有插件
+        self._auto_load_rules: List[tuple] = []
         for cls in load_plugins(plugin_paths):
             name = cls.name
+            # CLI 形态插件在客户端进程执行，daemon 不登记（不实例化/不可挂载）
+            if resolve_kind(cls) == "cli":
+                _logger.info("CLI 插件跳过 daemon 登记（客户端进程加载）: %s", name)
+                continue
             if name in self._classes:
                 _logger.error(
                     "插件名冲突，跳过 %s（已存在: %s）", name, self._source.get(name)
@@ -94,6 +101,8 @@ class PluginRegistry:
                 self._process_instances[name] = instance
             self._classes[name] = cls
             self._source[name] = cls.__module__
+            if cls.auto_load:
+                self._auto_load_rules.append((name, cls.auto_load))
             _logger.info(
                 "插件已加载: %s v%s 触发=%s 间隔=%s 消息=%s io=%s",
                 name,
@@ -149,10 +158,7 @@ class PluginRegistry:
     ) -> List[str]:
         """按 exec 请求字段（command/cwd/env）返回 auto_load 命中的插件名列表"""
         hits = []
-        for name, cls in self._classes.items():
-            rule = cls.auto_load
-            if not rule:
-                continue
+        for name, rule in self._auto_load_rules:
             try:
                 if _match_auto_load(rule, command, cwd, env):
                     hits.append(name)

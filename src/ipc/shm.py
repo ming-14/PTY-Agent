@@ -9,9 +9,9 @@ Windows 使用命名 mmap，Unix 回退文件。
 - HMAC 密钥：守护进程生成，客户端加载用于消息签名验证
 """
 
-import logging
 import mmap
 import os
+import time
 from typing import Optional
 
 from ..config.common import IS_WINDOWS
@@ -21,8 +21,19 @@ from ..config.shared import (
     HMAC_KEY_NAME,
     HMAC_KEY_SIZE,
 )
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-ipc")
+_logger = get_logger("pty-ipc")
+
+# 令牌 SHM seqlock 布局：[seq 1 字节][token 数据 63 字节]
+# seq 偶数 = 稳定可读；奇数 = 写入中。写者先置奇 → 写数据 → 再置偶；
+# 读者读 seq → 数据 → 复核 seq，不一致或为奇则重读。单字节写天然原子，
+# 由此消除令牌轮换窗口期并发读者的撕裂读（半个旧 token + 半个新 token
+# 既非旧也非新 → Authentication failed）。
+_TOKEN_SEQ_OFFSET = 0
+_TOKEN_DATA_OFFSET = 1
+_TOKEN_DATA_SIZE = AUTH_TOKEN_SIZE - 1
+_TOKEN_READ_RETRIES = 4
 
 
 def _create_restricted_mmap(size: int, tagname: str) -> mmap.mmap:
@@ -41,14 +52,30 @@ def _create_restricted_mmap(size: int, tagname: str) -> mmap.mmap:
 
 
 def generate_auth_token() -> str:
-    """生成 32 字节随机认证令牌（hex 编码）"""
-    token = os.urandom(32).hex()
+    """生成 31 字节随机认证令牌（hex 编码，62 字符 ≤ SHM 数据区 63 字节）"""
+    token = os.urandom(31).hex()
     _logger.debug("generate_auth_token: len=%d", len(token))
     return token
 
 
+def _publish_token(shm: mmap.mmap, token: str) -> None:
+    """按 seqlock 协议发布令牌到共享内存（daemon 为唯一写者）
+
+    seq 置奇（写入中）→ 写数据区 → seq 置偶（完成）。
+    读者据此检测撕裂读；跨字节的数据写不再是原子性要求。
+    """
+    data = token.encode("ascii")[:_TOKEN_DATA_SIZE].ljust(_TOKEN_DATA_SIZE, b"\x00")
+    seq = shm[_TOKEN_SEQ_OFFSET]
+    shm.seek(_TOKEN_SEQ_OFFSET)
+    shm.write(bytes([(seq + 1) & 0xFF]))  # 写入中（奇数）
+    shm.seek(_TOKEN_DATA_OFFSET)
+    shm.write(data)
+    shm.seek(_TOKEN_SEQ_OFFSET)
+    shm.write(bytes([(seq + 2) & 0xFF]))  # 完成（偶数）
+
+
 def read_auth_token() -> Optional[str]:
-    """从共享内存读取认证令牌
+    """从共享内存读取认证令牌（seqlock 复核，撕裂读自动重读）
 
     Returns:
         令牌字符串，获取失败返回 None。
@@ -56,11 +83,25 @@ def read_auth_token() -> Optional[str]:
     if IS_WINDOWS:
         try:
             shm = _create_restricted_mmap(AUTH_TOKEN_SIZE, AUTH_TOKEN_NAME)
-            data = shm.read(AUTH_TOKEN_SIZE)
-            shm.close()
-            token = data.rstrip(b"\x00").decode("ascii")
-            _logger.debug("read_auth_token: %s...", token[:8] if token else "None")
-            return token or None
+            try:
+                for _ in range(_TOKEN_READ_RETRIES):
+                    seq1 = shm[_TOKEN_SEQ_OFFSET]
+                    if seq1 & 1:  # 写者正在发布，稍后重读
+                        time.sleep(0.001)
+                        continue
+                    shm.seek(_TOKEN_DATA_OFFSET)
+                    data = shm.read(_TOKEN_DATA_SIZE)
+                    if shm[_TOKEN_SEQ_OFFSET] != seq1:  # 撕裂读，重读
+                        continue
+                    token = data.rstrip(b"\x00").decode("ascii")
+                    _logger.debug(
+                        "read_auth_token: %s...", token[:8] if token else "None"
+                    )
+                    return token or None
+                _logger.warning("read_auth_token: 持续撕裂读，放弃本次读取")
+                return None
+            finally:
+                shm.close()
         except (FileNotFoundError, OSError) as e:
             _logger.debug("read_auth_token: failed %s", e)
             return None
@@ -81,7 +122,7 @@ def read_auth_token() -> Optional[str]:
 
 
 def write_auth_token(token: str) -> Optional[mmap.mmap]:
-    """将认证令牌写入命名共享内存
+    """将认证令牌写入命名共享内存（seqlock 发布）
 
     Args:
         token: 认证令牌字符串（hex 编码）。
@@ -89,11 +130,10 @@ def write_auth_token(token: str) -> Optional[mmap.mmap]:
     Returns:
         mmap 对象（Windows），Unix 返回 None。
     """
-    token_bytes = token.encode("ascii").ljust(AUTH_TOKEN_SIZE, b"\x00")
     _logger.debug("write_auth_token: %s...", token[:8] if token else "None")
     if IS_WINDOWS:
         shm = _create_restricted_mmap(AUTH_TOKEN_SIZE, AUTH_TOKEN_NAME)
-        shm.write(token_bytes)
+        _publish_token(shm, token)
         return shm
     else:
         from ..config.common import DATA_DIR
@@ -106,6 +146,16 @@ def write_auth_token(token: str) -> Optional[mmap.mmap]:
         finally:
             os.close(fd)
         return None
+
+
+def update_auth_token(shm: mmap.mmap, token: str) -> None:
+    """原地更新已创建的令牌共享内存（seqlock 发布，免重建 mmap）
+
+    Args:
+        shm: write_auth_token 返回的 mmap 对象（Windows）。
+        token: 新的认证令牌字符串（hex 编码）。
+    """
+    _publish_token(shm, token)
 
 
 def cleanup_auth_shm():

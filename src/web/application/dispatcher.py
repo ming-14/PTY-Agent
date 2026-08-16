@@ -1,12 +1,12 @@
 """WebSocket 消息分发器。"""
 
-import logging
 from typing import Optional
 
 from ...protocol.response import Response
 from .handlers import HandlerContext, MessageHandler, build_handler_registry
+from ...logging import get_logger
 
-_logger = logging.getLogger("pty-web")
+_logger = get_logger("pty-web")
 
 
 class MessageDispatcher:

@@ -1,13 +1,13 @@
 """系统资源统计提供者实现。"""
 
-import logging
 import os
 import time
 
 from ...application.ports import SystemStatsProvider, ThreadExecutor
 from ...domain.entities import SystemStats
+from ....logging import get_logger
 
-_logger = logging.getLogger("pty-web")
+_logger = get_logger("pty-web")
 
 
 def _get_windows_stats():

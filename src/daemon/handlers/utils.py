@@ -1,7 +1,6 @@
 import base64
 import gzip
 import json
-import logging
 import re
 import time
 from typing import Optional
@@ -14,8 +13,9 @@ from ...protocol.ansi import strip_ansi
 from ...protocol.message import Message
 from ...protocol.response import Response
 from ...session.manager import SessionManager
+from ...logging import get_logger
 
-_logger = logging.getLogger("pty-daemon")
+_logger = get_logger("pty-daemon")
 
 _REASON_MAP = {
     "matched": "trigger_matched",
@@ -64,16 +64,17 @@ def map_reason(reason: str, exit_code=None) -> str:
     return _REASON_MAP.get(reason, reason)
 
 
-def filter_snapshot_lines(output: str, lines_param, column_param=None) -> str:
+def filter_snapshot_lines(
+    output: str, lines_param, column_param=None, grep=None
+) -> str:
     if not output:
         return output
+    # 单次 splitlines：lines/grep/column 依次作用于同一行列表
+    snap_lines = output.splitlines()
+
     if lines_param is not None:
-        snap_lines = output.splitlines()
         if isinstance(lines_param, int):
-            if 1 <= lines_param <= len(snap_lines):
-                snap_lines = [snap_lines[lines_param - 1]]
-            else:
-                snap_lines = []
+            snap_lines = snap_lines[-lines_param:] if lines_param > 0 else []
         elif isinstance(lines_param, str) and ":" in lines_param:
             parts = lines_param.split(":", 1)
             try:
@@ -86,24 +87,23 @@ def filter_snapshot_lines(output: str, lines_param, column_param=None) -> str:
         else:
             try:
                 n = int(lines_param)
-                if 1 <= n <= len(snap_lines):
-                    snap_lines = [snap_lines[n - 1]]
-                else:
-                    snap_lines = []
+                snap_lines = snap_lines[-n:] if n > 0 else []
             except ValueError:
                 snap_lines = []
-        output = "\n".join(snap_lines)
-    if column_param is not None and output:
-        snap_lines = output.splitlines()
+    if grep:
+        if not snap_lines:
+            return ""
+        try:
+            pat = re.compile(grep)
+            snap_lines = [l for l in snap_lines if safe_regex_search(pat, l)]
+        except re.error:
+            return ""
+    if column_param is not None:
         col_idx = column_param - 1
-        filtered = []
-        for line in snap_lines:
-            if 0 <= col_idx < len(line):
-                filtered.append(line[col_idx])
-            else:
-                filtered.append("")
-        output = "\n".join(filtered)
-    return output
+        snap_lines = [
+            line[col_idx] if 0 <= col_idx < len(line) else "" for line in snap_lines
+        ]
+    return "\n".join(snap_lines)
 
 
 def build_hint(
@@ -171,17 +171,27 @@ def format_iso_ms(timestamp: float) -> str:
 def attach_screen_buffer(result: dict, session, msg: dict):
     if not msg.get("include_screen_buffer"):
         return
-    screen_buffer = session.export_screen_buffer()
-    if not screen_buffer:
-        return
-    compressed = compress_screen_buffer(screen_buffer)
+    # 屏幕内容仅随 feed/resize 变化：按 (feed_count, cols, rows) 缓存压缩结果，
+    # 避免高频命令重复 export + json.dumps + gzip + base64
+    screen = getattr(session, "_screen", None)
+    key = (screen.feed_count, screen.cols, screen.rows) if screen else None
+    cached = getattr(session, "_screen_buffer_cache", None)
+    if cached is not None and cached[0] == key:
+        compressed, meta = cached[1], cached[2]
+    else:
+        screen_buffer = session.export_screen_buffer()
+        if not screen_buffer:
+            return
+        compressed = compress_screen_buffer(screen_buffer)
+        meta = {
+            "cols": screen_buffer.get("cols", 0),
+            "rows": screen_buffer.get("rows", 0),
+            "sparse": True,
+            "compressed": True,
+        }
+        session._screen_buffer_cache = (key, compressed, meta)
     result["screenBufferZ"] = compressed
-    result["screenBufferMeta"] = {
-        "cols": screen_buffer.get("cols", 0),
-        "rows": screen_buffer.get("rows", 0),
-        "sparse": True,
-        "compressed": True,
-    }
+    result["screenBufferMeta"] = meta
 
 
 def build_result(
@@ -225,7 +235,7 @@ def build_result(
     result: dict = {
         "commandType": result_type,
         "sessionId": session_id,
-        # 会话 UID（Session.uid），供客户端 AI 分析按 uid 续聊（aichat --session <uid>）
+        # 会话 UID（Session.uid），供 CLI 侧插件（如 ai）按会话续聊使用
         "uid": session.uid if session else None,
         "outputStream": output,
         "outputOffset": output_offset
@@ -312,8 +322,10 @@ def strip_if_needed(output: str, msg: dict) -> str:
     return output
 
 
-def apply_lines_grep(output: str, lines_param, grep, conn) -> Optional[str]:
-    if not lines_param and not grep:
+def apply_lines_grep(
+    output: str, lines_param, grep, conn, column_param=None
+) -> Optional[str]:
+    if not lines_param and not grep and column_param is None:
         return output
 
     lines = output.splitlines()
@@ -348,6 +360,13 @@ def apply_lines_grep(output: str, lines_param, grep, conn) -> Optional[str]:
         except re.error:
             Message.send(conn, Response.error(f"Invalid regex: {grep}"))
             return None
+
+    # 与 filter_snapshot_lines 一致：取每行第 N 列（1-based 字符位）
+    if column_param is not None:
+        col_idx = column_param - 1
+        lines = [
+            line[col_idx] if 0 <= col_idx < len(line) else "" for line in lines
+        ]
 
     return "\n".join(lines)
 
@@ -397,6 +416,24 @@ def validate_request(conn, msg: dict, fields: list) -> bool:
     for name, max_len in fields:
         if not validate_field(msg.get(name), name, max_len, conn):
             return False
+    return True
+
+
+def validate_trigger_regex(trigger, conn) -> bool:
+    """校验触发正则在提交前可编译；非法正则拒绝并返回 False
+
+    仅拦截 re.compile 抛出的语法错误（用户输入错误），
+    合法但存在 ReDoS 风险的正则由 TriggerMatcher 降级为子串匹配，不在此拒绝。
+    """
+    if trigger is None:
+        return True
+    try:
+        re.compile(trigger)
+    except re.error as e:
+        Message.send(
+            conn, Response.error(f"Invalid trigger regex: {trigger!r} ({e})")
+        )
+        return False
     return True
 
 

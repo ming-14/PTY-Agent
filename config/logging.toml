@@ -1,0 +1,19 @@
+# 日志系统配置 — 跨侧共享（daemon 与 client 均加载）
+#
+# 消费方：src/config/shared.py、src/config/daemon.py、src/config/client.py
+# 侧专属覆盖（分组定义、级别）：
+#   daemon 侧 → config/daemon/logging.toml
+#   client 侧 → config/client/logging.toml
+
+[format]
+LOG_FORMAT      = "%(asctime)s.%(msecs)03d [%(levelname)-8s] [%(name)s:%(threadName)s] %(filename)s:%(lineno)d - %(message)s"
+LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+[archive]
+# 前一日日志自动 gzip 归档的后台检查间隔（秒）
+LOG_ARCHIVE_INTERVAL = 600
+
+[async]
+# 异步日志队列容量：业务线程 put 到此队列，后台单线程消费写文件
+# 队列满时丢弃最旧记录（drop_oldest），防止背压阻塞业务线程
+LOG_QUEUE_SIZE = 8192

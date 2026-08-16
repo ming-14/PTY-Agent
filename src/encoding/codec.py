@@ -4,13 +4,13 @@
 Session 类内部不再直接实现这些逻辑，通过本模块的纯函数完成。
 """
 
+from ..logging import get_logger
 import ctypes
 import locale
-import logging
 import sys
 from typing import Optional, Tuple
 
-_logger = logging.getLogger("pty-session")
+_logger = get_logger("pty-session")
 
 _MAX_STRIP_TRIES = 20  # 从 100 降到 20，配合智能截断
 
@@ -106,15 +106,32 @@ def decode_strip_tail(data: bytes, encoding: str) -> str:
     Returns:
         解码后的字符串。
     """
+    text, _ = decode_strip_tail_len(data, encoding)
+    return text
+
+
+def decode_strip_tail_len(data: bytes, encoding: str) -> Tuple[str, int]:
+    """解码并返回 (文本, 被消费的字节长度)
+
+    语义与 decode_strip_tail 一致，额外返回文本对应的完整字节前缀长度，
+    供增量解码器跟踪被丢弃的残缺尾部（尾部 = data[consumed:]）。
+
+    Args:
+        data:     待解码的字节数据。
+        encoding: 编码名称（如 'utf-8', 'gbk'）。
+
+    Returns:
+        (解码后的字符串, 被消费的字节长度)。
+    """
     if not data:
-        return ""
+        return "", 0
     # 快速路径：严格解码成功直接返回
     try:
         decoded = data.decode(encoding)
         _logger.debug(
             "decode_strip_tail: fast path OK len=%d enc=%s", len(data), encoding
         )
-        return decoded
+        return decoded, len(data)
     except UnicodeDecodeError:
         pass
 
@@ -127,14 +144,15 @@ def decode_strip_tail(data: bytes, encoding: str) -> str:
             encoding,
         )
         try:
-            return trimmed.decode(encoding)
+            return trimmed.decode(encoding), len(trimmed)
         except UnicodeDecodeError:
             pass
 
     # 回退路径：替换模式扫描尾部替换符
+    consumed = len(data)
     tries = 0
-    while len(data) > 0 and tries < _MAX_STRIP_TRIES:
-        result = data.decode(encoding, errors="replace")
+    while consumed > 0 and tries < _MAX_STRIP_TRIES:
+        result = data[:consumed].decode(encoding, errors="replace")
         i = len(result) - 1
         while i >= 0 and result[i] in ("\ufffd", "\r", "\n", "\t", " "):
             if result[i] == "\ufffd":
@@ -142,14 +160,14 @@ def decode_strip_tail(data: bytes, encoding: str) -> str:
             i -= 1
         else:
             _logger.debug(
-                "decode_strip_tail: fallback path tries=%d len=%d", tries, len(data)
+                "decode_strip_tail: fallback path tries=%d len=%d", tries, consumed
             )
-            return result
-        data = data[:-1]
+            return result, consumed
+        consumed -= 1
         tries += 1
-    result = data.decode(encoding, errors="replace") if data else ""
-    _logger.debug("decode_strip_tail: fallback end tries=%d len=%d", tries, len(data))
-    return result
+    result = data[:consumed].decode(encoding, errors="replace") if consumed else ""
+    _logger.debug("decode_strip_tail: fallback end tries=%d len=%d", tries, consumed)
+    return result, consumed
 
 
 def detect_decode_ext(

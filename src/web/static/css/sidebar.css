@@ -153,6 +153,11 @@ body[data-theme="dark"] .sidebar-resizing .sidebar-resizer {
   opacity: 0.7;
 }
 .sidebar-item-label { font-weight: 600; }
+/* 运行模式徽标（子进程） — 复用 tabbar 的 .mode-badge，此处仅约束 label 内布局 */
+.sidebar-item-label .mode-badge {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
 .sidebar-item-cmd {
   color: var(--wt-tab-text-muted);
   overflow: hidden;

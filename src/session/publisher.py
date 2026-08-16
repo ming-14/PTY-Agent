@@ -5,11 +5,11 @@
 - 会话结束回调管理（Web WS 等外部组件监听）
 """
 
-import logging
+from ..logging import get_logger
 import threading
 from typing import Callable, List
 
-_logger = logging.getLogger("pty-session")
+_logger = get_logger("pty-session")
 
 
 class SessionPublisher:
@@ -17,8 +17,11 @@ class SessionPublisher:
 
     def __init__(self):
         self._subscribers: List = []
+        # 订阅者快照：订阅/退订时重建，通知时直接复用（免每块 list 拷贝）
+        self._subs_snapshot: List = []
         self._sub_lock = threading.Lock()
         self._on_end_callbacks: List[Callable] = []
+        self._on_end_snapshot: List[Callable] = []
         self._on_end_lock = threading.Lock()
 
     def subscribe(self, callback):
@@ -26,6 +29,7 @@ class SessionPublisher:
         with self._sub_lock:
             if callback not in self._subscribers:
                 self._subscribers.append(callback)
+                self._subs_snapshot = list(self._subscribers)
 
     def unsubscribe(self, callback):
         """移除输出订阅者"""
@@ -34,12 +38,15 @@ class SessionPublisher:
                 self._subscribers.remove(callback)
             except ValueError:
                 pass
+            else:
+                self._subs_snapshot = list(self._subscribers)
 
     def add_on_end_callback(self, callback: Callable):
         """注册会话结束回调"""
         with self._on_end_lock:
             if callback not in self._on_end_callbacks:
                 self._on_end_callbacks.append(callback)
+                self._on_end_snapshot = list(self._on_end_callbacks)
 
     def remove_on_end_callback(self, callback: Callable):
         """移除会话结束回调"""
@@ -48,12 +55,12 @@ class SessionPublisher:
                 self._on_end_callbacks.remove(callback)
             except ValueError:
                 pass
+            else:
+                self._on_end_snapshot = list(self._on_end_callbacks)
 
     def notify_subscribers(self, data: bytes, stream: str):
         """通知所有输出订阅者"""
-        with self._sub_lock:
-            subs = list(self._subscribers)
-        for cb in subs:
+        for cb in self._subs_snapshot:
             try:
                 cb(data, stream)
             except Exception:
@@ -61,9 +68,7 @@ class SessionPublisher:
 
     def notify_end(self, session):
         """通知所有结束回调"""
-        with self._on_end_lock:
-            callbacks = list(self._on_end_callbacks)
-        for cb in callbacks:
+        for cb in self._on_end_snapshot:
             try:
                 cb(session)
             except Exception:

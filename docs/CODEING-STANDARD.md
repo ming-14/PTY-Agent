@@ -1,6 +1,6 @@
-# pty-agent Python 编码规范
+# Python 编码规范
 
-> 本文档定义 **pty-agent** 项目的 Python 编码规范。所有 `src/` 目录下的代码须遵循此规范。
+> 本文档定义本项目的 Python 编码规范。所有 `src/` 目录下的代码须遵循此规范。
 
 ---
 
@@ -62,7 +62,7 @@ import sys
 import time
 from typing import Optional
 
-import third_party   # 第三方库（当前项目无）
+import third_party   # 第三方库（按需使用，如 cryptography/fastapi 等）
 
 from .daemon import (  # 本地包，使用相对导入
     CONNECT_MODE,
@@ -176,7 +176,9 @@ daemon/ (依赖 session + protocol + config)
     ↓
 client/ (依赖 protocol + config)
     ↓
-__main__.py (依赖 client)
+cli/ (依赖 client + config)
+    ↓
+__main__.py (依赖 cli)
 ```
 
 **禁止**：
@@ -227,7 +229,7 @@ def handle(self, conn, addr):
 | `session/` | 包装为 `RuntimeError` 或记录日志后继续 |
 | `daemon/handler.py` | 异常防火墙，全部捕获并记录，返回错误响应 |
 | `client/transport.py` | 捕获 `ConnectionError`，其他抛到 `__main__` |
-| `__main__.py` | 捕获 `KeyboardInterrupt` + `Exception` 兜底 |
+| `cli/main.py` | 捕获 `KeyboardInterrupt` + `Exception` 兜底 |
 
 ### 4.3 防御性检查
 
@@ -289,15 +291,53 @@ if self._reader_thread and self._reader_thread.is_alive():
 
 ## 6. 日志
 
-### 6.1 日志器命名
+### 6.1 日志器获取
 
-每个模块创建自己的日志器：
+每个模块通过 `get_logger` 工厂获取日志器（统一入口，校验注册表）：
 
 ```python
-_logger = logging.getLogger("pty-session")
-_logger = logging.getLogger("pty-daemon")
-_logger = logging.getLogger("pty-client")
+from ..logging import get_logger
+
+_logger = get_logger("pty-session")
+_logger = get_logger("pty-daemon")
+_logger = get_logger("pty-client")
 ```
+
+### 6.2 日志级别
+
+| 级别 | 场景 |
+|------|------|
+| `ERROR` | 影响功能的异常（PTY 创建失败、写入失败） |
+| `WARNING` | 非致命但不期望的情况（连接断开、回退路径） |
+| `INFO` | 关键生命周期事件（守护进程启动/停止、会话创建/销毁） |
+| `DEBUG` | 任何对调试有帮助的信息（消息内容、线程状态） |
+
+```python
+_logger.error("连接异常 (会话 '%s'): %s", session_id, e)  # ERROR
+_logger.warning("会话已结束 (会话 '%s')", session_id)      # WARNING
+_logger.info("创建会话 '%s': %s", session_id, command)     # INFO
+```
+
+### 6.3 上下文绑定
+
+在会话/连接/请求入口绑定上下文字段，后续所有日志自动携带：
+
+```python
+from ..logging import bind, unbind
+
+token = bind(session_id=session_id, connection_id=conn_id)
+try:
+    _logger.info("处理请求")  # 自动带 [session_id=xxx connection_id=yyy]
+finally:
+    unbind(token)
+```
+
+### 6.4 异步架构
+
+日志系统基于异步队列（`QueueHandler` + 后台单线程），业务线程零阻塞：
+- 业务线程仅 `queue.put_nowait`（O(1)），格式化/IO/归档全在后台 `pty-log-writer` 线程
+- 队列满时 `drop_oldest` 丢弃最旧记录，防止背压阻塞业务
+- `shutdown()` 刷空队列 + 最后一次归档，确保所有日志落盘
 
 ### 6.2 日志级别
 
@@ -331,7 +371,8 @@ import sys
 from typing import Optional
 
 # ── 日志 ──
-_logger = logging.getLogger("pty-xxx")
+from ..logging import get_logger
+_logger = get_logger("pty-xxx")
 
 # ── 常量 ──
 MAX_BUFFER_SIZE = 1024 * 1024
@@ -387,42 +428,51 @@ class SomeManager:
 
 ### 8.1 平台隔离
 
-所有 Windows 特有代码必须放在 `pty/windows/` 子包下：
+Windows 特有代码按业务域落位，不设集中式 `windows/` 子包：
+
+- 进程管理（Job Object / 进程查询 / GUI 监控）：`src/process/windows/`，仅在 Windows 被导入
+- PTY/控制台绑定：`src/pty/wezterm_pty.py`（wezterm-py 后端，跨平台统一；Windows 用 OpenConsole 宿主，Unix 用 openpty）
+- 平台分支：`src/pty/pty_factory.py` 工厂按 `IS_WINDOWS` 选择后端（Windows 优先 wezterm-py，沙箱启用时走沙箱后端；Unix 统一 wezterm-py）
 
 ```python
-# pty/__init__.py
-from ..config import IS_WINDOWS
+# src/pty/pty_factory.py — 平台分支（示意）
+from ..config.common import IS_WINDOWS
+from .wezterm_pty import WeztermPseudoTerminal  # 跨平台统一后端
 
 if IS_WINDOWS:
-    from .windows.wezterm_pty import WeztermPseudoTerminal
+    # Windows：优先 WeztermPseudoTerminal；失败或沙箱启用时走沙箱后端
+    ...
+else:
+    # Unix：统一 WeztermPseudoTerminal（openpty）
+    ...
 ```
 
-**Unix 平台** 永远不会导入 `pty/windows/` 中的任何代码。
+**Unix 平台** 永远不会导入 `src/process/windows/` 中的任何代码。
 
 ### 8.2 ctypes API 声明
 
 ```python
-# pty/windows/win32_api.py — 唯一的 Windows API 声明文件
+# src/process/windows/api.py — Windows 进程管理 API 绑定
 
 import ctypes
 from ctypes import wintypes as W
 
 K = ctypes.WinDLL("kernel32", use_last_error=True)
+U = ctypes.WinDLL("user32", use_last_error=True)
 
-def _api(name: str, restype, argtypes):
+def _api(name, restype, argtypes):
+    """绑定 kernel32 API 函数"""
     fn = K[name]
     fn.restype = restype
     fn.argtypes = argtypes
     return fn
-
-_CreateNamedPipeW = _api("CreateNamedPipeW", W.HANDLE, [...])
-_CreateFileW = _api("CreateFileW", W.HANDLE, [...])
 ```
 
 **规则**：
+- 进程管理相关 API 绑定集中在 `src/process/windows/api.py`（`_api`/`_uapi` 辅助绑定）
+- PTY/控制台绑定（ConPTY、管道）由 `src/pty/wezterm_pty.py` 承担，仅声明少量通用绑定（如 CloseHandle），两处显式独立、避免跨层依赖
 - 所有 API 函数名加 `_` 前缀标记为私有
-- 所有 NT 类型定义使用 `_` 前缀
-- 使用 `_api()` / `_ntapi()` 辅助函数简化绑定
+- 使用 `_api()` / `_uapi()` 辅助函数简化绑定
 - 不要将 API 声明分散到其他文件
 
 ---
@@ -434,5 +484,5 @@ _CreateFileW = _api("CreateFileW", W.HANDLE, [...])
 - `config/` 包不导入任何其他项目业务模块
 - 常量名全大写 `SCREAMING_SNAKE_CASE`
 - 所有模块从 `config/` 包导入所需常量，不要重复定义
-- 配置文件：`common.toml` / `shared.toml` / `transfer.toml`（根）、`daemon/daemon.toml` / `daemon/logging.toml` / `daemon/web.toml` / `daemon/sandbox.toml`、`client/client.toml`（项目根 `config/`，加载器在 `src/config/`）；`daemon/vnc.toml` / `daemon/vnc.example.toml` 为 winvnc.exe 外部配置，Python 不加载。插件业务参数由插件自包含配置（如 `config/plugins/files/files.toml`）提供
+- 配置文件：`common.toml` / `shared.toml` / `transfer.toml`（根）、`daemon/daemon.toml` / `daemon/logging.toml` / `daemon/web.toml`（可选，缺失即 web 禁用） / `daemon/sandbox.toml`（可选，缺失即沙箱关闭）、`client/client.toml`（项目根 `config/`，加载器在 `src/config/`）；`daemon/vnc.toml` / `daemon/vnc.example.toml` 为 winvnc.exe 外部配置，Python 不加载。插件业务参数由插件自包含配置（如 `config/plugins/files/files.toml`）提供；`plugins/plugins.json` 可选，缺失即插件系统禁用
 - 加载机制：`_loader.py` 提供 `load_toml()` / `flatten()` / `merge()` 工具函数

@@ -17,6 +17,11 @@ from pathlib import Path
 # 将 src 加入 path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+# Windows 专属用例（winvnc）；非 Windows 平台直接跳过
+if sys.platform != "win32":
+    print("VNC proxy e2e 仅支持 Windows，跳过")
+    sys.exit(0)
+
 import websockets
 
 

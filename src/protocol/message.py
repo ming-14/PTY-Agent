@@ -8,7 +8,7 @@ Message 类提供消息的编码、解码、发送和接收功能。
 - 出站签名器（outbound_signer）：send 时给本端发出的消息签名
 - 入站验证器（inbound_verifier）：recv 时验证本端收到的消息签名
 
-线程局部化使双端口架构成为可能：plain Listener 和 TLS Listener 在不同线程中
+线程局部化使双端口架构成为可能：basic/token Listener 和 TLS Listener 在不同线程中
 运行，各自设置独立的签名器/验证器，互不干扰。
 
 这使非对称签名（Ed25519）成为可能：客户端用私钥签请求（出站），
@@ -17,7 +17,6 @@ daemon 用公钥验请求（入站）；daemon 响应不签（无私钥），客
 """
 
 import json
-import logging
 import socket
 import threading
 import weakref
@@ -25,8 +24,9 @@ from typing import Optional
 
 from ..config.shared import MAX_MESSAGE_LENGTH, SOCKET_RECV_BUFSIZE
 from .signing import MessageSigner
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-protocol")
+_logger = get_logger("pty-protocol")
 
 
 class Message:
@@ -40,7 +40,7 @@ class Message:
 
     _recv_buffers: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
     # 线程局部存储：每个线程独立持有出站签名器与入站验证器
-    # 双端口架构下 plain Listener 和 TLS Listener 在不同线程中运行，
+    # 双端口架构下 basic/token Listener 和 TLS Listener 在不同线程中运行，
     # 各自需要独立的签名器/验证器，互不干扰
     _tls = threading.local()
 
@@ -122,14 +122,19 @@ class Message:
             解码后的 dict，连接关闭时返回 None。
         """
         sock_key = sock
-        buf = Message._recv_buffers.get(sock_key, b"")
+        buf = Message._recv_buffers.get(sock_key)
+        if buf is None:
+            # 逐行缓冲用 bytearray 原地追加/截断：大消息（如 screenBufferZ，
+            # 可达 MB 级）被拆成多块到达时避免逐块复制整个已累积缓冲（O(n²)）
+            buf = bytearray()
+            Message._recv_buffers[sock_key] = buf
         _logger.debug("recv: fd=%d buffered=%d", sock.fileno(), len(buf))
         retries = 0
         while True:
             idx = buf.find(b"\n")
             if idx >= 0:
-                line = buf[:idx]
-                Message._recv_buffers[sock_key] = buf[idx + 1 :]
+                line = bytes(buf[:idx])
+                del buf[: idx + 1]
                 _logger.debug(
                     "recv: fd=%d complete line len=%d", sock.fileno(), len(line)
                 )
@@ -180,7 +185,7 @@ class Message:
                 _logger.info("recv: fd=%d connection closed", sock.fileno())
                 Message._recv_buffers.pop(sock_key, None)
                 return None
-            buf += chunk
+            buf.extend(chunk)
             if len(buf) > MAX_MESSAGE_LENGTH:
                 _logger.warning(
                     "recv: fd=%d line too large (%d), dropping", sock.fileno(), len(buf)
@@ -199,8 +204,9 @@ class Message:
         """
         signer = Message.get_outbound_signer()
         if signer and not skip_sign:
-            obj = signer.sign(obj)
-            data = Message.encode(obj)
+            # sign_bytes 由签名器单次序列化产出完整 wire（签名器内部已有规范 JSON，
+            # 在规范字节上拼接签名字段，避免二次 json.dumps）
+            data = signer.sign_bytes(obj)
         else:
             data = Message.encode(obj)
         _logger.debug(

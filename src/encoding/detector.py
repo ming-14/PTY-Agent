@@ -6,17 +6,18 @@
 - decode_only    无副作用（用于持锁路径，如 TriggerMatcher.check）
 """
 
-import logging
 from typing import Optional
 
 from .codec import (
     check_encoding_ok,
     decode_strip_tail,
+    decode_strip_tail_len,
     detect_decode,
     detect_decode_ext,
 )
+from ..logging import get_logger
 
-_logger = logging.getLogger("pty-session")
+_logger = get_logger("pty-session")
 
 
 class EncodingDetector:
@@ -92,10 +93,26 @@ class EncodingDetector:
         Returns:
             解码后的文本字符串。
         """
+        text, _ = self.decode_only_len(data)
+        return text
+
+    def decode_only_len(self, data: bytes) -> tuple:
+        """仅解码并返回 (文本, 被消费的字节长度)（无副作用，持锁路径使用）
+
+        与 decode_only 语义一致，额外返回文本对应的完整字节前缀长度，
+        供 TriggerMatcher 滚动解码缓存跟踪跨块拆分的残缺尾部字节。
+
+        Args:
+            data: 待解码的原始字节数据。
+
+        Returns:
+            (解码后的文本, 被消费的字节长度)。
+        """
         if not data:
-            return ""
+            return "", 0
         if self._encoding_locked and self.encoding:
-            text = decode_strip_tail(data, self.encoding)
+            text, consumed = decode_strip_tail_len(data, self.encoding)
             if check_encoding_ok(text):
-                return text
-        return detect_decode(data)
+                return text, consumed
+        # 自动探测路径按全部字节消费（首块无历史，无跨块边界问题）
+        return detect_decode(data), len(data)

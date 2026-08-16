@@ -21,7 +21,6 @@
   - signal/write_stdin 命令走 Process 对象直调
 """
 
-import logging
 import os
 import queue
 import sys
@@ -29,8 +28,9 @@ import threading
 from typing import List, Optional
 
 from ..process.base import NOTIF_CRASH, NOTIF_EXIT, NOTIF_SPAWN, ProcessNotification
+from ..logging import get_logger
 
-_logger = logging.getLogger("sandbox-manager")
+_logger = get_logger("sandbox-manager")
 
 # 把 bin/ 加入 sys.path（win_sandbox 为 vendored 包）
 _BIN_DIR = os.path.join(
@@ -41,8 +41,15 @@ if _BIN_DIR not in sys.path:
     sys.path.insert(0, _BIN_DIR)
 
 # win_sandbox 仅 Windows 可用（pybind11 扩展加载）；非 Windows 平台不应导入
-import win_sandbox
-from win_sandbox import SandboxTimeoutError
+try:
+    import win_sandbox
+    from win_sandbox import SandboxTimeoutError
+
+    _HAS_WIN_SANDBOX = True
+except ImportError:
+    win_sandbox = None  # type: ignore[assignment]
+    SandboxTimeoutError = Exception  # 降级占位，实际不会实例化
+    _HAS_WIN_SANDBOX = False
 
 
 class SandboxError(Exception):
@@ -91,6 +98,10 @@ class SandboxSessionManager:
         """创建原生沙箱实例（幂等）"""
         if self._instance is not None:
             return
+        if not _HAS_WIN_SANDBOX:
+            raise SandboxError(
+                "win_sandbox 不可用（bin/win_sandbox 缺失或平台不支持），无法创建沙箱实例"
+            )
         self._instance = win_sandbox.SandboxInstance(
             config=None, log_level=self._log_level
         )

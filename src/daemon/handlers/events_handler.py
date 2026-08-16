@@ -1,11 +1,11 @@
-import logging
 
 from ...protocol.message import Message
 from ...protocol.response import Response
 from .base import DaemonHandler, HandlerContext
 from .utils import _EVENTS_HINT, _EVENTS_NO_ARGS_HINT, _SESSION_ENDED_HINT
+from ...logging import get_logger
 
-_logger = logging.getLogger("pty-daemon")
+_logger = get_logger("pty-daemon")
 
 
 class EventsHandler(DaemonHandler):
@@ -49,8 +49,16 @@ class EventsHandler(DaemonHandler):
         else:
             events = session.peek_events()
 
+        # 批量存在性判定：所有 process_spawn 事件共用一次进程列表查询
+        # （原实现逐事件 get_process_list()，N 个事件 N 次全量进程扫描）
+        alive_pids = None
         for ev in events:
-            ev["currentlyActive"] = session.check_event_existence(ev)
+            if ev.get("type") == "process_spawn":
+                if alive_pids is None:
+                    alive_pids = set(session.get_pty_process_list())
+                ev["currentlyActive"] = ev.get("pid", 0) in alive_pids
+            else:
+                ev["currentlyActive"] = session.check_event_existence(ev)
             ev.pop("still_active", None)
 
         hint = ""

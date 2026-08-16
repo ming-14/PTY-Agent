@@ -17,10 +17,10 @@
 线程安全：所有访问均在 asyncio event loop 中（单线程），无需加锁。
 """
 
-import logging
+from ...logging import get_logger
 from typing import Optional
 
-_logger = logging.getLogger("pty-web")
+_logger = get_logger("pty-web")
 
 
 class AdaptiveLockService:

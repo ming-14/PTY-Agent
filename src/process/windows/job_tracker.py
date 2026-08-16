@@ -13,7 +13,6 @@
 """
 
 import ctypes
-import logging
 import threading
 import time
 from ctypes import wintypes as W
@@ -41,6 +40,7 @@ from .api import (
     JOBOBJECT_BASIC_PROCESS_ID_LIST,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     PROCESS_QUERY_LIMITED_INFORMATION,
+    PROCESS_SET_QUOTA,
     PROCESS_TERMINATE,
     _AssignProcessToJobObject,
     _CloseHandle,
@@ -59,8 +59,9 @@ from .api import (
     _TerminateProcess,
 )
 from .gui_monitor import GuiWindowMonitor
+from ...logging import get_logger
 
-_logger = logging.getLogger("process-job-tracker")
+_logger = get_logger("process-job-tracker")
 
 # ── IOCP 超时（毫秒）──
 _IOCP_TIMEOUT = 1000  # 每秒检查停止标志
@@ -138,6 +139,34 @@ class JobProcessTreeTracker(ProcessTreeTracker):
             finally:
                 _CloseHandle(hproc)
         return self._assign(hproc)
+
+    def assign_extra_process(self, pid: int) -> bool:
+        """把额外进程纳入 Job 作用域（缓解：ConPTY 宿主 OpenConsole 连带清理）
+
+        daemon spawn 的 OpenConsole/conhost 默认不在命令树 Job 内，宿主异常死亡时
+        会残留（其 VtInputThread 对死 server 管道不自旋退出时）。此处把这类进程
+        Assign 进当前 Job（KILL_ON_JOB_CLOSE），保证宿主进程句柄关闭时被连带清理。
+
+        Args:
+            pid: 目标进程 PID。
+
+        Returns:
+            True 入组成功；进程已退出或无法打开时返回 False。
+        """
+        if not self._hjob or not pid:
+            return False
+        hproc = _OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, pid)
+        if not hproc:
+            _logger.warning(
+                "assign_extra_process: OpenProcess(%d) 失败 err=%d",
+                pid,
+                ctypes.get_last_error(),
+            )
+            return False
+        try:
+            return self._assign(hproc)
+        finally:
+            _CloseHandle(hproc)
 
     def _assign(self, hprocess: int) -> bool:
         """将进程分配到 Job Object（子进程自动继承）"""
@@ -264,10 +293,9 @@ class JobProcessTreeTracker(ProcessTreeTracker):
     # ── 通知 ──
 
     def drain_notifications(self) -> List[ProcessNotification]:
-        """取出所有待处理的通知（线程安全）"""
+        """取出所有待处理的通知（线程安全，引用交换避免复制）"""
         with self._notif_lock:
-            items = list(self._notifications)
-            self._notifications.clear()
+            items, self._notifications = self._notifications, []
         return items
 
     def _push_notif(self, notif: ProcessNotification):
@@ -425,9 +453,13 @@ class JobProcessTreeTracker(ProcessTreeTracker):
         """获取已检测到的全部 GUI 窗口（dict 列表）"""
         return [w.to_dict() for w in self._gui_monitor.windows]
 
-    def poll_gui_windows(self) -> List[dict]:
-        """轮询检测新增 GUI 窗口（仅返回本轮新增）"""
-        return [w.to_dict() for w in self._gui_monitor.poll()]
+    def poll_gui_windows(self, pids: Optional[List[int]] = None) -> List[dict]:
+        """轮询检测新增 GUI 窗口（仅返回本轮新增）
+
+        Args:
+            pids: 调用方已获取的进程树 PID 列表（同一 tick 复用）；None 时自行查询。
+        """
+        return [w.to_dict() for w in self._gui_monitor.poll(pids)]
 
     def close_gui_window(self, hwnd: int) -> bool:
         """通过 WM_CLOSE 关闭指定 GUI 窗口"""
