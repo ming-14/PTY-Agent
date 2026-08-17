@@ -8,6 +8,7 @@ from typing import Optional
 from ...config.common import (
     GZIP_COMPRESS_LEVEL,
 )
+from ...config.encoding import is_valid_encoding
 from ...output import safe_regex_search
 from ...protocol.ansi import strip_ansi
 from ...protocol.message import Message
@@ -58,9 +59,16 @@ def compress_screen_buffer(buf: dict) -> str:
     return base64.b64encode(compressed).decode("ascii")
 
 
-def map_reason(reason: str, exit_code=None) -> str:
-    if reason == "ended" and exit_code is not None and exit_code != 0:
-        return "program_crashed"
+def map_reason(reason: str, exit_code=None, error_message=None) -> str:
+    """原始 reason → 对外 triggerReturnReason
+
+    崩溃判定以退出码/错误消息为权威依据：crash_event 信号会被 stop()
+    无条件置位，等待循环可能据其误报 "crashed"；此处兜底保证
+    exit_code==0 且无 error_message 的正常完成绝不映射为 program_crashed。
+    """
+    is_crash = (exit_code is not None and exit_code != 0) or bool(error_message)
+    if reason in ("crashed", "ended"):
+        return "program_crashed" if is_crash else "program_ended"
     return _REASON_MAP.get(reason, reason)
 
 
@@ -231,7 +239,7 @@ def build_result(
 
                     error_message = _format_exit_code_message(crash_ec)
 
-    mapped_reason = map_reason(reason, exit_code)
+    mapped_reason = map_reason(reason, exit_code, error_message)
 
     result: dict = {
         "commandType": result_type,
@@ -379,11 +387,33 @@ def apply_lines_grep(
     return "\n".join(lines)
 
 
-def apply_client_defaults(session, msg: dict):
+def apply_client_defaults(session, msg: dict, conn=None) -> bool:
+    """把 client_defaults 合入 session.client_config（daemon 侧权威落点）
+
+    对 encoding 键做与 CLI 侧同一白名单校验：非法编码拒绝写入并返回
+    type:error（conn 可用时直接发送；conn 缺失时抛出 ValueError 兜底，绝不平静
+    采纳非法值）。其余键（timeout/newline/keep-ansi/debug/...）行为不变。
+
+    Returns:
+        True 表示已应用（或无可应用内容）；False 表示校验失败，调用方应中止。
+    """
     client_defaults = msg.get("client_defaults")
-    if client_defaults and isinstance(client_defaults, dict):
-        session.client_config.update(client_defaults)
-        _apply_resize_default(session, client_defaults)
+    if not client_defaults or not isinstance(client_defaults, dict):
+        return True
+    bad_encoding = client_defaults.get("encoding")
+    if bad_encoding is not None and not is_valid_encoding(bad_encoding):
+        err = (
+            f"Invalid encoding: {bad_encoding!r}. "
+            "Use a valid codec name (e.g. utf-8, gbk, cp936, latin-1) "
+            "or leave it unset for auto detection."
+        )
+        if conn is not None:
+            Message.send(conn, Response.error(err))
+            return False
+        raise ValueError(err)
+    session.client_config.update(client_defaults)
+    _apply_resize_default(session, client_defaults)
+    return True
 
 
 def _parse_terminal_size(size_str) -> Optional[tuple]:

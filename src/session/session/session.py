@@ -408,16 +408,43 @@ class Session(
         self._do_release()
 
     def _do_release(self) -> None:
-        self._threads = None
         # 断开全部大缓冲引用（OutputBuffer 被 Session._out_buf 与
         # Threads._comp.out_buf 双引用持有，双断后引用计数归零立即回收，
         # 无需等待 GC）；归档早已完成，_out_buf/_err_buf 不再被读取
-        # （已结束会话的历史输出走 history_store）。轻量组件保留：
-        # handler 响应构造期仍需读取进程/事件元数据（build_result 的
-        # session.processes），残留轻量循环由 gen2 GC 兜底。
+        # （已结束会话的历史输出走 history_store）。
+        self._threads = None
         self._out_buf = None
         if self._err_buf is not None:
             self._err_buf = None
+        # 断开其余循环引用链与重量级子组件，让已结束会话对象图被引用计数
+        # 立即整体回收，不再依赖 gen2 GC：
+        # - 循环引用来源：TriggerMatcher.decode_func、ProcessMonitor/GuiDetector
+        #   的 event_sink、Threads 的 on_exit/session_ref（已随 _threads 断开）、
+        #   PluginHost(session)、tracker 回调、publisher 回调；
+        # - 重量级组件：TerminalScreen 滚动缓冲（scrollback 可达数万行）、
+        #   事件历史、输入编码器、编码探测器滚动缓存。
+        # 此前这些残留循环只能等 gen2 GC 兜底，而空闲 daemon 的 gen2 触发
+        # 频率低，残留对象滞留至下次全量 GC，表现为 RSS 随会话累积上行、
+        # 空闲期才被后台 GC 逐步清理（黑盒观测：内存随 ended 会话增长且
+        # 空闲不回落）。
+        # 安全前提：release_components/_do_release 仅在会话停止完成且无任何
+        # handler 持有（hold 计数为 0）时执行；此时已结束会话已从管理器
+        # 活跃表移除，handler 无法再访问本对象（历史读取走 history_store），
+        # 故可安全置空全部组件。
+        self._trig_mat = None
+        self._proc_mon = None
+        self._gui = None
+        self._tracker = None
+        self._publisher = None
+        self.plugin_host = None
+        self._input_interceptor = None
+        self._input_encoder = None
+        self._screen = None
+        self._evt_hist = None
+        self._enc = None
+        self._last_snapshot_lines = None
+        self._last_snapshot_key = None
+        self._screen_buffer_cache = None
 
     # ── 编码委托 ─────────────────────────────────────────────
 

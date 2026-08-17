@@ -8,6 +8,7 @@ import argparse
 import json
 
 from ..client.input import safe_print
+from ..config.encoding import is_valid_encoding
 from ..protocol.response import Response
 
 
@@ -21,16 +22,56 @@ def _format_config_key(key: str) -> str:
     return key.replace("_", "-")
 
 
+def _encoding_type(value: str) -> str:
+    """argparse type：--encoding 取值必须为合法编码名
+
+    非法取值（如 zzzz）由 argparse 转为 parser.error（退出码 2）。
+    自动探测语义由不传该参数（None）表达；"auto"/"detect" 等字符串
+    在编码模块中无特殊语义，同样按非法处理。
+    """
+    if not is_valid_encoding(value):
+        raise argparse.ArgumentTypeError(
+            f"invalid encoding: {value!r} "
+            "(use a valid codec name like utf-8, gbk, cp936, or omit for auto detection)"
+        )
+    return value
+
+
+class _DefaultArgsAction(argparse.Action):
+    """--default KEY VALUE：解析期校验 encoding 键取值
+
+    与 --encoding 同一白名单规则；非法取值（如 --default encoding zzzz）
+    在参数解析阶段即被拒绝（parser.error，退出码 2），不会进入
+    ConfigManager / client_defaults / daemon sessionDefaults。
+    """
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        key, value = values
+        if _parse_default_key(key) == "encoding" and not is_valid_encoding(value):
+            parser.error(
+                f"argument --default: invalid encoding value: {value!r} "
+                "(use a valid codec name like utf-8, gbk, cp936, or omit for auto detection)"
+            )
+        items = getattr(namespace, self.dest, None)
+        if items is None:
+            items = []
+        items.append((key, value))
+        setattr(namespace, self.dest, items)
+
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     """全命令公共参数：--encoding / --default / --debug-output（由 registry 统一添加）"""
     parser.add_argument(
-        "--encoding", default=None, help="终端编码（如 utf-8、gbk），本次调用记忆"
+        "--encoding",
+        type=_encoding_type,
+        default=None,
+        help="终端编码（如 utf-8、gbk），本次调用记忆",
     )
     parser.add_argument(
         "--default",
         nargs=2,
         metavar=("KEY", "VALUE"),
-        action="append",
+        action=_DefaultArgsAction,
         default=None,
         help="设置默认配置 "
         "(timeout/newline/keep-ansi/encoding/debug/send-eol/response-format/svg-compression-level/terminal-size)",

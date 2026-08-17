@@ -135,7 +135,8 @@ class ExecHandler(DaemonHandler):
 
     def _handle_exec_flow(self, ctx, conn, session, msg, existing, trigger):
         """exec 会话处理主体（已持有 session.hold）"""
-        apply_client_defaults(session, msg)
+        if not apply_client_defaults(session, msg, conn):
+            return
 
         if getattr(session, "mode", "pty") == "subprocess":
             if msg.get("snapshot_diff"):

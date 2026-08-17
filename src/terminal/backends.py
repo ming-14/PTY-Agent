@@ -37,8 +37,9 @@ except ImportError:
     _HAS_WEZTERM = False
     pywezterm = None  # type: ignore[assignment]
 
-# scrollback 历史行上限（参考 tmux default history-limit 2000，这里给更大值）
-_DEFAULT_HLIMIT = 10000
+# scrollback 历史行上限（与 screen.py 保持一致：30000 行，过长输出按
+# "万行尾缓冲"截断的问题缓解，前部历史仍由 100MB OutputBuffer 兜底）
+_DEFAULT_HLIMIT = 30000
 
 # 单元格元组字段下标（与 wezterm-py snapshot() 返回的 CellTuple 一致）：
 # (col, data, fg, bg, bold, italic, underline, reverse, strikethrough, width)
