@@ -362,8 +362,15 @@ class SubscribeSessionHandler(MessageHandler):
                 )
             ]
 
-        # 添加到订阅集合
+        # 添加到订阅集合（首次订阅才走到此处；已订阅分支提前返回）
         ctx.connection.add_subscription(session_id)
+
+        # 订阅期间持有会话：会话可能在输出回调/replay 生成窗口内自然结束，
+        # manager 会触发 release_components 释放大缓冲；持有确保结束只延迟
+        # 释放，全部退订后才实际释放，避免回调/读取路径访问已置空的缓冲。
+        # 与门户端创建期预持有衔接：自 create_session 预持有起计数保持非零。
+        session.acquire_hold()
+        ctx.connection.add_held_session(session_id, session)
 
         # 第一次订阅用终端模型 snapshot 作为 replay，而非原始输出缓冲区：
         # 原始输出缓冲区包含 ConPTY 增量光标序列（CSI row;col H），
@@ -537,7 +544,13 @@ class UnsubscribeSessionHandler(MessageHandler):
             end_cb = callbacks.get("end")
             event_cb = callbacks.get("event")
 
+            # 释放订阅期间持有的会话：使用连接上下文保存的引用
+            # （会话结束被移出仓库后 get_session 已取不到，须凭持有凭证释放）
+            held_session = ctx.connection.pop_held_session(sid)
+
             if sid:
+                if held_session is not None:
+                    held_session.release_hold()
                 session = ctx.session_repo.get_session(sid)
                 if session:
                     if cb:

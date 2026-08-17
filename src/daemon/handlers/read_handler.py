@@ -28,6 +28,13 @@ from ...logging import get_logger
 _logger = get_logger("pty-daemon")
 
 
+def _include_debug(session) -> bool:
+    """read 非等待路径是否产出 debugInformation（--debug-output 经 client_defaults 落 session.client_config）"""
+    return bool(
+        getattr(session, "client_config", None) and session.client_config.get("debug")
+    )
+
+
 class ReadHandler(DaemonHandler):
     def handle(self, ctx: HandlerContext, conn, msg: dict):
         from ...config.common import MAX_PATTERN_LEN, MAX_SESSION_ID_LEN
@@ -229,6 +236,7 @@ class ReadHandler(DaemonHandler):
             has_trigger=False,
             result_type="read",
             session=session,
+            include_debug=_include_debug(session),
         )
         if not output:
             result["snapshotDiagnostics"] = session.get_snapshot_diagnostics()
@@ -331,6 +339,7 @@ class ReadHandler(DaemonHandler):
                 session=session,
                 t_start=msg.get("_t_start"),
                 output_offset=cur_offset,
+                include_debug=_include_debug(session),
             )
             _attach_subprocess_stderr(result, session, msg)
             attach_screen_buffer(result, session, msg)
@@ -392,6 +401,7 @@ class ReadHandler(DaemonHandler):
             session=session,
             t_start=msg.get("_t_start"),
             output_offset=cur_offset,
+            include_debug=_include_debug(session),
         )
         _attach_subprocess_stderr(result, session, msg)
         attach_screen_buffer(result, session, msg)

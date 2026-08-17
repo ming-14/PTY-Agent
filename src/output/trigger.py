@@ -161,6 +161,9 @@ class TriggerMatcher:
         self._idle_last_activity = 0.0
         self._idle_had_output = False
 
+        # 快照模式换行语义（set_snapshot_trigger 专用，与流式 _on_newline 独立）
+        self._snapshot_newline = False
+
     # ── 公开接口 ──
 
     def set(
@@ -406,6 +409,7 @@ class TriggerMatcher:
             self._idle_after_first = False
             self._idle_had_output = False
             self._idle_last_activity = 0.0
+            self._snapshot_newline = False
             self._reset_scan_cache_locked()
         self._event.clear()
 
@@ -414,6 +418,7 @@ class TriggerMatcher:
         pattern: Optional[str] = None,
         idle_timeout: Optional[float] = None,
         idle_after_first_output: bool = False,
+        newline: bool = False,
     ):
         """设置快照模式触发条件
 
@@ -421,6 +426,8 @@ class TriggerMatcher:
             pattern:              正则表达式模式（匹配快照文本）。
             idle_timeout:         快照静默超时（秒）。
             idle_after_first_output: 是否在首次快照变化后才开始检测静默超时。
+            newline:              仅在快照尾部为完整行（以换行结尾）时才检查
+                                  触发条件（等价流式触发的"换行后才检查"）。
         """
         with self._state_lock:
             if pattern is not None:
@@ -441,6 +448,7 @@ class TriggerMatcher:
             self._idle_after_first = idle_after_first_output
             self._idle_had_output = False
             self._idle_last_activity = time.monotonic()
+            self._snapshot_newline = newline
             self._reset_scan_cache_locked()
 
     def check_snapshot(self, text: str) -> bool:
@@ -455,8 +463,14 @@ class TriggerMatcher:
         with self._state_lock:
             pattern = self._pattern
             regex = self._regex
+            newline = self._snapshot_newline
 
         if not pattern:
+            return False
+
+        # 换行语义：快照尾部必须是完整行才检查（末行未以换行收尾时
+        # 视为输出未完成，等待下一轮快照变化后再判定）
+        if newline and not text.endswith("\n"):
             return False
 
         if regex:

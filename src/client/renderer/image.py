@@ -13,6 +13,8 @@ from typing import Optional
 
 from ...config.common import DEFAULT_COLS, DEFAULT_ROWS
 from .common import (
+    CELL_H,
+    CELL_W,
     _char_width,
     _is_cjk_char,
     _is_block_element,
@@ -63,8 +65,9 @@ def render_pillow(path: str, buf: dict, ext: str) -> Optional[str]:
     cols = buf.get("cols", DEFAULT_COLS)
     rows = buf.get("rows", DEFAULT_ROWS)
     lines = _expand_lines(buf)
-    cell_w = 8
-    cell_h = 16
+    # 行高与 SVG/GDI 统一（GDI 实测 Consolas 14px 的 tmHeight=17）
+    cell_w = CELL_W
+    cell_h = CELL_H
     font_size = cell_h - 2
 
     ascii_font, cjk_font = _load_font_pair(ImageFont, font_size)

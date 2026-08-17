@@ -234,7 +234,7 @@ class Threads:
             pty = comp.pty_provider()
 
         # 读者退出前：扫描残留 GUI 窗口和进程事件
-        gui_detector.check(pty, session_id)
+        gui_detector.check(comp.tracker, session_id)
         proc_mon.drain_notifications()
         proc_mon.check_events(force=True)
 
@@ -352,7 +352,7 @@ class Threads:
                     pids = comp.tracker.get_process_list()
                 except Exception:
                     pids = None
-                comp.gui_detector.check(pty, comp.session_id, pids=pids)
+                comp.gui_detector.check(comp.tracker, comp.session_id, pids=pids)
                 comp.proc_mon.check_events(pids=pids)
 
                 # ── 插件定时触发 ──
@@ -360,19 +360,17 @@ class Threads:
                 if comp.plugin_host is not None:
                     comp.plugin_host.poll_tick()
 
-                # 自然退出检测：所有子进程已退出且 PTY 仍在运行，主动关闭 PTY 让 reader EOF
+                # 自然退出检测：所有工作进程已退出且 PTY 仍在运行，主动关闭
+                # PTY 让 reader EOF。仅在工作进程内判定——宿主进程（Windows
+                # OpenConsole 常驻 Job 直至 pty.close）被 get_work_process_list
+                # 排除，若计入则工作进程全退后 Job 仍非空，自然结束永不触发。
                 if pty and not self._stop_event.is_set() and pids is not None:
-                    if len(pids) == 0:
-                        try:
-                            session = comp.session_ref()
-                            if session and session.running:
-                                _logger.info(
-                                    "会话 '%s': 所有子进程已退出，触发自然结束",
-                                    comp.session_id,
-                                )
-                                session._on_all_processes_exited()
-                        except Exception:
-                            pass
+                    try:
+                        session = comp.session_ref()
+                        if session:
+                            session.poll_natural_exit()
+                    except Exception:
+                        pass
 
             self._stop_event.wait(0.2)
 

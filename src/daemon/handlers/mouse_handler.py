@@ -122,6 +122,11 @@ class MouseHandler(DaemonHandler):
             result_obj.update(resp_extra)
             if matches is not None:
                 result_obj["matches"] = matches
+                # 多匹配未执行：hint 必须与 performed:false 一致，覆盖成功文案
+                result_obj["hint"] = (
+                    "Multiple matches found; please specify coordinates "
+                    "or a more specific pattern"
+                )
             if error:
                 result_obj["message"] = error
             attach_screen_buffer(result_obj, session, msg)

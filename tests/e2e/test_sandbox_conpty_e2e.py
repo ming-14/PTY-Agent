@@ -19,6 +19,7 @@
 
 import glob
 import os
+import re
 import sys
 import time
 
@@ -64,6 +65,24 @@ def _read_available(pty, timeout: float) -> bytes:
             break
         time.sleep(0.05)
     return b"".join(chunks)
+
+
+def _strip_trailing_ansi(data: bytes) -> bytes:
+    """剥除尾部 ANSI 转义序列（CSI/OSC），还原文本语义尾
+
+    ConPTY 会在输出尾部追加光标显示（\x1b[?25h）、光标定位（\x1b[21;1H）等
+    CSI 序列，直接以 endswith 判 prompt 会误判；文本语义判断前先剥净尾部序列。
+    """
+    while True:
+        csi = re.search(rb"\x1b\[[0-9;?]*[ -/]*[@-~]$", data)
+        if csi:
+            data = data[: csi.start()]
+            continue
+        osc = re.search(rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)$", data)
+        if osc:
+            data = data[: osc.start()]
+            continue
+        return data
 
 
 def _run() -> int:
@@ -118,7 +137,8 @@ def _run() -> int:
         time.sleep(0.8)
         pty.write(b"\x03")
         data = _read_available(pty, 8.0)
-        prompt_back = data.rstrip().endswith(b">")
+        # 尾部可能有 CSI（光标显示等）序列，剥净后再判 prompt 文本尾
+        prompt_back = _strip_trailing_ansi(data).rstrip().endswith(b">")
         root_alive = pty.get_exit_code() is None
         sort_gone = mgr.get_process_list() == [pty.get_child_pid()]
         marker = b"Control-C" in data or b"^C" in data

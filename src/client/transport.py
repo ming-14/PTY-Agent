@@ -592,7 +592,10 @@ class Client:
         if response_format is None:
             response_format = self._config.get("response_format") or "stream"
         if svg_compression_level is None:
-            svg_compression_level = self._config.get("svg_compression_level") or 1
+            svg_compression_level = self._config.get("svg_compression_level")
+            if svg_compression_level is None:
+                # 配置未设置时默认等级 1；注意 0 是合法值（不压缩），不能用 or 兜底
+                svg_compression_level = 1
 
         # 命令拆分为参数列表（子进程模式也拆分，Popen 直接执行）
         if isinstance(command, str):
@@ -774,7 +777,10 @@ class Client:
         if response_format is None:
             response_format = self._config.get("response_format") or "stream"
         if svg_compression_level is None:
-            svg_compression_level = self._config.get("svg_compression_level") or 1
+            svg_compression_level = self._config.get("svg_compression_level")
+            if svg_compression_level is None:
+                # 配置未设置时默认等级 1；注意 0 是合法值（不压缩），不能用 or 兜底
+                svg_compression_level = 1
 
         msg = {
             "type": "read",
@@ -942,7 +948,10 @@ class Client:
         if response_format is None:
             response_format = self._config.get("response_format") or "stream"
         if svg_compression_level is None:
-            svg_compression_level = self._config.get("svg_compression_level") or 1
+            svg_compression_level = self._config.get("svg_compression_level")
+            if svg_compression_level is None:
+                # 配置未设置时默认等级 1；注意 0 是合法值（不压缩），不能用 or 兜底
+                svg_compression_level = 1
 
         msg = {
             "type": "send",
@@ -1430,7 +1439,10 @@ class Client:
         if response_format is None:
             response_format = self._config.get("response_format") or "stream"
         if svg_compression_level is None:
-            svg_compression_level = self._config.get("svg_compression_level") or 1
+            svg_compression_level = self._config.get("svg_compression_level")
+            if svg_compression_level is None:
+                # 配置未设置时默认等级 1；注意 0 是合法值（不压缩），不能用 or 兜底
+                svg_compression_level = 1
 
         msg = {"type": "mouse", "id": session_id, **action}
         msg["newline"] = newline

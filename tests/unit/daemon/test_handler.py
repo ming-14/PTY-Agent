@@ -100,6 +100,12 @@ class _MockSession:
     def consume_events(self):
         return []
 
+    def poll_natural_exit(self):
+        pass
+
+    def read_new_err_output(self, encoding=None):
+        return ""
+
     def close_window(self, hwnd):
         return True
 
@@ -476,9 +482,10 @@ class TestSnapshotFlowWithTrigger:
             return session._snapshot_text
 
         def fake_set_snapshot_trigger(pattern=None, idle_timeout=None,
-                                      idle_after_first_output=False):
+                                      idle_after_first_output=False, newline=False):
             tm.set_snapshot_trigger(pattern=pattern, idle_timeout=idle_timeout,
-                                    idle_after_first_output=idle_after_first_output)
+                                    idle_after_first_output=idle_after_first_output,
+                                    newline=newline)
 
         def fake_check_snapshot_trigger(snapshot_text):
             return tm.check_snapshot(snapshot_text)
@@ -720,3 +727,86 @@ class TestSnapshotReadLines:
         })
         assert resp is not None
         assert resp["outputStream"] == "line1\nline2\nline3\nline4\nline5"
+
+
+class _RecordingSession(_MockSession):
+    """send 回归：记录写入的输入，验证 send 流程正常写 stdin"""
+
+    def __init__(self, sid="test", running=True, mode="pty"):
+        super().__init__(sid, running)
+        self.mode = mode
+        self.written = []
+        self.stderr_read_offset = 0
+
+    def write_input(self, data):
+        self.written.append(data)
+
+
+class TestSendHandler:
+    """send 请求回归：修复前 _handle_send_flow 引用未定义局部变量
+    session_id/input_text 抛 NameError，流程直接崩溃"""
+
+    def _handle_send(self, handler, msg_dict):
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+        ready = threading.Event()
+
+        def server():
+            ready.set()
+            conn, _ = srv.accept()
+            try:
+                handler.handle(conn, ("127.0.0.1", 0))
+            finally:
+                conn.close()
+
+        t = threading.Thread(target=server, daemon=True)
+        t.start()
+        ready.wait(timeout=5)
+
+        cli = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        cli.connect(("127.0.0.1", port))
+        msg_dict["token"] = "test-token"
+        Message.send(cli, msg_dict)
+        resp = Message.recv(cli)
+        cli.close()
+        srv.close()
+        t.join(timeout=5)
+        return resp
+
+    def test_send_pty_writes_input(self):
+        session = _RecordingSession("send-test")
+        mgr = _MockManager({"send-test": session})
+        handler = RequestHandler(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
+        resp = self._handle_send(handler, {
+            "type": "send", "id": "send-test", "input": "hello",
+            "timeout": 0,
+        })
+        assert resp is not None
+        assert resp["commandType"] == "send"
+        assert resp["sessionId"] == "send-test"
+        assert session.written == ["hello"]
+
+    def test_send_subprocess_writes_input(self):
+        session = _RecordingSession("send-sub", mode="subprocess")
+        mgr = _MockManager({"send-sub": session})
+        handler = RequestHandler(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
+        resp = self._handle_send(handler, {
+            "type": "send", "id": "send-sub", "input": "world",
+            "timeout": 0,
+        })
+        assert resp is not None
+        assert resp["commandType"] == "send"
+        assert resp["sessionId"] == "send-sub"
+        assert session.written == ["world"]
+
+    def test_send_non_running_returns_error(self):
+        session = _RecordingSession("send-dead", running=False)
+        mgr = _MockManager({"send-dead": session})
+        handler = RequestHandler(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
+        resp = self._handle_send(handler, {
+            "type": "send", "id": "send-dead", "input": "hello",
+        })
+        assert resp is not None
+        assert "error" in resp["type"] or "ended" in resp["message"]

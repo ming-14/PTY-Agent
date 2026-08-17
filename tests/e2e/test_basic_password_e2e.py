@@ -142,6 +142,8 @@ def _build_client_toml(*, client_password: str) -> str:
     Returns:
         client.toml 文本内容
     """
+    # 注意：不得包含 [logging] 段 —— 日志配置已拆分到 config/client/logging.toml
+    # （测试不覆写该文件），重复定义 CLIENT_LOG_LEVEL 会触发配置合并冲突
     return f"""# 客户端配置 —— e2e 测试临时覆写
 
 [connection]
@@ -162,10 +164,6 @@ DEFAULT_TRIGGER_TIMEOUT = 120.0
 PUBKEY_PRIVATE_KEY_PATH = "~/.pty-agent/keys/id_ed25519"
 KNOWN_HOSTS_FILE    = "~/.pty-agent/known_hosts"
 TOFU_STRICT         = true
-
-[logging]
-CLIENT_LOG_LEVEL = "DEBUG"
-CLIENT_LOGGERS   = ["pty-client", "pty-daemonctl"]
 """
 
 

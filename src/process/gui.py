@@ -88,7 +88,10 @@ class GuiDetector:
                 with self._lock:
                     self.processes = pids
         except Exception as e:
-            _logger.debug("GUI 窗口检测异常 (会话 '%s'): %s", session_id, e)
+            # 检测异常说明调用方接线/跟踪器配置有误，WARNING 级暴露便于发现
+            _logger.warning(
+                "GUI 窗口检测异常 (会话 '%s'): %s", session_id, e
+            )
 
     def clear(self) -> None:
         """重置 GUI 检测状态"""

@@ -8,4 +8,6 @@
 CLIENT_LOG_LEVEL = "DEBUG"
 
 [loggers]
-CLIENT_LOGGERS = ["pty-client", "pty-daemonctl"]
+# pty-auth：keygen 等本地命令经 src/auth/keys.py 使用 auth 域 logger，
+# 需在 client 侧注册，否则 get_logger 告警"日志可能丢失"且日志确实不落盘
+CLIENT_LOGGERS = ["pty-client", "pty-daemonctl", "pty-auth"]

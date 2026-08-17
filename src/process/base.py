@@ -96,6 +96,18 @@ class ProcessTreeTracker(ABC):
     def get_process_list(self) -> List[int]:
         """获取进程树内所有进程的 PID 列表"""
 
+    def get_work_process_list(self) -> List[int]:
+        """获取进程树内的工作进程 PID 列表（排除宿主进程）
+
+        默认与 get_process_list 一致；Windows Job 实现把 ConPTY 宿主
+        （OpenConsole）并入 Job 后需覆写排除宿主，供会话自然结束检测
+        （宿主在 PTY 关闭前常驻，若不排除将永远检测不到工作进程全退）。
+        """
+        return self.get_process_list()
+
+    def register_host_pid(self, pid: int):
+        """登记宿主进程（如 OpenConsole），默认空实现（无宿主概念的平台忽略）。"""
+
     def get_process_count(self) -> int:
         """获取进程树内当前进程数"""
         return len(self.get_process_list())

@@ -28,6 +28,9 @@ class WebSocketConnectionContext(ConnectionContext):
         self._subscribed_session_ids: set = set()
         self._decoders: dict[str, Any] = {}
         self._callbacks_by_sid: dict[str, dict] = {}
+        # 本连接持有（acquire_hold）的会话：sid → Session 引用。
+        # 会话结束被移出仓库后仍须据此释放持有，故引用保存在连接侧。
+        self._held_sessions: dict[str, Any] = {}
         # web 客户端 uid（localStorage 持久化，刷新后不变）
         self._client_uid: Optional[str] = client_uid
 
@@ -79,6 +82,15 @@ class WebSocketConnectionContext(ConnectionContext):
         """清除所有订阅和回调（连接关闭场景）。"""
         self._subscribed_session_ids.clear()
         self._callbacks_by_sid.clear()
+        self._held_sessions.clear()
+
+    def add_held_session(self, session_id: str, session: Any) -> None:
+        """记录本连接对某会话的持有（见 ConnectionContext 抽象说明）。"""
+        self._held_sessions[session_id] = session
+
+    def pop_held_session(self, session_id: str) -> Optional[Any]:
+        """取出并移除本连接对某会话的持有（未持有过返回 None）。"""
+        return self._held_sessions.pop(session_id, None)
 
     # ── web 客户端 uid ──────────────────────────────────────────
 

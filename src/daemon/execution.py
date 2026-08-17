@@ -54,6 +54,7 @@ def _run_snapshot_flow(
             pattern=trigger,
             idle_timeout=idle_timeout,
             idle_after_first_output=idle_after_first,
+            newline=msg.get("newline", False),
         )
         last_snapshot = ""
         deadline = time.time() + timeout
@@ -127,6 +128,7 @@ def _run_snapshot_flow(
                     matched, reason = False, "idle_timeout"
                     break
 
+                session.poll_natural_exit()
                 if not session.running:
                     if session.process_monitor.crash_event.is_set():
                         matched, reason = False, "crashed"
@@ -144,16 +146,22 @@ def _run_snapshot_flow(
         matched, reason = False, "ok"
         if result_type == "exec":
             session.wait_for_initial_output(timeout=min(timeout, 2.0))
-        wait_s = min(timeout, 1.0)
-        if cancel_event is not None:
-            deadline = time.time() + wait_s
-            while time.time() < deadline:
-                if cancel_event.is_set():
-                    matched, reason = False, "cancelled"
-                    break
-                time.sleep(min(0.1, deadline - time.time()))
-        else:
-            time.sleep(wait_s)
+        deadline = time.time() + min(timeout, 1.0)
+        # 分片复查：程序可能在固定等待期间结束/崩溃，应如实上报而非恒 ok；
+        # 每片同步推进自然结束检测（监控线程按 2s 低频 tick 触发，仅等它
+        # 扫到前会误判程序持续运行直至超时）
+        while time.time() < deadline:
+            if cancel_event is not None and cancel_event.is_set():
+                matched, reason = False, "cancelled"
+                break
+            if not session.running:
+                if session.process_monitor.crash_event.is_set():
+                    matched, reason = False, "crashed"
+                else:
+                    matched, reason = False, "ended"
+                break
+            session.poll_natural_exit()
+            time.sleep(min(0.1, deadline - time.time()))
 
     if msg.get("snapshot_diff"):
         output = session.get_snapshot_diff(keep_ansi=keep_ansi)

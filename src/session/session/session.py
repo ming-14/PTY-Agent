@@ -162,6 +162,13 @@ class Session(
         self._hold_count = 0
         self._release_pending = False
         self._hold_cond = threading.Condition()
+        # 创建期预持有：manager.create_session 在 start 前调用 pre_hold() 进入，
+        # 把"create_session 返回 → handler 首次进入 hold"之间的空窗并入持有。
+        # 子进程在该空窗内快速退出时，reader 线程走完整套结束生命周期并触发
+        # release_components；若无预持有（_hold_count==0），缓冲会被立即释放，
+        # handler 随后访问 _out_buf 即 AttributeError。预持有保证空窗内的
+        # release 一律转 pending，待首个 hold 退出时才实际释放。
+        self._creation_hold = False
 
         self._publisher = SessionPublisher()
 
@@ -309,19 +316,67 @@ class Session(
         置 None 会崩溃。handler 在处理期间用 with session.hold() 包裹，
         release 遇持有中置 pending，最后一个 hold 退出时执行实际释放。
         """
-        with self._hold_cond:
-            self._hold_count += 1
+        self.acquire_hold()
         try:
             yield self
         finally:
-            do_release = False
-            with self._hold_cond:
-                self._hold_count -= 1
-                if self._hold_count == 0 and self._release_pending:
-                    self._release_pending = False
-                    do_release = True
+            self.release_hold()
+
+    def acquire_hold(self) -> None:
+        """持有 +1（hold() 的底层实现，供长生命周期异步路径（web 订阅）使用）
+
+        首个持有若恰逢创建期预持有（_creation_hold）则直接消费预持有，
+        不再叠加计数；预持有由此转交给首个持有者。
+        """
+        with self._hold_cond:
+            if self._creation_hold:
+                self._creation_hold = False
+            else:
+                self._hold_count += 1
+
+    def release_hold(self) -> None:
+        """持有 -1（hold() 的底层实现，须与 acquire_hold 配对）
+
+        最后一个持有退出且存在 pending 释放时执行实际释放。
+        """
+        with self._hold_cond:
+            self._hold_count -= 1
+            do_release = self._hold_count == 0 and self._release_pending
             if do_release:
-                self._do_release()
+                self._release_pending = False
+        if do_release:
+            self._do_release()
+
+    def pre_hold(self) -> None:
+        """创建期预持有：start() 前由 manager.create_session 调用
+
+        见 __init__ 中 _creation_hold 的说明：把创建到首个 hold 的
+        空窗并入持有，避免子进程在该窗口内快速退出时缓冲被提前释放。
+        """
+        with self._hold_cond:
+            if self._creation_hold:
+                return
+            self._creation_hold = True
+            self._hold_count += 1
+
+    def release_creation_hold(self) -> None:
+        """撤销创建期预持有（start 失败路径：会话未交接给 handler）
+
+        预持有被首个 hold 消费后调用本方法无效果；仅当预持有仍存续
+        （会话创建失败、从未进入任何 hold）时，归还计数并执行可能的
+        pending 释放。
+        """
+        do_release = False
+        with self._hold_cond:
+            if not self._creation_hold:
+                return
+            self._creation_hold = False
+            self._hold_count -= 1
+            if self._hold_count == 0 and self._release_pending:
+                self._release_pending = False
+                do_release = True
+        if do_release:
+            self._do_release()
 
     def release_components(self) -> None:
         """最终移除时释放会话大缓冲组件（幂等）

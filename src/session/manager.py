@@ -93,10 +93,18 @@ class SessionManager:
             if plugins:
                 self._attach_plugins(s, plugins)
             s._publisher.add_on_end_callback(lambda sess: self._on_session_ended(sess))
+            # 创建期预持有：把"create_session 返回 → 调用方首个 hold"之间的
+            # 空窗并入持有。子进程在 start 期间快速退出时 reader 线程会走完
+            # 结束生命周期并触发 release_components；若无预持有，缓冲在
+            # handler 尚未持有会话的空窗内即被释放，handler 随后访问崩溃。
+            # 预持有待调用方首个 hold() 进入时消费。
+            s.pre_hold()
             _logger.info("create_session: starting sid=%r cmd=%r", session_id, command)
             try:
                 s.start()
             except Exception:
+                # start 失败：会话不会交接给 handler，撤销预持有归还计数
+                # （stop 之后调用：stop 期间可能仍有线程访问组件）
                 _logger.warning(
                     "create_session: start failed sid=%r, removing tombstone", session_id
                 )
@@ -106,6 +114,7 @@ class SessionManager:
                     s.stop()
                 except Exception:
                     pass
+                s.release_creation_hold()
                 raise
             _logger.info("create_session: started sid=%r pty=%s", session_id, s.pty_type)
             if self._on_session_created:
