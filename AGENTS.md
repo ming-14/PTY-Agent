@@ -5,6 +5,9 @@ PTY-Agent 核心包体在 `src`，`web_rime`、`fastscreen`、`win-sandbox`、`w
 Windows：本机环境
 Linux：使用`wsl.exe -d Ubuntu2204`
 
+构建：`python BUILD.py -Mirror "https://v4.gh-proxy.org/"`
+构建产物：请打包成`pty-agent-win_x86-64.zip`和`pty-agent-linux_x86-64.zip`
+
 # 总规范
 - **跨平台开发，请注意Linux支持**
 - Python兼容Python3.8，遵循 PEP8 语言规范
@@ -24,6 +27,10 @@ Linux：使用`wsl.exe -d Ubuntu2204`
 - 不要无用的防御编程与过度工程
 	- 例：`function A() {} if(type A === "function") A()` 错误
 - 提交git时，发现不是自己改动的文件时，请向用户询问是全部提交还是分多次提交，禁止静默只提交自身改动部分
+- Bug 修复后，**需撤销之前的无效修改点**，不能让无效改动污染代码！
+	- Debug完成后，检查
+		- [] 旧改动删了吗
+		- [] 旧改动删了后，是否还能正常运行
 
 未经用户允许，禁止使用、查看、更改等任何方式操作git；用户授权的“查看”和“操作”需分开，用户授权查看不代表能操作；执行高危操作如commit、reset、push（特别是push force）等命令必须用户明确授权
 未经用户允许，禁止使用、查看、更改等任何方式操作git；用户授权的“查看”和“操作”需分开，用户授权查看不代表能操作；执行高危操作如commit、reset、push（特别是push force）等命令必须用户明确授权
@@ -85,6 +92,9 @@ Linux：使用`wsl.exe -d Ubuntu2204`
 - `.agents\skills\download-by-mirror` **下载文件，尤其从Github下载请使用镜像**
 - `.agents\skills\python-win32api`
 - `.agents\skills\windows-debugging` WindowDebugging套件，含cdb等
+- `py-spy` 采样分析器
+
+Python 安装的工具可能不在 PATH 里面，请检查`%APPDATA%\Python\Python版本\Scripts\`
 
 **需要什么工具自己下载，主动性强一点**
 
@@ -99,12 +109,6 @@ Linux：使用`wsl.exe -d Ubuntu2204`
 - 等方式
 
 若有些操作无法实现，请寻求用户帮助
-
-## 撤销之前的无效修改点
-bug修复后，**需撤销之前的无效修改点**，不能让无效改动污染代码！
-Debug完成后，检查
-- [] 旧改动删了吗
-- [] 旧改动删了后，是否还能正常运行
 	
 # 用户交互
 - **必须与用户对齐需求**，防止实现偏差，以结果为导向
