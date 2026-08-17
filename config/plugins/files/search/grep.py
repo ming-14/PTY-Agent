@@ -1,6 +1,6 @@
 """file grep 用例 —— rg 双引擎
 
-引擎1: bin/rg/rg.exe -H -n --no-heading [--glob include] <pattern> <path>
+引擎1: bin/rg/rg（Windows 为 rg.exe）-H -n --no-heading [--glob include] <pattern> <path>
    用 rg 的真实 regex 语义；literal_text 时对 pattern 做 re.escape。
    rg 退出码 1 = 无匹配，合法空结果；其他非 0 退出（含 rg 缺失）→ 降级。
 引擎2（降级）: os.walk + 逐行 regex + SkipHidden 过滤，收集满上限提前停。
