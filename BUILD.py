@@ -195,6 +195,57 @@ def step_clean_output():
     OUTPUT_DIR.mkdir(parents=True)
 
 
+def step_clean_platform_artifacts():
+    """清理源目录基础包中其他平台残留的构建/下载产物。
+
+    构建产物统一落入源目录（bin/ 与 config/plugins/ai/bin/），跨平台
+    切换构建时旧平台的二进制不会自动消失，会被 step_copy_base 整体复制
+    进发布包。此处按当前平台删除其他平台命名的文件与 Windows 专属目录。
+    """
+    # bin/rg 与 config/plugins/ai/bin：平台差异仅可执行文件名
+    for directory, own_name, other_name in (
+        (SCRIPT_DIR / "bin" / "rg", "rg.exe" if IS_WINDOWS else "rg",
+         "rg" if IS_WINDOWS else "rg.exe"),
+        (SCRIPT_DIR / "config" / "plugins" / "ai" / "bin",
+         "aichat.exe" if IS_WINDOWS else "aichat",
+         "aichat" if IS_WINDOWS else "aichat.exe"),
+    ):
+        if not directory.is_dir():
+            continue
+        stale = directory / other_name
+        if stale.is_file():
+            stale.unlink()
+            logger.info("已删除跨平台残留: %s", stale)
+        if not (directory / own_name).is_file():
+            logger.info("[clean] %s 缺失，由后续构建/下载步骤补齐", directory / own_name)
+    # bin/pywezterm：Windows 与 Unix 产物文件名不同，按平台删除对侧残留
+    pyw_dir = SCRIPT_DIR / "bin" / "pywezterm"
+    if pyw_dir.is_dir():
+        if IS_WINDOWS:
+            for so in pyw_dir.glob("*.so"):
+                so.unlink()
+                logger.info("已删除跨平台残留: %s", so)
+        else:
+            for name in ("pywezterm.pyd", "conpty.dll", "OpenConsole.exe"):
+                stale = pyw_dir / name
+                if stale.is_file():
+                    stale.unlink()
+                    logger.info("已删除跨平台残留: %s", stale)
+    # Windows 专属组件目录：仅删除构建/下载产物，保留 git 跟踪的源文件。
+    # ultravnc/terminal_injector 整体为下载产物；win_sandbox 仅 _native/ 下
+    # 的 pyd 是构建产物（__init__.py 等 py 文件为仓库跟踪的 vendored 包装）
+    if not IS_WINDOWS:
+        for name in ("ultravnc", "terminal_injector"):
+            stale_dir = SCRIPT_DIR / "bin" / name
+            if stale_dir.is_dir():
+                shutil.rmtree(stale_dir)
+                logger.info("已删除 Windows 专属残留目录: %s", stale_dir)
+        native_dir = SCRIPT_DIR / "bin" / "win_sandbox" / "_native"
+        if native_dir.is_dir():
+            shutil.rmtree(native_dir)
+            logger.info("已删除 Windows 专属残留目录: %s", native_dir)
+
+
 def step_build_rime():
     """构建 rime-plugin（webpack 产物复制进 src/web/static/vendor/rime，随基础包打包）。"""
     plugin_dir = SCRIPT_DIR / "web_rime" / "plugin"
@@ -241,7 +292,7 @@ def _has_hidden_or_system_attr(path):
 
 
 def step_clean_pycache():
-    """清理发布目录 __pycache__：仅删纯 .pyc 缓存，跳过隐藏/系统属性与含子目录的。"""
+    """清理发布目录 __pycache__ 与散落 *.pyc：仅删纯 .pyc 缓存，跳过隐藏/系统属性与含子目录的。"""
     for cache_dir in OUTPUT_DIR.rglob("__pycache__"):
         if not cache_dir.is_dir():
             continue
@@ -257,6 +308,17 @@ def step_clean_pycache():
             continue
         shutil.rmtree(cache_dir)
         logger.info("已删除: %s", cache_dir)
+    # 散落在 __pycache__ 之外的 *.pyc，同样跳过点目录与隐藏/系统属性目录
+    for pyc in OUTPUT_DIR.rglob("*.pyc"):
+        if not pyc.is_file():
+            continue
+        relative = pyc.relative_to(OUTPUT_DIR)
+        if any(part.startswith(".") for part in relative.parts):
+            continue
+        if _has_hidden_or_system_attr(pyc.parent):
+            continue
+        pyc.unlink(missing_ok=True)
+        logger.info("已删除: %s", pyc)
 
 
 def step_clean_gitkeep():
@@ -265,6 +327,31 @@ def step_clean_gitkeep():
         if f.is_file():
             f.unlink()
             logger.info("已删除: %s", f)
+
+
+def step_clean_logs():
+    """删除发布目录日志：log/、logs/ 目录整体删除，散落 *.log 文件删除。"""
+    for dir_name in ("log", "logs"):
+        for log_dir in OUTPUT_DIR.rglob(dir_name):
+            if not log_dir.is_dir():
+                continue
+            relative = log_dir.relative_to(OUTPUT_DIR)
+            if any(part.startswith(".") for part in relative.parts):
+                continue
+            if _has_hidden_or_system_attr(log_dir):
+                continue
+            shutil.rmtree(log_dir)
+            logger.info("已删除: %s", log_dir)
+    for log_file in OUTPUT_DIR.rglob("*.log"):
+        if not log_file.is_file():
+            continue
+        relative = log_file.relative_to(OUTPUT_DIR)
+        if any(part.startswith(".") for part in relative.parts):
+            continue
+        if _has_hidden_or_system_attr(log_file.parent):
+            continue
+        log_file.unlink(missing_ok=True)
+        logger.info("已删除: %s", log_file)
 
 
 # ===================== 构建步骤 =====================
@@ -645,8 +732,9 @@ def step_final_cleanup():
     (OUTPUT_DIR / "config" / "daemon" / "vnc.toml").unlink(missing_ok=True)
     ultravnc_dir = OUTPUT_DIR / "bin" / "ultravnc"
     if ultravnc_dir.is_dir():
+        # *.log 已由全局日志清理步骤处理，此处只处理 .ini
         for f in ultravnc_dir.iterdir():
-            if f.is_file() and f.suffix.lower() in (".log", ".ini"):
+            if f.is_file() and f.suffix.lower() == ".ini":
                 f.unlink(missing_ok=True)
 
 
@@ -683,6 +771,7 @@ def main():
 
     # 构建/下载产物统一写入源目录基础包（src/bin），最后整体复制进发布目录
     steps.append(("清理构建产物目录", step_clean_output))
+    steps.append(("清理跨平台残留", step_clean_platform_artifacts))
 
     if _enabled(args.NoRime, "BUILD_RIME"):
         steps.append(("构建 rime-plugin", step_build_rime))
@@ -690,7 +779,7 @@ def main():
         logger.info("[rime-plugin] 跳过构建（BUILD_RIME=false 或 -NoRime）")
 
 # Windows 专属组件（fastscreen/win-sandbox/UltraVNC/terminal_injector）：
-    # 仅 Windows 构建/下载，Unix 平台直接跳过（这些功能依赖 Windows 原生二进制）
+# 仅 Windows 构建/下载，Unix 平台直接跳过（这些功能依赖 Windows 原生二进制）
     if IS_WINDOWS:
         if _enabled(args.NoFastscreen, "BUILD_FASTSCREEN"):
             steps.append(("编译 fastscreen.dll", step_build_fastscreen))
@@ -730,6 +819,7 @@ def main():
         ("复制基础包", step_copy_base),
         ("清理 __pycache__", step_clean_pycache),
         ("删除 .gitkeep", step_clean_gitkeep),
+        ("清理日志文件", step_clean_logs),
         ("清理发布目录冗余文件", step_final_cleanup),
     ]
 

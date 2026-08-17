@@ -1229,7 +1229,7 @@ python BUILD.py [选项]
 4. 用 cmake + Ninja + vcvars64 编译 `win_sandbox_native.pyd`（pybind11），产物落入 `bin/win_sandbox/_native/`
 5. 用 maturin + vcvars64 + cargo 编译 wezterm-py，解包 wheel 落入 `bin/pywezterm/`
 6. 从 `sigoden/aichat` releases 下载 `aichat.exe` 到 ai 插件目录 `config/plugins/ai/bin/`
-7. 从 `BurntSushi/ripgrep` releases 下载 `rg.exe`（按系统架构 x86_64/aarch64）到 `bin/rg/`
+7. 从 `BurntSushi/ripgrep` releases 下载 `rg`（Windows 为 `rg.exe`，Unix 无扩展名；按系统架构 x86_64/aarch64）到 `bin/rg/`
 8. 下载 `UltraVNC_1824.zip`（按 x64/x86 架构）到 `bin/ultravnc/`
 9. 下载 `terminal_injector_x64_v1.0.zip` 到 `bin/terminal_injector/`
 10. 复制基础包（`src/`、`bin/`、`config/plugins/`、`app.py`、`SKILL.md`）到 `pty-agent/`
