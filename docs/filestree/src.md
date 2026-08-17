@@ -101,6 +101,7 @@ src/
 │   ├── lifecycle.py         # 客户端日志配置（setup_client_logging；daemon 控制见 daemonctl 包）
 │   ├── transport.py         # TCP/TLS 连接管理 + Client 类（自动启动守护进程，按 CONNECT_MODE 三路路由）
 │   ├── formatter.py         # 响应格式化输出（JSON 模式）
+│   ├── cli_plugins.py       # CLI 插件宿主（CliPluginHost，kind=cli 钩子链）
 │   ├── renderer/            # ═══ 终端快照渲染器（SVG / Pillow / GDI / box-drawing） ═══
 │   │   ├── __init__.py      # 包导出（render_to_file / render_svg_string / is_image_ext）
 │   │   ├── common.py        # 渲染共享基础（颜色映射 / 字符宽度 / 行格式展开）
@@ -166,6 +167,7 @@ src/
 │   ├── __init__.py
 │   ├── base.py              # PseudoTerminal 抽象基类
 │   ├── pty_factory.py       # 工厂函数 create_pty + 平台检测
+│   ├── subprocess_pty.py    # SubprocessPseudoTerminal（--subprocess 模式，Popen 双管道）
 │   └── wezterm_pty.py       # WeztermPseudoTerminal（wezterm-py Pty 跨平台统一，OpenConsole 宿主）
 │   # Shell 探测见 common/shells.py（跨侧共享）
 
@@ -180,7 +182,16 @@ src/
 │   ├── shm.py               # 共享内存工具（端口/PID + 认证令牌 + HMAC 密钥读写）
 │   └── single_instance.py   # 单实例互斥锁（Windows 命名互斥 / Unix flock，守护进程与客户端共用）
 
-├── logging_setup.py         # 日志系统共享工具（按模块分组写独立日志文件 + 前一日日志 gzip 归档）
+├── logging/                 # ═══════ 日志系统（异步队列 + 分组日志 + 归档） ═══════
+│   ├── __init__.py          # 包导出（get_logger / bind / unbind / setup_* / shutdown）
+│   ├── setup.py             # 日志装配入口（daemon/client 两侧初始化）
+│   ├── config.py            # 日志配置结构（从 config/ 常量组装 LoggingConfig）
+│   ├── registry.py          # logger 名注册表（get_logger 校验，防配置遗漏导致日志丢失）
+│   ├── context.py           # ContextVar 上下文绑定（session_id/connection_id 自动注入）
+│   ├── _queue.py            # 异步队列核心（QueueHandler + pty-log-writer 后台线程）
+│   ├── archiver.py          # LogArchiver（前一日日志 gzip 归档）
+│   ├── formatters.py        # 文本格式器（上下文字段注入）
+│   └── handlers.py          # 文件 handler 封装（毫秒时间戳文件名）
 
 ├── terminal/                # ═══════ 终端屏幕层 ═══════
 │   ├── __init__.py

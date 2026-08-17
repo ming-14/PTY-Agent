@@ -313,9 +313,9 @@ python app.py exec <id> -c <命令> [选项] [公共选项]
 | 选项                | 说明                                                         |
 | ------------------- | ------------------------------------------------------------ |
 | `--force-pty-mode`  | 强制模式：忽略 shell 操作符检测，原样拆分执行                 |
-| `--cwd DIR`         | 子进程工作目录（默认为守护进程当前目录）                     |
+| `--cwd DIR`         | 子进程工作目录（默认取调用方 CLI 的当前目录）                 |
 | `--env KEY=VALUE...`| 子进程环境变量（可多次指定），例：`--env TERM=xterm-256color COLORTERM=truecolor` |
-| `--size WxH`        | 终端尺寸（如 `120x40`，默认 `80x24`）                        |
+| `--size WxH`        | 终端尺寸（如 `120x40`，默认 `80x24`；仅新会话创建时生效）    |
 
 **触发与超时选项：**
 
@@ -752,7 +752,7 @@ python app.py set-default <key> <value> [公共选项]
 | `send-eol`             | 发送行尾符（lf/crlf/cr/none）                   |
 | `response-format`      | 响应格式（stream/svg）                         |
 | `svg-compression-level`| SVG 压缩等级（0/1/2）                          |
-| `terminal-size`        | 终端尺寸（如 120x40）                          |
+| `terminal-size`        | 终端尺寸（如 120x40）。对运行中的会话：下次 exec/send/read/mouse 携带时即刻 resize |
 
 **示例：**
 
@@ -766,7 +766,7 @@ python app.py set-default response-format svg
 
 ### 4.15  file - 文件工具
 
-文件读写/搜索/传输工具集（read-before-write 状态机、rg 双引擎，机制详见 [docs/design/files-tools.md](design/files-tools.md) 与 [docs/design/files-transfer.md](design/files-transfer.md)）。
+文件读写/搜索/传输工具集（read-before-write 状态机、rg 双引擎，机制详见 [files 插件 README](../config/plugins/files/README.md)，用法详见 [files 插件 USAGE](../config/plugins/files/USAGE.md)）。
 
 **用法：**
 
@@ -1064,7 +1064,7 @@ SCREENSHARE_LOGGERS = ["pty-web-screenshare", "pty-screenshareservice", "pty-scr
 CLIENT_LOG_LEVEL = "DEBUG"
 
 [loggers]
-CLIENT_LOGGERS = ["pty-client", "pty-daemonctl"]
+CLIENT_LOGGERS = ["pty-client", "pty-daemonctl", "pty-auth"]
 ```
 
 ### 6.5  web.toml - Web 服务器配置（可选）
@@ -1416,7 +1416,7 @@ python app.py kill py
 ```bash
 python app.py exec srv -c "python server.py" --timeout 10
 python app.py read srv -l 20        # 中途查看最近 20 行
-python app.py read srv              # 增量读取 (从上次 offset 继续)
+python app.py read srv              # PTY 模式返回屏幕快照；子进程模式则从上次 offset 增量读取
 python app.py read srv -g "ERROR"   # 只看错误行
 python app.py kill srv
 ```

@@ -82,6 +82,36 @@ class TestTerminalSizeCLI:
             assert diag.get("cols") == 100, f"Expected cols=100, got {diag.get('cols')}"
             assert diag.get("rows") == 30, f"Expected rows=30, got {diag.get('rows')}"
 
+    def test_runtime_resize_default_terminal_size(self):
+        """--default terminal-size 对运行中会话即刻生效（read 携带时 resize）"""
+        out = _run(["exec", "s6", "-c", "python -c \"input()\"", "--timeout", "3"])
+        resp = _parse_json(out)
+        if resp and resp.get("commandType") == "exec":
+            diag = resp.get("snapshotDiagnostics", {})
+            assert diag.get("cols") == 80, f"Expected cols=80, got {diag.get('cols')}"
+
+        out = _run(["read", "s6", "--default", "terminal-size", "100x30"])
+        resp = _parse_json(out)
+        if resp and resp.get("commandType") == "read":
+            diag = resp.get("snapshotDiagnostics", {})
+            assert diag.get("cols") == 100, \
+                f"Expected cols=100 after resize, got {diag.get('cols')}"
+            assert diag.get("rows") == 30, \
+                f"Expected rows=30 after resize, got {diag.get('rows')}"
+
+    def test_size_overrides_default_terminal_size(self):
+        """--size 显式指定时优先于 --default terminal-size（新会话）"""
+        out = _run(["exec", "s7", "-c", "python -c \"input()\"",
+                     "--size", "120x40", "--default", "terminal-size", "50x20",
+                     "--timeout", "3"])
+        resp = _parse_json(out)
+        if resp and resp.get("commandType") == "exec":
+            diag = resp.get("snapshotDiagnostics", {})
+            assert diag.get("cols") == 120, \
+                f"Expected cols=120 (--size wins), got {diag.get('cols')}"
+            assert diag.get("rows") == 40, \
+                f"Expected rows=40 (--size wins), got {diag.get('rows')}"
+
 
 if __name__ == "__main__":
     import pytest

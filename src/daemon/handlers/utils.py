@@ -383,6 +383,60 @@ def apply_client_defaults(session, msg: dict):
     client_defaults = msg.get("client_defaults")
     if client_defaults and isinstance(client_defaults, dict):
         session.client_config.update(client_defaults)
+        _apply_resize_default(session, client_defaults)
+
+
+def _parse_terminal_size(size_str) -> Optional[tuple]:
+    """解析 WxH 终端尺寸字符串 → (cols, rows)；非法输入返回 None
+
+    与客户端 parse_terminal_size 同语义（支持 × 分隔符），仅要求正整数，
+    边界约束由客户端 ConfigManager 在 --default/set-default 写入时校验。
+    """
+    try:
+        s = str(size_str).lower().replace("×", "x")
+        cols_s, rows_s = s.split("x", 1)
+        cols, rows = int(cols_s), int(rows_s)
+    except (ValueError, AttributeError):
+        return None
+    if cols <= 0 or rows <= 0:
+        return None
+    return cols, rows
+
+
+def _apply_resize_default(session, client_defaults: dict) -> None:
+    """--default terminal-size 对运行中的会话即刻生效（resize）
+
+    client_defaults 携带 terminal_size 时（exec/send/read/mouse 均会下发），
+    尺寸与当前不同则调用 session.resize()；子进程模式无终端、会话未运行、
+    尺寸未变或解析失败时静默跳过。
+    """
+    ts = client_defaults.get("terminal_size")
+    if not ts:
+        return
+    if not getattr(session, "running", False):
+        return
+    if getattr(session, "mode", "pty") == "subprocess":
+        return
+    size = _parse_terminal_size(ts)
+    if size is None:
+        _logger.debug("忽略非法 terminal_size=%r（会话 %s）", ts, session.id)
+        return
+    cols, rows = size
+    try:
+        if session.cols == cols and session.rows == rows:
+            return
+    except Exception:
+        return
+    try:
+        session.resize(cols, rows)
+        _logger.info(
+            "会话 '%s' 经 --default terminal-size 调整尺寸: %dx%d",
+            session.id,
+            cols,
+            rows,
+        )
+    except Exception:
+        _logger.debug("会话 '%s' resize 失败（忽略）: %r", session.id, ts)
 
 
 def check_ended_session(manager: SessionManager, session_id: str) -> Optional[str]:
