@@ -207,6 +207,7 @@ def build_result(
     session=None,
     t_start: Optional[float] = None,
     output_offset: Optional[int] = None,
+    include_debug: Optional[bool] = None,
 ) -> dict:
     if session is None:
         session = manager.get_session(session_id)
@@ -271,7 +272,14 @@ def build_result(
     if terminal_state:
         result["terminalState"] = terminal_state
 
-    if consume_events:
+    # 调试信息产出与事件消费解耦：默认沿用 consume_events（既有语义），
+    # 调用方（如 read --debug-output）可显式 include_debug=True 在非等待
+    # 路径也产出 debugInformation（事件消费仍由 consume_events 单独控制，
+    # read 不应消费事件，只展示当前时刻快照）
+    wants_debug = (
+        include_debug if include_debug is not None else consume_events
+    )
+    if wants_debug:
         processes = session.processes if session else []
         process_tree = []
         if processes:

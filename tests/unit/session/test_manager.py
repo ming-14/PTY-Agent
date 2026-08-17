@@ -51,6 +51,32 @@ class TestSessionManagerCreate:
             mgr.create_session(None, _SPAWN_CMD)
 
 
+class TestSessionManagerPreHold:
+    """create_session 创建期预持有接线（缺陷2 修复）：
+
+    pre_hold 在 start 前调用，把"create_session 返回 → handler 首个 hold"
+    的空窗并入持有；首个 hold/acquire_hold 消费预持有。"""
+
+    def test_create_session_pre_holds(self):
+        mgr = SessionManager()
+        s = mgr.create_session("test", _SPAWN_CMD)
+        try:
+            assert s._creation_hold is True
+            assert s._hold_count == 1
+        finally:
+            # 消费预持有并归还计数（模拟 handler 流程），避免持有泄漏
+            s.acquire_hold()
+            s.release_hold()
+
+    def test_hold_consumes_creation_hold(self):
+        mgr = SessionManager()
+        s = mgr.create_session("test", _SPAWN_CMD)
+        with s.hold():
+            assert s._creation_hold is False
+            assert s._hold_count == 1
+        assert s._hold_count == 0
+
+
 class TestSessionManagerGet:
     def test_get_existing_session(self):
         mgr = SessionManager()

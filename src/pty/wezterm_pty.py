@@ -119,6 +119,8 @@ class WeztermPseudoTerminal(PseudoTerminal):
                 for cpid in after_cons - before_cons:
                     try:
                         if self._tracker.assign_extra_process(cpid):
+                            # 登记为宿主进程：自然结束检测排除（见 tracker）
+                            self._tracker.register_host_pid(cpid)
                             _logger.debug("OpenConsole %d 并入 Job", cpid)
                     except Exception as e:
                         _logger.warning(

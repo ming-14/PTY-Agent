@@ -333,40 +333,45 @@ class WorkflowEngine:
                 mode=raw.get("mode", "pty"),
             )
 
-        msg = {
-            "timeout": raw.get("timeout", 120),
-            "trigger": raw.get("trigger"),
-            "idle_timeout": raw.get("idle_timeout"),
-            "idle_after_first_output": raw.get("idle_after_first_output", False),
-            "keep_ansi": raw.get("keep_ansi", False),
-            "full": raw.get("full", False),
-            "mode": raw.get("mode", "pty"),
-            "size": raw.get("size"),
-            "cwd": raw.get("cwd"),
-            "env": raw.get("env"),
-            "_t_start": time.monotonic(),
-        }
-        if getattr(session, "mode", "pty") == "subprocess":
-            if msg.get("trigger"):
-                result, _ = _run_subprocess_trigger_flow(
-                    ctx, None, session, msg, 0 if msg.get("full") else
-                    session.output_offset, msg["trigger"], False, False,
-                    msg.get("timeout", 120), start_offset=0,
-                    result_type="exec", send_response=False,
-                    cancel_event=run.cancel_event,
-                )
+        # 持有会话：exec 流程可能等待输出（子进程可能在等待期间快速退出，
+        # 由 manager 触发 release_components）；hold 确保会话结束只延迟释放
+        # 缓冲，最后一个 hold 退出时执行实际释放，避免流程读到 None 缓冲
+        # （新建会话的创建期预持有在此消费）
+        with session.hold():
+            msg = {
+                "timeout": raw.get("timeout", 120),
+                "trigger": raw.get("trigger"),
+                "idle_timeout": raw.get("idle_timeout"),
+                "idle_after_first_output": raw.get("idle_after_first_output", False),
+                "keep_ansi": raw.get("keep_ansi", False),
+                "full": raw.get("full", False),
+                "mode": raw.get("mode", "pty"),
+                "size": raw.get("size"),
+                "cwd": raw.get("cwd"),
+                "env": raw.get("env"),
+                "_t_start": time.monotonic(),
+            }
+            if getattr(session, "mode", "pty") == "subprocess":
+                if msg.get("trigger"):
+                    result, _ = _run_subprocess_trigger_flow(
+                        ctx, None, session, msg, 0 if msg.get("full") else
+                        session.output_offset, msg["trigger"], False, False,
+                        msg.get("timeout", 120), start_offset=0,
+                        result_type="exec", send_response=False,
+                        cancel_event=run.cancel_event,
+                    )
+                else:
+                    result, _ = _run_subprocess_no_trigger_flow(
+                        ctx, None, session, msg, result_type="exec",
+                        send_response=False, from_offset=0,
+                        cancel_event=run.cancel_event,
+                    )
             else:
-                result, _ = _run_subprocess_no_trigger_flow(
+                result, _ = _run_snapshot_flow(
                     ctx, None, session, msg, result_type="exec",
-                    send_response=False, from_offset=0,
-                    cancel_event=run.cancel_event,
+                    send_response=False, cancel_event=run.cancel_event,
                 )
-        else:
-            result, _ = _run_snapshot_flow(
-                ctx, None, session, msg, result_type="exec",
-                send_response=False, cancel_event=run.cancel_event,
-            )
-        return self._resolve_result(step, result)
+            return self._resolve_result(step, result)
 
     def _send_type(self, ctx, run, step, raw: dict) -> tuple:
         from ..daemon.execution import (
@@ -378,39 +383,42 @@ class WorkflowEngine:
         session_id = raw["session"]
         session = self._get_session(ctx, session_id)
         input_text = raw["input"]
-        session.write_input(input_text)
-        trigger = raw.get("trigger")
-        msg = {
-            "timeout": raw.get("timeout", 120),
-            "trigger": trigger,
-            "idle_timeout": raw.get("idle_timeout"),
-            "idle_after_first_output": raw.get("idle_after_first_output", False),
-            "keep_ansi": raw.get("keep_ansi", False),
-            "full": raw.get("full", False),
-            "encoding": raw.get("encoding"),
-            "_t_start": time.monotonic(),
-        }
-        is_sub = getattr(session, "mode", "pty") == "subprocess"
-        if is_sub:
-            if trigger:
-                result, _ = _run_subprocess_trigger_flow(
-                    ctx, None, session, msg, 0 if msg.get("full") else
-                    session.output_offset, trigger, False, True,
-                    msg.get("timeout", 120), result_type="send",
+        # 持有会话：write_input 与后续等待输出期间会话可能自然结束，
+        # hold 防止缓冲被提前释放（与 _exec_type 同理）
+        with session.hold():
+            session.write_input(input_text)
+            trigger = raw.get("trigger")
+            msg = {
+                "timeout": raw.get("timeout", 120),
+                "trigger": trigger,
+                "idle_timeout": raw.get("idle_timeout"),
+                "idle_after_first_output": raw.get("idle_after_first_output", False),
+                "keep_ansi": raw.get("keep_ansi", False),
+                "full": raw.get("full", False),
+                "encoding": raw.get("encoding"),
+                "_t_start": time.monotonic(),
+            }
+            is_sub = getattr(session, "mode", "pty") == "subprocess"
+            if is_sub:
+                if trigger:
+                    result, _ = _run_subprocess_trigger_flow(
+                        ctx, None, session, msg, 0 if msg.get("full") else
+                        session.output_offset, trigger, False, True,
+                        msg.get("timeout", 120), result_type="send",
+                        send_response=False, cancel_event=run.cancel_event,
+                    )
+                else:
+                    result, _ = _run_subprocess_no_trigger_flow(
+                        ctx, None, session, msg, result_type="send",
+                        send_response=False, from_offset=0 if msg.get("full")
+                        else session.output_offset, cancel_event=run.cancel_event,
+                    )
+            else:
+                result, _ = _run_snapshot_flow(
+                    ctx, None, session, msg, result_type="send",
                     send_response=False, cancel_event=run.cancel_event,
                 )
-            else:
-                result, _ = _run_subprocess_no_trigger_flow(
-                    ctx, None, session, msg, result_type="send",
-                    send_response=False, from_offset=0 if msg.get("full")
-                    else session.output_offset, cancel_event=run.cancel_event,
-                )
-        else:
-            result, _ = _run_snapshot_flow(
-                ctx, None, session, msg, result_type="send",
-                send_response=False, cancel_event=run.cancel_event,
-            )
-        return self._resolve_result(step, result)
+            return self._resolve_result(step, result)
 
     def _read_type(self, ctx, run, step, raw: dict) -> tuple:
         from ..daemon.execution import _run_snapshot_flow
@@ -420,52 +428,56 @@ class WorkflowEngine:
         if session is None:
             raise RuntimeError("会话 '%s' 不存在" % session_id)
         trigger = raw.get("trigger")
-        msg = {
-            "timeout": raw.get("timeout", 120),
-            "trigger": trigger,
-            "idle_timeout": raw.get("idle_timeout"),
-            "idle_after_first_output": raw.get("idle_after_first_output", False),
-            "keep_ansi": raw.get("keep_ansi", False),
-            "full": raw.get("full", False),
-            "snapshot_diff": raw.get("snapshot_diff", False),
-            "encoding": raw.get("encoding"),
-            "_t_start": time.monotonic(),
-        }
-        if trigger or raw.get("idle_timeout"):
-            result, output = _run_snapshot_flow(
-                ctx, None, session, msg, result_type="read",
-                send_response=False, cancel_event=run.cancel_event,
-            )
-            if raw.get("lines") or raw.get("grep"):
+        # 持有会话：等待输出/构建响应期间会话可能自然结束（含多步骤
+        # workflow 中上一步创建的会话在本步期间退出），hold 防止缓冲被
+        # 提前释放（与 _exec_type 同理）
+        with session.hold():
+            msg = {
+                "timeout": raw.get("timeout", 120),
+                "trigger": trigger,
+                "idle_timeout": raw.get("idle_timeout"),
+                "idle_after_first_output": raw.get("idle_after_first_output", False),
+                "keep_ansi": raw.get("keep_ansi", False),
+                "full": raw.get("full", False),
+                "snapshot_diff": raw.get("snapshot_diff", False),
+                "encoding": raw.get("encoding"),
+                "_t_start": time.monotonic(),
+            }
+            if trigger or raw.get("idle_timeout"):
+                result, output = _run_snapshot_flow(
+                    ctx, None, session, msg, result_type="read",
+                    send_response=False, cancel_event=run.cancel_event,
+                )
+                if raw.get("lines") or raw.get("grep"):
+                    output = filter_snapshot_lines(
+                        output, raw.get("lines"), None, raw.get("grep")
+                    )
+                    result["outputStream"] = output
+            else:
+                if raw.get("snapshot_diff"):
+                    output = session.get_snapshot_diff(
+                        keep_ansi=raw.get("keep_ansi", False)
+                    )
+                elif raw.get("full"):
+                    output = session.get_full_snapshot(
+                        keep_ansi=raw.get("keep_ansi", False)
+                    )
+                else:
+                    output = session.get_snapshot(keep_ansi=raw.get("keep_ansi", False))
                 output = filter_snapshot_lines(
                     output, raw.get("lines"), None, raw.get("grep")
                 )
-                result["outputStream"] = output
-        else:
-            if raw.get("snapshot_diff"):
-                output = session.get_snapshot_diff(
-                    keep_ansi=raw.get("keep_ansi", False)
+                result = build_result(
+                    ctx.manager,
+                    session_id,
+                    output,
+                    False,
+                    "ok" if session.running else "ended",
+                    has_trigger=False,
+                    result_type="read",
+                    session=session,
                 )
-            elif raw.get("full"):
-                output = session.get_full_snapshot(
-                    keep_ansi=raw.get("keep_ansi", False)
-                )
-            else:
-                output = session.get_snapshot(keep_ansi=raw.get("keep_ansi", False))
-            output = filter_snapshot_lines(
-                output, raw.get("lines"), None, raw.get("grep")
-            )
-            result = build_result(
-                ctx.manager,
-                session_id,
-                output,
-                False,
-                "ok" if session.running else "ended",
-                has_trigger=False,
-                result_type="read",
-                session=session,
-            )
-        return self._resolve_result(step, result)
+            return self._resolve_result(step, result)
 
     def _kill_type(self, ctx, run, step, raw: dict) -> tuple:
         session_id = raw["session"]
@@ -493,11 +505,21 @@ class WorkflowEngine:
     def _resolve_result(self, step, result) -> tuple:
         """把响应 dict 归一为 (status, 核心字段, error)
 
-        取消（reason=cancelled）按取消处理；error 响应按失败处理。
+        取消（reason=cancelled）按取消处理；error 响应按失败处理；
+        exec/send 步骤程序崩溃（program_crashed，含非 0 退出码的自然退出）
+        按失败处理以触发 retry/on_error；read 步骤读已结束/崩溃会话属正常
+        读取行为，不算失败；trigger 超时（trigger_timeout）按文档不算失败。
         """
         if result.get("error"):
             return STEP_FAILED, {}, result["error"]
         if result.get("triggerReturnReason") == "cancelled":
             return STEP_CANCELLED, {}, None
         fields = _extract_result_fields(result)
+        if step.type != "read" and result.get("triggerReturnReason") == "program_crashed":
+            _logger.info(
+                "workflow 步骤 %s 程序崩溃（exit=%s），按失败处理",
+                step.id,
+                fields.get("exit_code"),
+            )
+            return STEP_FAILED, fields, "program crashed"
         return STEP_DONE, fields, None

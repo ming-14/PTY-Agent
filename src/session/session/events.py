@@ -41,6 +41,23 @@ class EventsMixin:
             target=self.stop, daemon=True, name=f"pty-stop-{self.id}"
         ).start()
 
+    def poll_natural_exit(self) -> None:
+        """主动检查所有工作进程是否已退出，是则触发自然结束收尾
+
+        供等待循环分片调用：监控线程的自然结束检查按 2s 低频 tick 执行，
+        命令等待期间程序退出后最迟 2s 才被发现；调用方分片等待时调用本
+        方法，工作进程全退（宿主进程除外）即立即关闭 PTY 完成收尾，
+        running 随之置 False，等待循环即可按 ended 如实上报。
+        """
+        if not self.running or not self._pty:
+            return
+        try:
+            work_pids = self._tracker.get_work_process_list()
+        except Exception:
+            return
+        if len(work_pids) == 0:
+            self._on_all_processes_exited()
+
     def _on_reader_exit(self, exit_code, error_message):
         if exit_code is not None:
             self.exit_code = exit_code

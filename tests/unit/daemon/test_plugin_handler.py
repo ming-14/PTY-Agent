@@ -75,7 +75,7 @@ class TestPluginHandler:
         assert resp["action"] == "list"
         assert resp["plugins"] == [{
             "name": "echo", "version": "1.0", "description": "echo plugin",
-            "triggers": ["event"], "pollInterval": None, "autoLoad": False,
+            "kind": "session", "triggers": ["event"], "pollInterval": None, "autoLoad": False,
             "messageTypes": [], "needsIO": False,
         }]
 

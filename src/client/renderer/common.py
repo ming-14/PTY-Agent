@@ -21,6 +21,20 @@ except ImportError:
 
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".svg"}
 
+# 单元格网格度量：行高取 Windows GDI 实测（Consolas 14px 的 tmHeight=17），
+# SVG/Pillow 等无字体度量能力的后端与 GDI 输出保持像素级一致
+CELL_W = 8
+CELL_H = 17
+
+# ANSI 16 色调色板（服务端 cell fg/bg 的 "pN" 调色板索引格式），
+# 顺序与 _ANSI_COLOR_MAP 的 16 色一一对应
+_PALETTE_COLORS = [
+    "#000000", "#cd0000", "#00cd00", "#cdcd00",
+    "#0000ee", "#cd00cd", "#00cdcd", "#e5e5e5",
+    "#7f7f7f", "#ff0000", "#00ff00", "#ffff00",
+    "#5c5cff", "#ff00ff", "#00ffff", "#ffffff",
+]
+
 _ANSI_COLOR_MAP = {
     "black": "#000000",
     "red": "#cd0000",
@@ -48,10 +62,23 @@ def _resolve_color(color_str: str, is_fg: bool = True) -> Optional[str]:
         return None
     if color_str in _ANSI_COLOR_MAP:
         return _ANSI_COLOR_MAP[color_str]
+    # 服务端调色板索引格式 "pN"（ANSII 16 色）
+    if color_str.startswith("p") and color_str[1:].isdigit():
+        idx = int(color_str[1:])
+        if 0 <= idx < len(_PALETTE_COLORS):
+            return _PALETTE_COLORS[idx]
+        return None
     if isinstance(color_str, str) and len(color_str) == 6:
         try:
             int(color_str, 16)
             return f"#{color_str}"
+        except ValueError:
+            pass
+    # 服务端真彩格式 "#rrggbb"（7 字符）；剥 # 后按 6 位 hex 处理
+    if isinstance(color_str, str) and len(color_str) == 7 and color_str.startswith("#"):
+        try:
+            int(color_str[1:], 16)
+            return color_str
         except ValueError:
             pass
     if color_str.startswith("rgb:"):

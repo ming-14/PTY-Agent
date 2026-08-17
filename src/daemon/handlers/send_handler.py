@@ -24,7 +24,6 @@ class SendHandler(DaemonHandler):
         from ...config.common import MAX_INPUT_LEN, MAX_PATTERN_LEN, MAX_SESSION_ID_LEN
 
         session_id = msg.get("id", "")
-        input_text = msg.get("input", "")
         trigger = msg.get("trigger")
         if not validate_request(
             conn,
@@ -71,6 +70,12 @@ class SendHandler(DaemonHandler):
     def _handle_send_flow(self, ctx, conn, session, msg):
         """send 会话处理主体（已持有 session.hold）"""
         apply_client_defaults(session, msg)
+
+        # 本流程独立于 handle() 从消息取值：会话 id 与输入文本供
+        # 写入与日志使用（send 写入失败的日志定位不依赖会话对象）
+        session_id = msg.get("id", "")
+        input_text = msg.get("input", "")
+        trigger = msg.get("trigger")
 
         is_sub = getattr(session, "mode", "pty") == "subprocess"
 

@@ -144,6 +144,8 @@ class PluginRegistry:
                 "name": cls.name,
                 "version": cls.version,
                 "description": cls.description,
+                # 形态：process（经消息路由直调）/ session（可挂载）/ cli（客户端侧）
+                "kind": resolve_kind(cls),
                 "triggers": list(cls.triggers),
                 "pollInterval": cls.poll_interval,
                 "autoLoad": bool(cls.auto_load),

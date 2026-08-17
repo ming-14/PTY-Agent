@@ -39,6 +39,7 @@ from .common import (
     TransferAbortedError,
     TransferError,
     TransferTimeoutError,
+    entry,
 )
 from .scan import scan_tree
 from ..logging import get_logger
@@ -206,6 +207,18 @@ def upload(
     """
     t_start = time.monotonic()
     entries = scan_tree(local_root)
+    # 远端目标以路径分隔符结尾 = 目录语义：本地单文件上传时把清单根条目
+    # 归一为文件名（relpath=<文件名>），由 daemon 落到 <目录>/<文件名>；
+    # 否则根条目 relpath="" 会落地为与目标同名的文件，违背"上传到该目录"的意图
+    if remote_path.endswith(("/", "\\")) and len(entries) == 1 and not entries[0].get("relpath"):
+        base = os.path.basename(local_root)
+        if base:
+            parent = os.path.dirname(local_root) or "."
+            root_entry = entries[0]
+            entries = [
+                entry(base, ENTRY_FILE, root_entry.get("size", 0), root_entry.get("mtime", 0.0))
+            ]
+            local_root = parent
     file_entries = [e for e in entries if e.get("kind") == ENTRY_FILE]
     total_bytes = sum(e.get("size", 0) for e in file_entries)
     _logger.info(

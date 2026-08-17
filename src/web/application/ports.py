@@ -157,6 +157,22 @@ class ConnectionContext(ABC):
         """
 
     @abstractmethod
+    def add_held_session(self, session_id: str, session: Any) -> None:
+        """记录本连接对某会话的持有（订阅期间 acquire_hold 的配对凭证）。
+
+        会话结束从仓库移除后仍需要原 Session 对象来释放持有，
+        故订阅时保存引用，退订时按 id 取出释放。
+        """
+
+    @abstractmethod
+    def pop_held_session(self, session_id: str) -> Optional[Any]:
+        """取出并移除本连接对某会话的持有（退订时调用）。
+
+        Returns:
+            订阅时保存的 Session；未持有过返回 None。
+        """
+
+    @abstractmethod
     def clear_all_subscriptions(self) -> None:
         """清除所有订阅和回调（用于连接关闭）。"""
 

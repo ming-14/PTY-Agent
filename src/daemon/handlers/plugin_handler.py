@@ -91,10 +91,21 @@ class PluginHandler(DaemonHandler):
             return
         inst = registry.instantiate(name)
         if inst is None:
-            Message.send(conn, Response.error(f"插件未加载: {name}"))
+            cls = registry.get(name)
+            if cls is not None and cls.message_types:
+                # 进程级插件单例常驻、经 message_types 路由直调，设计上不可挂载
+                msg_types = ", ".join(list(cls.message_types)[:3])
+                Message.send(
+                    conn,
+                    Response.error(
+                        f"插件 {name} 为进程级插件（经 {msg_types} 等消息直调），不支持会话挂载"
+                    ),
+                )
+            else:
+                Message.send(conn, Response.error(f"插件未加载: {name}"))
             return
         if not session.plugin_host.attach(inst):
-            Message.send(conn, Response.error(f"插件已挂载: {name}"))
+            Message.send(conn, Response.error(f"插件 {name} 已挂载到会话，禁止重复挂载"))
             return
         _logger.info("plugin attach: sid=%r name=%r", session_id, name)
         Message.send(
@@ -140,6 +151,17 @@ class PluginHandler(DaemonHandler):
             return
         result = session.plugin_host.handle_command(name, msg)
         if result is None:
+            registry = ctx.manager.plugin_registry
+            cls = registry.get(name) if registry else None
+            if cls is not None and cls.message_types:
+                msg_types = ", ".join(list(cls.message_types)[:3])
+                Message.send(
+                    conn,
+                    Response.error(
+                        f"插件 {name} 为进程级插件（经 {msg_types} 等消息直调），不支持 plugin cmd"
+                    ),
+                )
+                return
             Message.send(conn, Response.error(f"插件 {name} 未处理命令: {command}"))
             return
         Message.send(

@@ -33,7 +33,8 @@ class TestRenderSvgString:
         buf = _make_buf(cols=40, rows=10)
         svg = render_svg_string(buf)
         assert 'width="320"' in svg
-        assert 'height="160"' in svg
+        # 行高 17 与 GDI 渲染实测（Consolas 14px tmHeight）保持一致
+        assert 'height="170"' in svg
 
     def test_bold_text(self):
         bold_cell = {"d": "X", "f": "default", "b": "default", "bo": True}
@@ -48,6 +49,27 @@ class TestRenderSvgString:
         buf = _make_buf(cols=1, rows=1, lines=lines)
         svg = render_svg_string(buf)
         assert "#cd0000" in svg
+
+    def test_palette_index_color(self):
+        cell = {"d": "R", "f": "p1", "b": "default", "bo": False}
+        lines = [[cell]]
+        buf = _make_buf(cols=1, rows=1, lines=lines)
+        svg = render_svg_string(buf)
+        assert 'fill="#cd0000"' in svg
+
+    def test_truecolor_hash_color(self):
+        cell = {"d": "T", "f": "#ff8800", "b": "default", "bo": False}
+        lines = [[cell]]
+        buf = _make_buf(cols=1, rows=1, lines=lines)
+        svg = render_svg_string(buf)
+        assert 'fill="#ff8800"' in svg
+
+    def test_background_rect(self):
+        cell = {"d": "G", "f": "p2", "b": "p4", "bo": False}
+        lines = [[cell]]
+        buf = _make_buf(cols=1, rows=1, lines=lines)
+        svg = render_svg_string(buf)
+        assert '<rect x="0" y="0" width="8" height="17" fill="#0000ee"/>' in svg
 
 
 class TestCompressSvg:
@@ -71,6 +93,20 @@ class TestCompressSvg:
         except ImportError:
             result = _compress_svg(svg, 1)
             assert "Test" in result
+
+    def test_level1_differ_from_level2(self):
+        try:
+            from scour import scour
+        except ImportError:
+            pytest.skip("scour 未安装")
+        svg = '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="17">' \
+              '<defs><linearGradient id="g1"><stop offset="0" stop-color="#ff0000"/></linearGradient></defs>' \
+              '<rect width="100%" height="100%" fill="url(#g1)"/>' \
+              '<text x="0" y="0">Hello World</text></svg>'
+        l1 = _compress_svg(svg, 1)
+        l2 = _compress_svg(svg, 2)
+        assert l1 != l2
+        assert len(_compress_svg(svg, 2)) <= len(_compress_svg(svg, 1))
 
     def test_level_2_without_scour(self):
         svg = '<svg><text x="0" y="0">Test</text></svg>'

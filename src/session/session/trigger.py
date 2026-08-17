@@ -141,7 +141,7 @@ class TriggerMixin:
             now = time.time()
             if now - _last_gui_check >= 1.0:
                 _last_gui_check = now
-                self._gui.check(self._pty, self.id)
+                self._gui.check(self._tracker, self.id)
             if gui_short_circuit and self._gui.detected_event.is_set():
                 self._gui.detected_event.clear()
                 return False, "gui_detected"
@@ -161,11 +161,13 @@ class TriggerMixin:
         pattern: Optional[str] = None,
         idle_timeout: Optional[float] = None,
         idle_after_first_output: bool = False,
+        newline: bool = False,
     ):
         self._trig_mat.set_snapshot_trigger(
             pattern=pattern,
             idle_timeout=idle_timeout,
             idle_after_first_output=idle_after_first_output,
+            newline=newline,
         )
 
     def check_snapshot_trigger(self, snapshot_text: str) -> bool:

@@ -178,6 +178,8 @@ def _build_client_toml(
     Returns:
         client.toml 文本内容
     """
+    # 注意：不得包含 [logging] 段 —— 日志配置已拆分到 config/client/logging.toml
+    # （测试不覆写该文件），重复定义 CLIENT_LOG_LEVEL 会触发配置合并冲突
     tls_host = '"127.0.0.1"' if connect_mode == "tls" else '""'
     return f"""# 客户端配置 —— e2e 测试临时覆写
 
@@ -199,10 +201,6 @@ DEFAULT_TRIGGER_TIMEOUT = 120.0
 PUBKEY_PRIVATE_KEY_PATH = "{private_key_path}"
 KNOWN_HOSTS_FILE    = "{known_hosts_path}"
 TOFU_STRICT         = true
-
-[logging]
-CLIENT_LOG_LEVEL = "DEBUG"
-CLIENT_LOGGERS   = ["pty-client", "pty-daemonctl"]
 """
 
 

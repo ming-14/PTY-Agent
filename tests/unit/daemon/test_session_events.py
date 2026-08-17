@@ -85,6 +85,9 @@ class _MockTracker:
     def get_process_list(self):
         return list(self._pids)
 
+    def get_work_process_list(self):
+        return list(self._pids)
+
     def get_process_exit_code(self, pid):
         return None
 

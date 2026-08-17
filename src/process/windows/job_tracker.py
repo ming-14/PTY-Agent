@@ -95,6 +95,7 @@ class JobProcessTreeTracker(ProcessTreeTracker):
         self._notif_lock = threading.Lock()
         self._notifications: List[ProcessNotification] = []
         self._root_pid: Optional[int] = None
+        self._host_pids: set = set()
         self._gui_monitor = GuiWindowMonitor(self)
 
         job_name = None
@@ -180,6 +181,23 @@ class JobProcessTreeTracker(ProcessTreeTracker):
                 ctypes.get_last_error(),
             )
         return bool(ok)
+
+    # ── 宿主进程登记（ConPTY 宿主等非工作进程）──
+
+    def register_host_pid(self, pid: int):
+        """登记宿主进程 PID（如 OpenConsole），自然结束检测时排除
+
+        宿主进程常驻于 PTY 生命周期（直至 pty.close），若被计入工作进程，
+        Job 进程列表恒非空，会话将永远检测不到自然结束。
+        """
+        if pid:
+            self._host_pids.add(pid)
+
+    def get_work_process_list(self) -> List[int]:
+        """获取工作进程 PID 列表（排除已登记的宿主进程）"""
+        if not self._host_pids:
+            return self.get_process_list()
+        return [p for p in self.get_process_list() if p not in self._host_pids]
 
     # ── 进程树查询 ──
 
