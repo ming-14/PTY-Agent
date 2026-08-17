@@ -157,7 +157,8 @@ class ReadHandler(DaemonHandler):
 
     def _handle_read_flow(self, ctx, conn, session, msg):
         """read 会话处理主体（已持有 session.hold）"""
-        apply_client_defaults(session, msg)
+        if not apply_client_defaults(session, msg, conn):
+            return
 
         session_id = session.id
         lines_param = msg.get("lines")
@@ -190,6 +191,12 @@ class ReadHandler(DaemonHandler):
         if offset is not None and msg.get("full"):
             Message.send(conn, Response.error("--offset cannot be used with --full"))
             return
+        if offset is not None and msg.get("snapshot_diff"):
+            Message.send(
+                conn,
+                Response.error("--offset cannot be used with --snapshot-diff"),
+            )
+            return
 
         if has_wait:
             # --lines 需作用于含 scrollback 历史的全量内容（隐式 full）
@@ -220,6 +227,39 @@ class ReadHandler(DaemonHandler):
             return
 
         # 非等待：直接返回快照（--full/--lines 时含 scrollback 历史）
+        # 显式 --offset：与子进程模式语义一致，从原始输出缓冲区增量读取，
+        # 返回"该偏移之后的新增输出"，响应 outputOffset 为缓冲结束偏移。
+        # （offset 未显式给定时保持快照语义，read 默认返回可见屏幕快照）
+        if offset is not None:
+            output, cur_offset = session.get_output_with_offset(
+                from_offset=offset, encoding=msg.get("encoding")
+            )
+            output = strip_if_needed(output, msg)
+            if grep or msg.get("column") is not None:
+                filtered = apply_lines_grep(
+                    output, None, grep, conn,
+                    column_param=msg.get("column"),
+                )
+                if filtered is None:
+                    return
+                output = filtered
+            result = build_result(
+                ctx.manager,
+                session_id,
+                output,
+                False,
+                "ok" if session.running else "ended",
+                has_trigger=False,
+                result_type="read",
+                session=session,
+                t_start=msg.get("_t_start"),
+                output_offset=cur_offset,
+                include_debug=_include_debug(session),
+            )
+            attach_screen_buffer(result, session, msg)
+            Message.send(conn, result)
+            return
+
         if msg.get("snapshot_diff"):
             output = session.get_snapshot_diff(keep_ansi=msg.get("keep_ansi", False))
         elif msg.get("full") or lines_param is not None:

@@ -72,11 +72,11 @@ class TriggerMixin:
         """
         if self._trig_mat.matched:
             return True, "matched"
-        if self._proc_mon.crash_event.is_set():
+        if self._proc_mon.crash_event.is_set() and self._is_real_crash():
             self._proc_mon.clear_crash()
             return False, "crashed"
         if not self.running:
-            return False, "ended"
+            return False, "crashed" if self._is_real_crash() else "ended"
         if (
             gui_short_circuit
             and self._gui.gui_windows
@@ -123,7 +123,7 @@ class TriggerMixin:
                 )
                 return True, plugin_reason
 
-            if self._proc_mon.crash_event.is_set():
+            if self._proc_mon.crash_event.is_set() and self._is_real_crash():
                 self._proc_mon.clear_crash()
                 return False, "crashed"
 
@@ -136,7 +136,7 @@ class TriggerMixin:
                 )
                 return True, "matched"
             if not self.running:
-                return False, "ended"
+                return False, "crashed" if self._is_real_crash() else "ended"
 
             now = time.time()
             if now - _last_gui_check >= 1.0:

@@ -79,6 +79,25 @@ class EventsMixin:
 
     # ── 退出码获取 ────────────────────────────────────────────
 
+    def _is_real_crash(self) -> bool:
+        """会话是否确已崩溃（以退出码/错误消息/崩溃事件为权威依据）
+
+        crash_event 信号会被 stop() 无条件置位（用于唤醒等待循环），
+        不能单独作为崩溃判定依据；正常完成（exit 0 且无错误消息）必须
+        判定为非崩溃，否则 triggerReturnReason 会被误标为 program_crashed。
+        """
+        if self.exit_code is not None and self.exit_code != 0:
+            return True
+        if self.error_message:
+            return True
+        try:
+            return any(
+                e.get("type") == "process_crash" and e.get("detail", {}).get("exitCode")
+                for e in self.get_all_events()
+            )
+        except Exception:
+            return False
+
     def _update_exit_info(self):
         if not self._pty:
             return

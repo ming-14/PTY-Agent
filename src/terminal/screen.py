@@ -44,8 +44,11 @@ _DECSET_RE = re.compile(rb"\x1b\[\?(\d+(?:;\d+)*)([hl])")
 
 _ALT_TAIL_WINDOW = 64
 
-# scrollback 历史行上限（参考 tmux default history-limit 2000，这里给更大值）
-_DEFAULT_HLIMIT = 10000
+# scrollback 历史行上限（参考 tmux default history-limit 2000；10000 行 ≈ 60KB
+# 文本，黑盒实测 `seq 1 100000` 仅尾部约万行可取回，前部输出丢失。调至 30000
+# 行在"可恢复历史"与"单会话内存（Rust 侧稀疏网格）"间取平衡；原始输出另由
+# OutputBuffer（100MB）兜底，仅终端屏幕快照受本上限约束）
+_DEFAULT_HLIMIT = 30000
 
 
 class TerminalScreen:

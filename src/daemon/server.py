@@ -12,6 +12,7 @@
 import mmap
 import os
 import signal
+import sys
 import threading
 import time
 from typing import Optional
@@ -58,6 +59,33 @@ from .listener import Listener
 from ..logging import get_logger
 
 _logger = get_logger("pty-daemon")
+
+
+def _run_memory_maintenance() -> None:
+    """周期内存维护：回收会话对象循环引用 + 归还空闲堆内存给操作系统
+
+    已结束会话经 release_components/_do_release 断开组件后，对象图可被
+    引用计数回收；但 CPython 小对象分配器（pymalloc/glibc）释放后通常
+    不立即归还 OS，长时间运行的守护进程 RSS 会随会话历史累积而居高不下
+    （黑盒观测表现为"ended 会话未回收、内存随会话增长"）。此处周期性触发：
+    1. gc.collect() —— 防御性兜底回收残留的引用循环（正常路径已无循环）；
+    2. glibc malloc_trim(0) —— 把空闲 arena 页归还操作系统，使 RSS 可见
+       回落（仅 Linux 有效；Windows 无对应 API，静默跳过）。
+    """
+    try:
+        import gc
+
+        gc.collect()
+    except Exception:
+        pass
+    if sys.platform.startswith("linux"):
+        try:
+            import ctypes
+
+            libc = ctypes.CDLL("libc.so.6")
+            libc.malloc_trim(ctypes.c_size_t(0))
+        except Exception:
+            pass
 
 
 class DaemonServer:
@@ -404,10 +432,11 @@ class DaemonServer:
         if not IS_WINDOWS:
             signal.signal(signal.SIGHUP, _signal_handler)
 
-        # 5. 主线程阻塞等待关闭信号
+        # 5. 主线程阻塞等待关闭信号（每 30s 执行一次内存维护，
+        #    使长时运行下 RSS 可见回落而非随会话历史单调累积）
         try:
             while not self._shutdown_event.wait(30.0):
-                pass
+                _run_memory_maintenance()
         except Exception:
             _logger.exception("服务器主循环异常")
         finally:

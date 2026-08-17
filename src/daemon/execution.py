@@ -18,6 +18,40 @@ from ..logging import get_logger
 _logger = get_logger("pty-daemon")
 
 
+def _kill_exec_session_on_timeout(ctx, session) -> None:
+    """exec 显式 --timeout 到期：终止会话进程树并触发管理器移除
+
+    仅 exec 发起命令时的显式超时到期调用（read/send 等轮询等待不适用）。
+
+    - stop() 幂等（防重入）：强杀进程树 + 关闭 PTY + 停止后台线程；
+    - 读者线程被 EOF/stop_event 唤醒退出，走既有自然结束链
+      （on_exit → notify_end → manager._on_session_ended）从活跃表移除
+      并归档；此处仅在会话仍处于活跃表时兜底触发移除（幂等），
+      读者线程已触发则跳过，避免重复广播 end 事件；
+    - 响应构造所需的 exit_code/error_message/processes 等元数据在
+      stop 后仍可用：release_components 仅在被移除且无 handler 持有
+      时执行，flow 内持有期间释放一律转 pending。
+    """
+    _logger.info("exec 显式超时到期，终止会话 '%s' 进程树", session.id)
+    try:
+        session.stop()
+    except Exception as e:
+        _logger.warning("终止会话 '%s' 进程树异常: %s", session.id, e)
+    # 兜底触发管理器移除：读者线程在 stop join 期间已触发则跳过
+    try:
+        manager = getattr(ctx, "manager", None) if ctx is not None else None
+        if manager is not None and manager.get_session(session.id) is session:
+            session.publisher.notify_end(session)
+    except Exception:
+        pass
+    # 兜底登记组件释放：读者线程在 stop join 期间触发的 release_components
+    # 可能因 _stop_finished 尚未置位而早退，此处补登（持锁期间转 pending）
+    try:
+        session.release_components()
+    except Exception:
+        pass
+
+
 def _run_snapshot_flow(
     ctx,
     conn,
@@ -38,6 +72,7 @@ def _run_snapshot_flow(
     idle_timeout = msg.get("idle_timeout")
     idle_after_first = msg.get("idle_after_first_output", False)
     keep_ansi = msg.get("keep_ansi", False)
+    explicit_timeout = msg.get("explicit_timeout", False)
 
     has_trigger = trigger is not None
     has_idle = idle_timeout is not None
@@ -147,7 +182,7 @@ def _run_snapshot_flow(
 
                 session.poll_natural_exit()
                 if not session.running:
-                    if session.process_monitor.crash_event.is_set():
+                    if session._is_real_crash():
                         matched, reason = False, "crashed"
                     else:
                         matched, reason = False, "ended"
@@ -161,24 +196,38 @@ def _run_snapshot_flow(
         session.clear_trigger()
     else:
         matched, reason = False, "ok"
-        if result_type == "exec":
-            session.wait_for_initial_output(timeout=min(timeout, 2.0))
-        deadline = time.time() + min(timeout, 1.0)
-        # 分片复查：程序可能在固定等待期间结束/崩溃，应如实上报而非恒 ok；
+        # exec 显式 --timeout：以完整 timeout 为等待预算等待命令自然结束，
+        # 到期以 reason=timeout 返回并杀会话；其余（read 轮询 / exec 非显式）
+        # 沿用固定短等待分片复查，会话继续运行、不杀
+        if result_type == "exec" and explicit_timeout:
+            deadline = time.time() + timeout
+        else:
+            if result_type == "exec":
+                session.wait_for_initial_output(timeout=min(timeout, 2.0))
+            deadline = time.time() + min(timeout, 1.0)
+        # 分片复查：程序可能在等待期间结束/崩溃，应如实上报而非恒 ok；
         # 每片同步推进自然结束检测（监控线程按 2s 低频 tick 触发，仅等它
         # 扫到前会误判程序持续运行直至超时）
-        while time.time() < deadline:
+        while True:
             if cancel_event is not None and cancel_event.is_set():
                 matched, reason = False, "cancelled"
                 break
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                if result_type == "exec" and explicit_timeout:
+                    matched, reason = False, "timeout"
+                break
             if not session.running:
-                if session.process_monitor.crash_event.is_set():
+                if session._is_real_crash():
                     matched, reason = False, "crashed"
                 else:
                     matched, reason = False, "ended"
                 break
             session.poll_natural_exit()
-            time.sleep(min(0.1, deadline - time.time()))
+            time.sleep(min(0.1, remaining))
+
+    if result_type == "exec" and explicit_timeout and reason == "timeout":
+        _kill_exec_session_on_timeout(ctx, session)
 
     if msg.get("snapshot_diff"):
         output = session.get_snapshot_diff(keep_ansi=keep_ansi)
@@ -262,6 +311,7 @@ def _run_subprocess_trigger_flow(
 
     idle_timeout = msg.get("idle_timeout")
     idle_after_first = msg.get("idle_after_first_output", False)
+    explicit_timeout = msg.get("explicit_timeout", False)
 
     if result_type == "exec":
         session.wait_for_initial_output(timeout=min(timeout, 2.0))
@@ -280,6 +330,8 @@ def _run_subprocess_trigger_flow(
     matched, reason = session.wait_for_trigger(
         timeout, gui_short_circuit=False, cancel_event=cancel_event
     )
+    if result_type == "exec" and explicit_timeout and reason == "timeout":
+        _kill_exec_session_on_timeout(ctx, session)
     output = session.get_output(
         from_offset=trigger_offset, encoding=msg.get("encoding")
     )
@@ -367,6 +419,9 @@ def _run_subprocess_no_trigger_flow(
             matched, reason = False, "cancelled"
 
         _interruptible_sleep(min(msg.get("timeout", 120), 1.0), cancel_event, _on_cancel)
+
+    if result_type == "exec" and explicit_timeout and reason == "timeout":
+        _kill_exec_session_on_timeout(ctx, session)
 
     output = session.get_output(from_offset=from_offset, encoding=msg.get("encoding"))
     output = strip_if_needed(output, msg)
