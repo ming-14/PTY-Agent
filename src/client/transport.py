@@ -359,6 +359,7 @@ class Client:
             "send_eol",
             "response_format",
             "svg_compression_level",
+            "terminal_size",
         ):
             val = cfg.get(key)
             if val is not None and val != _DEFAULTS_MAP.get(key):
@@ -686,6 +687,10 @@ class Client:
 
         self._maybe_save_encoding(encoding)
         client_defaults = self._get_client_defaults()
+        if size is not None:
+            # --size 显式指定时优先于 --default terminal-size：
+            # 避免新会话创建后被 client_defaults 里的 terminal_size 改回
+            client_defaults.pop("terminal_size", None)
         if client_defaults:
             msg["client_defaults"] = client_defaults
 

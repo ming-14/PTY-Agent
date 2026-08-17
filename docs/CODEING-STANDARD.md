@@ -339,21 +339,6 @@ finally:
 - 队列满时 `drop_oldest` 丢弃最旧记录，防止背压阻塞业务
 - `shutdown()` 刷空队列 + 最后一次归档，确保所有日志落盘
 
-### 6.2 日志级别
-
-| 级别 | 场景 |
-|------|------|
-| `ERROR` | 影响功能的异常（PTY 创建失败、写入失败） |
-| `WARNING` | 非致命但不期望的情况（连接断开、回退路径） |
-| `INFO` | 关键生命周期事件（守护进程启动/停止、会话创建/销毁） |
-| `DEBUG` | 任何对调试有帮助的信息（消息内容、线程状态） |
-
-```python
-_logger.error(f"连接异常 (会话 '%s'): %s", session_id, e)  # ERROR
-_logger.warning(f"会话已结束 (会话 '%s')", session_id)      # WARNING
-_logger.info(f"创建会话 '%s': %s", session_id, command)     # INFO
-```
-
 ---
 
 ## 7. 代码组织模板

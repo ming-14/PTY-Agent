@@ -27,6 +27,7 @@ web/static/
 │   ├── domain/            # ═══ 领域层 ═══
 │   │   ├── constants.js
 │   │   ├── formatters.js
+│   │   ├── i18n.js            # 国际化文案（zh/en）
 │   │   ├── logger.js
 │   │   ├── settingsSchema.js
 │   │   └── state.js

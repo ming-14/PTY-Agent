@@ -1083,7 +1083,7 @@ daemon/handlers/exec_handler.py:ExecHandler.handle()
   →                      idle_timeout=3, idle_after_first_output=True)
   →      → TriggerMatcher.set(pattern, ...)
   →      → 初次检查：持 OutputBuffer.lock → TriggerMatcher.check(OutputBuffer)
-  → 若无 trigger：_run_no_trigger_flow 检测到 idle_timeout 时，使用永不匹配正
+  → 若无 trigger：_run_subprocess_no_trigger_flow 检测到 idle_timeout 时，使用永不匹配正
   →       则 `(?!x)x` 进入 wait_for_trigger 等待循环，同样支持静默超时检测
   → matched, reason = session.wait_for_trigger(timeout)
       → 读者线程持续读 PTY → 追加 OutputBuffer → TriggerMatcher 检测

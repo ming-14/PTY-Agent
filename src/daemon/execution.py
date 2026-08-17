@@ -69,6 +69,7 @@ def _run_snapshot_flow(
         screen = getattr(session, "_screen", None)
         last_key = None
         last_rendered = ""
+        _last_gui_check = 0.0
         try:
             while True:
                 if cancel_event is not None and cancel_event.is_set():
@@ -127,6 +128,22 @@ def _run_snapshot_flow(
                 if has_idle and session.check_snapshot_idle_timeout():
                     matched, reason = False, "idle_timeout"
                     break
+
+                # GUI 窗口检测：节流 1s 主动轮询（后台监控线程另有 2s 兜底），
+                # 检测到新窗口即短路返回（与子进程 wait_for_trigger 语义一致）
+                gui = getattr(session, "_gui", None)
+                if gui is not None:
+                    now = time.time()
+                    if now - _last_gui_check >= 1.0:
+                        _last_gui_check = now
+                        try:
+                            gui.check(getattr(session, "_tracker", None), session.id)
+                        except Exception:
+                            pass
+                    if gui.gui_windows and gui.detected_event.is_set():
+                        gui.detected_event.clear()
+                        matched, reason = False, "gui_detected"
+                        break
 
                 session.poll_natural_exit()
                 if not session.running:

@@ -25,7 +25,7 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过伪终端（
 
 ### pty 模式（默认，终端）
 
-基于ConPTY，**输出始终为终端屏幕快照**，等效于实际用户使用时真正看到的部分
+基于ConPTY，有TTY，**输出始终为终端屏幕快照**，等效于实际用户使用时真正看到的部分
 
 - 适用：TUI 程序（vim/htop）、需要回显/行编辑的交互式程序
 - 快照返回条件：trigger 匹配快照文本 / idle-timeout / timeout / 进程结束 / GUI 检测
@@ -41,6 +41,8 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过伪终端（
 - `exec`/`send`/`read` 返回增量文本；`read` 支持 `--offset` 增量读取
 - 输入通过写 stdin
 
+注意：不要使用子进程模式运行需要TTY的会话！
+
 ## 程序返回条件
 
 命令执行后，程序满足条件会携带消息返回，之后你可继续操作该会话
@@ -54,7 +56,7 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过伪终端（
 | 带idle-timeout | 屏幕静默超时（在一段时间内无变化） | 增量输出 |
 | 带timeout | 达到超时 | 增量输出 |
 | 有指定返回条件 | 但是达到了默认超时 | 增量输出 |
-| 未关闭GUI检测 | 检测到GUI窗口 | GUI窗口信息+增量输出 |
+| GUI检测（仅无trigger等待） | 检测到GUI窗口 | GUI窗口信息+增量输出 |
 | | 有进程崩溃 | 相关事件+增量输出 |
 | | 程序退出 | 残余增量输出 |
 
@@ -67,11 +69,13 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过伪终端（
 | 带idle-timeout | 屏幕静默超时（在一段时间内无变化） | 屏幕快照 |
 | 带timeout | 达到超时 | 屏幕快照 |
 | 有指定返回条件 | 但是达到了默认超时 | 屏幕快照 |
-| 未关闭GUI检测 | 检测到GUI窗口 | GUI窗口信息+屏幕快照 |
+| GUI检测（等待模式下） | 检测到GUI窗口 | GUI窗口信息+屏幕快照 |
 | | 有进程崩溃 | 相关事件+屏幕快照 |
 | | 程序退出 | 最后的屏幕快照 |
 
 注：**高效利用本程序的条件返回功能，及时根据对应程序的输出结果更新条件（特别是`-t`），灵活使用不同的返回条件**。不建议反复`send`后又`read`，如果可以的话尽量一次性设置最强的返回条件
+
+注：GUI 窗口检测仅在等待流程中生效；子进程模式带 `-t` 的 trigger 等待不检测 GUI。命中时 `triggerReturnReason="gui_detected"`
 
 ## 命令速查
 
@@ -103,10 +107,10 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过伪终端（
 特殊选项：
 - `-c "<command>"`(req) 执行的命令，必填
 - `--force-pty-mode` 忽略命令中的 shell 操作符（`|`、`&&`、`>` 等）检测，强制执行
-- `--cwd <path>` 子进程工作目录（默认取守护进程当前目录）；如果与期望工作目录不一致，建议指定
+- `--cwd <path>` 子进程工作目录（默认取调用方 CLI 的当前目录）；如果与期望工作目录不一致，建议指定
 - `--env KEY=VALUE` 子进程额外环境变量，可指定多个，合并到继承的环境中；适用于设置 `TERM`、`COLORTERM` 等终端能力变量
 - `--subprocess` 子进程模式：Popen 捕获 stdout/stderr（非 PTY），增量输出 + stderr 分离，支持写 stdin，无 resize/快照
-- `--size <WxH>` 终端尺寸（如 `120x40`，默认 `80x24`；仅 pty 模式）
+- `--size <WxH>` 终端尺寸（如 `120x40`，默认 `80x24`；仅 pty 模式，**仅会话创建时生效**；运行中调整请用 `--default terminal-size NxN`）
 - `-o/--output <path>` 输出到文件（.txt/.log=纯文本; .svg=矢量图; .png/.jpg/.bmp=位图，需 Pillow）
 
 `-c "<command>"`必填
@@ -235,7 +239,7 @@ app.py read myid -o output.png
 
 当输入已以 `\n` 或 `\r` 结尾时不重复追加
 
-提示：操作ssh、gdb等 REPL 由于本身就要在命令末尾敲换行，所以不建议更改或显式指定追加字符，因为默认就是`\r`（终端换行）
+提示：操作ssh、gdb等 REPL 由于**本身就要在命令末尾敲换行**，所以不建议更改或显式指定追加字符，因为默认就是`\r`（终端换行）
 需要精细控制输入时，可以显式指定或更改默认值
 
 #### 引号处理规则（你的Shell命令行层）
@@ -259,7 +263,7 @@ app.py read myid -o output.png
 - `-l/--lines <N>` PTY 取最后 N 行（作用于含 scrollback 历史的全量）；子进程取最后 N 行
 - `-l/--lines start:end` 范围行（PTY 作用于含 scrollback 历史的全量）
 - `-g/--grep "<regex>"` 正则过滤
-- `--offset <bytes>` 增量：从指定字节开始读取
+- `--offset <bytes>` 增量读取（仅子进程模式）：从指定字节开始读取
 - `--full` 返回全部内容（PTY = scrollback 历史 + 当前可见区；子进程 = 全部累积输出；数据大，尽量用`--lines N`，禁止在TUI等高刷程序使用该选项）
 - `-s/--snapshot-diff` 仅返回屏幕变化的行
 - `--column <N>` 输出第 N 列（必须用全名`--column`；仅read有此参数）
@@ -439,7 +443,7 @@ steps:
 - `--show-config [KEY]` 查看当前调用配置
 - `--default <KEY> <VALUE>` 通用子命令：覆盖默认配置（可用键：`timeout`/`newline`/`keep-ansi`/`encoding`/`debug`/`send-eol`/`response-format`/`svg-compression-level`/`terminal-size`，`<VALUE>`是配置值或者`on`/`off`；支持多个 `--default`；按 session 持久化到守护进程）
 
-`terminal-size`即刻生效，运行中更改终端尺寸就用`--default terminal-size NxN`
+`--default terminal-size NxN` 对**运行中的会话即刻生效**：exec/send/read/mouse 任一命令携带该配置时，daemon 检测到尺寸变化即对会话执行 resize（默认 `80x24`）；`--size WxH` 只在**会话创建时**生效（新会话初始尺寸）
 
 ### 总结
 
@@ -453,9 +457,9 @@ steps:
 | `--snapshot-diff/-s` | 返回启动后屏幕变化行 | 返回发送输入后的变化行 | 返回本次较上次快照的变化行 | 返回鼠标动作后的变化行 | 不支持 | 不支持 | 不支持 | — |
 | `--idle-timeout` | 屏幕持续 N 秒无变化即返回快照 | 屏幕持续 N 秒无变化即返回 | 同左 | 同左 | 无新输出 N 秒即返回增量 | 同左 | 同左 | — |
 | `--full` | 返回全部内容 = scrollback 历史 + 当前可见区 | 同左 | 同左 | — | 返回全部累积 stdout        | 同左 | 同左 | — |
-| `--offset` | — | — | 从指定字节偏移取快照文本（非等待模式；不可与 `-l`/`--full` 同用） | — | — | — | 从指定字节偏移增量读取输出（不可与等待模式同用） | — |
+| `--offset` | — | — | — | — | — | — | 从指定字节偏移增量读取输出（不可与等待模式同用） | — |
 | `--trigger/-t` | 基于快照文本命中正则即返回 | 同左 | 同左 | 同左 | 基于增量输出命中正则即返回 | 同左 | 同左 | — |
-| `--size` | 设置终端尺寸 WxH | — | — | — | — | — | — | — |
+| `--size` | 创建会话时设置终端尺寸 WxH（运行中调整用 `--default terminal-size`） | — | — | — | — | — | — | — |
 | `--newline` | 仅换行后才检查触发条件 | 同左 | 同左 | 同左 | 同左 | 同左 | 同左 | — |
 | `--timeout` | 等待触发/首次输出的超时秒数 | 等待触发超时 | 同左 | 同左 | 等待触发超时 | 同左 | 同左 | — |
 | `--idle-after-first-output` | 首次输出后才开始检测静默超时 | 同左 | 同左 | 同左 | 同左 | 同左 | 同左 | — |
@@ -470,8 +474,7 @@ steps:
 | `--last/-l` | — | — | — | — | — | — | — | 仅返回最近 N 条事件 |
 | `--since` | — | — | — | — | — | — | — | 仅返回此时间之后的事件（ISO/HH:MM） |
 | `--until` | — | — | — | — | — | — | — | 仅返回此时间之前的事件（ISO/HH:MM） |
-| `--offset` | ...
-| `--plugin` | 挂载插件 | — | — | — | 同左 | — | — | — |
+| `--plugin` | 挂载插件 | 不支持 | 同左 | 同左 | 挂载插件 | 不支持 | 同左 | 同左 |
 
 ## 插件
 
@@ -488,6 +491,8 @@ python app.py file <read|write|edit|grep|glob|upload|download> ... -s <session-i
 ### simple
 
 极简模式输出，省Token
+
+直接挂载即可
 
 ### state_check
 
@@ -506,7 +511,7 @@ python app.py file <read|write|edit|grep|glob|upload|download> ... -s <session-i
 ```bash
 app.py exec srv -c "python server.py" --timeout 10
 app.py read srv -l 20 # 中途查看最近20行输出
-app.py read srv # 默认就是增量读取（从上次 offset 继续）
+app.py read srv # PTY 模式返回屏幕快照；子进程模式则从上次 offset 增量读取
 app.py read srv -g "ERROR" # 只看错误行
 app.py kill srv # 不再需要时终止
 ```
