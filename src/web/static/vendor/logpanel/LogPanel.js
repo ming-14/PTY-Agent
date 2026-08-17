@@ -748,7 +748,7 @@ export class LogPanel {
     this._unbindContextMenu();
     const menu = document.createElement('div');
     menu.className = 'lp-context-menu';
-    menu.innerHTML = '<div class="lp-context-menu-item danger" data-action="close">this._t('logpanel.closePanel') + '</div>';
+    menu.innerHTML = '<div class="lp-context-menu-item danger" data-action="close">' + this._t('logpanel.closePanel') + '</div>';
     this._shadow.appendChild(menu);
     menu.style.left = Math.min(x, window.innerWidth - menu.offsetWidth - 4) + 'px';
     menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 4) + 'px';
