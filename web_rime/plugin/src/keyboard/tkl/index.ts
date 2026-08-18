@@ -554,7 +554,10 @@ export class RimeTKLKeyboard {
   private getKeyDef(key: string): TKLKeyDef | null {
     const layout = getTKLLayout()
     for (const row of layout) {
-      for (const def of row) {
+      for (const def of row.main) {
+        if (def.key === key) return def
+      }
+      for (const def of row.nav) {
         if (def.key === key) return def
       }
     }

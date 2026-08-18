@@ -120,9 +120,15 @@ export function attachCustomKeyEventHandler(term, sid) {
       return false;
     }
 
-    // IME 组合中：不发送原始键（最终文本由 RIME 提交）
+    // IME 组合中：不发送原始键（最终文本由 compositionend → onData 上屏）
+    // 不调 preventDefault：手机浏览器需要 keydown 默认行为让字符进入 xterm.js
+    // 辅助 textarea，compositionend 时 xterm.js 从 textarea.value 提取提交文本。
+    // 调 preventDefault 会阻止字符进入 textarea，导致 compositionend 时
+    // textarea.value 为空，中文无法上屏（手机系统输入法选候选词后不上屏）。
+    // 桌面浏览器 IME 由系统驱动，preventDefault 不影响 textarea.value，但为
+    // 统一行为仍不调。
+    // 返回 false 阻止 xterm.js 处理 keydown，避免组合中的按键被当作普通输入发送。
     if (e.isComposing || e.keyCode === 229) {
-      e.preventDefault();
       return false;
     }
 

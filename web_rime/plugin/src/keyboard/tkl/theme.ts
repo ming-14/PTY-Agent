@@ -192,9 +192,11 @@ const TKL_CSS = `
 .rime-tkl-tb-hide{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:transparent;border:none;color:var(--rime-tkl-toolbar-btn-color,rgba(255,255,255,.45));font-size:8px;cursor:pointer;padding:2px 4px;line-height:1;border-radius:3px;-webkit-tap-highlight-color:transparent}
 .rime-tkl-tb-hide:hover{color:var(--rime-tkl-toolbar-btn-active-color,#70c0e8)}
 .rime-tkl-keys{padding:4px 6px 4px;display:flex;flex-direction:column;gap:var(--rime-tkl-key-gap,2px);background:var(--rime-tkl-bg,rgba(30,30,34,.98));border-radius:0 0 var(--rime-tkl-radius,10px) var(--rime-tkl-radius,10px)}
-.rime-tkl-row{display:flex;justify-content:center;gap:var(--rime-tkl-key-gap,2px);align-items:stretch}
-.rime-tkl-key{display:flex;align-items:center;justify-content:center;flex:1;min-height:var(--rime-tkl-key-height,32px);background:var(--rime-tkl-key-bg,rgba(58,58,64,.92));color:var(--rime-tkl-key-color,rgba(255,255,255,.88));border:none;border-radius:var(--rime-tkl-key-radius,4px);font-size:var(--rime-tkl-key-font-size,12px);font-family:inherit;cursor:pointer;transition:transform .08s,background .08s;-webkit-tap-highlight-color:transparent;outline:none;padding:0;white-space:nowrap}
-.rime-tkl-spacer{visibility:hidden;pointer-events:none;min-height:var(--rime-tkl-key-height,32px)}
+.rime-tkl-row{display:flex;gap:var(--rime-tkl-key-gap,2px);align-items:stretch}
+.rime-tkl-row-main{display:flex;flex:15;min-width:0}
+.rime-tkl-row-nav{display:flex;flex:3;min-width:0}
+.rime-tkl-key{display:flex;align-items:center;justify-content:center;flex:1;min-height:var(--rime-tkl-key-height,32px);background:var(--rime-tkl-key-bg,rgba(58,58,64,.92));color:var(--rime-tkl-key-color,rgba(255,255,255,.88));border:1px solid transparent;box-sizing:border-box;border-radius:calc(var(--rime-tkl-key-radius,4px) + 1px);font-size:var(--rime-tkl-key-font-size,12px);font-family:inherit;cursor:pointer;transition:transform .08s,background .08s;-webkit-tap-highlight-color:transparent;outline:none;padding:0;white-space:nowrap}
+.rime-tkl-spacer{visibility:hidden;pointer-events:none;min-height:var(--rime-tkl-key-height,32px);border:1px solid transparent;box-sizing:border-box}
 .rime-tkl-key-dual{position:relative;flex-direction:column;justify-content:flex-end;align-items:center;padding-bottom:3px}
 .rime-tkl-sub{position:absolute;top:1px;right:3px;font-size:calc(var(--rime-tkl-key-font-size,12px) * 0.6);opacity:.4;line-height:1;pointer-events:none}
 .rime-tkl-main{line-height:1;pointer-events:none}
