@@ -31,9 +31,23 @@ export function renderTKLKeys(
   for (const row of layout) {
     const rowEl = document.createElement('div')
     rowEl.className = 'rime-tkl-row'
-    for (const keyDef of row) {
-      rowEl.appendChild(createTKLKeyEl(keyDef, shiftState, capsActive, modifiers, isEnglish, isFullWidth, isEnglishPunct))
+
+    // 主键区（15u）
+    const mainEl = document.createElement('div')
+    mainEl.className = 'rime-tkl-row-main'
+    for (const keyDef of row.main) {
+      mainEl.appendChild(createTKLKeyEl(keyDef, shiftState, capsActive, modifiers, isEnglish, isFullWidth, isEnglishPunct))
     }
+    rowEl.appendChild(mainEl)
+
+    // 导航区（3u，空数组也渲染容器以保持 flex 比例）
+    const navEl = document.createElement('div')
+    navEl.className = 'rime-tkl-row-nav'
+    for (const keyDef of row.nav) {
+      navEl.appendChild(createTKLKeyEl(keyDef, shiftState, capsActive, modifiers, isEnglish, isFullWidth, isEnglishPunct))
+    }
+    rowEl.appendChild(navEl)
+
     keysEl.appendChild(rowEl)
   }
 }

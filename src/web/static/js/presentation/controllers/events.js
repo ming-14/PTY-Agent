@@ -7,7 +7,7 @@
 
 import { state, getSessionSizeConfigBySid } from '../../domain/state.js';
 import { $, showConfirm, hideConfirm, showToast } from '../../infrastructure/domUtils.js';
-import { wsSend } from '../../infrastructure/wsClient.js';
+import { wsSend, checkWsAlive } from '../../infrastructure/wsClient.js';
 import {
   applyTerminalFrameSize,
   applyTerminalSize,
@@ -439,6 +439,8 @@ document.addEventListener('keydown', e => {
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
+    // 移动端后台→前台：主动检测 WS 是否已静默断开（onclose 在后台可能未触发）
+    checkWsAlive();
     const sid = state.activeTab;
     if (!sid) return;
     const inst = state.termInstances[sid];
