@@ -19,7 +19,7 @@ class TestPubkeyAuthenticator:
         """授权指纹通过"""
         kp = generate_keypair()
         auth = PubkeyAuthenticator({kp.fingerprint: kp.public_key})
-        msg = {"type": "exec", "pubkey_fp": kp.fingerprint}
+        msg = {"type": "exec", "auth": {"pubkey_fp": kp.fingerprint}}
         assert auth.authenticate(msg) is True
 
     def test_unauthorized_fingerprint_fails(self):
@@ -27,14 +27,14 @@ class TestPubkeyAuthenticator:
         kp = generate_keypair()
         other = generate_keypair()
         auth = PubkeyAuthenticator({other.fingerprint: other.public_key})
-        msg = {"type": "exec", "pubkey_fp": kp.fingerprint}
+        msg = {"type": "exec", "auth": {"pubkey_fp": kp.fingerprint}}
         assert auth.authenticate(msg) is False
 
     def test_empty_authorized_keys_fail_closed(self):
         """authorized_keys 为空时 fail-closed"""
         kp = generate_keypair()
         auth = PubkeyAuthenticator({})
-        msg = {"type": "exec", "pubkey_fp": kp.fingerprint}
+        msg = {"type": "exec", "auth": {"pubkey_fp": kp.fingerprint}}
         assert auth.authenticate(msg) is False
 
     def test_missing_fingerprint_field_fails(self):
@@ -48,7 +48,7 @@ class TestPubkeyAuthenticator:
         """pubkey_fp 为空字符串失败"""
         kp = generate_keypair()
         auth = PubkeyAuthenticator({kp.fingerprint: kp.public_key})
-        msg = {"type": "exec", "pubkey_fp": ""}
+        msg = {"type": "exec", "auth": {"pubkey_fp": ""}}
         assert auth.authenticate(msg) is False
 
     def test_name_property(self):
@@ -67,25 +67,25 @@ class TestPubkeyAuthenticator:
             kp3.fingerprint: kp3.public_key,
         })
         # 三个都通过
-        assert auth.authenticate({"pubkey_fp": kp1.fingerprint}) is True
-        assert auth.authenticate({"pubkey_fp": kp2.fingerprint}) is True
-        assert auth.authenticate({"pubkey_fp": kp3.fingerprint}) is True
+        assert auth.authenticate({"auth": {"pubkey_fp": kp1.fingerprint}}) is True
+        assert auth.authenticate({"auth": {"pubkey_fp": kp2.fingerprint}}) is True
+        assert auth.authenticate({"auth": {"pubkey_fp": kp3.fingerprint}}) is True
         # 未授权的失败
         other = generate_keypair()
-        assert auth.authenticate({"pubkey_fp": other.fingerprint}) is False
+        assert auth.authenticate({"auth": {"pubkey_fp": other.fingerprint}}) is False
 
 
 class TestPubkeyCredentialProvider:
     """PubkeyCredentialProvider 凭证注入"""
 
     def test_enrich_adds_fingerprint(self):
-        """enrich 注入 pubkey_fp 字段"""
+        """enrich 注入 pubkey_fp 字段（auth 段）"""
         kp = generate_keypair()
         provider = PubkeyCredentialProvider(kp)
         msg = {"type": "exec", "cmd": "ls"}
         result = provider.enrich(msg)
-        assert "pubkey_fp" in result
-        assert result["pubkey_fp"] == kp.fingerprint
+        assert "pubkey_fp" in result["auth"]
+        assert result["auth"]["pubkey_fp"] == kp.fingerprint
 
     def test_enrich_mutates_in_place(self):
         """enrich 原地修改消息"""

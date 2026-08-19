@@ -4,14 +4,11 @@
 跨命令通用校验；cli/main 只负责编排。
 """
 
-import json
 import sys
 from typing import Optional
 
 from ..client.config_manager import ConfigManager
-from ..client.formatter import set_debug_mode
-from ..client.input import safe_print
-from ..protocol.response import Response
+from ..client.presenter import emit, emit_error, set_debug_mode, set_render_hook
 from .common_args import _parse_default_key
 from ..logging import get_logger
 
@@ -34,26 +31,21 @@ def apply_config_ops(args, parser) -> Optional[dict]:
                 cfg.set(internal_key, value)
                 overrides[internal_key] = cfg.get(internal_key)
             except ValueError as e:
-                safe_print(json.dumps(Response.error(str(e)), ensure_ascii=False))
+                emit_error(str(e))
                 sys.exit(1)
         # --default 发送到守护进程按 session UID 存储
         if args.subcmd is None:
             for key, value in default_vals:
                 internal_key = _parse_default_key(key)
-                safe_print(
-                    json.dumps(
-                        Response.info(
-                            f"已设置默认值: {key} = {cfg.get(internal_key)}（将随会话命令发送到守护进程）"
-                        ),
-                        ensure_ascii=False,
-                        default=str,
-                    )
+                emit(
+                    f"已设置默认值: {key} = {cfg.get(internal_key)}"
+                    "（将随会话命令发送到守护进程）"
                 )
 
     if args.show_config is not None:
         internal_key = _parse_default_key(args.show_config) if args.show_config else None
         show_text = cfg.show(internal_key)
-        safe_print(json.dumps(Response.config(show_text), ensure_ascii=False))
+        emit(show_text, msg_type="config")
         if args.subcmd is None:
             return None
 
@@ -84,7 +76,7 @@ def setup_cli_plugins():
     """
     try:
         from ..client.cli_plugins import CliPluginHost
-        from ..client.formatter import set_render_hook
+        from ..client.presenter import set_render_hook
         from ..config.plugins import PLUGIN_PATHS as _cli_plugin_paths
 
         cli_plugins = None
@@ -102,13 +94,6 @@ def check_common_conflicts(args) -> bool:
     """通用跨命令冲突校验；冲突时打印错误并返回 False（main 提前返回）"""
     if getattr(args, "snapshot_diff", False):
         if getattr(args, "response_format", None) == "svg":
-            safe_print(
-                json.dumps(
-                    Response.error(
-                        "--snapshot-diff is incompatible with --response-format svg"
-                    ),
-                    ensure_ascii=False,
-                )
-            )
+            emit_error("--snapshot-diff is incompatible with --response-format svg")
             return False
     return True

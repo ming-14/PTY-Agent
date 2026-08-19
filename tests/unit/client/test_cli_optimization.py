@@ -1,8 +1,6 @@
-"""ConfigManager 与 Formatter 单元测试
+"""ConfigManager 单元测试
 
-测试客户端配置管理、JSON/自然语言双模式输出。"""
-
-import json
+测试客户端配置管理与配置解析。"""
 import pytest
 
 
@@ -129,92 +127,7 @@ class TestConfigManager:
         assert "on" in text
 
 
-# ---- Formatter 测试 ----
-
-
-class TestFormatter:
-    """响应格式化输出单元测试"""
-
-    @pytest.fixture(autouse=True)
-    def reset_mode(self):
-        from src.client.formatter import set_debug_mode
-
-        yield
-        set_debug_mode(True)
-
-    def test_json_mode_result(self, capsys):
-        from src.client.formatter import print_response
-
-        resp = {
-            "type": "result",
-            "sessionId": "test-sess",
-            "output": "Hello World",
-            "trigger": {"matched": True, "reason": "matched"},
-            "program": {"running": True, "exitCode": None, "errorMessage": None},
-            "debugInformation": {"processes": [1234], "guiWindows": [], "pendingEvents": []},
-        }
-        print_response(resp)
-        captured = capsys.readouterr()
-
-        data = json.loads(captured.out.strip())
-        assert data["type"] == "result"
-        assert data["sessionId"] == "test-sess"
-        assert data["output"] == "Hello World"
-
-    def test_json_mode_error(self, capsys):
-        from src.client.formatter import print_response
-
-        resp = {"type": "error", "error": "会话不存在"}
-        print_response(resp)
-        captured = capsys.readouterr()
-
-        data = json.loads(captured.out.strip())
-        assert data["type"] == "error"
-        assert "会话不存在" in data["error"]
-
-    def test_json_mode_none(self, capsys):
-        from src.client.formatter import print_response
-
-        print_response(None)
-        captured = capsys.readouterr()
-
-        data = json.loads(captured.out.strip())
-        assert data["type"] == "error"
-
-    def test_debug_stripped_when_disabled(self, capsys):
-        from src.client.formatter import print_response, set_debug_mode
-
-        set_debug_mode(False)
-        resp = {
-            "type": "result",
-            "session_id": "test-sess",
-            "output": "hello",
-            "debugInformation": {"processes": [1234]},
-        }
-        print_response(resp)
-        captured = capsys.readouterr()
-
-        data = json.loads(captured.out.strip())
-        assert "debugInformation" not in data
-        assert data["output"] == "hello"
-
-    def test_debug_kept_when_enabled(self, capsys):
-        from src.client.formatter import print_response, set_debug_mode
-
-        set_debug_mode(True)
-        resp = {
-            "type": "result",
-            "session_id": "test-sess",
-            "output": "hello",
-            "debugInformation": {"processes": [1234]},
-        }
-        print_response(resp)
-        captured = capsys.readouterr()
-
-        data = json.loads(captured.out.strip())
-        assert "debugInformation" in data
-        assert data["debugInformation"]["processes"] == [1234]
-
+# ---- ConfigParser 集成测试 ----
 
 class TestConfigParserIntegration:
     """配置解析集成测试（测试 cli.common_args 的 _parse_default_key）"""
@@ -235,25 +148,25 @@ class TestUnescapeJsonString:
 
     def test_unescape_double_quote(self):
         """测试 \\" → 字面引号"""
-        from src.client.input import unescape_json_string
+        from src.input.text import unescape_json_string
 
         assert unescape_json_string("\\\"hello\\\"") == '"hello"'
 
     def test_unescape_backslash(self):
         """测试 \\\\ → 字面反斜杠"""
-        from src.client.input import unescape_json_string
+        from src.input.text import unescape_json_string
 
         assert unescape_json_string("path\\\\to\\\\file") == "path\\to\\file"
 
     def test_unescape_path_backslash_r_preserved(self):
         """测试 Windows 路径中的 \\r 不被当作回车转义"""
-        from src.client.input import unescape_json_string
+        from src.input.text import unescape_json_string
 
         assert unescape_json_string("C:\\Users\\rikka\\Desktop") == "C:\\Users\\rikka\\Desktop"
 
     def test_unescape_path_backslash_t_preserved(self):
         """测试 Windows 路径中的 \\t 不被当作制表符转义"""
-        from src.client.input import unescape_json_string
+        from src.input.text import unescape_json_string
 
         assert unescape_json_string("third_party") == "third_party"
 
@@ -262,7 +175,7 @@ class TestUnescapeJsonString:
 
         模拟用户实际场景：g++ 编译命令含多个带空格路径
         """
-        from src.client.input import unescape_json_string
+        from src.input.text import unescape_json_string
 
         cmd = (
             "& \\\"C:\\\\Program Files\\\\g++.exe\\\""
@@ -280,27 +193,27 @@ class TestUnescapeJsonString:
 
     def test_unescape_no_effect_on_plain_text(self):
         """测试纯文本不受影响"""
-        from src.client.input import unescape_json_string
+        from src.input.text import unescape_json_string
 
         assert unescape_json_string("hello world") == "hello world"
         assert unescape_json_string("g++ -std=c++17 file.cpp") == "g++ -std=c++17 file.cpp"
 
     def test_unescape_unknown_escape_preserved(self):
         """测试不识别的转义序列保留原样"""
-        from src.client.input import unescape_json_string
+        from src.input.text import unescape_json_string
 
         assert unescape_json_string("\\x\\z") == "\\x\\z"
 
     def test_process_input_newline(self):
         """测试 process_input 解码 \\n （需启用 json_escaping）"""
-        from src.client.input import process_input
+        from src.input.text import process_input
 
         result = process_input("line1\\nline2", json_escaping=True)
         assert result == "line1\nline2\r"
 
     def test_process_input_backslash_in_path(self):
         """测试路径中双反斜杠经 JSON 解码后变为单反斜杠（需启用 json_escaping）"""
-        from src.client.input import process_input
+        from src.input.text import process_input
 
         result = process_input("cd C:\\\\Users", json_escaping=True)
         # json.loads 将 \\\\ 解码为 \\，路径变为 cd C:\Users

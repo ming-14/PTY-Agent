@@ -17,7 +17,8 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Dict, Optional
 
 from ..daemon.handlers.base import HandlerContext
-from ..daemon.handlers.utils import build_result, filter_snapshot_lines
+from ..daemon.handlers.utils import filter_snapshot_lines, resolve_output
+from ..daemon.conditions import ReturnConditions
 from .definition import ParsedStep, WorkflowDefinition
 from .expr import ExpressionError, eval_expr, render_value
 from .runner import (
@@ -383,6 +384,22 @@ class WorkflowEngine:
         session_id = raw["session"]
         session = self._get_session(ctx, session_id)
         input_text = raw["input"]
+        # 输入处理与 CLI send 对齐：默认追加 \r（模拟 Enter），
+        # 支持可选字段 eol: lf|crlf|cr|none 与 json: true（展开 {enter} 等转义）
+        from ..input.text import process_input
+        from ..client.config_manager import _SEND_EOL_MAP
+
+        eol_name = raw.get("eol", "cr")
+        if eol_name not in _SEND_EOL_MAP:
+            raise RuntimeError(
+                "步骤 '%s' 的 eol '%s' 非法（可选: %s）"
+                % (step.id, eol_name, "/".join(_SEND_EOL_MAP))
+            )
+        input_text = process_input(
+            input_text,
+            json_escaping=bool(raw.get("json", False)),
+            send_eol=_SEND_EOL_MAP[eol_name],
+        )
         # 持有会话：write_input 与后续等待输出期间会话可能自然结束，
         # hold 防止缓冲被提前释放（与 _exec_type 同理）
         with session.hold():
@@ -454,28 +471,24 @@ class WorkflowEngine:
                     )
                     result["outputStream"] = output
             else:
-                if raw.get("snapshot_diff"):
-                    output = session.get_snapshot_diff(
-                        keep_ansi=raw.get("keep_ansi", False)
-                    )
-                elif raw.get("full"):
-                    output = session.get_full_snapshot(
-                        keep_ansi=raw.get("keep_ansi", False)
-                    )
-                else:
-                    output = session.get_snapshot(keep_ansi=raw.get("keep_ansi", False))
+                from ..daemon.execution import assemble_response
+
+                output = resolve_output(session, ReturnConditions.from_msg(msg))
                 output = filter_snapshot_lines(
                     output, raw.get("lines"), None, raw.get("grep")
                 )
-                result = build_result(
-                    ctx.manager,
-                    session_id,
-                    output,
-                    False,
-                    "ok" if session.running else "ended",
-                    has_trigger=False,
+                result, _ = assemble_response(
+                    ctx,
+                    None,
+                    session,
+                    msg,
+                    output=output,
+                    matched=False,
+                    reason="ok" if session.running else "ended",
                     result_type="read",
-                    session=session,
+                    has_trigger=False,
+                    consume_events=False,
+                    send_response=False,
                 )
             return self._resolve_result(step, result)
 

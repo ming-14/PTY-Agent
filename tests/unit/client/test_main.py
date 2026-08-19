@@ -149,7 +149,7 @@ class TestBuildParser:
         """解析 --default 配置（子命令级别）"""
         parser = _build_parser()
         args = parser.parse_args(["exec", "test-id", "-c", "python", "--default", "timeout", "30"])
-        assert args.default == [["timeout", "30"]]
+        assert args.default == [("timeout", "30")]
 
     def test_parse_show_config(self):
         """解析 --show-config"""
@@ -216,7 +216,7 @@ class TestBuildParser:
         """解析 --default debug off"""
         parser = _build_parser()
         args = parser.parse_args(["exec", "test-id", "-c", "python", "--default", "debug", "off"])
-        assert args.default == [["debug", "off"]]
+        assert args.default == [("debug", "off")]
 
     def test_debug_output_default_false(self):
         """默认 debug_output 为 False"""
@@ -312,13 +312,13 @@ class TestBuildParser:
         """解析 --default response-format svg"""
         parser = _build_parser()
         args = parser.parse_args(["exec", "test-id", "-c", "cmd", "--default", "response-format", "svg"])
-        assert args.default == [["response-format", "svg"]]
+        assert args.default == [("response-format", "svg")]
 
     def test_parse_default_svg_compression_level(self):
         """解析 --default svg-compression-level 1"""
         parser = _build_parser()
         args = parser.parse_args(["exec", "test-id", "-c", "cmd", "--default", "svg-compression-level", "1"])
-        assert args.default == [["svg-compression-level", "1"]]
+        assert args.default == [("svg-compression-level", "1")]
 
     def test_parse_mouse_click(self):
         """解析 mouse click"""

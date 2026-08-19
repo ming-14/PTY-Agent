@@ -60,6 +60,7 @@ src/
 ├── protocol/                # ═══════ 通信协议层 ═══════
 │   ├── __init__.py
 │   ├── message.py           # Message 类（JSON 换行分隔协议：编码/解码/收发 + ping 探测）
+│   ├── envelope.py          # 线协议信封 + 分组载荷（请求 op/condition/output/io，响应 data/state/meta）
 │   ├── transfer.py          # 文件传输二进制帧协议（file upload/download 专用，零业务编解码）
 │   ├── signing.py           # MessageSigner 签名抽象（协议域，auth 包实现）
 │   ├── ansi.py              # ANSI 转义序列过滤（strip_ansi）
@@ -99,8 +100,9 @@ src/
 ├── client/                  # ═══════ 前端客户端层 ═══════
 │   ├── __init__.py
 │   ├── lifecycle.py         # 客户端日志配置（setup_client_logging；daemon 控制见 daemonctl 包）
-│   ├── transport.py         # TCP/TLS 连接管理 + Client 类（自动启动守护进程，按 CONNECT_MODE 三路路由）
-│   ├── formatter.py         # 响应格式化输出（JSON 模式）
+│   ├── transport.py         # TCP/TLS 连接管理 + Client 类（自动启动守护进程，按 CONNECT_MODE 三路路由；信封封装接缝）
+│   ├── result.py            # 类型化结果模型（Result / from_response 工厂，含稳定错误码）
+│   ├── presenter.py         # 人类可读渲染层（内容→stdout / 元信息→stderr / 错误+退出码）
 │   ├── cli_plugins.py       # CLI 插件宿主（CliPluginHost，kind=cli 钩子链）
 │   ├── renderer/            # ═══ 终端快照渲染器（SVG / Pillow / GDI / box-drawing） ═══
 │   │   ├── __init__.py      # 包导出（render_to_file / render_svg_string / is_image_ext）
@@ -119,6 +121,7 @@ src/
 │   ├── listener.py          # Listener（单端口 accept 循环，封装 tcp/tls 传输 + AuthContext）
 │   ├── handler.py           # RequestHandler（委托 handlers/ 子包）
 │   ├── execution.py         # 执行原语（快照/子进程执行流程，exec/send/read handler 与 workflow 共用）
+│   ├── conditions.py        # 返回条件统一声明（ReturnConditions.from_msg + Reason 词表）
 │   └── handlers/            # ═══ 命令处理器子包（每命令一文件 + 派发器） ═══
 │       ├── __init__.py
 │       ├── base.py          # DaemonHandler 基类 + HandlerContext

@@ -5,10 +5,10 @@ from ...output import safe_regex_search
 from ...protocol.message import Message
 from ...protocol.response import Response
 from ..execution import (
-    _attach_subprocess_stderr,
     _run_snapshot_flow,
     _run_subprocess_no_trigger_flow,
     _run_subprocess_trigger_flow,
+    assemble_response,
 )
 from .base import DaemonHandler, HandlerContext
 from .utils import (
@@ -16,10 +16,11 @@ from .utils import (
     apply_client_defaults,
     apply_lines_grep,
     attach_screen_buffer,
-    build_result,
     filter_snapshot_lines,
     format_iso_ms,
+    resolve_output,
     strip_if_needed,
+    validate_offset_policy,
     validate_request,
     validate_trigger_regex,
 )
@@ -67,13 +68,7 @@ class ReadHandler(DaemonHandler):
 
         has_wait = trigger is not None or idle_timeout is not None or explicit_timeout
 
-        if offset is not None and has_wait:
-            Message.send(
-                conn,
-                Response.error(
-                    "--offset cannot be used with --trigger/--idle-timeout/--timeout (waiting mode)"
-                ),
-            )
+        if not validate_offset_policy(conn, offset, waiting=has_wait):
             return
 
         session = ctx.manager.get_session(session_id)
@@ -157,21 +152,22 @@ class ReadHandler(DaemonHandler):
 
     def _handle_read_flow(self, ctx, conn, session, msg):
         """read 会话处理主体（已持有 session.hold）"""
+        from ..conditions import RequestContext
+
         if not apply_client_defaults(session, msg, conn):
             return
 
+        req = RequestContext.from_msg(msg)
+        cond = req.cond
         session_id = session.id
-        lines_param = msg.get("lines")
-        grep = msg.get("grep")
-        offset = msg.get("offset")
-        idle_timeout = msg.get("idle_timeout")
-        explicit_timeout = msg.get("explicit_timeout", False)
-        trigger = msg.get("trigger")
-        has_wait = trigger is not None or idle_timeout is not None or explicit_timeout
+        lines_param = req.lines
+        grep = req.grep
+        offset = req.offset
+        has_wait = cond.has_wait
 
         is_sub = getattr(session, "mode", "pty") == "subprocess"
         if is_sub:
-            if msg.get("snapshot_diff"):
+            if cond.snapshot_diff:
                 Message.send(
                     conn,
                     Response.error(
@@ -183,19 +179,13 @@ class ReadHandler(DaemonHandler):
             return
 
         # pty 模式恒为屏幕快照
-        if offset is not None and lines_param is not None:
-            Message.send(
-                conn, Response.error("--offset cannot be used with --lines/-l")
-            )
-            return
-        if offset is not None and msg.get("full"):
-            Message.send(conn, Response.error("--offset cannot be used with --full"))
-            return
-        if offset is not None and msg.get("snapshot_diff"):
-            Message.send(
-                conn,
-                Response.error("--offset cannot be used with --snapshot-diff"),
-            )
+        if not validate_offset_policy(
+            conn,
+            offset,
+            lines=lines_param,
+            full=cond.full,
+            snapshot_diff=cond.snapshot_diff,
+        ):
             return
 
         if has_wait:
@@ -203,8 +193,8 @@ class ReadHandler(DaemonHandler):
             wait_msg = msg
             if (
                 lines_param is not None
-                and not msg.get("full")
-                and not msg.get("snapshot_diff")
+                and not cond.full
+                and not cond.snapshot_diff
             ):
                 wait_msg = dict(msg)
                 wait_msg["full"] = True
@@ -217,7 +207,7 @@ class ReadHandler(DaemonHandler):
                 send_response=False,
             )
             output = filter_snapshot_lines(
-                output, lines_param, msg.get("column"), grep
+                output, lines_param, req.column, grep
             )
             # 过滤结果必须写回响应：build_result 装配的是未过滤快照，
             # 此前漏写回导致等待模式下 -g/-l/--column 全部静默失效
@@ -232,86 +222,75 @@ class ReadHandler(DaemonHandler):
         # （offset 未显式给定时保持快照语义，read 默认返回可见屏幕快照）
         if offset is not None:
             output, cur_offset = session.get_output_with_offset(
-                from_offset=offset, encoding=msg.get("encoding")
+                from_offset=offset, encoding=req.encoding
             )
             output = strip_if_needed(output, msg)
-            if grep or msg.get("column") is not None:
+            if grep or req.column is not None:
                 filtered = apply_lines_grep(
                     output, None, grep, conn,
-                    column_param=msg.get("column"),
+                    column_param=req.column,
                 )
                 if filtered is None:
                     return
                 output = filtered
-            result = build_result(
-                ctx.manager,
-                session_id,
-                output,
-                False,
-                "ok" if session.running else "ended",
-                has_trigger=False,
+            assemble_response(
+                ctx,
+                conn,
+                session,
+                msg,
+                output=output,
+                matched=False,
+                reason="ok" if session.running else "ended",
                 result_type="read",
-                session=session,
-                t_start=msg.get("_t_start"),
+                has_trigger=False,
+                consume_events=False,
                 output_offset=cur_offset,
                 include_debug=_include_debug(session),
             )
-            attach_screen_buffer(result, session, msg)
-            Message.send(conn, result)
             return
 
-        if msg.get("snapshot_diff"):
-            output = session.get_snapshot_diff(keep_ansi=msg.get("keep_ansi", False))
-        elif msg.get("full") or lines_param is not None:
-            output = session.get_full_snapshot(keep_ansi=msg.get("keep_ansi", False))
-        else:
-            output = session.get_snapshot(keep_ansi=msg.get("keep_ansi", False))
-        output = filter_snapshot_lines(output, lines_param, msg.get("column"), grep)
-        result = build_result(
-            ctx.manager,
-            session_id,
-            output,
-            False,
-            "ok" if session.running else "ended",
-            has_trigger=False,
-            result_type="read",
-            session=session,
-            include_debug=_include_debug(session),
+        output = resolve_output(
+            session, cond, force_full=(lines_param is not None)
         )
-        if not output:
-            result["snapshotDiagnostics"] = session.get_snapshot_diagnostics()
-        attach_screen_buffer(result, session, msg)
-        Message.send(conn, result)
+        output = filter_snapshot_lines(output, lines_param, req.column, grep)
+        assemble_response(
+            ctx,
+            conn,
+            session,
+            msg,
+            output=output,
+            matched=False,
+            reason="ok" if session.running else "ended",
+            result_type="read",
+            has_trigger=False,
+            consume_events=False,
+            include_debug=_include_debug(session),
+            snapshot_diagnostics=True,
+        )
 
     def _handle_subprocess_read(self, ctx, conn, session, msg: dict):
         """子进程模式 read：增量读取 stdout + 附加 stderr
 
         支持 --offset / --full / -l / -g / --timeout / --idle-timeout / --trigger。
         """
-        from ..execution import _attach_subprocess_stderr
-        from .utils import attach_screen_buffer, build_result, strip_if_needed
+        from ..conditions import RequestContext
+        from .utils import attach_screen_buffer, strip_if_needed
 
-        lines_param = msg.get("lines")
-        grep = msg.get("grep")
-        offset = msg.get("offset")
-        encoding = msg.get("encoding")
-        trigger = msg.get("trigger")
-        idle_timeout = msg.get("idle_timeout")
-        explicit_timeout = msg.get("explicit_timeout", False)
-        has_wait = trigger is not None or idle_timeout is not None or explicit_timeout
+        req = RequestContext.from_msg(msg)
+        cond = req.cond
+        lines_param = req.lines
+        grep = req.grep
+        offset = req.offset
+        encoding = req.encoding
+        trigger = cond.trigger
+        has_wait = cond.has_wait
 
-        if offset is not None and has_wait:
-            Message.send(
-                conn,
-                Response.error(
-                    "--offset cannot be used with --trigger/--idle-timeout/--timeout (waiting mode)"
-                ),
-            )
+        if not validate_offset_policy(conn, offset, waiting=has_wait):
             return
 
         if has_wait:
             if trigger:
-                trigger_offset = 0 if msg.get("full") else session.output_offset
+                trigger_offset = 0 if cond.full else session.output_offset
                 result, output = _run_subprocess_trigger_flow(
                     ctx,
                     conn,
@@ -319,9 +298,10 @@ class ReadHandler(DaemonHandler):
                     msg,
                     trigger_offset,
                     trigger,
-                    msg.get("newline", False),
+                    cond.newline,
+                    # read 子进程 trigger 语义：fresh 默认 True（对齐 CLI 读取新输出）
                     msg.get("fresh", True),
-                    msg.get("timeout", 120),
+                    cond.timeout,
                     result_type="read",
                     send_response=False,
                 )
@@ -334,12 +314,12 @@ class ReadHandler(DaemonHandler):
                     result_type="read",
                     send_response=False,
                     from_offset=(
-                        0 if msg.get("full") else session.output_offset
+                        0 if cond.full else session.output_offset
                     ),
                 )
             output = apply_lines_grep(
                 output, lines_param, grep, conn,
-                column_param=msg.get("column"),
+                column_param=req.column,
             )
             if output is None:
                 return
@@ -349,7 +329,7 @@ class ReadHandler(DaemonHandler):
             return
 
         # 非等待：增量读取 stdout
-        if msg.get("full"):
+        if cond.full:
             read_offset = 0
         elif offset is not None:
             read_offset = offset
@@ -365,84 +345,43 @@ class ReadHandler(DaemonHandler):
             read_offset is not None
             and not lines_param
             and not grep
-            and msg.get("column") is None
+            and req.column is None
         ):
-            sid = session.id
-            result = build_result(
-                ctx.manager,
-                sid,
-                output,
-                False,
-                "ok" if session.running else "ended",
-                has_trigger=False,
+            assemble_response(
+                ctx,
+                conn,
+                session,
+                msg,
+                output=output,
+                matched=False,
+                reason="ok" if session.running else "ended",
                 result_type="read",
-                session=session,
-                t_start=msg.get("_t_start"),
+                has_trigger=False,
+                consume_events=False,
                 output_offset=cur_offset,
                 include_debug=_include_debug(session),
+                attach_stderr=True,
             )
-            _attach_subprocess_stderr(result, session, msg)
-            attach_screen_buffer(result, session, msg)
-            Message.send(conn, result)
             return
 
-        lines = output.splitlines()
-
-        if lines_param is not None:
-            if isinstance(lines_param, int):
-                lines = lines[-lines_param:] if lines_param > 0 else []
-            elif isinstance(lines_param, str) and ":" in lines_param:
-                parts = lines_param.split(":", 1)
-                try:
-                    start = int(parts[0]) if parts[0] else 1
-                    end = int(parts[1]) if parts[1] else len(lines)
-                    start = max(start, 1)
-                    lines = lines[start - 1 : end]
-                except (ValueError, IndexError):
-                    Message.send(
-                        conn, Response.error(f"Invalid line range: {lines_param}")
-                    )
-                    return
-            else:
-                try:
-                    n = int(lines_param)
-                    lines = lines[-n:] if n > 0 else []
-                except ValueError:
-                    Message.send(
-                        conn, Response.error(f"Invalid lines parameter: {lines_param}")
-                    )
-                    return
-
-        if grep:
-            try:
-                pat = re.compile(grep)
-                lines = [l for l in lines if safe_regex_search(pat, l)]
-            except re.error:
-                Message.send(conn, Response.error(f"Invalid regex: {grep}"))
-                return
-
-        column_param = msg.get("column")
-        if column_param is not None and lines:
-            col_idx = column_param - 1
-            lines = [
-                line[col_idx] if 0 <= col_idx < len(line) else "" for line in lines
-            ]
-
-        output = "\n".join(lines)
-        sid = session.id
-        result = build_result(
-            ctx.manager,
-            sid,
-            output,
-            False,
-            "ok" if session.running else "ended",
-            has_trigger=False,
+        # 统一过滤：lines/grep/column 复用 apply_lines_grep（原内联第三份复制已去除）
+        output = apply_lines_grep(
+            output, lines_param, grep, conn, column_param=req.column
+        )
+        if output is None:
+            return
+        assemble_response(
+            ctx,
+            conn,
+            session,
+            msg,
+            output=output,
+            matched=False,
+            reason="ok" if session.running else "ended",
             result_type="read",
-            session=session,
-            t_start=msg.get("_t_start"),
+            has_trigger=False,
+            consume_events=False,
             output_offset=cur_offset,
             include_debug=_include_debug(session),
+            attach_stderr=True,
         )
-        _attach_subprocess_stderr(result, session, msg)
-        attach_screen_buffer(result, session, msg)
-        Message.send(conn, result)

@@ -1,158 +1,26 @@
-"""系统资源统计提供者实现。"""
+"""系统资源统计提供者实现。
 
-import os
-import time
+统一以 psutil 提供 CPU/内存使用率（psutil 为核心必装依赖，见 requirements.txt），
+不再保留 ctypes//proc 降级兜底。
+"""
 
-from ...application.ports import SystemStatsProvider, ThreadExecutor
+import psutil
+
+from ...application.ports import SystemStatsProvider
 from ...domain.entities import SystemStats
-from ....logging import get_logger
-
-_logger = get_logger("pty-web")
-
-
-def _get_windows_stats():
-    """无 psutil 时，用 ctypes 读取全局内存和最近一次的 CPU 使用率估算（Windows）。"""
-    import ctypes
-    from ctypes import wintypes
-
-    mem = None
-    try:
-        kernel32 = ctypes.windll.kernel32
-        kernel32.GlobalMemoryStatusEx.argtypes = [wintypes.LPVOID]
-        kernel32.GlobalMemoryStatusEx.restype = wintypes.BOOL
-
-        class _MEMORYSTATUSEX(ctypes.Structure):
-            _fields_ = [
-                ("dwLength", wintypes.DWORD),
-                ("dwMemoryLoad", wintypes.DWORD),
-                ("ullTotalPhys", wintypes.ULONGLONG),
-                ("ullAvailPhys", wintypes.ULONGLONG),
-                ("ullTotalPageFile", wintypes.ULONGLONG),
-                ("ullAvailPageFile", wintypes.ULONGLONG),
-                ("ullTotalVirtual", wintypes.ULONGLONG),
-                ("ullAvailVirtual", wintypes.ULONGLONG),
-                ("ullAvailExtendedVirtual", wintypes.ULONGLONG),
-            ]
-
-        stat = _MEMORYSTATUSEX()
-        stat.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
-        if kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
-            mem = stat.dwMemoryLoad
-    except Exception:
-        pass
-
-    cpu = None
-    try:
-        _FILETIME = wintypes.FILETIME
-        idle1 = _FILETIME()
-        kernel1 = _FILETIME()
-        user1 = _FILETIME()
-        ctypes.windll.kernel32.GetSystemTimes(
-            ctypes.byref(idle1), ctypes.byref(kernel1), ctypes.byref(user1)
-        )
-
-        def ft2int(ft):
-            return (ft.dwHighDateTime << 32) | ft.dwLowDateTime
-
-        idle1v = ft2int(idle1)
-        user1v = ft2int(user1)
-        kernel1v = ft2int(kernel1)
-        time.sleep(0.1)
-        idle2 = _FILETIME()
-        kernel2 = _FILETIME()
-        user2 = _FILETIME()
-        ctypes.windll.kernel32.GetSystemTimes(
-            ctypes.byref(idle2), ctypes.byref(kernel2), ctypes.byref(user2)
-        )
-        idle2v = ft2int(idle2)
-        user2v = ft2int(user2)
-        kernel2v = ft2int(kernel2)
-        idle_delta = idle2v - idle1v
-        total_delta = (kernel2v - kernel1v) + (user2v - user1v)
-        if total_delta > 0:
-            cpu = round((1.0 - idle_delta / total_delta) * 100, 1)
-    except Exception:
-        pass
-    return cpu, mem
-
-
-def _get_linux_stats():
-    """无 psutil 时，通过 /proc 文件系统读取系统内存和 CPU 使用率（Linux）。"""
-    mem = None
-    cpu = None
-
-    # 读取内存信息
-    try:
-        with open("/proc/meminfo", "r") as f:
-            meminfo = {}
-            for line in f:
-                parts = line.split()
-                if len(parts) >= 2:
-                    key = parts[0].rstrip(":")
-                    val = int(parts[1])
-                    meminfo[key] = val
-
-        total = meminfo.get("MemTotal", 0)
-        available = meminfo.get("MemAvailable", 0)
-        if total > 0 and available > 0:
-            mem = round((1.0 - available / total) * 100, 1)
-    except Exception:
-        pass
-
-    # 读取 CPU 使用率（两次采样计算差值）
-    try:
-
-        def read_cpu_times():
-            with open("/proc/stat", "r") as f:
-                line = f.readline()
-                # cpu  user nice system idle iowait irq softirq steal guest guest_nice
-                fields = line.split()[1:]
-                return [int(x) for x in fields[:7]]
-
-        t1 = read_cpu_times()
-        time.sleep(0.1)
-        t2 = read_cpu_times()
-
-        idle1 = t1[3]
-        idle2 = t2[3]
-        total1 = sum(t1)
-        total2 = sum(t2)
-        idle_delta = idle2 - idle1
-        total_delta = total2 - total1
-        if total_delta > 0:
-            cpu = round((1.0 - idle_delta / total_delta) * 100, 1)
-    except Exception:
-        pass
-
-    return cpu, mem
-
-
-def _get_fallback_stats():
-    """根据平台选择对应的统计函数。"""
-    if os.name == "nt" or (hasattr(os, "sys") and os.sys.platform == "win32"):
-        return _get_windows_stats()
-    return _get_linux_stats()
 
 
 class SystemStatsProviderImpl(SystemStatsProvider):
     """系统资源统计提供者实现。"""
 
-    def __init__(self, executor: ThreadExecutor):
-        self._executor = executor
-
     async def get_stats(self) -> SystemStats:
         cpu = mem = None
         try:
-            import psutil
-
             cpu = psutil.cpu_percent(interval=0)
-            mem_info = psutil.virtual_memory()
-            mem = mem_info.percent
         except Exception:
             pass
-        if cpu is None or mem is None:
-            try:
-                cpu, mem = await self._executor.run(_get_fallback_stats)
-            except Exception:
-                pass
+        try:
+            mem = psutil.virtual_memory().percent
+        except Exception:
+            pass
         return SystemStats(cpu=cpu, memory=mem)

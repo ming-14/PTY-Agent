@@ -35,6 +35,7 @@ from ..config.client import (
 from ..config.common import IS_WINDOWS
 from ..daemonctl import TLSClient
 from ..ipc.shm import read_hmac_key
+from ..protocol.envelope import request as _env_request, unwrap as _env_unwrap
 from ..protocol.message import Message
 from ..protocol.response import Response
 
@@ -54,11 +55,20 @@ def _decompress_screen_buffer(resp: dict):
 from ..daemonctl import start_daemon, stop_daemon
 from .config_manager import _DEFAULTS as _DEFAULTS_MAP
 from .config_manager import ConfigManager
-from .formatter import print_response
-from .input import process_input
+from .presenter import present as _present
+from .result import from_response
+from ..input.text import process_input
 from ..logging import get_logger
 
 _logger = get_logger("pty-client")
+
+
+def print_response(resp: dict):
+    """渲染 daemon 响应（经类型化 Result + Presenter：内容→stdout / 元信息→stderr）
+
+    不再原样 JSON dump；错误走 stderr 并由 present() 记录 error 标志。
+    """
+    _present(from_response(resp))
 
 _SHELL_OPS = frozenset({"|", "||", "&", "&&", ";", ">", "<", ">>"})
 
@@ -469,13 +479,17 @@ class Client:
             if output_path is not None:
                 self._cli_plugins.set_output_path(output_path)
             msg = self._cli_plugins.before_request(msg.get("type", ""), msg)
+        # 信封封装：分组负载（op/condition/output/io）+ 信封元数据；
+        # 认证凭证（token/password/pubkey_fp）在随后 enrich 时注入到信封顶层，
+        # 与请求一并参与签名，保证业务内容与身份同时受保护
+        req_timeout = msg.get("timeout")
+        msg = _env_request(msg.get("type", ""), msg)
         # 凭证提供者可能为 None（认证全关模式），条件调用
         if self._credential_provider is not None:
             self._credential_provider.enrich(msg)
         msg_type = msg.get("type", "?")
         _logger.debug("_send_recv: type=%s id=%s", msg_type, msg.get("id", ""))
         try:
-            req_timeout = msg.get("timeout")
             if req_timeout is not None:
                 sock.settimeout(float(req_timeout) + 30.0)
             Message.send(sock, msg)
@@ -483,6 +497,9 @@ class Client:
             if resp is None:
                 _logger.warning("_send_recv: type=%s no response", msg_type)
                 resp = Response.error("no response")
+            else:
+                # 拆响应信封 → 扁平 body（内部业务层沿原语义消费）
+                _, resp, _ = _env_unwrap(resp)
             # CLI 插件 transform_response 链：响应收到后、业务后处理前变换
             if self._cli_plugins is not None:
                 resp = self._cli_plugins.transform_response(msg_type, resp)

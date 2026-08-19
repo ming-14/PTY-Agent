@@ -51,7 +51,7 @@ class PubkeyAuthenticator(Authenticator):
         if not self._authorized_keys:
             _logger.warning("公钥认证失败: authorized_keys 为空（fail-closed）")
             return False
-        fp = msg.get("pubkey_fp", "")
+        fp = msg.get("auth", {}).get("pubkey_fp", "")
         if not fp:
             _logger.warning("公钥认证失败: 消息缺少 pubkey_fp 字段")
             return False
@@ -88,5 +88,5 @@ class PubkeyCredentialProvider(CredentialProvider):
         Returns:
             附加了 pubkey_fp 字段的消息字典（原地修改并返回）。
         """
-        msg["pubkey_fp"] = self._private_key.fingerprint
+        msg.setdefault("auth", {})["pubkey_fp"] = self._private_key.fingerprint
         return msg

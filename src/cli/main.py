@@ -8,11 +8,11 @@
 
 import sys
 
-from ..client.formatter import error_was_printed, print_response
+from ..client.presenter import error_was_printed, present
+from ..client.result import ErrorResult
 from ..client.lifecycle import setup_client_logging
 from ..client.transport import Client
 from ..logging import get_logger
-from ..protocol.response import Response
 from .base import CommandContext
 from .commands import register_all
 from .pipeline import (
@@ -73,10 +73,10 @@ def main() -> None:
         if error_was_printed():
             sys.exit(1)
     except KeyboardInterrupt:
-        print_response(Response.error("Interrupted by user"))
+        present(ErrorResult(message="Interrupted by user"))
         sys.exit(130)
     except SystemExit:
         raise
     except Exception as e:
-        print_response(Response.error(str(e)))
+        present(ErrorResult(message=str(e)))
         sys.exit(1)

@@ -73,14 +73,14 @@ class Ed25519MessageSigner(MessageSigner):
     def sign(self, obj: dict) -> dict:
         """用私钥签名消息
 
-        客户端模式专用。签名前注入 ``pubkey_fp`` 字段（私钥对应的公钥指纹），
-        然后对排除签名字段与指纹字段后的规范 JSON 签名。
+        客户端模式专用。凭证（pubkey_fp）由提供者注入到 ``auth.pubkey_fp``，
+        签名内容为排除签名字段后的整封消息（含 auth.pubkey_fp 身份）。
 
         Args:
             obj: 待签名的消息字典。
 
         Returns:
-            带 ``pubkey_fp`` 与 ``_sig_ed25519`` 字段的消息副本。
+            带 ``_sig_ed25519`` 字段的消息副本。
 
         Raises:
             RuntimeError: 服务端模式调用 sign()。
@@ -88,8 +88,7 @@ class Ed25519MessageSigner(MessageSigner):
         if self._private_key is None:
             raise RuntimeError("服务端模式不支持 sign()，请用客户端模式构造")
         obj = dict(obj)
-        # 注入公钥指纹，服务端据此查公钥验签
-        obj[PUBKEY_FP_FIELD] = self._private_key.fingerprint
+        obj.setdefault("auth", {}).setdefault("pubkey_fp", self._private_key.fingerprint)
         sig = self._compute_signature(obj)
         obj[SIG_FIELD] = sig
         return obj
@@ -97,20 +96,18 @@ class Ed25519MessageSigner(MessageSigner):
     def sign_bytes(self, obj: dict) -> bytes:
         """签名并直接产出 wire 字节：单次序列化
 
-        规范 JSON 排除指纹与签名字段；wire 在其上拼接 pubkey_fp 与
-        _sig_ed25519（均为 ASCII），免二次 json.dumps 与消息整 dict 拷贝。
+        规范 JSON 排除签名字段，签名内容含 auth.pubkey_fp（身份一并认证）；
+        wire 在其上拼接 _sig_ed25519（ASCII），免二次 json.dumps 与整 dict 拷贝。
         """
         if self._private_key is None:
             raise RuntimeError("服务端模式不支持 sign()，请用客户端模式构造")
-        filtered = {k: v for k, v in obj.items() if k not in _EXCLUDED_FIELDS}
-        canonical = self._canonical_json(filtered)
+        obj = dict(obj)
+        obj.setdefault("auth", {}).setdefault("pubkey_fp", self._private_key.fingerprint)
+        canonical = self._canonical_json(obj)
         sig = self._private_key.key.sign(canonical).hex()
-        fp = self._private_key.fingerprint
         return (
             canonical[:-1]
-            + b',"pubkey_fp":"'
-            + fp.encode("ascii")
-            + b'","_sig_ed25519":"'
+            + b',"_sig_ed25519":"'
             + sig.encode("ascii")
             + b'"}\n'
         )
@@ -132,7 +129,7 @@ class Ed25519MessageSigner(MessageSigner):
         """
         if self._authorized_keys is None:
             raise RuntimeError("客户端模式不支持 verify()，请用服务端模式构造")
-        fp = obj.get(PUBKEY_FP_FIELD, "")
+        fp = obj.get("auth", {}).get(PUBKEY_FP_FIELD, "")
         if not fp:
             _logger.warning("Ed25519 验签失败: 消息缺少 pubkey_fp 字段")
             return False

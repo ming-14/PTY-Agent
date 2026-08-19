@@ -46,7 +46,7 @@ graph TB
     subgraph CLIENT["前端客户端层"]
         CLIFE["client/lifecycle.py<br/>客户端日志配置"]
         TRANS["client/transport.py<br/>TCP/TLS 连接管理"]
-        FORM["client/formatter.py<br/>JSON 输出"]
+        PRES["client/presenter.py<br/>人类可读渲染 + result.py"]
         CFGM["client/config_manager.py<br/>配置管理"]
         INP["client/input.py<br/>输入文本处理"]
         CLIP["client/cli_plugins.py<br/>CLI 插件宿主（kind=cli）"]
@@ -206,9 +206,9 @@ graph TB
 | `transport.py` | `_parse_iso_time(s)` | 解析 ISO 8601 时间字符串为 Unix 时间戳 |
 | `transport.py` | `_probe_port()` | 端口探测：token 模式经 SHM 发现（`_find_daemon_port`），basic/tls 模式返回配置目标端口 |
 | `transport.py` | `_load_signer_and_providers()` | 认证装配：按 CONNECT_MODE 三路装配（token→HMAC 双向签名 + TokenCredentialProvider，tls→Ed25519 单向签名 + PubkeyCredentialProvider，basic→密码非空时 HMAC 双向 + PasswordCredentialProvider，空则无装配） |
-| `formatter.py` | `set_debug_mode(enabled)` | debug 输出开关（控制是否移除 `debugInformation` 字段） |
-| `formatter.py` | `_strip_debug_info(obj)` | 递归移除所有 `debugInformation` 字段 |
-| `formatter.py` | `print_response(resp)` | 打印守护进程响应：直接 `json.dumps(resp, ensure_ascii=False)` 到 stdout |
+| `result.py` | `from_response(resp)` / `Result` 类型 | 把 daemon 响应规范化为类型化结果模型（Error/Message/Session/List/Status/Events/...），含稳定错误码分类 |
+| `presenter.py` | `present(result)` / `emit` / `emit_error` | 人类可读渲染：内容→stdout、元信息→stderr、错误+退出码；`--debug-output` 控制详略；插件 `render_response` 钩子 |
+| `input.py` | `safe_print(text, **kwargs)` | 安全打印（自适应控制台编码，GBK 终端强制 UTF-8 输出） |
 | `renderer/__init__.py` | `render_to_file(path, response, svg_compression_level)` | 根据文件后缀选择渲染器（GDI/SVG/Pillow/纯文本），写入文件 |
 | `renderer/svg.py` | `render_svg_string(buf, compression_level)` | 渲染 SVG 为字符串（供 `--response-format svg` 使用，支持压缩等级） |
 | `renderer/common.py` | `_expand_lines(buf)` | 将稀疏/全量 `lines` 统一展开为全量二维数组 |
@@ -226,8 +226,8 @@ graph TB
 **设计要点**：
 - `Client._connect()` 按 CONNECT_MODE 三路分流：tls 走 `_connect_tls`（TLS + TOFU + Ed25519），basic 走 `_connect_basic`（密码认证，空密码=无认证），token 走 `_connect_token`（SHM 发现 + Token/HMAC）
 - token 模式 `_connect_token()` 在 daemon 未运行（单实例锁未占用）时自动 `start_daemon()`，无需用户手动 start；basic/tls 模式不自动启动（目标位置固定，守护进程需手动管理）
-- **formatter.py 仅支持 JSON 模式**：`print_response` 直接 `json.dumps(resp, ensure_ascii=False)` 输出到 stdout。所有非命令响应（守护进程启停信息、配置查询、帮助文本、警告等）均以 JSON 格式输出：`{"type":"info","message":"..."}` / `{"type":"config","content":"..."}` / `{"type":"help","content":"..."}` / `{"type":"warning","message":"..."}`
-- `_SHOW_DEBUG` 全局标志控制是否移除 `debugInformation` 字段：默认关闭，`--debug-output` 或 `--default debug on` 开启后保留 `debugInformation`，否则 `_strip_debug_info` 递归移除所有 `debugInformation`
+- **CLI 呈现层（presenter 人类可读）**：`transport.cmd_*` 经 `result.from_response` 规范化为类型化 Result，`presenter.present` 渲染——程序输出/表格主体/配置 → `stdout`，状态/原因/hint/调试 → `stderr`；错误走 `stderr` 并置退出码。原 `formatter.py` 已移除（无 JSON dump）。
+- `_SHOW_DEBUG` 全局标志控制是否输出 `debugInformation`：默认关闭，`--debug-output` 或 `--default debug on` 开启后 presenter 在 stderr 元信息中展示 `debugInformation`
 - `ConfigManager` 管理调用级默认配置（timeout/newline/encoding/keep_ansi/send_eol/response_format/svg_compression_level/terminal_size/debug），`--default` 设置的值通过 `client_defaults` 字段发送给守护进程按 session UID 存储，会话结束后自动清理。`cmd_*()` 方法在构建请求时应用配置默认值
 - `--default` 支持多个键值对（`action="append"`），设置值发送给守护进程按 session 存储，后续调用自动从 `sessionDefaults` 合并
 - 每个 `cmd_*` 方法仅负责构建请求 dict + 调用 `_send_recv` + 调用 `print_response`
@@ -359,14 +359,14 @@ graph TB
 | `keys.py` | `PublicKey` / `PrivateKey` | Ed25519 密钥实体，OpenSSH 格式兼容，SHA-256 指纹（与 `ssh-keygen -lf` 一致） |
 | `keys.py` | `generate_keypair()` / `load_authorized_keys()` / `_compute_fingerprint()` / `_check_private_key_permissions()` | 密钥对生成 / authorized_keys 文件加载（指纹→PublicKey 映射）/ 指纹计算 / 私钥权限检查 |
 | `context.py` | `AuthContext` | 连接级认证上下文：绑定 `outbound_signer`（出站签名）、`inbound_verifier`（入站验证）、`authenticator`（身份认证） |
-| `token/authenticator.py` | `TokenAuthenticator` | Token 认证器：通过 SHM 令牌验证客户端身份，支持轮换与宽限期 |
-| `token/authenticator.py` | `TokenCredentialProvider` | Token 凭证提供者：从 SHM 读取令牌注入到请求消息 |
+| `token/authenticator.py` | `TokenAuthenticator` | Token 认证器：校验请求 `auth.token`（SHM 令牌），支持轮换与宽限期 |
+| `token/authenticator.py` | `TokenCredentialProvider` | Token 凭证提供者：从 SHM 读取令牌注入请求信封 `auth.token` |
 | `token/signer.py` | `HmacMessageSigner` | HMAC-SHA256 消息签名器（实现 `protocol/signing.MessageSigner`）：对称密钥，双向签名（请求签+验，响应签+验） |
-| `pubkey/authenticator.py` | `PubkeyAuthenticator` | 公钥认证器：校验 `pubkey_fp` 是否在 authorized_keys 白名单（fail-closed） |
-| `pubkey/authenticator.py` | `PubkeyCredentialProvider` | 公钥凭证提供者：向消息注入 `pubkey_fp` 字段 |
+| `pubkey/authenticator.py` | `PubkeyAuthenticator` | 公钥认证器：校验请求 `auth.pubkey_fp` 是否在 authorized_keys 白名单（fail-closed） |
+| `pubkey/authenticator.py` | `PubkeyCredentialProvider` | 公钥凭证提供者：向请求信封 `auth.pubkey_fp` 注入公钥指纹 |
 | `pubkey/signer.py` | `Ed25519MessageSigner` | Ed25519 消息签名器（实现 `protocol/signing.MessageSigner`）：非对称单向（请求签名，响应不验签），白名单验签 |
-| `password/authenticator.py` | `PasswordAuthenticator` | 密码认证器：常量时间比较消息 `password` 字段与配置密码（`hmac.compare_digest`） |
-| `password/authenticator.py` | `PasswordCredentialProvider` | 密码凭证提供者：向消息注入 `password` 字段 |
+| `password/authenticator.py` | `PasswordAuthenticator` | 密码认证器：常量时间比较请求 `auth.password` 与配置密码（`hmac.compare_digest`） |
+| `password/authenticator.py` | `PasswordCredentialProvider` | 密码凭证提供者：向请求信封 `auth.password` 注入密码 |
 | `tls/cert_manager.py` | `CertificateManager` | 自签证书管理：首次启动自动生成 TLS 证书，计算 SHA-256 指纹（类似 SSH host key） |
 | `tls/known_hosts.py` | `KnownHosts` | TOFU 信任存储：首次连接自动信任证书指纹，后续比对（类似 SSH known_hosts） |
 
@@ -699,7 +699,7 @@ pty 模式会话恒返回终端屏幕快照，行为如下：
 | `client/transport.py` | `_load_signer_and_providers()` 连接后从共享内存读取密钥并构建签名器（双向：出站签请求 + 入站验响应） |
 
 **设计要点**：
-- HMAC 签名字段：`_sig`，值为 hex 编码的 HMAC-SHA256 摘要；Ed25519 签名字段：`_sig_ed25519`（客户端模式同时注入 `pubkey_fp`，指纹不纳入签名内容）。两种签名字段可共存（`MessageSigner.signature_fields` 声明）
+- HMAC 签名字段：`_sig`，值为 hex 编码的 HMAC-SHA256 摘要；Ed25519 签名字段：`_sig_ed25519`（签名内容为排除签名字段后的整封消息，含 `auth.pubkey_fp` 身份）。两种签名字段可共存（`MessageSigner.signature_fields` 声明）
 - `recv()` 保留 `skip_sign` 参数：`ping`/`pong` 使用 `skip_sign=True`（健康检查时密钥可能未加载），`stop` 消息正常签名验证
 - 密钥通过共享内存传递（Windows: 命名 mmap `Local\PTYAgentHmac`；Unix: `daemon.hmac` 文件）
 - `kill` 和 `stop` 命令均要求 token 认证 + HMAC 签名验证
@@ -776,7 +776,7 @@ CONNECT_MODE == "token" → 明文连接 + SHM 发现（_connect_token: 本机 T
 2. 构建 `KnownHosts`（从 `KNOWN_HOSTS_FILE` 加载已信任指纹）
 3. `TLSClient.connect()` → TCP 连接 + TLS 握手 + 获取服务端 DER 证书 → 计算 SHA-256 指纹
 4. TOFU 验证：首次自动信任并存储指纹，后续比对（不匹配 → `TOFU_STRICT=true` 拒绝 / `false` 警告）
-5. 连接建立后注入 `pubkey_fp` 凭证 + Ed25519 签名
+5. 连接建立后注入 `auth.pubkey_fp` 凭证 + Ed25519 签名
 
 **停止流程**（`daemonctl/lifecycle.py:stop_daemon()`）：
 - tls 模式：先通过 TLS 连接远程 daemon 发送 stop，TLS stop 失败（如 TOFU 指纹不匹配）且 `force=True` 时回退到本地强制终止（通过互斥锁定位 PID）
@@ -1099,8 +1099,8 @@ daemon/handlers/exec_handler.py:ExecHandler.handle()
 client/cli_plugins.py:CliPluginHost.transform_response()  [若会话挂载了 CLI 插件（如 ai）]
   → ai.transform_response → config/plugins/ai/common.py → aichat → AI 输出覆盖 outputStream（失败回退原 resp）
 
-client/formatter.py:print_response(resp)
-  → json.dumps(resp, ensure_ascii=False) 输出到 stdout
+transport.print_response(resp)（经 result.from_response + presenter 渲染）
+  → 内容→stdout / 元信息→stderr（人类可读，不再 JSON dump）
 ```
 
 #### send 流程
@@ -1141,7 +1141,7 @@ daemon/handlers/read_handler.py:ReadHandler.handle()
 |------|------|
 | `protocol/` 独立为层 | `Message` 类和 `strip_ansi` 被 client 和 daemon 两端使用，独立为底层设施，避免循环依赖 |
 | `process/windows/` 子包隔离 | Windows 特有代码（Job Object / IOCP / GUI 枚举 / ctypes API 绑定）放入独立子包，Unix 平台零加载 |
-| `client/` 拆为多模块 | `transport.py`（连接管理 + 明文/TLS 路由）、`daemonctl/`（守护进程启停/探测 + TLS + TOFU）、`formatter.py`（仅 JSON 输出）、`renderer/`（快照渲染包：common/svg/image/box_drawing）、`input.py`（文本处理）、`cli_plugins.py`（CLI 插件宿主） |
+| `client/` 拆为多模块 | `transport.py`（连接管理 + 信封接缝 + 明文/TLS 路由）、`daemonctl/`（守护进程启停/探测 + TLS + TOFU）、`result.py`（类型化结果模型）+ `presenter.py`（人类可读渲染，原 formatter 已移除）、`renderer/`（快照渲染包：common/svg/image/box_drawing）、`input.py`（文本处理）、`cli_plugins.py`（CLI 插件宿主） |
 | `daemonctl/` 独立 | 守护进程生命周期控制与 TLS 连接独立为 client 侧组件，仅依赖共享层（config/protocol/auth/ipc/common），与 daemon 核心彻底解耦 |
 | `common/` 跨侧共享 | pid_exists 与 Shell 探测为纯 OS 级工具，client 与 daemon 两端共用（位于跨侧共享层） |
 | `shared.toml` 共享配置域 | 协议/IPC 命名/daemon 控制/日志格式等跨侧常量集中管理，client 与 daemon 各自聚合，互不依赖对方配置文件 |
@@ -1151,7 +1151,7 @@ daemon/handlers/read_handler.py:ReadHandler.handle()
 | 三监听器模型 | basic（明文共享密码，空密码=无认证）/ token（Token + HMAC 本机）/ tls（TLS + Ed25519 跨机）三个监听器由 `[listener]` 独立启停，可同开或只开一个，支持灵活部署 |
 | Web 层洋葱架构 | domain（实体）← application（用例+端口）← infrastructure（适配器）← presentation（FastAPI+控制器），依赖只从外向内 |
 | 前端 JS 分层 | `web/static/js/` 采用与后端对应的 domain/application/infrastructure/presentation 分层 |
-| formatter 仅 JSON 模式 | 仅输出 JSON，统一格式，简化客户端输出逻辑，便于程序化消费 |
+| Presenter 人类可读渲染 | `transport.cmd_*` → `result` 类型化模型 → `presenter`：内容→stdout、元信息→stderr、错误+退出码；放弃 JSON dump（原 formatter 移除） |
 | AI 二次分析移入 CLI 插件 | `config/plugins/ai`（kind=cli）自包含 aichat 资产（common.py/talk.py/bin/aichat.exe/config.yaml），`exec --plugin ai` 挂载到会话后自动回调，失败回退不阻断主流程 |
 | Web 密码认证可选 | `WEB_PASSWORD_HASH` 空=免密，非空=需密码；双通道（Cookie + X-Auth-Token），SHA-256 哈希存储 |
 | 可选模块惰性导入网关 | `src/optional.py` 集中管理 web/vnc/screenshare/cursorlocator/sandbox/plugins 等可选模块的可用性探测 + 惰性导入 + 缓存；`web.toml`/`plugins.json`/`sandbox.toml` 允许缺失即功能禁用，缺失模块返回 None/False 不抛 ImportError，主流程正常，避免各模块散落 try/except |
@@ -1411,7 +1411,32 @@ wait_for_trigger 轮询循环（0.1s 间隔）
 {"commandType": "plugin", "sessionId": "s1", "action": "attach", "plugin": "state_check", "plugins": [{"name": "...", "version": "..."}]}
 ```
 
-> 注：所有响应均以 JSON 格式输出到 stdout（formatter 仅支持 JSON 模式）。
+> 注：线协议为信封 + 分组载荷（请求 op/condition/output/io，响应 data/state/meta，认证在 auth 段），详见附录 A 增补；CLI 以人类可读输出（内容→stdout / 元信息→stderr），不再 JSON dump。
+
+---
+
+## 附录 A 增补：线协议信封与分组载荷（重构后）
+
+> daemon↔CLI 的 JSON 线协议已升级为「信封 + 分组载荷」，详见
+> [PROTOCOL-REDESIGN-PLAN.md](PROTOCOL-REDESIGN-PLAN.md) 与实现 `protocol/envelope.py`。
+
+**信封字段**：`proto`（版本）、`dir`（request/response）、`type`（命令/事件）、`mid`（消息关联 id）、
+`ts`（时间戳）、`kind`（呈现意图）、`auth`（凭证/签名）、`payload`（业务载荷）、`error`（统一错误，可选）。
+
+**请求载荷分组**（exec/send/read/mouse）：
+```
+payload { op: 操作本体, condition: 返回条件, output: 返回数据过滤, io: IO 偏好 }
+```
+其余命令 `payload.op` 承载全量字段，纵向扩展同一信封。
+
+**响应载荷分组**：
+```
+payload { data: 返回内容, state: 状态与原因, meta: 渲染注解 }
+```
+
+**两端接缝**：客户端 `client/transport.py:_send_recv` 出站套请求信封、入站拆响应信封；
+daemon `daemon/handlers/dispatcher.py` 拆请求信封并还原扁平 body 交 handler（业务零改动），
+`protocol/message.py` 经线程局部响应包装为 handler 的扁平响应套响应信封并分组。
 
 ---
 

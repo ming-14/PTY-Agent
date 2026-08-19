@@ -1,7 +1,6 @@
 """set-default 命令：覆盖默认配置（会话级）"""
 
 import argparse
-import json
 import sys
 
 from ..base import Command, CommandContext
@@ -30,28 +29,21 @@ class SetDefaultCommand(Command):
             load_persistent_defaults,
             save_persistent_defaults,
         )
-        from ...client.input import safe_print
-        from ...protocol.response import Response
+        from ...client.presenter import emit, emit_error
 
         cfg = ConfigManager()
         internal_key = _parse_default_key(args.key)
         try:
             cfg.set(internal_key, args.value)
         except ValueError as e:
-            safe_print(json.dumps(Response.error(str(e)), ensure_ascii=False))
+            emit_error(str(e))
             sys.exit(1)
 
         persistent = load_persistent_defaults()
         persistent[internal_key] = cfg.get(internal_key)
         save_persistent_defaults(persistent)
 
-        safe_print(
-            json.dumps(
-                Response.info(
-                    f"已设置默认值: {args.key} = {cfg.get(internal_key)}"
-                    "（将随后续会话命令自动生效）"
-                ),
-                ensure_ascii=False,
-                default=str,
-            )
+        emit(
+            f"已设置默认值: {args.key} = {cfg.get(internal_key)}"
+            "（将随后续会话命令自动生效）"
         )

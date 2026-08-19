@@ -88,7 +88,7 @@ class WebServer:
         self._history_repo: HistoryRepository = HistoryRepositoryAdapter(
             self._history_store
         )
-        self._system_stats = SystemStatsProviderImpl(self._executor)
+        self._system_stats = SystemStatsProviderImpl()
         self._shell_provider = ShellProviderImpl()
 
         existing = getattr(manager, "_history_store", None)

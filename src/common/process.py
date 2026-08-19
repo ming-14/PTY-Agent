@@ -1,37 +1,21 @@
 """跨侧共享进程工具 —— 进程存在性探测
 
 pid_exists 被 daemon 控制（src/daemonctl）与 daemon 自身（server.py 启动检查）共用。
+统一走 psutil.pid_exists（跨平台，权限不足时视为存在，与历史语义一致）。
 """
 
-import os
-
-from ..config.common import IS_WINDOWS
+import psutil
 
 
 def pid_exists(pid: int) -> bool:
     """检查指定 PID 的进程是否存在（跨平台）
 
-    Windows: OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION) 探测句柄；
-    Unix: os.kill(pid, 0) 信号探测。
+    底层语义：pid<=0 视为不存在（0 表示"未设置"，psutil 会误判为系统空闲进程）；
+    进程不存在返回 False；存在或虽被拒权但无法证伪时返回 True。
     """
-    if IS_WINDOWS:
-        try:
-            import ctypes
-
-            kernel32 = ctypes.windll.kernel32
-            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-            if handle:
-                kernel32.CloseHandle(handle)
-                return True
-            return False
-        except Exception:
-            return False
-    else:
-        try:
-            os.kill(pid, 0)
-            return True
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
+    if pid <= 0:
+        return False
+    try:
+        return psutil.pid_exists(pid)
+    except Exception:
+        return False

@@ -18,40 +18,6 @@ from ..logging import get_logger
 _logger = get_logger("pty-daemon")
 
 
-def _kill_exec_session_on_timeout(ctx, session) -> None:
-    """exec 显式 --timeout 到期：终止会话进程树并触发管理器移除
-
-    仅 exec 发起命令时的显式超时到期调用（read/send 等轮询等待不适用）。
-
-    - stop() 幂等（防重入）：强杀进程树 + 关闭 PTY + 停止后台线程；
-    - 读者线程被 EOF/stop_event 唤醒退出，走既有自然结束链
-      （on_exit → notify_end → manager._on_session_ended）从活跃表移除
-      并归档；此处仅在会话仍处于活跃表时兜底触发移除（幂等），
-      读者线程已触发则跳过，避免重复广播 end 事件；
-    - 响应构造所需的 exit_code/error_message/processes 等元数据在
-      stop 后仍可用：release_components 仅在被移除且无 handler 持有
-      时执行，flow 内持有期间释放一律转 pending。
-    """
-    _logger.info("exec 显式超时到期，终止会话 '%s' 进程树", session.id)
-    try:
-        session.stop()
-    except Exception as e:
-        _logger.warning("终止会话 '%s' 进程树异常: %s", session.id, e)
-    # 兜底触发管理器移除：读者线程在 stop join 期间已触发则跳过
-    try:
-        manager = getattr(ctx, "manager", None) if ctx is not None else None
-        if manager is not None and manager.get_session(session.id) is session:
-            session.publisher.notify_end(session)
-    except Exception:
-        pass
-    # 兜底登记组件释放：读者线程在 stop join 期间触发的 release_components
-    # 可能因 _stop_finished 尚未置位而早退，此处补登（持锁期间转 pending）
-    try:
-        session.release_components()
-    except Exception:
-        pass
-
-
 def _run_snapshot_flow(
     ctx,
     conn,
@@ -63,16 +29,18 @@ def _run_snapshot_flow(
     cancel_event: Optional[threading.Event] = None,
 ):
     from .handlers.utils import (
-        attach_screen_buffer,
-        build_result,
+        resolve_output,
     )
+    from .conditions import RequestContext
 
-    timeout = msg.get("timeout", 120)
-    trigger = msg.get("trigger")
-    idle_timeout = msg.get("idle_timeout")
-    idle_after_first = msg.get("idle_after_first_output", False)
-    keep_ansi = msg.get("keep_ansi", False)
-    explicit_timeout = msg.get("explicit_timeout", False)
+    req = RequestContext.from_msg(msg)
+    cond = req.cond
+    timeout = cond.timeout
+    trigger = cond.trigger
+    idle_timeout = cond.idle_timeout
+    idle_after_first = cond.idle_after_first
+    keep_ansi = cond.keep_ansi
+    explicit_timeout = cond.explicit_timeout
 
     has_trigger = trigger is not None
     has_idle = idle_timeout is not None
@@ -89,7 +57,7 @@ def _run_snapshot_flow(
             pattern=trigger,
             idle_timeout=idle_timeout,
             idle_after_first_output=idle_after_first,
-            newline=msg.get("newline", False),
+            newline=cond.newline,
         )
         last_snapshot = ""
         deadline = time.time() + timeout
@@ -106,26 +74,21 @@ def _run_snapshot_flow(
         last_rendered = ""
         _last_gui_check = 0.0
         try:
-            while True:
-                if cancel_event is not None and cancel_event.is_set():
-                    matched, reason = False, "cancelled"
-                    break
+            # 迭代骨架（cancel/remaining/timeout/循环）复用统一等待引擎；
+            # 检查顺序与 sleep 原语保持原样（行为零变化）
+            from ..session.wait import wait_reason
 
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    matched, reason = False, "timeout"
-                    break
-
+            def _iteration(remaining):
+                nonlocal last_key, last_rendered, last_snapshot, _last_gui_check
                 if host is not None:
                     plugin_reason = host.consume_return_request()
                     if plugin_reason:
-                        matched, reason = True, plugin_reason
                         _logger.info(
                             "snapshot flow: PLUGIN_RETURN id=%r reason=%r",
                             session.id,
                             plugin_reason,
                         )
-                        break
+                        return True, plugin_reason
 
                 if screen is not None:
                     key = (screen.feed_count, screen.cols, screen.rows, keep_ansi)
@@ -152,8 +115,7 @@ def _run_snapshot_flow(
                             ]
                             check_text = "\n".join(diff_lines)
                         if check_text and session.check_snapshot_trigger(check_text):
-                            matched, reason = True, "matched"
-                            break
+                            return True, "matched"
 
                 if has_idle:
                     if snapshot != last_snapshot:
@@ -161,34 +123,28 @@ def _run_snapshot_flow(
                         session.notify_snapshot_changed()
 
                 if has_idle and session.check_snapshot_idle_timeout():
-                    matched, reason = False, "idle_timeout"
-                    break
+                    return False, "idle_timeout"
 
-                # GUI 窗口检测：节流 1s 主动轮询（后台监控线程另有 2s 兜底），
-                # 检测到新窗口即短路返回（与子进程 wait_for_trigger 语义一致）
-                gui = getattr(session, "_gui", None)
-                if gui is not None:
-                    now = time.time()
-                    if now - _last_gui_check >= 1.0:
-                        _last_gui_check = now
-                        try:
-                            gui.check(getattr(session, "_tracker", None), session.id)
-                        except Exception:
-                            pass
-                    if gui.gui_windows and gui.detected_event.is_set():
-                        gui.detected_event.clear()
-                        matched, reason = False, "gui_detected"
-                        break
+                # GUI 窗口检测：检测到新窗口即短路返回（与子进程 wait_for_trigger 语义一致）
+                detected, _last_gui_check = session.check_gui_detected(
+                    _last_gui_check
+                )
+                if detected:
+                    return False, "gui_detected"
 
                 session.poll_natural_exit()
                 if not session.running:
-                    if session._is_real_crash():
-                        matched, reason = False, "crashed"
-                    else:
-                        matched, reason = False, "ended"
-                    break
+                    return False, session.resolve_exit_reason()
 
                 time.sleep(min(0.1, remaining))
+                return None
+
+            matched, reason = wait_reason(
+                deadline=deadline,
+                cancel_event=cancel_event,
+                iteration=_iteration,
+                on_timeout=lambda: (False, "timeout"),
+            )
         finally:
             if host is not None:
                 host.exit_wait()
@@ -197,8 +153,8 @@ def _run_snapshot_flow(
     else:
         matched, reason = False, "ok"
         # exec 显式 --timeout：以完整 timeout 为等待预算等待命令自然结束，
-        # 到期以 reason=timeout 返回并杀会话；其余（read 轮询 / exec 非显式）
-        # 沿用固定短等待分片复查，会话继续运行、不杀
+        # 到期以 reason=timeout 返回（会话保持运行，供后续 send/read 继续使用）；
+        # 其余（read 轮询 / exec 非显式）沿用固定短等待分片复查
         if result_type == "exec" and explicit_timeout:
             deadline = time.time() + timeout
         else:
@@ -208,54 +164,54 @@ def _run_snapshot_flow(
         # 分片复查：程序可能在等待期间结束/崩溃，应如实上报而非恒 ok；
         # 每片同步推进自然结束检测（监控线程按 2s 低频 tick 触发，仅等它
         # 扫到前会误判程序持续运行直至超时）
-        while True:
-            if cancel_event is not None and cancel_event.is_set():
-                matched, reason = False, "cancelled"
-                break
-            remaining = deadline - time.time()
-            if remaining <= 0:
-                if result_type == "exec" and explicit_timeout:
-                    matched, reason = False, "timeout"
-                break
+        # 迭代骨架复用统一等待引擎：GUI/结束检查 + sleep 顺序保持原样
+        from ..session.wait import NO_RETURN, wait_reason
+
+        _last_gui_check = 0.0
+
+        def _iteration(remaining):
+            nonlocal _last_gui_check
+            # GUI 窗口检测：与 trigger 等待分支同一套语义（节流 1s 主动轮询，
+            # 检测到新窗口即短路返回 —— 实现「GUI 检测在无 trigger 等待时生效」）
+            detected, _last_gui_check = session.check_gui_detected(
+                _last_gui_check
+            )
+            if detected:
+                return False, "gui_detected"
             if not session.running:
-                if session._is_real_crash():
-                    matched, reason = False, "crashed"
-                else:
-                    matched, reason = False, "ended"
-                break
+                return False, session.resolve_exit_reason()
             session.poll_natural_exit()
             time.sleep(min(0.1, remaining))
+            return None
 
-    if result_type == "exec" and explicit_timeout and reason == "timeout":
-        _kill_exec_session_on_timeout(ctx, session)
+        result = wait_reason(
+            deadline=deadline,
+            cancel_event=cancel_event,
+            iteration=_iteration,
+            on_timeout=(
+                (lambda: (False, "timeout"))
+                if result_type == "exec" and explicit_timeout
+                else (lambda: NO_RETURN)
+            ),
+        )
+        if result is not NO_RETURN:
+            matched, reason = result
 
-    if msg.get("snapshot_diff"):
-        output = session.get_snapshot_diff(keep_ansi=keep_ansi)
-    elif msg.get("full"):
-        output = session.get_full_snapshot(keep_ansi=keep_ansi)
-    else:
-        output = session.get_snapshot(keep_ansi=keep_ansi)
-    result = build_result(
-        ctx.manager,
-        session.id,
-        output,
-        matched,
-        reason,
-        consume_events=True,
-        has_trigger=has_trigger or has_idle,
+    output = resolve_output(session, cond)
+    return assemble_response(
+        ctx,
+        conn,
+        session,
+        msg,
+        output=output,
+        matched=matched,
+        reason=reason,
         result_type=result_type,
-        session=session,
-        t_start=msg.get("_t_start"),
+        has_trigger=has_trigger or has_idle,
+        extra_fields=extra_fields,
+        send_response=send_response,
+        snapshot_diagnostics=True,
     )
-    if not output:
-        result["snapshotDiagnostics"] = session.get_snapshot_diagnostics()
-    attach_screen_buffer(result, session, msg)
-    if extra_fields:
-        result.update(extra_fields)
-    if send_response:
-        Message.send(conn, result)
-    else:
-        return result, output
 
 
 def _interruptible_sleep(duration: float, cancel_event, on_cancel):
@@ -290,6 +246,65 @@ def _attach_subprocess_stderr(result: dict, session, msg: dict) -> None:
     result["stderrOutputOffset"] = session.stderr_read_offset
 
 
+def assemble_response(
+    ctx,
+    conn,
+    session,
+    msg: dict,
+    *,
+    output: str,
+    matched: bool,
+    reason: str,
+    result_type: str,
+    has_trigger: bool,
+    consume_events: bool = True,
+    extra_fields: Optional[dict] = None,
+    send_response: bool = True,
+    output_offset: Optional[int] = None,
+    include_debug: Optional[bool] = None,
+    snapshot_diagnostics: bool = False,
+    attach_stderr: bool = False,
+    warning: Optional[str] = None,
+):
+    """统一响应装配器（P0-A 步2）：build_result → (diagnostics/stderr) → attach_screen → extra → send/return
+
+    把 execution.py 三个流程与 read_handler / workflow 多处重复的"装配+发送"尾部
+    收敛到一处；send_response=False 时返回 (result, output) 供 workflow 等调用方
+    自行处理。纯结构归一，不改变任何既有装配顺序与字段语义。
+    """
+    from .handlers.utils import (
+        attach_screen_buffer,
+        build_result,
+    )
+
+    result = build_result(
+        ctx.manager,
+        session.id,
+        output,
+        matched,
+        reason,
+        consume_events=consume_events,
+        has_trigger=has_trigger,
+        result_type=result_type,
+        session=session,
+        t_start=msg.get("_t_start"),
+        output_offset=output_offset,
+        include_debug=include_debug,
+        warning=warning,
+    )
+    if not output and snapshot_diagnostics:
+        result["snapshotDiagnostics"] = session.get_snapshot_diagnostics()
+    if attach_stderr:
+        _attach_subprocess_stderr(result, session, msg)
+    attach_screen_buffer(result, session, msg)
+    if extra_fields:
+        result.update(extra_fields)
+    if send_response:
+        Message.send(conn, result)
+        return None
+    return result, output
+
+
 def _run_subprocess_trigger_flow(
     ctx,
     conn,
@@ -307,11 +322,14 @@ def _run_subprocess_trigger_flow(
     cancel_event: Optional[threading.Event] = None,
 ):
     """子进程模式 trigger 流程：增量文本匹配（复用 TriggerMatcher）"""
-    from .handlers.utils import build_result, strip_if_needed
+    from .handlers.utils import strip_if_needed
+    from .conditions import RequestContext
 
-    idle_timeout = msg.get("idle_timeout")
-    idle_after_first = msg.get("idle_after_first_output", False)
-    explicit_timeout = msg.get("explicit_timeout", False)
+    req = RequestContext.from_msg(msg)
+    cond = req.cond
+    idle_timeout = cond.idle_timeout
+    idle_after_first = cond.idle_after_first
+    explicit_timeout = cond.explicit_timeout
 
     if result_type == "exec":
         session.wait_for_initial_output(timeout=min(timeout, 2.0))
@@ -330,33 +348,26 @@ def _run_subprocess_trigger_flow(
     matched, reason = session.wait_for_trigger(
         timeout, gui_short_circuit=False, cancel_event=cancel_event
     )
-    if result_type == "exec" and explicit_timeout and reason == "timeout":
-        _kill_exec_session_on_timeout(ctx, session)
     output = session.get_output(
-        from_offset=trigger_offset, encoding=msg.get("encoding")
+        from_offset=trigger_offset, encoding=req.encoding
     )
     output = strip_if_needed(output, msg)
-    result = build_result(
-        ctx.manager,
-        session.id,
-        output,
-        matched,
-        reason,
-        consume_events=True,
-        has_trigger=True,
+    ret = assemble_response(
+        ctx,
+        conn,
+        session,
+        msg,
+        output=output,
+        matched=matched,
+        reason=reason,
         result_type=result_type,
-        session=session,
-        t_start=msg.get("_t_start"),
+        has_trigger=True,
+        extra_fields=extra_fields,
+        send_response=send_response,
+        attach_stderr=True,
     )
-    _attach_subprocess_stderr(result, session, msg)
-    if extra_fields:
-        result.update(extra_fields)
-    if send_response:
-        Message.send(conn, result)
-        session.clear_trigger()
-    else:
-        session.clear_trigger()
-        return result, output
+    session.clear_trigger()
+    return ret
 
 
 def _run_subprocess_no_trigger_flow(
@@ -375,15 +386,18 @@ def _run_subprocess_no_trigger_flow(
     from_offset=None 时按 msg 计算：--full 从 0 读，否则从当前 offset 增量读
     （对齐 trigger 流程的增量语义，避免重复 exec/send 返回全量副本）。
     """
-    from .handlers.utils import build_result, strip_if_needed
+    from .handlers.utils import strip_if_needed
+    from .conditions import RequestContext
 
-    idle_timeout = msg.get("idle_timeout")
-    idle_after_first = msg.get("idle_after_first_output", False)
-    explicit_timeout = msg.get("explicit_timeout", False)
+    req = RequestContext.from_msg(msg)
+    cond = req.cond
+    idle_timeout = cond.idle_timeout
+    idle_after_first = cond.idle_after_first
+    explicit_timeout = cond.explicit_timeout
 
     # 增量基准：必须在等待前捕获，才能返回等待期间的新增输出
     if from_offset is None:
-        from_offset = 0 if msg.get("full") else session.output_offset
+        from_offset = 0 if cond.full else session.output_offset
 
     session.wait_for_initial_output(timeout=0.5)
 
@@ -397,7 +411,7 @@ def _run_subprocess_no_trigger_flow(
             idle_after_first_output=idle_after_first,
         )
         matched, reason = session.wait_for_trigger(
-            timeout=msg.get("timeout", 120), cancel_event=cancel_event
+            timeout=cond.timeout, cancel_event=cancel_event
         )
         session.clear_trigger()
     elif explicit_timeout:
@@ -408,7 +422,7 @@ def _run_subprocess_no_trigger_flow(
             start_offset=session.output_offset,
         )
         matched, reason = session.wait_for_trigger(
-            timeout=msg.get("timeout", 120), cancel_event=cancel_event
+            timeout=cond.timeout, cancel_event=cancel_event
         )
         session.clear_trigger()
     else:
@@ -418,29 +432,21 @@ def _run_subprocess_no_trigger_flow(
             nonlocal matched, reason
             matched, reason = False, "cancelled"
 
-        _interruptible_sleep(min(msg.get("timeout", 120), 1.0), cancel_event, _on_cancel)
+        _interruptible_sleep(min(cond.timeout, 1.0), cancel_event, _on_cancel)
 
-    if result_type == "exec" and explicit_timeout and reason == "timeout":
-        _kill_exec_session_on_timeout(ctx, session)
-
-    output = session.get_output(from_offset=from_offset, encoding=msg.get("encoding"))
+    output = session.get_output(from_offset=from_offset, encoding=req.encoding)
     output = strip_if_needed(output, msg)
-    result = build_result(
-        ctx.manager,
-        session.id,
-        output,
-        matched,
-        reason,
-        consume_events=True,
-        has_trigger=False,
+    return assemble_response(
+        ctx,
+        conn,
+        session,
+        msg,
+        output=output,
+        matched=matched,
+        reason=reason,
         result_type=result_type,
-        session=session,
-        t_start=msg.get("_t_start"),
+        has_trigger=False,
+        extra_fields=extra_fields,
+        send_response=send_response,
+        attach_stderr=True,
     )
-    _attach_subprocess_stderr(result, session, msg)
-    if extra_fields:
-        result.update(extra_fields)
-    if send_response:
-        Message.send(conn, result)
-    else:
-        return result, output

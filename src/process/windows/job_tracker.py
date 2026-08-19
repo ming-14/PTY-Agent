@@ -53,7 +53,6 @@ from .api import (
     _JobObjectExtendedLimitInformation,
     _OpenProcess,
     _PostQueuedCompletionStatus,
-    _QueryFullProcessImageNameW,
     _QueryInformationJobObject,
     _SetInformationJobObject,
     _TerminateProcess,
@@ -449,21 +448,15 @@ class JobProcessTreeTracker(ProcessTreeTracker):
         _logger.info("Job 通知线程退出")
 
     def _get_process_path_fast(self, pid: int) -> Optional[str]:
-        """在通知线程中快速获取进程路径（进程刚创建，一定还活着）"""
-        try:
-            hproc = _OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-            if not hproc:
-                return None
-            try:
-                buf = ctypes.create_unicode_buffer(260)
-                size = W.DWORD(260)
-                if _QueryFullProcessImageNameW(hproc, 0, buf, ctypes.byref(size)):
-                    return buf.value
-                return None
-            finally:
-                _CloseHandle(hproc)
-        except Exception:
-            return None
+        """在通知线程中快速获取进程路径（进程刚创建，一定还活着）
+
+        收敛到统一的 psutil 查询，失败返回 None（与阻塞式 _get_process_path
+        的 'PID {pid}' 哨兵区分）。
+        """
+        from ..info import _get_process_path
+
+        path = _get_process_path(pid)
+        return None if path.startswith("PID ") else path
 
     # ── GUI 窗口（聚合 GuiWindowMonitor）──
 

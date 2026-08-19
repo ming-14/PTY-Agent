@@ -26,6 +26,10 @@ mcp>=1.0
 numpy>=1.24
 av>=11.0
 
+# 进程信息/系统统计 (src/process、src/web/.../stats_provider.py)：
+# 统一以 psutil 查询进程名/路径/命令行/内存/CPU/创建时间与进程树，勿手写 ctypes//proc
+psutil>=5.9
+
 # ===================== 可选依赖（缺失时自动降级） =====================
 # 以下包在代码中均以 try/except ImportError 保护，未安装时相关功能降级，不影响主流程。
 # 按需取消注释安装即可。
@@ -38,9 +42,6 @@ scour
 
 # Pillow    — PNG/JPG/BMP 终端快照渲染 (src/client/renderer.py)，缺失时仅支持 .svg
 Pillow>=10.0
-
-# psutil    — 系统 CPU/内存统计 (src/web/.../stats_provider.py) 及调试脚本 (dumps/)
-psutil>=5.9
 
 # ===================== 测试依赖 =====================
 pytest>=7.0

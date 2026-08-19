@@ -204,12 +204,10 @@ class ProcessMonitor:
 
         now = time.time()
         if new_pids:
-            # 一次快照表供整批新进程复用（避免逐 pid 全量扫描）
-            snapshot = None
-            if IS_WINDOWS:
-                from .info import _get_process_snapshot_windows
+            # 一次快照表供整批新进程复用（避免逐 pid 全量枚举）
+            from .info import _get_process_snapshot
 
-                snapshot = _get_process_snapshot_windows()
+            snapshot = _get_process_snapshot()
         for pid in new_pids:
             detail = _get_process_detail(pid, snapshot) or {}
             name = detail.get("name") or _get_process_name(pid)

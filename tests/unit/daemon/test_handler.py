@@ -12,9 +12,19 @@ import pytest
 
 from src.daemon.handler import RequestHandler
 from src.daemon.handlers.utils import validate_field, map_reason, build_hint, build_result, strip_if_needed, get_detail
+from src.protocol.envelope import unwrap as _env_unwrap
 from src.protocol.message import Message
 from src.auth.token import TokenAuthenticator
 from src.auth.context import AuthContext
+
+
+def _read_body(cli):
+    """读取一条响应并按线协议解信封（线协议：daemon 响应为响应信封）"""
+    resp = Message.recv(cli)
+    if resp is None:
+        return None
+    _, body, _ = _env_unwrap(resp)
+    return body
 
 
 class _MockConn:
@@ -96,6 +106,18 @@ class _MockSession:
 
     def wait_for_initial_output(self, timeout=1.0):
         return True
+
+    def check_gui_detected(self, last_check_time, enabled=True):
+        # 与真实 Session.check_gui_detected 同语义：无 _gui 视为无 GUI 检测
+        return False, last_check_time
+
+    def resolve_exit_reason(self):
+        # 与真实 Session.resolve_exit_reason 同语义：退出码/错误消息为崩溃权威依据
+        return (
+            "crashed"
+            if (self.exit_code not in (None, 0)) or self.error_message
+            else "ended"
+        )
 
     def consume_events(self):
         return []
@@ -183,7 +205,10 @@ class TestMapReason:
         assert map_reason("ended") == "program_ended"
 
     def test_crashed(self):
-        assert map_reason("crashed") == "program_crashed"
+        # 崩溃映射以退出码为权威依据：无退出码不映射为 crashed（避免误报）
+        assert map_reason("crashed") == "program_ended"
+        assert map_reason("crashed", exit_code=-1) == "program_crashed"
+        assert map_reason("crashed", error_message="boom") == "program_crashed"
 
     def test_gui_detected(self):
         assert map_reason("gui_detected") == "gui_detected"
@@ -229,15 +254,15 @@ class TestBuildHint:
 class TestRequestHandlerAuth:
     def test_valid_token(self):
         auth = TokenAuthenticator("my-token")
-        assert auth.authenticate({"token": "my-token"}) is True
+        assert auth.authenticate({"auth": {"token": "my-token"}}) is True
 
     def test_invalid_token(self):
         auth = TokenAuthenticator("my-token")
-        assert auth.authenticate({"token": "wrong-token"}) is False
+        assert auth.authenticate({"auth": {"token": "wrong-token"}}) is False
 
     def test_empty_token_when_auth_enforced(self):
         auth = TokenAuthenticator("my-token")
-        assert auth.authenticate({"token": ""}) is False
+        assert auth.authenticate({"auth": {"token": ""}}) is False
 
     def test_no_auth_when_not_enforced(self):
         handler, _ = _setup_handler("")
@@ -246,14 +271,14 @@ class TestRequestHandlerAuth:
     def test_add_valid_token(self):
         auth = TokenAuthenticator("old-token")
         auth.rotate_token("new-token", "old-token")
-        assert auth.authenticate({"token": "new-token"}) is True
-        assert auth.authenticate({"token": "old-token"}) is True
+        assert auth.authenticate({"auth": {"token": "new-token"}}) is True
+        assert auth.authenticate({"auth": {"token": "old-token"}}) is True
 
     def test_expired_old_token(self):
         auth = TokenAuthenticator("old-token")
         auth.rotate_token("new-token", "old-token")
         auth._tokens["old-token"] = time.monotonic() - 1
-        assert auth.authenticate({"token": "old-token"}) is False
+        assert auth.authenticate({"auth": {"token": "old-token"}}) is False
 
 
 class TestRequestHandlerHandle:
@@ -278,9 +303,9 @@ class TestRequestHandlerHandle:
 
         cli = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         cli.connect(("127.0.0.1", port))
-        msg_dict["token"] = "test-token"
+        msg_dict.setdefault("auth", {})["token"] = "test-token"
         Message.send(cli, msg_dict)
-        resp = Message.recv(cli)
+        resp = _read_body(cli)
         cli.close()
         srv.close()
         t.join(timeout=5)
@@ -321,8 +346,8 @@ class TestRequestHandlerHandle:
 
         cli = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         cli.connect(("127.0.0.1", port))
-        Message.send(cli, {"type": "exec", "id": "x", "token": "wrong"})
-        resp = Message.recv(cli)
+        Message.send(cli, {"type": "exec", "id": "x", "auth": {"token": "wrong"}})
+        resp = _read_body(cli)
         cli.close()
         srv.close()
         t.join(timeout=5)
@@ -457,9 +482,9 @@ class TestRequestHandlerStop:
         cli = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         cli.connect(("127.0.0.1", port))
         cli.settimeout(5)
-        Message.send(cli, {"type": "stop", "token": "test-token"})
+        Message.send(cli, {"type": "stop", "auth": {"token": "test-token"}})
         try:
-            resp = Message.recv(cli)
+            resp = _read_body(cli)
         except Exception:
             resp = None
         cli.close()
@@ -534,7 +559,7 @@ class TestSnapshotFlowWithTrigger:
         cli.connect(("127.0.0.1", port))
         Message.send(cli, {
             "type": "exec", "id": "snap-test",
-            "token": "test-token",
+            "auth": {"token": "test-token"},
             "command": "echo test",
             "trigger": r"hello",
             "timeout": 5,
@@ -543,7 +568,7 @@ class TestSnapshotFlowWithTrigger:
         time.sleep(0.3)
         session._snapshot_text = "hello world"
 
-        resp = Message.recv(cli)
+        resp = _read_body(cli)
         cli.close()
         srv.close()
         t.join(timeout=5)
@@ -578,7 +603,7 @@ class TestSnapshotFlowWithTrigger:
         cli.connect(("127.0.0.1", port))
         Message.send(cli, {
             "type": "exec", "id": "snap-test",
-            "token": "test-token",
+            "auth": {"token": "test-token"},
             "command": "echo test",
             "idle_timeout": 0.2,
             "timeout": 10,
@@ -589,7 +614,7 @@ class TestSnapshotFlowWithTrigger:
         time.sleep(0.1)
         session._snapshot_text = "first output"
 
-        resp = Message.recv(cli)
+        resp = _read_body(cli)
         cli.close()
         srv.close()
         t.join(timeout=5)
@@ -624,12 +649,12 @@ class TestSnapshotFlowWithTrigger:
         cli.connect(("127.0.0.1", port))
         Message.send(cli, {
             "type": "exec", "id": "snap-test",
-            "token": "test-token",
+            "auth": {"token": "test-token"},
             "command": "echo test",
             "timeout": 1,
         })
 
-        resp = Message.recv(cli)
+        resp = _read_body(cli)
         cli.close()
         srv.close()
         t.join(timeout=5)
@@ -676,9 +701,9 @@ class TestSnapshotReadLines:
 
         cli = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         cli.connect(("127.0.0.1", port))
-        msg_dict["token"] = "test-token"
+        msg_dict.setdefault("auth", {})["token"] = "test-token"
         Message.send(cli, msg_dict)
-        resp = Message.recv(cli)
+        resp = _read_body(cli)
         cli.close()
         srv.close()
         t.join(timeout=5)
@@ -767,9 +792,9 @@ class TestSendHandler:
 
         cli = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         cli.connect(("127.0.0.1", port))
-        msg_dict["token"] = "test-token"
+        msg_dict.setdefault("auth", {})["token"] = "test-token"
         Message.send(cli, msg_dict)
-        resp = Message.recv(cli)
+        resp = _read_body(cli)
         cli.close()
         srv.close()
         t.join(timeout=5)

@@ -31,10 +31,10 @@ tests/
 │   │   ├── test_config_manager.py
 │   │   ├── test_connect_robustness.py
 │   │   ├── test_file_cli.py
-│   │   ├── test_formatter.py
 │   │   ├── test_input.py
 │   │   ├── test_keygen.py
 │   │   ├── test_main.py
+│   │   ├── test_presenter.py
 │   │   ├── test_renderer.py
 │   │   ├── test_terminal_size.py
 │   │   └── test_transport.py
@@ -112,6 +112,7 @@ tests/
 │   │   ├── __init__.py
 │   │   ├── test_ansi.py
 │   │   ├── test_encoding.py
+│   │   ├── test_envelope.py
 │   │   └── test_message.py
 │   ├── pty/                 # PTY 层测试
 │   │   ├── __init__.py

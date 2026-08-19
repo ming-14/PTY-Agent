@@ -110,25 +110,14 @@ class TestKeygenBasic:
         _keygen(_make_args(key_dir))
         captured = capsys.readouterr()
 
-        # 从 stdout 解析 JSON 输出（_keygen 用 indent=2 多行输出，
-        # 故从首个 '{' 抓到匹配的 '}' 而非按行解析）
-        out = captured.out
-        start = out.find("{")
-        assert start != -1, "应有 JSON 输出"
-        # 通过花括号配平定位 JSON 结束位置
-        depth = 0
-        end = -1
-        for i in range(start, len(out)):
-            if out[i] == "{":
-                depth += 1
-            elif out[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    end = i + 1
-                    break
-        assert end != -1, "JSON 块未闭合"
-        result = json.loads(out[start:end])
-        output_fp = result["fingerprint"]
+        # keygen 现输出人类可读文本（presenter），指纹在“指纹: xxx”行
+        output_fp = None
+        for line in captured.out.splitlines():
+            line = line.strip()
+            if line.startswith("指纹:"):
+                output_fp = line.split("指纹:", 1)[1].strip()
+                break
+        assert output_fp, "输出中应包含指纹信息"
 
         # 加载私钥比对指纹
         private_path = os.path.join(key_dir, "id_ed25519")
