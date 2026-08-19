@@ -69,6 +69,8 @@ class TriggerMixin:
 
         每轮循环检查插件返回请求（request_return），命中立即返回，
         原因由插件自定义并原样透传；cancel_event 置位时以 reason=cancelled 返回。
+        迭代骨架（cancel/remaining/timeout/循环）复用统一等待引擎 wait_reason，
+        检查顺序与事件等待原语保持原样（行为零变化）。
         """
         if self._trig_mat.matched:
             return True, "matched"
@@ -76,7 +78,7 @@ class TriggerMixin:
             self._proc_mon.clear_crash()
             return False, "crashed"
         if not self.running:
-            return False, "crashed" if self._is_real_crash() else "ended"
+            return False, self.resolve_exit_reason()
         if (
             gui_short_circuit
             and self._gui.gui_windows
@@ -85,27 +87,13 @@ class TriggerMixin:
             self._gui.detected_event.clear()
             return False, "gui_detected"
 
+        from ..wait import NO_RETURN, wait_reason
+
         deadline = time.time() + (timeout if timeout is not None else 999999.0)
         _last_gui_check = 0.0
-        while True:
-            if cancel_event is not None and cancel_event.is_set():
-                _logger.info(
-                    "wait_for_trigger: CANCELLED id=%r pattern=%r",
-                    self.id,
-                    self._trig_mat.pattern,
-                )
-                return False, "cancelled"
 
-            remaining = deadline - time.time()
-            if remaining <= 0:
-                _logger.info(
-                    "wait_for_trigger: TIMEOUT id=%r pattern=%r timeout=%s",
-                    self.id,
-                    self._trig_mat.pattern,
-                    timeout,
-                )
-                return False, "timeout"
-
+        def _iteration(remaining):
+            nonlocal _last_gui_check
             if self._trig_mat.check_idle_timeout():
                 _logger.info(
                     "wait_for_trigger: IDLE_TIMEOUT id=%r idle_timeout=%s",
@@ -136,15 +124,63 @@ class TriggerMixin:
                 )
                 return True, "matched"
             if not self.running:
-                return False, "crashed" if self._is_real_crash() else "ended"
+                return False, self.resolve_exit_reason()
 
-            now = time.time()
-            if now - _last_gui_check >= 1.0:
-                _last_gui_check = now
-                self._gui.check(self._tracker, self.id)
-            if gui_short_circuit and self._gui.detected_event.is_set():
-                self._gui.detected_event.clear()
+            detected, _last_gui_check = self.check_gui_detected(
+                _last_gui_check, enabled=gui_short_circuit
+            )
+            if detected:
                 return False, "gui_detected"
+            return None
+
+        def _on_cancel():
+            _logger.info(
+                "wait_for_trigger: CANCELLED id=%r pattern=%r",
+                self.id,
+                self._trig_mat.pattern,
+            )
+
+        def _on_timeout():
+            _logger.info(
+                "wait_for_trigger: TIMEOUT id=%r pattern=%r timeout=%s",
+                self.id,
+                self._trig_mat.pattern,
+                timeout,
+            )
+            return False, "timeout"
+
+        result = wait_reason(
+            deadline=deadline,
+            cancel_event=cancel_event,
+            iteration=_iteration,
+            on_timeout=_on_timeout,
+            on_cancel=_on_cancel,
+        )
+        if result is NO_RETURN:
+            return False, "timeout"
+        return result
+
+    def check_gui_detected(self, last_check_time: float, enabled: bool = True) -> tuple:
+        """GUI 窗口检测（节流 1s）— 等待循环统一判定点
+
+        enabled=False（子进程 trigger 的 gui_short_circuit=False）时仍保留
+        节流轮询（对齐既有时序），但不清空事件也不对外报告。
+        返回 (检测到新窗口, 本次检测时刻)；检测到即清空事件，供上层返回 gui_detected。
+        """
+        if self._gui is None:
+            return False, last_check_time
+        now = time.time()
+        if now - last_check_time < 1.0:
+            return False, last_check_time
+        try:
+            self._gui.check(getattr(self, "_tracker", None), self.id)
+        except Exception:
+            pass
+        detected = bool(self._gui.gui_windows and self._gui.detected_event.is_set())
+        if detected and enabled:
+            self._gui.detected_event.clear()
+            return True, now
+        return False, now
 
     def clear_trigger(self):
         _logger.info(

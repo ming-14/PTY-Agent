@@ -30,7 +30,6 @@
 - 测试期间会启停 daemon，请确保运行前 daemon 未在运行
 """
 
-import json
 import os
 import shutil
 import subprocess
@@ -209,37 +208,6 @@ PUBKEY_PRIVATE_KEY_PATH = "{private_key_path}"
 KNOWN_HOSTS_FILE    = "{known_hosts_path}"
 TOFU_STRICT         = true
 """
-
-
-def _parse_cli_json(stdout: str) -> dict:
-    """解析 ``python -m src list`` stdout 的 JSON 响应
-
-    print_response 用 safe_print 输出单行 JSON。取首个非 info 类型的 JSON 行解析
-    （跳过 start_daemon 输出的 {"type": "info", ...} 消息）。
-
-    Args:
-        stdout: CLI 子进程 stdout
-
-    Returns:
-        解析后的响应 dict
-
-    Raises:
-        ValueError: 无 JSON 输出
-        json.JSONDecodeError: JSON 格式错误
-    """
-    # 优先返回非 info 类型的 JSON 行（跳过 start_daemon 的 info 消息）
-    for line in stdout.strip().splitlines():
-        line = line.strip()
-        if line.startswith("{"):
-            data = json.loads(line)
-            if data.get("type") != "info":
-                return data
-    # 回退：返回首个 JSON 行
-    for line in stdout.strip().splitlines():
-        line = line.strip()
-        if line.startswith("{"):
-            return json.loads(line)
-    raise ValueError(f"无 JSON 输出: {stdout!r}")
 
 
 @pytest.fixture
@@ -432,34 +400,34 @@ def _generate_keypair(tmp_path: Path, key_dir_name: str = "keys") -> tuple:
 
 
 def _assert_auth_passed(result: subprocess.CompletedProcess):
-    """断言认证通过：list 响应非 error"""
+    """断言认证通过：list 退出码 0 且 stderr 无认证失败
+
+    presenter 层：内容走 stdout、元信息/错误走 stderr、错误以退出码非 0 结束。
+    """
     assert result.returncode == 0, f"CLI 退出码非 0: {result.stderr}"
-    resp = _parse_cli_json(result.stdout)
-    assert resp.get("type") != "error", \
-        f"认证应通过但收到 error 响应: {resp}"
+    assert "Authentication failed" not in result.stderr, \
+        f"认证应通过但 stderr 出现认证失败: {result.stderr}"
 
 
 def _assert_auth_rejected(result: subprocess.CompletedProcess):
-    """断言认证被拒绝：list 响应为 Authentication failed
+    """断言认证被拒绝：CLI 退出码非 0 且 stderr 含 Authentication failed
 
-    服务端签名验证失败或认证不通过时，daemon 返回 Authentication failed 错误。
+    presenter 层错误渲染为 stderr 的 "error: <message>"，并以退出码 1 退出。
     """
-    resp = _parse_cli_json(result.stdout)
-    assert resp.get("type") == "error", \
-        f"认证应被拒绝但收到非 error 响应: {resp}"
-    assert "Authentication failed" in resp.get("message", ""), \
-        f"error 响应应含 'Authentication failed': {resp}"
+    assert result.returncode != 0, \
+        f"认证应被拒绝但退出码为 0: {result.stdout!r} {result.stderr!r}"
+    assert "Authentication failed" in result.stderr, \
+        f"stderr 应含 'Authentication failed': {result.stderr!r}"
 
 
 def _assert_request_failed(result: subprocess.CompletedProcess):
-    """断言请求失败：list 响应为 error（不限定具体消息）
+    """断言请求失败：CLI 退出码非 0（不限定具体消息）
 
     用于配置不一致等客户端侧错误 —— 错误在发送请求前由客户端检测，
     消息为配置提示而非服务端 Authentication failed。
     """
-    resp = _parse_cli_json(result.stdout)
-    assert resp.get("type") == "error", \
-        f"请求应失败但收到非 error 响应: {resp}"
+    assert result.returncode != 0, \
+        f"请求应失败但退出码为 0: {result.stdout!r} {result.stderr!r}"
 
 
 # ═══════════════════════════════════════════════════════════════

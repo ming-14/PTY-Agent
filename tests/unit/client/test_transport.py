@@ -335,7 +335,7 @@ class TestClientShellOperators:
 class TestProcessInput:
     def test_raw_mode_preserves_backslash(self):
         """raw 模式（默认）保留反斜杠"""
-        from src.client.input import process_input
+        from src.input.text import process_input
 
         result = process_input("cd C:\\Users")
         assert "C:\\Users" in result
@@ -343,7 +343,7 @@ class TestProcessInput:
 
     def test_json_escaping_mode(self):
         """json_escaping 模式解码转义"""
-        from src.client.input import process_input
+        from src.input.text import process_input
 
         result = process_input("line1\\nline2", json_escaping=True)
         assert result == "line1\nline2\r"

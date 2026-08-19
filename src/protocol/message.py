@@ -85,6 +85,15 @@ class Message:
         """获取当前线程的入站验证器"""
         return getattr(cls._tls, "inbound_verifier", None)
 
+    @classmethod
+    def set_outbound_response_wrapper(cls, fn):
+        """设置当前线程的出站响应包装（daemon 连接线程：套响应信封并分组）
+
+        线程局部：仅影响调用线程。客户端不设置（出站是请求信封），
+        ping/pong 等 skip_sign 发送豁免。
+        """
+        cls._tls.response_wrapper = fn
+
     @staticmethod
     def encode(obj: dict) -> bytes:
         """将 dict 编码为 JSON 行 + \\n + UTF-8 字节"""
@@ -203,6 +212,11 @@ class Message:
             skip_sign: 为 True 时跳过签名（用于内部 ping/stop 健康检查）。
         """
         signer = Message.get_outbound_signer()
+        # daemon 出站响应包装（线程局部）：把通知构建好的扁平响应体
+        # 套上响应信封并分组（data/state/meta）；ping/pong 等 skip_sign 豁免
+        wrapper = getattr(Message._tls, "response_wrapper", None)
+        if wrapper is not None and not skip_sign:
+            obj = wrapper(obj)
         if signer and not skip_sign:
             # sign_bytes 由签名器单次序列化产出完整 wire（签名器内部已有规范 JSON，
             # 在规范字节上拼接签名字段，避免二次 json.dumps）

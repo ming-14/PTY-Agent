@@ -403,7 +403,8 @@ steps:
 要点：
 
 - **步骤类型**：`exec`（session/command 必填；已运行会话直接附加）/ `send`（session/input
-  必填）/ `read`（session 必填）/ `kill` / `wait`（seconds）
+  必填；input 默认自动追加 `\r` 模拟 Enter，可用可选字段 `eol: lf|crlf|cr|none` 覆盖、
+  `json: true` 启用 `{enter}`/`{ctrl+a}` 等转义展开，与 CLI send 语义一致）/ `read`（session 必填）/ `kill` / `wait`（seconds）
 - **并行**：`depends_on: [a, b]` 显式依赖；`depends_on: []` 无依赖可与前序并行；
   依赖失败的步骤自动跳过（skipped）；依赖环解析期拒绝
 - **变量/表达式**：字段支持 `{{vars.x}}` / `{{<step-id>.output}}` 插值；步骤结果
@@ -434,6 +435,9 @@ steps:
     session: py-repl
     lines: 5
 ```
+
+send 步骤需要发送快捷键/转义时用 `json: true`（如 `input: "{ctrl+c}"`），
+需要控制行尾时用 `eol`（如 `input: "make -j8"` 后触发 `eol: none` 的按键步骤）。
 
 ### 全局/通用选项
 

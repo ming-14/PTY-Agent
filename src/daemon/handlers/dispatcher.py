@@ -5,6 +5,7 @@ import traceback
 from ...auth.context import AuthContext
 from ...plugins.base import HANDLED, ProcessPluginContext
 from ...plugins.io import PluginIO
+from ...protocol.envelope import unwrap as _env_unwrap, wrap_response as _env_wrap_response
 from ...protocol.message import Message
 from ...protocol.response import Response
 from ...session.manager import SessionManager
@@ -110,13 +111,14 @@ class DaemonDispatcher:
                     _logger.debug("消息类型 %s 由进程级插件 %s 接管", mtype, name)
         return registry
 
-    def dispatch(self, conn, msg: dict):
-        msg_type = msg.get("type", "")
-        session_id = msg.get("id", "")
-        detail = get_detail(msg)
+    def dispatch(self, conn, body: dict, type_: str = None):
+        body = body if isinstance(body, dict) else {}
+        msg_type = type_ or body.get("type", "")
+        session_id = body.get("id", "")
+        detail = get_detail(body)
 
         _logger.info("请求: %s id=%s %s", msg_type, session_id, detail)
-        msg["_t_start"] = time.monotonic()
+        body["_t_start"] = time.monotonic()
 
         if msg_type == "ping":
             Message.send(conn, {"type": "pong"}, skip_sign=True)
@@ -124,7 +126,7 @@ class DaemonDispatcher:
 
         handler = self._registry.get(msg_type)
         if handler:
-            handler.handle(self._ctx, conn, msg)
+            handler.handle(self._ctx, conn, body)
         else:
             err = f"未知指令类型: {msg_type}"
             _logger.warning(err)
@@ -135,6 +137,8 @@ class DaemonDispatcher:
         # 双端口架构下每个 Listener 的连接线程独立设置，互不干扰
         Message.set_outbound_signer(self._auth_context.outbound_signer)
         Message.set_inbound_verifier(self._auth_context.inbound_verifier)
+        # 出站响应包装（线程局部）：把 handler 构建的扁平响应体套响应信封并分组
+        Message.set_outbound_response_wrapper(_env_wrap_response)
         _ctx_token = bind(connection_id=id(conn))
         try:
             msg = Message.recv(conn)
@@ -148,16 +152,20 @@ class DaemonDispatcher:
                 except Exception:
                     pass
                 return
+            # 拆请求信封 → 扁平 body（分组负载 op/condition/output/io 还原为业务字段）；
+            # 认证基于含凭证（token/password/pubkey_fp）的原始信封；非信封消息认证 body
+            type_, body, envelope = _env_unwrap(msg)
+            auth_msg = envelope if envelope is not None else body
             # 连接级握手认证：验签已隐含身份（token 凭据有效性 / pubkey 白名单 /
             # basic 密码均被签名内容覆盖），此处仅每连接校验一次，后续消息只验签
-            if msg.get("type") != "ping" and self._ctx.authenticator:
-                if not self._ctx.authenticator.authenticate(msg):
+            if type_ != "ping" and self._ctx.authenticator:
+                if not self._ctx.authenticator.authenticate(auth_msg):
                     _logger.warning(
-                        "认证失败 (type=%s id=%s)", msg.get("type"), msg.get("id")
+                        "认证失败 (type=%s id=%s)", type_, body.get("id")
                     )
                     Message.send(conn, Response.error("Authentication failed"))
                     return
-            self.dispatch(conn, msg)
+            self.dispatch(conn, body, type_=type_)
         except json.JSONDecodeError:
             _logger.error("JSON 解析失败")
             try:

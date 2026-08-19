@@ -98,6 +98,15 @@ class EventsMixin:
         except Exception:
             return False
 
+    def resolve_exit_reason(self) -> str:
+        """统一"为何返回"的结束原因（"crashed"/"ended"）— 等待循环单一判定点
+
+        crash 判定以 _is_real_crash 为权威依据，正常完成返回 "ended"。
+        各等待循环（子进程 trigger / pty 快照 / 无 trigger）共用，
+        避免"crashed if real_crash else ended"重复出现。
+        """
+        return "crashed" if self._is_real_crash() else "ended"
+
     def _update_exit_info(self):
         if not self._pty:
             return

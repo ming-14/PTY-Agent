@@ -154,6 +154,16 @@ def _validate_step(idx: int, raw: dict) -> ParsedStep:
         if field not in raw or raw[field] in (None, ""):
             raise _err("步骤 '%s' 缺少必填字段: %s" % (step_id, field))
 
+    if step_type == "send":
+        # eol/json 与 CLI send 对齐：名称映射见 client.config_manager._SEND_EOL_MAP
+        eol = raw.get("eol", "cr")
+        if eol not in ("lf", "crlf", "cr", "none"):
+            raise _err(
+                "步骤 '%s' 的 eol '%s' 非法（可选: lf/crlf/cr/none）" % (step_id, eol)
+            )
+        if "json" in raw and not isinstance(raw["json"], bool):
+            raise _err("步骤 '%s' 的 json 必须是布尔值" % step_id)
+
     on_error = raw.get("on_error", "fail")
     if on_error not in ON_ERROR_VALUES:
         raise _err(

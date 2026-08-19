@@ -1,14 +1,14 @@
-"""client/input.py 单元测试"""
+"""src/input/text.py 输入文本处理单元测试"""
 
 import pytest
 
-from src.client.input import (
+from src.input.text import (
     unescape_json_string,
     process_input,
-    safe_print,
     expand_control_characters,
     _expand_control_token,
 )
+from src.client.input import safe_print
 
 
 class TestUnescapeJsonString:

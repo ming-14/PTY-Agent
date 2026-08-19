@@ -69,14 +69,18 @@ class SendHandler(DaemonHandler):
 
     def _handle_send_flow(self, ctx, conn, session, msg):
         """send 会话处理主体（已持有 session.hold）"""
+        from ..conditions import RequestContext
+
         if not apply_client_defaults(session, msg, conn):
             return
 
+        req = RequestContext.from_msg(msg)
+        cond = req.cond
         # 本流程独立于 handle() 从消息取值：会话 id 与输入文本供
         # 写入与日志使用（send 写入失败的日志定位不依赖会话对象）
-        session_id = msg.get("id", "")
-        input_text = msg.get("input", "")
-        trigger = msg.get("trigger")
+        session_id = req.id
+        input_text = req.input
+        trigger = cond.trigger
 
         is_sub = getattr(session, "mode", "pty") == "subprocess"
 
@@ -89,7 +93,7 @@ class SendHandler(DaemonHandler):
             )
             return
 
-        if is_sub and msg.get("snapshot_diff"):
+        if is_sub and cond.snapshot_diff:
             Message.send(
                 conn,
                 Response.error(
@@ -116,11 +120,11 @@ class SendHandler(DaemonHandler):
                     conn,
                     session,
                     msg,
-                    0 if msg.get("full") else session.output_offset,
+                    0 if cond.full else session.output_offset,
                     trigger,
-                    msg.get("newline", False),
-                    msg.get("fresh", False),
-                    msg.get("timeout", 120),
+                    cond.newline,
+                    cond.fresh,
+                    cond.timeout,
                     result_type="send",
                 )
             else:
@@ -130,7 +134,7 @@ class SendHandler(DaemonHandler):
                     session,
                     msg,
                     result_type="send",
-                    from_offset=0 if msg.get("full") else session.output_offset,
+                    from_offset=0 if cond.full else session.output_offset,
                 )
             return
 

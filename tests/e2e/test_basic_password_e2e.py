@@ -167,35 +167,6 @@ TOFU_STRICT         = true
 """
 
 
-def _parse_cli_json(stdout: str) -> dict:
-    """解析 ``python -m src list`` stdout 的 JSON 响应
-
-    print_response 用 safe_print 输出单行 JSON。取首个非 info 类型的 JSON 行解析
-    （跳过 start_daemon 输出的 {"type": "info", ...} 消息）。
-
-    Args:
-        stdout: CLI 子进程 stdout
-
-    Returns:
-        解析后的响应 dict
-
-    Raises:
-        ValueError: 无 JSON 输出
-        json.JSONDecodeError: JSON 格式错误
-    """
-    for line in stdout.strip().splitlines():
-        line = line.strip()
-        if line.startswith("{"):
-            data = json.loads(line)
-            if data.get("type") != "info":
-                return data
-    for line in stdout.strip().splitlines():
-        line = line.strip()
-        if line.startswith("{"):
-            return json.loads(line)
-    raise ValueError(f"无 JSON 输出: {stdout!r}")
-
-
 def _send_raw_request(msg: dict) -> dict:
     """raw socket 发送请求并读取单行响应（不签名）
 
@@ -323,23 +294,24 @@ def basic_auth_env(tmp_path):
 
 
 def _assert_auth_passed(result: subprocess.CompletedProcess):
-    """断言认证通过：list 响应非 error"""
+    """断言认证通过：list 退出码 0 且 stderr 无认证失败
+
+    presenter 层：内容走 stdout、元信息/错误走 stderr、错误以退出码非 0 结束。
+    """
     assert result.returncode == 0, f"CLI 退出码非 0: {result.stderr}"
-    resp = _parse_cli_json(result.stdout)
-    assert resp.get("type") != "error", \
-        f"认证应通过但收到 error 响应: {resp}"
+    assert "Authentication failed" not in result.stderr, \
+        f"认证应通过但 stderr 出现认证失败: {result.stderr}"
 
 
 def _assert_auth_rejected(result: subprocess.CompletedProcess):
-    """断言认证被拒绝：list 响应为 Authentication failed
+    """断言认证被拒绝：CLI 退出码非 0 且 stderr 含 Authentication failed
 
-    服务端签名验证失败或认证不通过时，daemon 返回 Authentication failed 错误。
+    presenter 层错误渲染为 stderr 的 "error: <message>"，并以退出码 1 退出。
     """
-    resp = _parse_cli_json(result.stdout)
-    assert resp.get("type") == "error", \
-        f"认证应被拒绝但收到非 error 响应: {resp}"
-    assert "Authentication failed" in resp.get("message", ""), \
-        f"error 响应应含 'Authentication failed': {resp}"
+    assert result.returncode != 0, \
+        f"认证应被拒绝但退出码为 0: {result.stdout!r} {result.stderr!r}"
+    assert "Authentication failed" in result.stderr, \
+        f"stderr 应含 'Authentication failed': {result.stderr!r}"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -379,10 +351,9 @@ class TestPlainPasswordWrong:
             basic_password=_TEST_PASSWORD, client_password="wrong-password",
         )
         result = basic_auth_env.run_list()
-        # 拒绝语义：CLI 收到 error 响应（"no response" 或 "Authentication failed"）
-        resp = _parse_cli_json(result.stdout)
-        assert resp.get("type") == "error", \
-            f"认证应被拒绝但收到非 error 响应: {resp}"
+        # 拒绝语义：CLI 退出码非 0（"no response" 或 "Authentication failed" 均表现为错误）
+        assert result.returncode != 0, \
+            f"认证应被拒绝但退出码为 0: {result.stdout!r} {result.stderr!r}"
 
 
 class TestPlainPasswordClientMissing:
@@ -404,10 +375,12 @@ class TestPlainTamperedMessage:
             basic_password=_TEST_PASSWORD, client_password=_TEST_PASSWORD,
         )
         # raw socket 构造：password 正确但 _sig 为伪造值（64 个 0，非真实 HMAC）
-        msg = {"type": "list", "password": _TEST_PASSWORD, "_sig": "0" * 64}
+        msg = {"type": "list", "auth": {"password": _TEST_PASSWORD}, "_sig": "0" * 64}
         resp = _send_raw_request(msg)
+        # envelope 响应：错误消息在 payload.message（线协议重构后）
         assert resp.get("type") == "error", f"应被拒绝但收到: {resp}"
-        assert "Authentication failed" in resp.get("message", ""), f"应含 Authentication failed: {resp}"
+        assert "Authentication failed" in resp.get("payload", {}).get("message", ""), \
+            f"应含 Authentication failed: {resp}"
 
 
 class TestPlainServerNoPasswordClientHas:
@@ -422,6 +395,5 @@ class TestPlainServerNoPasswordClientHas:
         """daemon 密码为空（无认证），客户端配置了密码 → list 失败"""
         basic_auth_env.start(basic_password="", client_password=_TEST_PASSWORD)
         result = basic_auth_env.run_list()
-        resp = _parse_cli_json(result.stdout)
-        assert resp.get("type") == "error", \
-            f"配置不一致应失败但收到非 error 响应: {resp}"
+        assert result.returncode != 0, \
+            f"配置不一致应失败但退出码为 0: {result.stdout!r} {result.stderr!r}"

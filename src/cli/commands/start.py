@@ -1,9 +1,6 @@
 """start 命令：启动后台守护进程"""
 
-import json
-
-from ...client.input import safe_print
-from ...protocol.response import Response
+from ...client.presenter import emit
 from ..base import Command, CommandContext
 
 
@@ -20,13 +17,8 @@ class StartCommand(Command):
         # 编码（会话默认编码请用 --default encoding / set-default）。
         encoding = getattr(args, "encoding", None)
         if encoding:
-            safe_print(
-                json.dumps(
-                    Response.info(
-                        f"--encoding {encoding!r} 取值已校验，但不影响守护进程启动"
-                        "（会话默认编码请使用 --default encoding / set-default）"
-                    ),
-                    ensure_ascii=False,
-                )
+            emit(
+                f"--encoding {encoding!r} 取值已校验，但不影响守护进程启动"
+                "（会话默认编码请使用 --default encoding / set-default）"
             )
         ctx.client.cmd_start()

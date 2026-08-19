@@ -2,7 +2,6 @@
 
 import argparse
 import getpass
-import json
 import os
 import socket
 import sys
@@ -41,8 +40,7 @@ class KeygenCommand(Command):
     def run(self, args, ctx: CommandContext) -> None:
         """生成 Ed25519 密钥对并写入文件"""
         from ...auth.keys import generate_keypair
-        from ...client.input import safe_print
-        from ...protocol.response import Response
+        from ...client.presenter import emit, emit_error
 
         # 确定密钥目录（expandvars 展开 %TEMP%/$TEMP 类环境变量，expanduser 展开 ~）
         if args.key_dir:
@@ -56,24 +54,10 @@ class KeygenCommand(Command):
         # 检查文件是否存在（除非 --force）
         if not args.force:
             if os.path.exists(private_key_path):
-                safe_print(
-                    json.dumps(
-                        Response.error(
-                            f"私钥文件已存在: {private_key_path}\n使用 --force 覆盖"
-                        ),
-                        ensure_ascii=False,
-                    )
-                )
+                emit_error(f"私钥文件已存在: {private_key_path}\n使用 --force 覆盖")
                 sys.exit(1)
             if os.path.exists(public_key_path):
-                safe_print(
-                    json.dumps(
-                        Response.error(
-                            f"公钥文件已存在: {public_key_path}\n使用 --force 覆盖"
-                        ),
-                        ensure_ascii=False,
-                    )
-                )
+                emit_error(f"公钥文件已存在: {public_key_path}\n使用 --force 覆盖")
                 sys.exit(1)
 
         # 创建目录
@@ -95,33 +79,23 @@ class KeygenCommand(Command):
         fingerprint = private_key.fingerprint
         _logger.info("Ed25519 密钥对已生成: %s", private_key_path)
 
-        safe_print(
-            json.dumps(
-                {
-                    "type": "keygen",
-                    "status": "ok",
-                    "privateKeyPath": private_key_path,
-                    "publicKeyPath": public_key_path,
-                    "fingerprint": fingerprint,
-                    "publicKey": public_line,
-                    "comment": comment,
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
+        emit(
+            f"密钥对已生成:\n"
+            f"  私钥: {private_key_path}\n"
+            f"  公钥: {public_key_path}\n"
+            f"  指纹: {fingerprint}",
+            msg_type="raw",
         )
 
         authorized_keys_path = os.path.join(
             os.path.expanduser("~"), ".pty-agent", "authorized_keys"
         )
-        # stderr 提示也走 safe_print：stderr 被重定向且编码为 GBK 时强制 UTF-8，
-        # 与 stdout 同理，避免中文提示在 UTF-8 管道里乱码
-        safe_print(
+        # stderr 提示：请将公钥追加到服务端 authorized_keys（走 presenter，输出到 stderr）
+        emit(
             f"\n公钥已生成，请将其追加到服务端 authorized_keys 文件:\n"
             f"  {authorized_keys_path}\n\n"
             f"公钥内容:\n  {public_line}\n\n"
-            f"指纹: {fingerprint}",
-            file=sys.stderr,
+            f"指纹: {fingerprint}"
         )
 
     @staticmethod

@@ -72,46 +72,54 @@ def map_reason(reason: str, exit_code=None, error_message=None) -> str:
     return _REASON_MAP.get(reason, reason)
 
 
-def filter_snapshot_lines(
-    output: str, lines_param, column_param=None, grep=None
-) -> str:
-    if not output:
-        return output
-    # 单次 splitlines：lines/grep/column 依次作用于同一行列表
-    snap_lines = output.splitlines()
+def _apply_line_filters(lines, lines_param, grep, column):
+    """对行列表应用 lines/grep/column 过滤（统一核心算法，非法参数抛 ValueError）
 
+    三处既有过滤（snapshot 静默版 / 输出报错版 / read 内联版）共用同一算法，
+    错误语义由各自调用方/包装器决定，此处仅产生可稳定识别的 ValueError。
+    """
     if lines_param is not None:
         if isinstance(lines_param, int):
-            snap_lines = snap_lines[-lines_param:] if lines_param > 0 else []
+            lines = lines[-lines_param:] if lines_param > 0 else []
         elif isinstance(lines_param, str) and ":" in lines_param:
             parts = lines_param.split(":", 1)
             try:
                 start = int(parts[0]) if parts[0] else 1
-                end = int(parts[1]) if parts[1] else len(snap_lines)
+                end = int(parts[1]) if parts[1] else len(lines)
                 start = max(start, 1)
-                snap_lines = snap_lines[start - 1 : end]
+                lines = lines[start - 1 : end]
             except (ValueError, IndexError):
-                snap_lines = []
+                raise ValueError(f"Invalid line range: {lines_param}")
         else:
             try:
                 n = int(lines_param)
-                snap_lines = snap_lines[-n:] if n > 0 else []
-            except ValueError:
-                snap_lines = []
+                lines = lines[-n:] if n > 0 else []
+            except (ValueError, TypeError):
+                raise ValueError(f"Invalid lines parameter: {lines_param}")
     if grep:
-        if not snap_lines:
-            return ""
         try:
             pat = re.compile(grep)
-            snap_lines = [l for l in snap_lines if safe_regex_search(pat, l)]
+            lines = [l for l in lines if safe_regex_search(pat, l)]
         except re.error:
-            return ""
-    if column_param is not None:
-        col_idx = column_param - 1
-        snap_lines = [
-            line[col_idx] if 0 <= col_idx < len(line) else "" for line in snap_lines
-        ]
-    return "\n".join(snap_lines)
+            raise ValueError(f"Invalid regex: {grep}")
+    if column is not None:
+        col_idx = column - 1
+        lines = [line[col_idx] if 0 <= col_idx < len(line) else "" for line in lines]
+    return lines
+
+
+def filter_snapshot_lines(
+    output: str, lines_param, column_param=None, grep=None
+) -> str:
+    """快照路径过滤（静默：非法参数返回空串）"""
+    if not output:
+        return output
+    try:
+        return "\n".join(
+            _apply_line_filters(output.splitlines(), lines_param, grep, column_param)
+        )
+    except ValueError:
+        return ""
 
 
 def build_hint(
@@ -338,53 +346,36 @@ def strip_if_needed(output: str, msg: dict) -> str:
     return output
 
 
+def resolve_output(session, cond, force_full: bool = False) -> str:
+    """统一的"取哪种原始输出"——根据返回条件选源（snapshot/full/diff）
+
+    force_full: read 路径"指定 --lines 时隐式取全量"的语义（full 或 行数过滤）。
+    在各执行/read/workflow 流程共用，取代三处各自的选择分支（P0-A）。
+    """
+    from ..conditions import ReturnConditions
+
+    cond = cond if isinstance(cond, ReturnConditions) else ReturnConditions.from_msg(cond)
+    if cond.snapshot_diff:
+        return session.get_snapshot_diff(keep_ansi=cond.keep_ansi)
+    if cond.full or force_full:
+        return session.get_full_snapshot(keep_ansi=cond.keep_ansi)
+    return session.get_snapshot(keep_ansi=cond.keep_ansi)
+
+
 def apply_lines_grep(
     output: str, lines_param, grep, conn, column_param=None
 ) -> Optional[str]:
+    """输出/子进程路径过滤（报错版：非法参数发 error 并返回 None）"""
     if not lines_param and not grep and column_param is None:
         return output
 
-    lines = output.splitlines()
-
-    if lines_param is not None:
-        if isinstance(lines_param, int):
-            lines = lines[-lines_param:] if lines_param > 0 else []
-        elif isinstance(lines_param, str) and ":" in lines_param:
-            parts = lines_param.split(":", 1)
-            try:
-                start = int(parts[0]) if parts[0] else 1
-                end = int(parts[1]) if parts[1] else len(lines)
-                start = max(start, 1)
-                lines = lines[start - 1 : end]
-            except (ValueError, IndexError):
-                Message.send(conn, Response.error(f"Invalid line range: {lines_param}"))
-                return None
-        else:
-            try:
-                n = int(lines_param)
-                lines = lines[-n:] if n > 0 else []
-            except ValueError:
-                Message.send(
-                    conn, Response.error(f"Invalid lines parameter: {lines_param}")
-                )
-                return None
-
-    if grep:
-        try:
-            pat = re.compile(grep)
-            lines = [l for l in lines if safe_regex_search(pat, l)]
-        except re.error:
-            Message.send(conn, Response.error(f"Invalid regex: {grep}"))
-            return None
-
-    # 与 filter_snapshot_lines 一致：取每行第 N 列（1-based 字符位）
-    if column_param is not None:
-        col_idx = column_param - 1
-        lines = [
-            line[col_idx] if 0 <= col_idx < len(line) else "" for line in lines
-        ]
-
-    return "\n".join(lines)
+    try:
+        return "\n".join(
+            _apply_line_filters(output.splitlines(), lines_param, grep, column_param)
+        )
+    except ValueError as e:
+        Message.send(conn, Response.error(str(e)))
+        return None
 
 
 def apply_client_defaults(session, msg: dict, conn=None) -> bool:
@@ -524,6 +515,42 @@ def validate_trigger_regex(trigger, conn) -> bool:
     except re.error as e:
         Message.send(
             conn, Response.error(f"Invalid trigger regex: {trigger!r} ({e})")
+        )
+        return False
+    return True
+
+
+def validate_offset_policy(
+    conn,
+    offset,
+    *,
+    lines=None,
+    full=False,
+    snapshot_diff=False,
+    waiting=False,
+) -> bool:
+    """统一校验 --offset 的互斥策略（read 路径单点归属）
+
+    offset 仅用于"纯增量读取"；与 lines / full / snapshot_diff /
+    等待模式（trigger/idle-timeout/timeout）互斥，冲突时发 error 并返回 False。
+    """
+    if offset is None:
+        return True
+    if lines is not None:
+        Message.send(conn, Response.error("--offset cannot be used with --lines/-l"))
+        return False
+    if full:
+        Message.send(conn, Response.error("--offset cannot be used with --full"))
+        return False
+    if snapshot_diff:
+        Message.send(conn, Response.error("--offset cannot be used with --snapshot-diff"))
+        return False
+    if waiting:
+        Message.send(
+            conn,
+            Response.error(
+                "--offset cannot be used with --trigger/--idle-timeout/--timeout (waiting mode)"
+            ),
         )
         return False
     return True

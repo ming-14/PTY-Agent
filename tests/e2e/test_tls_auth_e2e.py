@@ -18,7 +18,6 @@
 - 测试期间会启停 daemon，请确保运行前 daemon 未在运行
 """
 
-import json
 import os
 import re
 import shutil
@@ -204,35 +203,6 @@ TOFU_STRICT         = true
 """
 
 
-def _parse_cli_json(stdout: str) -> dict:
-    """解析 CLI stdout 的 JSON 响应
-
-    跳过 start_daemon 输出的 {"type": "info"} 消息，返回首个非 info JSON 行。
-
-    Args:
-        stdout: CLI 子进程 stdout
-
-    Returns:
-        解析后的响应 dict
-
-    Raises:
-        ValueError: 无 JSON 输出
-        json.JSONDecodeError: JSON 格式错误
-    """
-    for line in stdout.strip().splitlines():
-        line = line.strip()
-        if line.startswith("{"):
-            data = json.loads(line)
-            if data.get("type") != "info":
-                return data
-    # 回退：返回首个 JSON 行
-    for line in stdout.strip().splitlines():
-        line = line.strip()
-        if line.startswith("{"):
-            return json.loads(line)
-    raise ValueError(f"无 JSON 输出: {stdout!r}")
-
-
 def _generate_keypair(tmp_path: Path, key_dir_name: str = "keys") -> tuple:
     """用项目 keygen 生成密钥对，返回 (私钥路径, 公钥路径, 公钥行内容)
 
@@ -263,11 +233,13 @@ def _generate_keypair(tmp_path: Path, key_dir_name: str = "keys") -> tuple:
 
 
 def _assert_auth_passed(result: subprocess.CompletedProcess):
-    """断言认证通过：list 响应非 error"""
+    """断言认证通过：list 退出码 0 且 stderr 无认证失败
+
+    presenter 层：内容走 stdout、元信息/错误走 stderr、错误以退出码非 0 结束。
+    """
     assert result.returncode == 0, f"CLI 退出码非 0: stderr={result.stderr!r} stdout={result.stdout!r}"
-    resp = _parse_cli_json(result.stdout)
-    assert resp.get("type") != "error", \
-        f"认证应通过但收到 error 响应: {resp}"
+    assert "Authentication failed" not in result.stderr, \
+        f"认证应通过但 stderr 出现认证失败: {result.stderr!r}"
 
 
 # ═══════════════════════════════════════════════════════════════

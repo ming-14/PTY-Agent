@@ -11,7 +11,6 @@
 ssh-keygen 工具不存在时，相关测试自动 skip（pytest.skip）。
 """
 
-import json
 import os
 import re
 import shutil
@@ -33,38 +32,27 @@ from src.auth.keys import PrivateKey, load_authorized_keys
 _SSH_KEYGEN = shutil.which("ssh-keygen")
 
 
-def _parse_json_block(text: str) -> dict:
-    """从可能混有非 JSON 文本中提取首个完整 JSON 对象
+def _extract_field(stdout: str, label: str) -> str:
+    """从 keygen 文本输出中提取 ``label: value`` 行的值
 
-    _cmd_keygen 用 ``json.dumps(..., indent=2)`` 输出多行 JSON，
-    故通过花括号配平定位 JSON 块而非按行解析。
+    presenter 层 keygen 以 raw 文本输出（"私钥:"/"公钥:"/"指纹:"），
+    不再输出 JSON；该 helper 按行匹配标签取值。
 
     Args:
-        text: 包含 JSON 块的文本
+        stdout: keygen 子进程 stdout
+        label: 字段标签（如 "指纹"、"私钥"）
 
     Returns:
-        解析后的 dict
+        标签后的值（已 strip）
 
     Raises:
-        ValueError: 未找到 JSON 块或块未闭合
-        json.JSONDecodeError: JSON 格式错误
+        ValueError: 输出中未找到该标签
     """
-    start = text.find("{")
-    if start == -1:
-        raise ValueError("未找到 JSON 起始 '{'")
-    depth = 0
-    end = -1
-    for i in range(start, len(text)):
-        if text[i] == "{":
-            depth += 1
-        elif text[i] == "}":
-            depth -= 1
-            if depth == 0:
-                end = i + 1
-                break
-    if end == -1:
-        raise ValueError("JSON 块未闭合")
-    return json.loads(text[start:end])
+    for line in stdout.splitlines():
+        line = line.strip()
+        if line.startswith(label + ":"):
+            return line[len(label) + 1 :].strip()
+    raise ValueError(f"未找到 {label}: {stdout!r}")
 
 
 def _run_keygen_cli(*extra_args: str, env: dict = None) -> subprocess.CompletedProcess:
@@ -173,21 +161,18 @@ class TestKeygenCliE2E:
         pub_content = Path(os.path.join(key_dir, "id_ed25519.pub")).read_text(encoding="utf-8").strip()
         assert pub_content.endswith("e2e@test"), f"公钥注释错误: {pub_content}"
 
-    def test_cli_output_json_contains_fingerprint(self, tmp_path):
-        """CLI stdout 输出的 JSON 应包含 fingerprint 字段，且与加载后的一致"""
+    def test_cli_output_contains_fingerprint(self, tmp_path):
+        """CLI stdout 文本输出应含 fingerprint，且与加载后的一致"""
         key_dir = str(tmp_path / "keys")
         result = _run_keygen_cli("--key-dir", key_dir)
         assert result.returncode == 0, f"CLI 失败: {result.stderr}"
 
-        payload = _parse_json_block(result.stdout)
-        assert payload["status"] == "ok"
-        assert payload["type"] == "keygen"
-        assert "fingerprint" in payload
-        assert payload["fingerprint"].startswith("SHA256:")
+        fingerprint = _extract_field(result.stdout, "指纹")
+        assert fingerprint.startswith("SHA256:"), f"指纹格式错误: {fingerprint!r}"
 
         # 加载私钥比对指纹
         pk = PrivateKey.from_file(os.path.join(key_dir, "id_ed25519"))
-        assert pk.fingerprint == payload["fingerprint"]
+        assert pk.fingerprint == fingerprint
 
     def test_cli_refuses_existing_without_force(self, tmp_path):
         """文件已存在时无 --force 应退出码 1"""
@@ -227,10 +212,10 @@ class TestKeygenCliE2E:
         assert (expected_dir / "id_ed25519").exists(), f"默认路径应存在私钥: {expected_dir}"
         assert (expected_dir / "id_ed25519.pub").exists(), f"默认路径应存在公钥: {expected_dir}"
 
-        # CLI 输出的 privateKeyPath 应指向隔离 HOME 下的路径
-        payload = _parse_json_block(result.stdout)
-        assert payload["privateKeyPath"].replace("\\", "/").endswith(".pty-agent/keys/id_ed25519"), \
-            f"privateKeyPath 错误: {payload['privateKeyPath']}"
+        # CLI 输出的私钥路径应指向隔离 HOME 下的路径
+        private_key_path = _extract_field(result.stdout, "私钥")
+        assert private_key_path.replace("\\", "/").endswith(".pty-agent/keys/id_ed25519"), \
+            f"私钥路径错误: {private_key_path}"
 
     def test_cli_stderr_contains_authorized_keys_hint(self, tmp_path):
         """CLI stderr 应包含把公钥追加到 authorized_keys 的提示"""
@@ -251,9 +236,8 @@ class TestKeygenSshKeygenInterop:
         result = _run_keygen_cli("--key-dir", key_dir, "--comment", "interop@pub")
         assert result.returncode == 0, f"CLI 失败: {result.stderr}"
 
-        # 项目输出指纹
-        payload = _parse_json_block(result.stdout)
-        project_fp = payload["fingerprint"]
+        # 项目输出指纹（文本行提取）
+        project_fp = _extract_field(result.stdout, "指纹")
 
         # ssh-keygen -lf 读取公钥指纹
         ssh_fp = _ssh_keygen_fingerprint(os.path.join(key_dir, "id_ed25519.pub"))

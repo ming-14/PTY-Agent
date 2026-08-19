@@ -54,8 +54,9 @@ class TestClientSign:
         msg = {"type": "exec", "cmd": "ls"}
         signed = signer.sign(msg)
         assert SIG_FIELD in signed
-        assert PUBKEY_FP_FIELD in signed
-        assert signed[PUBKEY_FP_FIELD] == kp.fingerprint
+        # pubkey_fp 现落于 auth 段（凭证与业务解耦）
+        assert "auth" in signed
+        assert signed["auth"][PUBKEY_FP_FIELD] == kp.fingerprint
         # 原消息不被修改
         assert SIG_FIELD not in msg
         assert PUBKEY_FP_FIELD not in msg
@@ -185,7 +186,8 @@ class TestVerifyAndStrip:
         result = server.verify_and_strip(signed)
         assert result is not None
         assert SIG_FIELD not in result
-        assert PUBKEY_FP_FIELD in result  # 保留供下游认证器复用
+        # pubkey_fp 保留在 auth 段，供下游认证器复用
+        assert result["auth"][PUBKEY_FP_FIELD] == kp.fingerprint
         assert result["type"] == "exec"
         assert result["cmd"] == "ls"
 

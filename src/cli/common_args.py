@@ -5,11 +5,9 @@
 """
 
 import argparse
-import json
 
-from ..client.input import safe_print
+from ..client.presenter import emit, emit_error
 from ..config.encoding import is_valid_encoding
-from ..protocol.response import Response
 
 
 def _parse_default_key(key: str) -> str:
@@ -161,10 +159,10 @@ def warn_idle_without_idle_timeout(args) -> None:
             "--idle-after-first-output 需要配合 --idle-timeout 使用，"
             "单独设置无效（当前未启用静默超时检测）"
         )
-        safe_print(json.dumps(Response.warning(warn_msg), ensure_ascii=False))
+        emit(warn_msg, msg_type="warning")
 
 
 def abort_error(message: str) -> None:
-    """打印 JSON 错误并提前退出（等价原 main 的 safe_print + return，退出码 0）"""
-    safe_print(json.dumps(Response.error(message), ensure_ascii=False))
+    """打印错误并提前退出（等价原 main 的 emit_error + return，退出码 0）"""
+    emit_error(message)
     raise SystemExit(0)

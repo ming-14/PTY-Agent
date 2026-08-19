@@ -74,9 +74,23 @@ async def _recv_until(ws, predicate, timeout=5.0, collect_output=True):
                 continue
         import json
         try:
-            msg = json.loads(raw)
+            data = json.loads(raw)
         except Exception:
             continue
+        if isinstance(data, list):
+            # 批量帧：Web 服务器高频 output 推送时单帧发送数组（见
+            # fastapi_transport.send_text(json.dumps(messages))），逐条处理
+            for m in data:
+                if not isinstance(m, dict):
+                    continue
+                if collect_output and m.get("type") == "output":
+                    outputs.append(m.get("data", ""))
+                if predicate(m):
+                    return m, outputs
+            continue
+        if not isinstance(data, dict):
+            continue
+        msg = data
         t = msg.get("type", "")
         if collect_output and t == "output":
             outputs.append(msg.get("data", ""))

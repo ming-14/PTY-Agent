@@ -37,7 +37,7 @@ class TokenAuthenticator(Authenticator):
         return "token"
 
     def authenticate(self, msg: dict) -> bool:
-        token = msg.get("token", "")
+        token = msg.get("auth", {}).get("token", "")
         return self._is_token_valid(token)
 
     def rotate_token(self, new_token: str, old_token: str):
@@ -76,7 +76,7 @@ class TokenCredentialProvider(CredentialProvider):
     """
 
     def enrich(self, msg: dict) -> dict:
-        msg["token"] = self._read_token()
+        msg.setdefault("auth", {})["token"] = self._read_token()
         return msg
 
     @staticmethod

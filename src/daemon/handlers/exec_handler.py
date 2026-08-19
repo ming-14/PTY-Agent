@@ -131,15 +131,21 @@ class ExecHandler(DaemonHandler):
         # 管理器会触发 release_components 释放大缓冲；hold 确保缓冲在
         # 响应构造完成前不被提前释放（最后一个 hold 退出时才实际释放）
         with session.hold():
-            return self._handle_exec_flow(ctx, conn, session, msg, existing, trigger)
+            return self._handle_exec_flow(ctx, conn, session, msg, existing)
 
-    def _handle_exec_flow(self, ctx, conn, session, msg, existing, trigger):
+    def _handle_exec_flow(self, ctx, conn, session, msg, existing):
         """exec 会话处理主体（已持有 session.hold）"""
+        from ..conditions import RequestContext
+
         if not apply_client_defaults(session, msg, conn):
             return
 
+        req = RequestContext.from_msg(msg)
+        cond = req.cond
+        trigger = cond.trigger
+
         if getattr(session, "mode", "pty") == "subprocess":
-            if msg.get("snapshot_diff"):
+            if cond.snapshot_diff:
                 Message.send(
                     conn,
                     Response.error(
@@ -150,7 +156,7 @@ class ExecHandler(DaemonHandler):
             # 子进程模式：增量输出 + stderr 分离，支持 trigger/read offset
             if trigger:
                 trigger_offset = (
-                    0 if (msg.get("full") or not existing) else session.output_offset
+                    0 if (cond.full or not existing) else session.output_offset
                 )
                 start_offset = 0 if not existing else None
                 _run_subprocess_trigger_flow(
@@ -160,9 +166,9 @@ class ExecHandler(DaemonHandler):
                     msg,
                     trigger_offset,
                     trigger,
-                    msg.get("newline", False),
-                    msg.get("fresh", False),
-                    msg.get("timeout", 120),
+                    cond.newline,
+                    cond.fresh,
+                    cond.timeout,
                     start_offset=start_offset,
                     result_type="exec",
                 )
@@ -174,7 +180,7 @@ class ExecHandler(DaemonHandler):
                     msg,
                     result_type="exec",
                     from_offset=(
-                        0 if (msg.get("full") or not existing) else session.output_offset
+                        0 if (cond.full or not existing) else session.output_offset
                     ),
                 )
         else:

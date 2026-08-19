@@ -49,7 +49,7 @@ class PasswordAuthenticator(Authenticator):
         Returns:
             True 表示密码一致，False 表示缺失或不匹配。
         """
-        provided = msg.get(PASSWORD_FIELD, "")
+        provided = msg.get("auth", {}).get(PASSWORD_FIELD, "")
         if not provided:
             _logger.warning("密码认证失败: 消息缺少 password 字段")
             return False
@@ -81,5 +81,5 @@ class PasswordCredentialProvider(CredentialProvider):
         Returns:
             附加了 password 字段的消息字典（原地修改并返回）。
         """
-        msg[PASSWORD_FIELD] = self._password
+        msg.setdefault("auth", {})[PASSWORD_FIELD] = self._password
         return msg

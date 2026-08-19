@@ -15,9 +15,7 @@
   → 停止 daemon → 恢复 toml
 """
 
-import json
 import os
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -134,24 +132,42 @@ TOFU_STRICT         = true
 
 
 def _run_cli(*args: str, timeout: float = 60) -> dict:
-    """以子进程方式调用 ``python -m src workflow ...``，返回首个非 info 的 JSON 响应"""
-    cmd = [sys.executable, "-m", "src", *args]
-    proc = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        cwd=_PROJECT_ROOT,
-        encoding="utf-8",
-        errors="replace",
-    )
-    for line in proc.stdout.strip().splitlines():
-        line = line.strip()
-        if line.startswith("{"):
-            data = json.loads(line)
-            if data.get("type") != "info":
-                return data
-    raise ValueError(f"无 JSON 输出: stdout={proc.stdout!r} stderr={proc.stderr!r}")
+    """进程内走真实 wire 协议调用 workflow 命令，返回扁平响应 body
+
+    presenter 重构后 CLI 不再输出 JSON（紧凑文本），结构化断言改走
+    Client._send_recv —— 仍是真实 daemon + 真实 TCP/SHM 认证链路，
+    仅跳过 CLI 呈现层（呈现层由单测/其他 e2e 覆盖）。
+    """
+    from src.client.transport import Client
+    from src.protocol.message import Message
+
+    # 进程内多 Client 实例复用同一 pytest 进程：_load_signer_and_providers 幂等
+    # （Message 全局签名器已设则跳过），第二次起的 Client 会丢失凭证提供者导致
+    # 请求不带 token 被 daemon 拒绝。每次调用前重置全局签名器，等价于新 CLI 进程。
+    Message.set_outbound_signer(None)
+    Message.set_inbound_verifier(None)
+
+    client = Client()
+    action = args[1]
+    if action == "run":
+        text = Path(args[2]).read_text(encoding="utf-8")
+        return client._send_recv(
+            {"type": "workflow", "action": "run", "definition": text},
+            autostart=True,
+        )
+    if action == "show":
+        return client._send_recv(
+            {"type": "workflow", "action": "show", "runId": args[2]},
+            autostart=True,
+        )
+    if action == "cancel":
+        return client._send_recv(
+            {"type": "workflow", "action": "cancel", "runId": args[2]},
+            autostart=True,
+        )
+    if action == "list":
+        return client._send_recv({"type": "workflow", "action": "list"}, autostart=True)
+    raise ValueError(f"未知 workflow 子命令: {args}")
 
 
 @pytest.fixture
@@ -180,11 +196,25 @@ def workflow_env(tmp_path):
 
         start_daemon()
         try:
+            # 等待 daemon 就绪：单实例锁 + token 端口 TCP 可达（锁先于 SHM 写入，
+            # 仅等锁会让进程内 Client 连上时 HMAC 密钥可能尚未发布到 SHM）
+            import socket as _socket
+
+            ready = False
             for _ in range(100):
-                if is_running():
+                if not is_running():
+                    time.sleep(0.1)
+                    continue
+                try:
+                    probe = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+                    probe.settimeout(0.5)
+                    probe.connect(("127.0.0.1", 10520))
+                    probe.close()
+                    ready = True
                     break
-                time.sleep(0.1)
-            assert is_running(), "daemon 未启动"
+                except OSError:
+                    time.sleep(0.1)
+            assert ready, "daemon 未就绪"
             yield SimpleNamespace(tmp_path=tmp_path)
         finally:
             try:

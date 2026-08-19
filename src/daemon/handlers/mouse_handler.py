@@ -23,6 +23,7 @@ _logger = get_logger("pty-daemon")
 class MouseHandler(DaemonHandler):
     def handle(self, ctx: HandlerContext, conn, msg: dict):
         from ...config.common import MAX_PATTERN_LEN, MAX_SESSION_ID_LEN
+        from ..conditions import RequestContext
 
         session_id = msg.get("id", "")
         trigger = msg.get("trigger")
@@ -68,6 +69,9 @@ class MouseHandler(DaemonHandler):
             )
             return
 
+        req = RequestContext.from_msg(msg)
+        cond = req.cond
+
         if session.pty_type == "subprocess":
             _send_mouse_response(
                 ctx,
@@ -85,7 +89,7 @@ class MouseHandler(DaemonHandler):
         error = result.get("message")
 
         if not result.get("performed"):
-            if msg.get("action") == "grep":
+            if req.action == "grep":
                 _send_mouse_response(
                     ctx,
                     conn,
@@ -102,9 +106,8 @@ class MouseHandler(DaemonHandler):
                 )
                 return
             # pty 恒为快照
-            keep_ansi = msg.get("keep_ansi", False)
-            output = session.get_snapshot(keep_ansi=keep_ansi)
-            if not keep_ansi:
+            output = session.get_snapshot(keep_ansi=cond.keep_ansi)
+            if not cond.keep_ansi:
                 output = strip_if_needed(output, msg)
             stderr_output = ""
             resp_extra = {"performed": False}
@@ -118,7 +121,7 @@ class MouseHandler(DaemonHandler):
                 has_trigger=False,
                 result_type="mouse",
                 session=session,
-                t_start=msg.get("_t_start"),
+                t_start=req.t_start,
             )
             result_obj.update(resp_extra)
             if matches is not None:
@@ -135,7 +138,7 @@ class MouseHandler(DaemonHandler):
             return
 
         extra = {"performed": True}
-        if msg.get("action") == "_get_cursor_location":
+        if req.action == "_get_cursor_location":
             cursor = result.get("cursor")
             _send_mouse_response(
                 ctx,

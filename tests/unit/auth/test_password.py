@@ -18,12 +18,12 @@ class TestPasswordAuthenticator:
     def test_matching_password_passes(self):
         """密码一致通过"""
         auth = PasswordAuthenticator("secret")
-        assert auth.authenticate({"type": "exec", "password": "secret"}) is True
+        assert auth.authenticate({"type": "exec", "auth": {"password": "secret"}}) is True
 
     def test_wrong_password_fails(self):
         """密码不一致失败"""
         auth = PasswordAuthenticator("secret")
-        assert auth.authenticate({"type": "exec", "password": "wrong"}) is False
+        assert auth.authenticate({"type": "exec", "auth": {"password": "wrong"}}) is False
 
     def test_missing_password_field_fails(self):
         """缺少 password 字段失败"""
@@ -33,7 +33,7 @@ class TestPasswordAuthenticator:
     def test_empty_password_fails(self):
         """password 为空字符串失败（配置非空时）"""
         auth = PasswordAuthenticator("secret")
-        assert auth.authenticate({"type": "exec", "password": ""}) is False
+        assert auth.authenticate({"type": "exec", "auth": {"password": ""}}) is False
 
     def test_name_property(self):
         """name 属性返回 password"""
@@ -45,11 +45,11 @@ class TestPasswordCredentialProvider:
     """PasswordCredentialProvider 凭证注入"""
 
     def test_enrich_adds_password(self):
-        """enrich 注入 password 字段"""
+        """enrich 注入 password 字段（auth 段）"""
         provider = PasswordCredentialProvider("secret")
         msg = {"type": "exec", "cmd": "ls"}
         result = provider.enrich(msg)
-        assert result["password"] == "secret"
+        assert result["auth"]["password"] == "secret"
 
     def test_enrich_mutates_in_place(self):
         """enrich 原地修改消息"""
