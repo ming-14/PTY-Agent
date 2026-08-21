@@ -208,13 +208,13 @@ class TestUnescapeJsonString:
         """测试 process_input 解码 \\n （需启用 json_escaping）"""
         from src.input.text import process_input
 
-        result = process_input("line1\\nline2", json_escaping=True)
+        result, _ = process_input("line1\\nline2", json_escaping=True)
         assert result == "line1\nline2\r"
 
     def test_process_input_backslash_in_path(self):
         """测试路径中双反斜杠经 JSON 解码后变为单反斜杠（需启用 json_escaping）"""
         from src.input.text import process_input
 
-        result = process_input("cd C:\\\\Users", json_escaping=True)
+        result, _ = process_input("cd C:\\\\Users", json_escaping=True)
         # json.loads 将 \\\\ 解码为 \\，路径变为 cd C:\Users
         assert result == "cd C:\\Users\r"

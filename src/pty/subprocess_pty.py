@@ -146,14 +146,6 @@ class SubprocessPseudoTerminal(PseudoTerminal):
         """两个管道是否均已 EOF（reader 据此退出）"""
         return self._all_eof()
 
-    def has_stdout(self) -> bool:
-        with self._eof_lock:
-            return not self._eof_out
-
-    def has_stderr(self) -> bool:
-        with self._eof_lock:
-            return not self._eof_err
-
     def get_type(self) -> str:
         return "subprocess"
 
@@ -185,10 +177,6 @@ class SubprocessPseudoTerminal(PseudoTerminal):
 
     def drain(self, max_bytes: int = 65536) -> bytes:
         """排空 stdout 队列所有已就绪（read 已覆盖，返回空）"""
-        return b""
-
-    def drain_stderr(self, max_bytes: int = 65536) -> bytes:
-        """排空 stderr 队列所有已就绪（read_stderr 已覆盖，返回空）"""
         return b""
 
     def write(self, data):

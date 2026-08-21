@@ -216,6 +216,69 @@ class TestTriggerMatcherIdleTimeout:
         assert tm.check_idle_timeout() is True
 
 
+class TestTriggerMatcherErrBuffer:
+    """子进程模式双流触发：stderr 缓冲的扫描起点与新鲜周期独立于 stdout"""
+
+    def test_err_buffer_prepopulated_scanned_from_zero(self):
+        """exec 场景：start_offset=0 时 set 后立即检查已就位的 stderr 内容"""
+        tm = TriggerMatcher(_decode_utf8)
+        err_buf = _MockOutputBuffer(b"Python 3.11.9 ...\n>>> ")
+        out_buf = _MockOutputBuffer(b"")
+        tm.set(
+            ">>>",
+            start_offset=0,
+            buffer_length=out_buf.length if hasattr(out_buf, "length") else 0,
+            err_buffer=err_buf,
+            err_buffer_length=len(err_buf._data),
+        )
+        assert tm.check(err_buf) is True
+
+    def test_err_buffer_offset_semantics_skip_stale(self):
+        """send 场景：err_buffer_length=N 时仅扫描 N 之后的新内容"""
+        tm = TriggerMatcher(_decode_utf8)
+        err_buf = _MockOutputBuffer(b"OLD >>>>")
+        tm.set(
+            ">>>",
+            start_offset=None,
+            buffer_length=0,
+            err_buffer=err_buf,
+            err_buffer_length=len(err_buf._data),
+        )
+        assert tm.check(err_buf) is False
+        err_buf._data.extend(b"\nnew >>>")
+        assert tm.check(err_buf) is True
+
+    def test_err_buffer_fresh_cycle(self):
+        """fresh 模式：stderr 使用自身 read_cycle 判定新数据"""
+        tm = TriggerMatcher(_decode_utf8)
+        err_buf = _MockOutputBuffer(b"old content")
+        out_buf = _MockOutputBuffer()
+        tm.set(
+            "match",
+            fresh=True,
+            start_offset=0,
+            buffer_length=0,
+            err_buffer=err_buf,
+            err_buffer_length=len(err_buf._data),
+        )
+        tm.fresh_cycle = 0
+        tm.fresh_cycle_err = 5
+        # stderr read_cycle 未超过 set 时刻 → 视为旧数据，跳过
+        err_buf._read_cycle = 5
+        assert tm.check(err_buf) is False
+        err_buf._data.extend(b"\nnew match")
+        err_buf._read_cycle = 6
+        assert tm.check(err_buf) is True
+
+    def test_err_buffer_cleared_on_clear(self):
+        tm = TriggerMatcher(_decode_utf8)
+        err_buf = _MockOutputBuffer(b"data")
+        tm.set("data", buffer_length=0, err_buffer=err_buf, err_buffer_length=4)
+        tm.clear()
+        assert tm._err_buffer is None
+        assert tm._err_start_offset == 0
+
+
 class TestSafeRegexSearch:
     def test_match(self):
         import re

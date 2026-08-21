@@ -98,3 +98,38 @@ def test_no_trigger_full_returns_all(timed_session):
         from_offset=0,
     )
     assert "A" in out2 and "B" in out2
+
+
+def test_no_trigger_intercall_no_loss(timed_session):
+    """两次调用之间写入的输出不被跳过（stdout 消费游标兜底）
+
+    回归：旧实现默认增量基准用写入末尾（output_offset），两次调用之间写入的
+    输出会被永久跳过；新实现用消费游标（read_base），应能读到 B。
+    """
+    import time
+
+    s = timed_session
+    ctx = _Ctx(s)
+
+    # 首次消费 A（交付到 A 末尾，推进游标）
+    _run_subprocess_no_trigger_flow(
+        ctx,
+        None,
+        s,
+        {"timeout": 0.8, "explicit_timeout": True},
+        result_type="exec",
+        send_response=False,
+        from_offset=0,
+    )
+    # 等 B 在两次调用之间产出（B 于 t≈2 打印；首调用已结束于 t≈0.8）
+    time.sleep(2.2)
+    # 默认（from_offset=None）→ 消费游标 → 读到 B，而不是被跳过
+    r2, out2 = _run_subprocess_no_trigger_flow(
+        ctx,
+        None,
+        s,
+        {"timeout": 0.3, "explicit_timeout": True},
+        result_type="exec",
+        send_response=False,
+    )
+    assert "B" in out2

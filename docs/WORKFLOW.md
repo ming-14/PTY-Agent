@@ -100,7 +100,7 @@ exec 步骤的 `output` 是返回时的终端快照；`reason` 为返回原因
 | `session` | ✓ | 会话标识（须已存在且运行中） |
 | `input` | ✓ | 输入文本 |
 | `trigger` / `timeout` / `idle_timeout` | | 等待返回（同 exec） |
-| `send_eol` | | 末尾行尾符（lf/crlf/cr/none，默认 cr） |
+| `send_eol` | | 末尾行尾符（lf/crlf/cr/none；默认按会话模式：pty=cr、subprocess=lf） |
 | `keep_ansi` / `full` | | 输出处理 |
 
 ### 3.3 read — 读取会话输出

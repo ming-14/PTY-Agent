@@ -20,7 +20,6 @@ _logger = get_logger("pty-session")
 MOD_SHIFT = 1 << 1
 MOD_ALT = 1 << 2
 MOD_CTRL = 1 << 3
-MOD_SUPER = 1 << 4
 
 # 鼠标事件类型 / 按钮（与 pywezterm parse_mouse_kind/parse_mouse_button 一致）
 MOUSE_KINDS = ("press", "release", "move")

@@ -18,7 +18,7 @@ class ReadCommand(Command):
         parser.add_argument(
             "--lines", "-l", default=None, help="行数过滤: N=最后N行, start:end=范围"
         )
-        parser.add_argument("--grep", "-g", default=None, help="正则匹配过滤行")
+        parser.add_argument("--grep", "-g", default=None, help="正则匹配过滤行（子进程模式不支持，仅终端模式可用）")
         parser.add_argument(
             "--offset", type=int, default=None, help="增量读取：从指定字节偏移开始"
         )

@@ -16,9 +16,12 @@ from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Dict, Optional
 
+from ..config.common import parse_terminal_size
 from ..daemon.handlers.base import HandlerContext
-from ..daemon.handlers.utils import filter_snapshot_lines, resolve_output
+from ..daemon.filtering import filter_snapshot_lines
+from ..daemon.output_policy import resolve_output
 from ..daemon.conditions import ReturnConditions
+from ..protocol.reasons import Reason
 from .definition import ParsedStep, WorkflowDefinition
 from .expr import ExpressionError, eval_expr, render_value
 from .runner import (
@@ -36,18 +39,8 @@ _logger = get_logger("pty-daemon")
 
 
 def _parse_size(size_str: str) -> tuple:
-    """解析终端尺寸字符串 WxH → (cols, rows)（与 client parse_terminal_size 同语义）"""
-    s = str(size_str).lower().replace("×", "x")
-    parts = s.split("x")
-    if len(parts) != 2:
-        raise ValueError("格式非法: %r，应为 WxH" % size_str)
-    try:
-        cols, rows = int(parts[0]), int(parts[1])
-    except ValueError as e:
-        raise ValueError("格式非法: %r，应为 WxH" % size_str) from e
-    if cols <= 0 or rows <= 0:
-        raise ValueError("尺寸必须为正数: %r" % size_str)
-    return cols, rows
+    """解析终端尺寸字符串 WxH → (cols, rows)（委托共享 parse_terminal_size）"""
+    return parse_terminal_size(size_str)
 
 
 def _extract_result_fields(result: dict) -> dict:
@@ -61,7 +54,7 @@ def _extract_result_fields(result: dict) -> dict:
     error = result.get("error")
     return {
         "output": result.get("outputStream", ""),
-        "reason": result.get("triggerReturnReason") or ("error" if error else "ok"),
+        "reason": result.get("triggerReturnReason") or ("error" if error else Reason.OK),
         "exit_code": result.get("program", {}).get("exitCode"),
         "error": error,
     }
@@ -123,6 +116,15 @@ class WorkflowEngine:
             thread_name_prefix="workflow",
         )
         running = {}  # future → ParsedStep
+        # 步骤 → 会话 id（exec/send/read/kill 步骤使用；wait 步骤为 None）
+        def _step_session(step: ParsedStep) -> Optional[str]:
+            raw = step.raw
+            return raw.get("session") if isinstance(raw, dict) else None
+
+        # 同会话步骤串行化：同一会话的并发操作会共享 TriggerMatcher /
+        # 写输入互相踩踏（触发被覆盖、输入截断、误报崩溃），调度器必须
+        # 保证任意时刻每个会话至多一个步骤在运行
+        running_sessions = set()
         # Kahn 入度计数：就绪步骤只在依赖完成时产生（事件驱动，免每轮全量扫描）
         in_degree = {s.id: len(s.depends_on) for s in steps}
         dependents: Dict[str, list] = {s.id: [] for s in steps}
@@ -191,10 +193,17 @@ class WorkflowEngine:
                             continue
                     if run.cancelled():
                         break
+                    session_id = _step_session(step)
+                    if session_id is not None and session_id in running_sessions:
+                        # 正在被其他步骤占用：推迟到该步骤完成后再派发
+                        ready.append(step)
+                        break
                     state[sid] = "running"
                     run.mark_step_running(sid)
                     fut = executor.submit(self._exec_step, ctx, run, step, ns)
                     running[fut] = step
+                    if session_id is not None:
+                        running_sessions.add(session_id)
 
                 if fatal is not None:
                     continue  # 回到顶部统一处理 fatal
@@ -215,6 +224,9 @@ class WorkflowEngine:
                 done, _ = wait(list(running), return_when=FIRST_COMPLETED)
                 for fut in done:
                     step = running.pop(fut)
+                    session_id = _step_session(step)
+                    if session_id is not None:
+                        running_sessions.discard(session_id)
                     ret = fut.result()
                     state[step.id] = ret["status"]
                     if ret["status"] == STEP_DONE:
@@ -297,9 +309,24 @@ class WorkflowEngine:
         session = ctx.manager.get_session(session_id)
         if session is None:
             raise RuntimeError("会话 '%s' 不存在" % session_id)
+        self._wait_session_ready(session, session_id)
         if not session.running:
             raise RuntimeError("会话 '%s' 已结束" % session_id)
         return session
+
+    def _wait_session_ready(self, session, session_id: str) -> None:
+        """等待会话进入 running（并行步骤可能取到兄弟步骤正在创建的会话）
+
+        manager 在 start() 完成前即已登记会话（running 尚未置位），
+        并行步骤此时取到会误报"已结束"；容忍启动窗口，短暂轮询等待。
+        """
+        if session.running:
+            return
+        deadline = time.time() + 3.0
+        while time.time() < deadline:
+            time.sleep(0.05)
+            if session.running:
+                return
 
     def _exec_type(self, ctx, run, step, raw: dict) -> tuple:
         from ..daemon.execution import (
@@ -315,6 +342,7 @@ class WorkflowEngine:
             cols, rows = _parse_size(raw["size"])
         existing = ctx.manager.get_session(session_id)
         if existing:
+            self._wait_session_ready(existing, session_id)
             if not existing.running:
                 raise RuntimeError("会话 '%s' 已结束（先 kill 再重新 exec）" % session_id)
             session = existing
@@ -355,8 +383,8 @@ class WorkflowEngine:
             if getattr(session, "mode", "pty") == "subprocess":
                 if msg.get("trigger"):
                     result, _ = _run_subprocess_trigger_flow(
-                        ctx, None, session, msg, 0 if msg.get("full") else
-                        session.output_offset, msg["trigger"], False, False,
+                        ctx, None, session, msg, session.read_base(msg.get("full", False)),
+                        msg["trigger"], False, False,
                         msg.get("timeout", 120), start_offset=0,
                         result_type="exec", send_response=False,
                         cancel_event=run.cancel_event,
@@ -384,26 +412,32 @@ class WorkflowEngine:
         session_id = raw["session"]
         session = self._get_session(ctx, session_id)
         input_text = raw["input"]
-        # 输入处理与 CLI send 对齐：默认追加 \r（模拟 Enter），
-        # 支持可选字段 eol: lf|crlf|cr|none 与 json: true（展开 {enter} 等转义）
-        from ..input.text import process_input
-        from ..client.config_manager import _SEND_EOL_MAP
+        # 输入处理与 CLI send 对齐：转义展开由守护进程统一完成（按会话模式决定
+        # {enter}/默认行尾符），支持可选字段 eol: lf|crlf|cr|none 与 json: true
+        #（展开 {enter} 等转义）。eol 未指定时由模式默认（pty=\r, subprocess=\n）。
+        from ..daemon.handlers.utils import prepare_input
+        from ..input.text import SEND_EOL_MAP
 
-        eol_name = raw.get("eol", "cr")
-        if eol_name not in _SEND_EOL_MAP:
+        eol = raw.get("eol")
+        if eol is not None and eol not in SEND_EOL_MAP:
             raise RuntimeError(
                 "步骤 '%s' 的 eol '%s' 非法（可选: %s）"
-                % (step.id, eol_name, "/".join(_SEND_EOL_MAP))
+                % (step.id, eol, "/".join(SEND_EOL_MAP))
             )
-        input_text = process_input(
-            input_text,
-            json_escaping=bool(raw.get("json", False)),
-            send_eol=_SEND_EOL_MAP[eol_name],
-        )
+        # 转义解析失败（如不可识别的 {body} 控制序列）给清晰步骤错误而非原始异常
+        try:
+            input_text, pause_offsets = prepare_input(
+                session.mode,
+                input_text,
+                json_escaping=bool(raw.get("json", False)),
+                send_eol=eol,
+            )
+        except ValueError as e:
+            raise RuntimeError("步骤 '%s' 输入转义错误: %s" % (step.id, e))
         # 持有会话：write_input 与后续等待输出期间会话可能自然结束，
         # hold 防止缓冲被提前释放（与 _exec_type 同理）
         with session.hold():
-            session.write_input(input_text)
+            session.write_input(input_text, pause_offsets=pause_offsets)
             trigger = raw.get("trigger")
             msg = {
                 "timeout": raw.get("timeout", 120),
@@ -419,16 +453,16 @@ class WorkflowEngine:
             if is_sub:
                 if trigger:
                     result, _ = _run_subprocess_trigger_flow(
-                        ctx, None, session, msg, 0 if msg.get("full") else
-                        session.output_offset, trigger, False, True,
+                        ctx, None, session, msg, session.read_base(msg.get("full", False)),
+                        trigger, False, True,
                         msg.get("timeout", 120), result_type="send",
                         send_response=False, cancel_event=run.cancel_event,
                     )
                 else:
                     result, _ = _run_subprocess_no_trigger_flow(
                         ctx, None, session, msg, result_type="send",
-                        send_response=False, from_offset=0 if msg.get("full")
-                        else session.output_offset, cancel_event=run.cancel_event,
+                        send_response=False, from_offset=session.read_base(msg.get("full", False)),
+                        cancel_event=run.cancel_event,
                     )
             else:
                 result, _ = _run_snapshot_flow(
@@ -484,9 +518,8 @@ class WorkflowEngine:
                     msg,
                     output=output,
                     matched=False,
-                    reason="ok" if session.running else "ended",
+                    reason=Reason.OK if session.running else Reason.ENDED,
                     result_type="read",
-                    has_trigger=False,
                     consume_events=False,
                     send_response=False,
                 )
@@ -525,10 +558,10 @@ class WorkflowEngine:
         """
         if result.get("error"):
             return STEP_FAILED, {}, result["error"]
-        if result.get("triggerReturnReason") == "cancelled":
+        if result.get("triggerReturnReason") == Reason.CANCELLED:
             return STEP_CANCELLED, {}, None
         fields = _extract_result_fields(result)
-        if step.type != "read" and result.get("triggerReturnReason") == "program_crashed":
+        if step.type != "read" and result.get("triggerReturnReason") == Reason.PROGRAM_CRASHED:
             _logger.info(
                 "workflow 步骤 %s 程序崩溃（exit=%s），按失败处理",
                 step.id,

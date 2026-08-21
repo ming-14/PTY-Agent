@@ -54,7 +54,7 @@ from ..ipc.shm import (
 )
 from ..plugins.registry import PluginRegistry
 from ..session.manager import SessionManager
-from .handler import RequestHandler
+from .handlers.dispatcher import DaemonDispatcher
 from .listener import Listener
 from ..logging import get_logger
 
@@ -105,6 +105,7 @@ class DaemonServer:
         # lazy import：server 装配 workflow manager，而 workflow 引擎依赖
         # daemon.handlers 工具函数；模块级导入会与 daemon 包初始化成环
         from ..workflow.manager import WorkflowManager
+        from ..optional import get_history_store_cls
 
         # 监听器配置快照：三段各自独立（enabled/host/port），同开或只开一个
         self.listeners_config = {
@@ -112,8 +113,17 @@ class DaemonServer:
             "token": (TOKEN_ENABLED, TOKEN_HOST, TOKEN_PORT),
             "tls": (TLS_ENABLED, TLS_HOST, TLS_PORT),
         }
+        # 历史归档存储由 daemon 核心创建并注入：必须在监听器开始 accept 前
+        # 就绪，否则启动窗口期内快速结束的会话（web 服务器尚未被构造）会因
+        # manager 无 history store 而静默跳过归档，events/历史查询查无记录。
+        # Web 服务器组件复用同一实例（见 WebServer.__init__ 的判空注入）。
+        history_cls = get_history_store_cls()
+        history_store = history_cls() if history_cls else None
         # 插件注册表：守护进程启动时扫描加载一次（enabled=false 或加载异常时禁用）
-        self.manager = SessionManager(plugin_registry=self._create_plugin_registry())
+        self.manager = SessionManager(
+            plugin_registry=self._create_plugin_registry(),
+            history_store=history_store,
+        )
         self.workflow_manager = WorkflowManager(self.manager)
         self._listeners: list = []
         self._shutdown_event = threading.Event()
@@ -249,12 +259,12 @@ class DaemonServer:
         )
         return AuthContext(None, verifier, authenticator)
 
-    def _create_handler(self, auth_context: AuthContext) -> RequestHandler:
-        """handler_factory — 接收 AuthContext，返回 RequestHandler 实例
+    def _create_handler(self, auth_context: AuthContext) -> DaemonDispatcher:
+        """handler_factory — 接收 AuthContext，返回 DaemonDispatcher 实例
 
         Listener.start() 调用此方法创建 handler，之后所有连接复用同一 handler。
         """
-        return RequestHandler(self.manager, auth_context, server=self)
+        return DaemonDispatcher(self.manager, auth_context, server=self)
 
     def _log_listeners(self):
         """输出各监听器状态日志（enabled 监听位置 / disabled 跳过）"""

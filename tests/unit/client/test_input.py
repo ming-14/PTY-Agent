@@ -30,42 +30,69 @@ class TestUnescapeJsonString:
         result = unescape_json_string(text)
         assert result == text
 
+    def test_raw_quotes_no_break_unescape(self):
+        """含裸双引号的文本也能整体解码，不被引号破坏 JSON 解析"""
+        result = unescape_json_string('import time\\nprint("line1")')
+        assert result == 'import time\nprint("line1")'
+
     def test_empty_string(self):
         assert unescape_json_string("") == ""
 
 
 class TestProcessInput:
     def test_raw_mode_no_escaping(self):
-        result = process_input("C:\\Users", json_escaping=False)
+        result, pauses = process_input("C:\\Users", json_escaping=False)
         assert "C:\\Users" in result
+        assert pauses == []
 
     def test_json_escaping_mode(self):
-        result = process_input("line1\\nline2", json_escaping=True)
+        result, pauses = process_input("line1\\nline2", json_escaping=True)
         assert result == "line1\nline2\r"
+        assert pauses == []
 
     def test_default_eol_lf(self):
-        result = process_input("hello", send_eol="\n")
+        result, _ = process_input("hello", send_eol="\n")
         assert result.endswith("\n")
 
     def test_eol_cr(self):
-        result = process_input("hello", send_eol="\r")
+        result, _ = process_input("hello", send_eol="\r")
         assert result.endswith("\r")
 
     def test_eol_crlf(self):
-        result = process_input("hello", send_eol="\r\n")
+        result, _ = process_input("hello", send_eol="\r\n")
         assert result.endswith("\r\n")
 
     def test_eol_none(self):
-        result = process_input("hello", send_eol="")
+        result, _ = process_input("hello", send_eol="")
         assert result == "hello"
 
     def test_no_duplicate_eol(self):
-        result = process_input("hello\n", send_eol="\n")
+        result, _ = process_input("hello\n", send_eol="\n")
         assert result == "hello\n"
 
     def test_no_duplicate_eol_cr(self):
-        result = process_input("hello\r", send_eol="\r")
+        result, _ = process_input("hello\r", send_eol="\r")
         assert result == "hello\r"
+
+    def test_pause_offsets_single_token(self):
+        """单个控制序列 token 返回其结束偏移"""
+        result, pauses = process_input("{esc}", json_escaping=True, send_eol="")
+        assert result == "\x1b"
+        assert pauses == [1]
+
+    def test_pause_offsets_multiple_tokens(self):
+        """多个 token 各自返回结束偏移（含中间普通文本）"""
+        result, pauses = process_input(
+            "{esc}:wq{enter}", json_escaping=True, send_eol=""
+        )
+        assert result == "\x1b:wq\r"
+        assert pauses == [1, 5]
+
+    def test_pause_offsets_raw_mode_empty(self):
+        """raw 模式（json_escaping=False）不产生停顿偏移"""
+        result, pauses = process_input("{esc}:wq{enter}", json_escaping=False, send_eol="")
+        assert pauses == []
+        assert result == "{esc}:wq{enter}"
 
 
 class TestSafePrint:
@@ -157,13 +184,16 @@ class TestExpandControlCharacters:
 
 class TestProcessInputControlEscaping:
     def test_json_and_control_sequence(self):
-        result = process_input("line1\\n{enter}", json_escaping=True, send_eol="")
+        result, pauses = process_input("line1\\n{enter}", json_escaping=True, send_eol="")
         assert result == "line1\n\r"
+        assert pauses == [7]
 
     def test_control_no_duplicate_eol(self):
-        result = process_input("{enter}", json_escaping=True, send_eol="\r")
+        result, pauses = process_input("{enter}", json_escaping=True, send_eol="\r")
         assert result == "\r"
+        assert pauses == [1]
 
     def test_raw_mode_preserves_control_syntax(self):
-        result = process_input("{ctrl+a}", json_escaping=False, send_eol="")
+        result, pauses = process_input("{ctrl+a}", json_escaping=False, send_eol="")
         assert result == "{ctrl+a}"
+        assert pauses == []

@@ -143,26 +143,6 @@ class TerminalScreen:
     def feed_count(self) -> int:
         return self._feed_count
 
-    def wait_for_change(self, timeout: float = 0.5, prior_count: int = -1) -> bool:
-        """等待 screen 内容变化（feed 被调用）
-
-        Args:
-            timeout: 等待超时（秒）。
-            prior_count: 进入前已知的 feed_count，若当前已不同则立即返回。
-
-        Returns:
-            True 表示检测到新 feed（feed_count 变化），False 表示超时。
-        """
-        if self._feed_count != prior_count:
-            return True
-        self._change_event.clear()
-        if self._feed_count != prior_count:
-            self._change_event.set()
-            return True
-        result = self._change_event.wait(timeout)
-        self._change_event.set()
-        return result
-
     def feed(self, data: bytes) -> None:
         if not self.available:
             return
@@ -211,20 +191,6 @@ class TerminalScreen:
                 self._feed_errors += 1
                 _logger.debug("feed 异常（可忽略）: %s", e)
         self._change_event.set()
-
-    def feed_snapshot(self, snapshot: str) -> None:
-        """将之前的屏幕快照（含 VT 颜色序列）写入后端，用于 resize 后重建屏幕
-
-        与 feed() 不同，此方法直接接收字符串（非 bytes），用于在 resize 后
-        将保留的快照内容写入新尺寸的终端模型。
-        """
-        if not self.available or not snapshot:
-            return
-        with self._lock:
-            try:
-                self._backend.feed_text(snapshot)
-            except Exception as e:
-                _logger.debug("feed_snapshot 异常: %s", e)
 
     def snapshot(self, keep_ansi: bool = False, include_cursor: bool = False) -> str:
         if not self.available:
@@ -504,24 +470,6 @@ class TerminalScreen:
                 self._rows = rows
             except Exception as e:
                 _logger.debug("resize 异常: %s", e)
-
-    def resize_and_reset(self, cols: int, rows: int) -> None:
-        """原子地 resize + reset：在一次锁保护内更新尺寸并重建终端模型
-
-        避免单独调用 resize() 与 reset() 之间读者线程 feed() 写入旧数据。
-        用于 session.resize() 场景：后端 resize 后立即清空屏幕，
-        让后续 ConPTY repaint 字节以新尺寸干净地重建屏幕。
-        """
-        with self._lock:
-            self._cols = cols
-            self._rows = rows
-            if not self.available:
-                return
-            try:
-                self._backend.resize(cols, rows)
-                self._backend.reset()
-            except Exception as e:
-                _logger.debug("resize_and_reset 异常: %s", e)
 
     def reset(self) -> None:
         with self._lock:

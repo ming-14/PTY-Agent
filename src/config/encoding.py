@@ -20,14 +20,3 @@ def is_valid_encoding(name) -> bool:
         return True
     except LookupError:
         return False
-
-
-def validate_encoding(name) -> str:
-    """校验编码名称；非法时抛出 ValueError（含清晰错误信息）"""
-    if not is_valid_encoding(name):
-        raise ValueError(
-            f"Invalid encoding: {name!r}. "
-            "Use a valid codec name (e.g. utf-8, gbk, cp936, latin-1) "
-            "or leave it unset for auto detection."
-        )
-    return name

@@ -5,34 +5,13 @@
 
 - ``ReturnConditions``：一次从请求消息解释全部返回条件（trigger/newline/fresh/
   idle/snapshot/keep_ansi/full/explicit_timeout），exec/send/read 与 workflow 共用。
-- ``Reason``：统一"为什么返回"的外向词汇（matched/idle_timeout/crashed/...），
-  供 map_reason 与各等待循环产出稳定原因，替代散落字符串。
+- 返回原因词汇（``Reason``）属协议层，见 ``protocol.reasons``。
 
 注意：本模块只做"声明与解释"，不改变等待/监控的时序逻辑，保证行为零变化。
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Optional
-
-
-class Reason(str, Enum):
-    """外向返回原因（对外 triggerReturnReason 的稳定词汇）"""
-
-    OK = "ok"
-    MATCHED = "matched"
-    TIMEOUT = "timeout"
-    IDLE_TIMEOUT = "idle_timeout"
-    ENDED = "ended"
-    CRASHED = "crashed"
-    GUI_DETECTED = "gui_detected"
-    CANCELLED = "cancelled"
-
-    # 外向映射（经 map_reason 权威判定后的对外值）
-    TRIGGER_MATCHED = "trigger_matched"
-    TRIGGER_TIMEOUT = "trigger_timeout"
-    PROGRAM_ENDED = "program_ended"
-    PROGRAM_CRASHED = "program_crashed"
 
 
 @dataclass
@@ -94,6 +73,7 @@ class RequestContext:
     id: str = ""
     command: Optional[str] = None
     input: Optional[str] = None
+    pause_offsets: Optional[list] = None
     encoding: Optional[str] = None
     cwd: Optional[str] = None
     env: Optional[dict] = None
@@ -103,6 +83,8 @@ class RequestContext:
     size: Optional[str] = None
     plugins: list = field(default_factory=list)
     cli_plugins: list = field(default_factory=list)
+    json_escaping: bool = False
+    send_eol: Optional[str] = None
     lines: Optional[object] = None
     grep: Optional[str] = None
     column: Optional[int] = None
@@ -118,6 +100,7 @@ class RequestContext:
             id=msg.get("id", ""),
             command=msg.get("command"),
             input=msg.get("input", ""),
+            pause_offsets=msg.get("pause_offsets"),
             encoding=msg.get("encoding"),
             cwd=msg.get("cwd"),
             env=msg.get("env"),
@@ -127,6 +110,8 @@ class RequestContext:
             size=msg.get("size"),
             plugins=msg.get("plugins") or [],
             cli_plugins=msg.get("cliPlugins") or [],
+            json_escaping=msg.get("json_escaping", False),
+            send_eol=msg.get("send_eol"),
             lines=msg.get("lines"),
             grep=msg.get("grep"),
             column=msg.get("column"),

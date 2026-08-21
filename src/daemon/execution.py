@@ -13,6 +13,7 @@ import time
 from typing import Optional
 
 from ..protocol.message import Message
+from ..protocol.reasons import Reason
 from ..logging import get_logger
 
 _logger = get_logger("pty-daemon")
@@ -28,7 +29,7 @@ def _run_snapshot_flow(
     send_response: bool = True,
     cancel_event: Optional[threading.Event] = None,
 ):
-    from .handlers.utils import (
+    from .output_policy import (
         resolve_output,
     )
     from .conditions import RequestContext
@@ -52,12 +53,27 @@ def _run_snapshot_flow(
         # 循环内不变，提升出等待循环（避免每轮重复 splitlines）
         prior_lines = prior_snapshot.splitlines() if prior_snapshot else []
 
+    # [缓解方案] --newline 回显行排除：本次 send 写入的输入文本按行拆分，
+    # 回显行（prompt + 输入文本）以输入行结尾，从匹配候选中剔除，避免
+    # trigger 提前命中输入回显而非程序输出；子进程模式无终端回显，不涉及。
+    # 每个输入行只声明一个"回显行内容"（首个以该输入行结尾的新行），
+    # 此后仅内容相同的行被排除（回显行跨帧/跨迭代恒在屏幕，内容级精确
+    # 排除避免重复帧泄漏）；不同内容的输出行（如 Hello Rikka）正常匹配。
+    # 局限：终端回显与程序输出在信息层面不可完全区分（输出行与回显行
+    # 内容完全相同或先于回显到达时仍会误排），仅缓解回显提前命中问题，
+    # 非根本方案。
+    echo_exclude_lines = None
+    if cond.newline:
+        sent = msg.get("input")
+        if sent:
+            echo_exclude_lines = [ln.strip() for ln in sent.splitlines() if ln.strip()]
+    echo_claimed = {}
+
     if has_trigger or has_idle:
         session.set_snapshot_trigger(
             pattern=trigger,
             idle_timeout=idle_timeout,
             idle_after_first_output=idle_after_first,
-            newline=cond.newline,
         )
         last_snapshot = ""
         deadline = time.time() + timeout
@@ -73,6 +89,11 @@ def _run_snapshot_flow(
         last_key = None
         last_rendered = ""
         _last_gui_check = 0.0
+        # --newline 换行语义（对齐流式 TriggerMatcher.check 的"换行后检查"）：
+        # 快照换行数较上次检查增加（出现新的完整行）才允许匹配；set 后首次
+        # 检查放行一次（覆盖 set 前已在输出中的行），与流式 _newline_first_ok 一致。
+        snap_nl_count = 0
+        first_nl_check = True
         try:
             # 迭代骨架（cancel/remaining/timeout/循环）复用统一等待引擎；
             # 检查顺序与 sleep 原语保持原样（行为零变化）
@@ -80,6 +101,7 @@ def _run_snapshot_flow(
 
             def _iteration(remaining):
                 nonlocal last_key, last_rendered, last_snapshot, _last_gui_check
+                nonlocal snap_nl_count, first_nl_check
                 if host is not None:
                     plugin_reason = host.consume_return_request()
                     if plugin_reason:
@@ -105,17 +127,45 @@ def _run_snapshot_flow(
 
                 if has_trigger:
                     if prior_snapshot is None or snapshot != prior_snapshot:
-                        check_text = snapshot
-                        if prior_lines:
-                            cur_lines = snapshot.splitlines()
-                            diff_lines = [
-                                l
-                                for i, l in enumerate(cur_lines)
-                                if i >= len(prior_lines) or l != prior_lines[i]
-                            ]
-                            check_text = "\n".join(diff_lines)
-                        if check_text and session.check_snapshot_trigger(check_text):
-                            return True, "matched"
+                        newline_ok = True
+                        if cond.newline:
+                            cur_nl = snapshot.count("\n")
+                            if cur_nl > snap_nl_count:
+                                snap_nl_count = cur_nl
+                            elif first_nl_check:
+                                first_nl_check = False
+                            else:
+                                newline_ok = False
+                        if newline_ok:
+                            check_text = snapshot
+                            if prior_lines:
+                                cur_lines = snapshot.splitlines()
+                                diff_lines = [
+                                    l
+                                    for i, l in enumerate(cur_lines)
+                                    if i >= len(prior_lines) or l != prior_lines[i]
+                                ]
+                                # 回显行剔除（缓解方案）：首个以输入行结尾的新行声明为回显，
+                                # 此后仅内容相同的行被排除（防重复帧泄漏）
+                                if echo_exclude_lines:
+                                    kept = []
+                                    for l in diff_lines:
+                                        s = l.strip()
+                                        echo_e = next(
+                                            (e for e in echo_exclude_lines if s.endswith(e)),
+                                            None,
+                                        )
+                                        if echo_e is not None:
+                                            if echo_e not in echo_claimed:
+                                                echo_claimed[echo_e] = s
+                                                continue
+                                            if echo_claimed[echo_e] == s:
+                                                continue
+                                        kept.append(l)
+                                    diff_lines = kept
+                                check_text = "\n".join(diff_lines)
+                            if check_text and session.check_snapshot_trigger(check_text):
+                                return True, Reason.MATCHED
 
                 if has_idle:
                     if snapshot != last_snapshot:
@@ -123,14 +173,14 @@ def _run_snapshot_flow(
                         session.notify_snapshot_changed()
 
                 if has_idle and session.check_snapshot_idle_timeout():
-                    return False, "idle_timeout"
+                    return False, Reason.IDLE_TIMEOUT
 
                 # GUI 窗口检测：检测到新窗口即短路返回（与子进程 wait_for_trigger 语义一致）
                 detected, _last_gui_check = session.check_gui_detected(
                     _last_gui_check
                 )
                 if detected:
-                    return False, "gui_detected"
+                    return False, Reason.GUI_DETECTED
 
                 session.poll_natural_exit()
                 if not session.running:
@@ -143,7 +193,7 @@ def _run_snapshot_flow(
                 deadline=deadline,
                 cancel_event=cancel_event,
                 iteration=_iteration,
-                on_timeout=lambda: (False, "timeout"),
+                on_timeout=lambda: (False, Reason.TIMEOUT),
             )
         finally:
             if host is not None:
@@ -151,11 +201,11 @@ def _run_snapshot_flow(
 
         session.clear_trigger()
     else:
-        matched, reason = False, "ok"
-        # exec 显式 --timeout：以完整 timeout 为等待预算等待命令自然结束，
-        # 到期以 reason=timeout 返回（会话保持运行，供后续 send/read 继续使用）；
-        # 其余（read 轮询 / exec 非显式）沿用固定短等待分片复查
-        if result_type == "exec" and explicit_timeout:
+        matched, reason = False, Reason.OK
+        # 显式 --timeout：以完整 timeout 为等待预算等待返回条件（命令自然结束/
+        # GUI/进程变化），到期以 reason=timeout 返回（会话保持运行，可继续 send/read）；
+        # 无显式 timeout：send/read/no-trigger 沿用固定短等待（min(timeout,1.0)）拿当前快照
+        if explicit_timeout:
             deadline = time.time() + timeout
         else:
             if result_type == "exec":
@@ -177,7 +227,7 @@ def _run_snapshot_flow(
                 _last_gui_check
             )
             if detected:
-                return False, "gui_detected"
+                return False, Reason.GUI_DETECTED
             if not session.running:
                 return False, session.resolve_exit_reason()
             session.poll_natural_exit()
@@ -189,8 +239,8 @@ def _run_snapshot_flow(
             cancel_event=cancel_event,
             iteration=_iteration,
             on_timeout=(
-                (lambda: (False, "timeout"))
-                if result_type == "exec" and explicit_timeout
+                (lambda: (False, Reason.TIMEOUT))
+                if explicit_timeout
                 else (lambda: NO_RETURN)
             ),
         )
@@ -207,10 +257,10 @@ def _run_snapshot_flow(
         matched=matched,
         reason=reason,
         result_type=result_type,
-        has_trigger=has_trigger or has_idle,
         extra_fields=extra_fields,
         send_response=send_response,
         snapshot_diagnostics=True,
+        include_debug=msg.get("debug"),
     )
 
 
@@ -256,7 +306,6 @@ def assemble_response(
     matched: bool,
     reason: str,
     result_type: str,
-    has_trigger: bool,
     consume_events: bool = True,
     extra_fields: Optional[dict] = None,
     send_response: bool = True,
@@ -272,9 +321,10 @@ def assemble_response(
     收敛到一处；send_response=False 时返回 (result, output) 供 workflow 等调用方
     自行处理。纯结构归一，不改变任何既有装配顺序与字段语义。
     """
-    from .handlers.utils import (
+    from .response import (
         attach_screen_buffer,
         build_result,
+        describe_output_format,
     )
 
     result = build_result(
@@ -284,7 +334,6 @@ def assemble_response(
         matched,
         reason,
         consume_events=consume_events,
-        has_trigger=has_trigger,
         result_type=result_type,
         session=session,
         t_start=msg.get("_t_start"),
@@ -294,6 +343,11 @@ def assemble_response(
     )
     if not output and snapshot_diagnostics:
         result["snapshotDiagnostics"] = session.get_snapshot_diagnostics()
+    # 过滤/取源格式标签（供 presenter 分隔线显示）
+    # 子进程模式为增量输出（无快照），标注 diff；pty 模式按过滤方式标注
+    result["format"] = describe_output_format(
+        msg, is_subprocess=getattr(session, "mode", "pty") == "subprocess"
+    )
     if attach_stderr:
         _attach_subprocess_stderr(result, session, msg)
     attach_screen_buffer(result, session, msg)
@@ -322,7 +376,7 @@ def _run_subprocess_trigger_flow(
     cancel_event: Optional[threading.Event] = None,
 ):
     """子进程模式 trigger 流程：增量文本匹配（复用 TriggerMatcher）"""
-    from .handlers.utils import strip_if_needed
+    from .filtering import strip_if_needed
     from .conditions import RequestContext
 
     req = RequestContext.from_msg(msg)
@@ -348,9 +402,11 @@ def _run_subprocess_trigger_flow(
     matched, reason = session.wait_for_trigger(
         timeout, gui_short_circuit=False, cancel_event=cancel_event
     )
-    output = session.get_output(
+    output, delivered_end = session.get_output_with_offset(
         from_offset=trigger_offset, encoding=req.encoding
     )
+    # 增量交付：推进消费游标到已交付末尾
+    session.advance_stdout_cursor(delivered_end)
     output = strip_if_needed(output, msg)
     ret = assemble_response(
         ctx,
@@ -361,10 +417,10 @@ def _run_subprocess_trigger_flow(
         matched=matched,
         reason=reason,
         result_type=result_type,
-        has_trigger=True,
         extra_fields=extra_fields,
         send_response=send_response,
         attach_stderr=True,
+        include_debug=msg.get("debug"),
     )
     session.clear_trigger()
     return ret
@@ -386,7 +442,7 @@ def _run_subprocess_no_trigger_flow(
     from_offset=None 时按 msg 计算：--full 从 0 读，否则从当前 offset 增量读
     （对齐 trigger 流程的增量语义，避免重复 exec/send 返回全量副本）。
     """
-    from .handlers.utils import strip_if_needed
+    from .filtering import strip_if_needed
     from .conditions import RequestContext
 
     req = RequestContext.from_msg(msg)
@@ -395,9 +451,10 @@ def _run_subprocess_no_trigger_flow(
     idle_after_first = cond.idle_after_first
     explicit_timeout = cond.explicit_timeout
 
-    # 增量基准：必须在等待前捕获，才能返回等待期间的新增输出
+    # 增量基准：必须在等待前捕获，才能返回等待期间的新增输出。
+    # 默认用 stdout 消费游标（而非写入末尾），避免两次调用之间写入的输出被跳过。
     if from_offset is None:
-        from_offset = 0 if cond.full else session.output_offset
+        from_offset = session.read_base(cond.full)
 
     session.wait_for_initial_output(timeout=0.5)
 
@@ -426,15 +483,19 @@ def _run_subprocess_no_trigger_flow(
         )
         session.clear_trigger()
     else:
-        matched, reason = False, "ok"
+        matched, reason = False, Reason.OK
 
         def _on_cancel():
             nonlocal matched, reason
-            matched, reason = False, "cancelled"
+            matched, reason = False, Reason.CANCELLED
 
         _interruptible_sleep(min(cond.timeout, 1.0), cancel_event, _on_cancel)
 
-    output = session.get_output(from_offset=from_offset, encoding=req.encoding)
+    output, delivered_end = session.get_output_with_offset(
+        from_offset=from_offset, encoding=req.encoding
+    )
+    # 增量交付：推进消费游标到已交付末尾（后续默认读取不再重复此段）
+    session.advance_stdout_cursor(delivered_end)
     output = strip_if_needed(output, msg)
     return assemble_response(
         ctx,
@@ -445,8 +506,8 @@ def _run_subprocess_no_trigger_flow(
         matched=matched,
         reason=reason,
         result_type=result_type,
-        has_trigger=False,
         extra_fields=extra_fields,
         send_response=send_response,
         attach_stderr=True,
+        include_debug=msg.get("debug"),
     )

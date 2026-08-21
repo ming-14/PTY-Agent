@@ -98,6 +98,55 @@ class TestOutputBufferOverflow:
         assert buf.read_cycle > cycle_before
 
 
+class TestOutputBufferStreamOffsets:
+    """绝对流偏移（stream_end/trim_base/read_stream）语义测试"""
+
+    def test_stream_end_equals_length_before_trim(self):
+        """无裁剪时 stream_end == length"""
+        buf = OutputBuffer(max_size=1024)
+        buf.append(b"hello")
+        assert buf.stream_end == 5
+        assert buf.trim_base == 0
+
+    def test_trim_base_tracks_dropped_head(self):
+        """溢出裁头后 trim_base 记录丢弃字节数，stream_end 单调不减"""
+        buf = OutputBuffer(max_size=16)
+        buf.append(b"a" * 16)
+        before = buf.stream_end
+        buf.append(b"b" * 10)  # 触发裁剪
+        assert buf.trim_base >= 0
+        # stream_end = trim_base + 物理长度，保持单调
+        assert buf.stream_end >= before
+        # 物理长度回到上限，但绝对流偏移持续增长
+        assert len(buf.get_slice()) == 16
+        assert buf.stream_end == buf.trim_base + 16
+
+    def test_read_stream_clamps_to_retained(self):
+        """read_stream 当请求起点早于裁剪点时从保留起点取，并标记 dropped_before"""
+        buf = OutputBuffer(max_size=16)
+        buf.append(b"1234567890123456")
+        buf.append(b"NEEDLE")  # 26 > 16+4 → 裁头
+        assert buf.trim_base > 0
+        data, actual, dropped = buf.read_stream(0)
+        assert dropped is True
+        assert actual == buf.trim_base
+        # 保留段含 NEEDLE（新数据不丢）
+        assert data.endswith(b"NEEDLE")
+
+    def test_read_stream_absolute_offset_stable(self):
+        """绝对流偏移请求（不落后裁剪点）正常切出且不误报 dropped"""
+        buf = OutputBuffer(max_size=16)
+        buf.append(b"1234567890123456")
+        before_append = buf.stream_end
+        buf.append(b"X" * 10)  # 26 > 16+4(批头) → 裁头
+        assert buf.trim_base > 0
+        # 请求起点等于上次的 stream_end（增量游标应落在保留段内）
+        from_abs = max(before_append, buf.trim_base)
+        data, actual, dropped = buf.read_stream(from_abs)
+        assert dropped is (from_abs < buf.trim_base)
+        assert actual >= buf.trim_base
+
+
 class TestOutputBufferGetSlice:
     """OutputBuffer.get_slice 测试"""
 

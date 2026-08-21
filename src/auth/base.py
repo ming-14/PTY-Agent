@@ -16,7 +16,7 @@ class Authenticator(ABC):
     """服务端认证器 — 验证客户端身份
 
     守护进程侧使用。每个认证器实现一种验证方式，
-    由 RequestHandler 在处理请求前调用 authenticate() 判断是否放行。
+    由 DaemonDispatcher 在处理请求前调用 authenticate() 判断是否放行。
     """
 
     @abstractmethod

@@ -148,7 +148,7 @@ class DaemonDispatcher:
                 # 连接已关闭时 send 会抛异常，忽略即可
                 _logger.warning("recv 返回 None，可能签名验证失败或连接关闭")
                 try:
-                    Message.send(conn, Response.error("Authentication failed"))
+                    Message.send(conn, Response.error("Authentication failed."))
                 except Exception:
                     pass
                 return
@@ -163,7 +163,7 @@ class DaemonDispatcher:
                     _logger.warning(
                         "认证失败 (type=%s id=%s)", type_, body.get("id")
                     )
-                    Message.send(conn, Response.error("Authentication failed"))
+                    Message.send(conn, Response.error("Authentication failed."))
                     return
             self.dispatch(conn, body, type_=type_)
         except json.JSONDecodeError:

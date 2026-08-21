@@ -45,11 +45,16 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-# common.toml / daemon.toml / client.toml 路径
-# 测试期间会被临时覆写，teardown 时逐一恢复
-_COMMON_TOML = Path(_PROJECT_ROOT) / "config" / "common.toml"
-_DAEMON_TOML = Path(_PROJECT_ROOT) / "config" / "daemon" / "daemon.toml"
-_CLIENT_TOML = Path(_PROJECT_ROOT) / "config" / "client" / "client.toml"
+# common.toml / daemon.toml / client.toml 路径：解析到隔离配置目录
+# （conftest iso_config 经 PTY_AGENT_CONFIG_DIR 重定向），测试写入
+# 全部落在临时目录，生产 config 不被触碰。
+
+
+def _cfg_path(*parts: str) -> Path:
+    """按配置目录解析文件路径（隔离临时目录优先，兜底生产 config/）"""
+    iso = os.environ.get("PTY_AGENT_CONFIG_DIR")
+    base = Path(iso) if iso else Path(_PROJECT_ROOT) / "config"
+    return base.joinpath(*parts)
 
 # ssh-keygen 可执行文件路径（场景 11 用，不存在则 skip）
 _SSH_KEYGEN = shutil.which("ssh-keygen")
@@ -211,7 +216,7 @@ TOFU_STRICT         = true
 
 
 @pytest.fixture
-def auth_env(tmp_path):
+def auth_env(tmp_path, config_reloader):
     """认证环境工厂 fixture
 
     提供 start() 与 run_list() 方法。start() 写入测试配置（common/daemon/client
@@ -221,9 +226,9 @@ def auth_env(tmp_path):
         SimpleNamespace(start=..., run_list=..., tmp_path=tmp_path)
     """
     # 备份三个 toml 文件（teardown 时逐字节恢复，避免污染生产配置）
-    backup_common = _COMMON_TOML.read_bytes()
-    backup_daemon = _DAEMON_TOML.read_bytes()
-    backup_client = _CLIENT_TOML.read_bytes()
+    backup_common = _cfg_path("common.toml").read_bytes()
+    backup_daemon = _cfg_path("daemon", "daemon.toml").read_bytes()
+    backup_client = _cfg_path("client", "client.toml").read_bytes()
     started = [False]
     daemon_stopped = [False]
 
@@ -274,12 +279,12 @@ def auth_env(tmp_path):
         }[client_auth_method]
 
         # 写入 common.toml（共享配置）
-        _COMMON_TOML.write_text(
+        _cfg_path("common.toml").write_text(
             _build_common_toml(),
             encoding="utf-8", errors="replace",
         )
         # 写入 daemon.toml（三监听器 + 服务端认证配置）
-        _DAEMON_TOML.write_text(
+        _cfg_path("daemon", "daemon.toml").write_text(
             _build_daemon_toml(
                 basic=basic,
                 token=enable_token,
@@ -290,7 +295,7 @@ def auth_env(tmp_path):
             encoding="utf-8", errors="replace",
         )
         # 写入 client.toml（连接方式 + 客户端认证配置）
-        _CLIENT_TOML.write_text(
+        _cfg_path("client", "client.toml").write_text(
             _build_client_toml(
                 connect_mode=connect_mode,
                 private_key_path=pk_path,
@@ -298,6 +303,8 @@ def auth_env(tmp_path):
             ),
             encoding="utf-8", errors="replace",
         )
+        # 写入测试 config 后重载进程内 config（见 conftest.reload_config）
+        config_reloader()
 
         # 确保 authorized_keys 文件存在（空内容也写，触发 fail-closed 走 load_authorized_keys 路径）
         ak_path = Path(authorized_keys_path)
@@ -364,11 +371,14 @@ def auth_env(tmp_path):
     try:
         yield SimpleNamespace(start=start, run_list=run_list, tmp_path=tmp_path)
     finally:
-        _stop_daemon()
-        # 恢复三个 toml 文件（无论 daemon 是否成功停止都恢复，避免污染生产配置）
-        _COMMON_TOML.write_bytes(backup_common)
-        _DAEMON_TOML.write_bytes(backup_daemon)
-        _CLIENT_TOML.write_bytes(backup_client)
+        # 无论测试结果/daemon 停止是否抛异常，都必须恢复三个 toml，
+        # 否则生产 config 被污染成测试态（如残留 CONNECT_MODE=tls）导致后续环境异常
+        try:
+            _stop_daemon()
+        finally:
+            _cfg_path("common.toml").write_bytes(backup_common)
+            _cfg_path("daemon", "daemon.toml").write_bytes(backup_daemon)
+            _cfg_path("client", "client.toml").write_bytes(backup_client)
 
 
 def _generate_keypair(tmp_path: Path, key_dir_name: str = "keys") -> tuple:

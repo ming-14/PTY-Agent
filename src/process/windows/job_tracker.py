@@ -192,6 +192,10 @@ class JobProcessTreeTracker(ProcessTreeTracker):
         if pid:
             self._host_pids.add(pid)
 
+    def is_host_process(self, pid: int) -> bool:
+        """pid 是否为登记的宿主进程（ConPTY 宿主 OpenConsole）"""
+        return pid in self._host_pids
+
     def get_work_process_list(self) -> List[int]:
         """获取工作进程 PID 列表（排除已登记的宿主进程）"""
         if not self._host_pids:

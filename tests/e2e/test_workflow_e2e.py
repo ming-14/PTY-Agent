@@ -29,9 +29,11 @@ _PROJECT_ROOT = os.path.dirname(
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-_COMMON_TOML = Path(_PROJECT_ROOT) / "config" / "common.toml"
-_DAEMON_TOML = Path(_PROJECT_ROOT) / "config" / "daemon" / "daemon.toml"
-_CLIENT_TOML = Path(_PROJECT_ROOT) / "config" / "client" / "client.toml"
+def _cfg_path(*parts: str) -> Path:
+    """按配置目录解析文件路径（隔离临时目录优先，兜底生产 config/）"""
+    iso = os.environ.get("PTY_AGENT_CONFIG_DIR")
+    base = Path(iso) if iso else Path(_PROJECT_ROOT) / "config"
+    return base.joinpath(*parts)
 
 
 def _build_common_toml() -> str:
@@ -171,7 +173,7 @@ def _run_cli(*args: str, timeout: float = 60) -> dict:
 
 
 @pytest.fixture
-def workflow_env(tmp_path):
+def workflow_env(tmp_path, config_reloader):
     """workflow e2e 环境：备份 toml → token 模式 daemon → teardown 恢复
 
     覆写与恢复均在 try/finally 内：任何一步（含 import）失败都必须还原配置，
@@ -180,19 +182,22 @@ def workflow_env(tmp_path):
     # import 提前：若配置/环境本身有问题，在覆写任何文件之前就失败
     from src.daemonctl import is_running, start_daemon, stop_daemon
 
-    backup_common = _COMMON_TOML.read_bytes()
-    backup_daemon = _DAEMON_TOML.read_bytes()
-    backup_client = _CLIENT_TOML.read_bytes()
+    backup_common = _cfg_path("common.toml").read_bytes()
+    backup_daemon = _cfg_path("daemon", "daemon.toml").read_bytes()
+    backup_client = _cfg_path("client", "client.toml").read_bytes()
 
     def _restore():
-        _COMMON_TOML.write_bytes(backup_common)
-        _DAEMON_TOML.write_bytes(backup_daemon)
-        _CLIENT_TOML.write_bytes(backup_client)
+        _cfg_path("common.toml").write_bytes(backup_common)
+        _cfg_path("daemon", "daemon.toml").write_bytes(backup_daemon)
+        _cfg_path("client", "client.toml").write_bytes(backup_client)
 
     try:
-        _COMMON_TOML.write_text(_build_common_toml(), encoding="utf-8", errors="replace")
-        _DAEMON_TOML.write_text(_build_daemon_toml(), encoding="utf-8", errors="replace")
-        _CLIENT_TOML.write_text(_build_client_toml(), encoding="utf-8", errors="replace")
+        _cfg_path("common.toml").write_text(_build_common_toml(), encoding="utf-8", errors="replace")
+        _cfg_path("daemon", "daemon.toml").write_text(_build_daemon_toml(), encoding="utf-8", errors="replace")
+        _cfg_path("client", "client.toml").write_text(_build_client_toml(), encoding="utf-8", errors="replace")
+        # 写入测试 config 后重载进程内 config：config 模块在 import 时缓存到
+        # 模块级 globals，不重载则进程内仍用上一个测试的 config（如 tls 模式）
+        config_reloader()
 
         start_daemon()
         try:
@@ -414,6 +419,14 @@ steps:
     run = _wait_run(run_id, timeout=15)
     assert run["status"] == "cancelled"
     by_id = {s["id"]: s for s in run["steps"]}
+    # 取消为异步契约：运行状态先置 cancelled，在途步骤线程随后自标记，
+    # 轮询到步骤进入终态，避免取到过渡快照
+    deadline = time.time() + 10
+    while by_id["long_wait"]["status"] not in ("cancelled", "failed"):
+        assert time.time() < deadline, "步骤未响应取消: %s" % by_id["long_wait"]
+        time.sleep(0.2)
+        run = _wait_run(run_id, timeout=10)
+        by_id = {s["id"]: s for s in run["steps"]}
     assert by_id["long_wait"]["status"] == "cancelled"
     assert by_id["never_start"]["status"] == "skipped"
 
@@ -432,3 +445,38 @@ def test_workflow_list(workflow_env):
     resp = _run_cli("workflow", "list")
     assert resp["type"] == "workflow"
     assert isinstance(resp["runs"], list)
+
+
+def test_workflow_same_session_parallel_serialized(workflow_env):
+    """同会话的并行步骤被调度器串行化，不互相踩踏触发/输入
+
+    回归：send 步骤与创建该会话的 exec 步骤并行派发时，旧引擎会在会话
+    尚未 running 时误报"已结束"，且并发共享 TriggerMatcher 导致截断输入/
+    误报崩溃；调度器按会话串行后必须稳定全绿。
+    """
+    wf_file = workflow_env.tmp_path / "samesession.yaml"
+    wf_file.write_text(
+        """name: e2e-same-session
+steps:
+  - id: py
+    type: exec
+    session: e2e-ss
+    command: "python -u -i"
+    trigger: ">>>"
+    timeout: 30
+  - id: ping
+    type: send
+    session: e2e-ss
+    input: 'print(1+1)'
+    trigger: "2"
+    timeout: 30
+""",
+        encoding="utf-8",
+    )
+    for _ in range(3):
+        resp = _run_cli("workflow", "run", str(wf_file))
+        run = _wait_run(resp["runId"])
+        by_id = {s["id"]: s for s in run["steps"]}
+        assert run["status"] == "done", "步骤: %s" % run["steps"]
+        assert by_id["ping"]["status"] == "done"
+        assert by_id["ping"]["reason"] == "trigger_matched"

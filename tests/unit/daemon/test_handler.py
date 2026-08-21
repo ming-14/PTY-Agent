@@ -1,4 +1,4 @@
-"""daemon/handler.py 单元测试
+"""daemon/handlers/dispatcher.py 单元测试
 
 测试请求处理器的认证、验证、消息派发、_build_result、_strip_if_needed 等。
 """
@@ -10,8 +10,12 @@ import socket
 import threading
 import pytest
 
-from src.daemon.handler import RequestHandler
-from src.daemon.handlers.utils import validate_field, map_reason, build_hint, build_result, strip_if_needed, get_detail
+from src.daemon.handlers.dispatcher import DaemonDispatcher
+from src.daemon.handlers.utils import validate_field, get_detail
+from src.daemon.response import build_result, map_reason
+from src.daemon.filtering import strip_if_needed
+from src.client.presenter import _session_message, _session_reason_hint
+from src.client.result import SessionResult
 from src.protocol.envelope import unwrap as _env_unwrap
 from src.protocol.message import Message
 from src.auth.token import TokenAuthenticator
@@ -64,6 +68,19 @@ class _MockSession:
     def get_output(self, **kwargs):
         return "test output"
 
+    @property
+    def stdout_read_offset(self):
+        return 0
+
+    def read_base(self, full=False):
+        return 0
+
+    def advance_stdout_cursor(self, delivered_end):
+        pass
+
+    def get_output_with_offset(self, from_offset=None, encoding=None):
+        return self.get_output(from_offset=from_offset, encoding=encoding), self.output_offset
+
     @contextlib.contextmanager
     def hold(self):
         yield self
@@ -80,7 +97,7 @@ class _MockSession:
     def export_screen_buffer(self):
         return {}
 
-    def write_input(self, data):
+    def write_input(self, data, pause_offsets=None):
         pass
 
     def set_trigger(self, *args, **kwargs):
@@ -169,7 +186,7 @@ class _MockManager:
 def _setup_handler(auth_token="test-token", sessions=None):
     mgr = _MockManager(sessions)
     authenticator = TokenAuthenticator(auth_token) if auth_token else None
-    handler = RequestHandler(mgr, AuthContext(authenticator=authenticator))
+    handler = DaemonDispatcher(mgr, AuthContext(authenticator=authenticator))
     return handler, mgr
 
 
@@ -220,38 +237,52 @@ class TestMapReason:
         assert map_reason("unknown_reason") == "unknown_reason"
 
 
-class TestBuildHint:
+class TestSessionReasonHint:
+    """presenter._session_reason_hint：返回原因文案由呈现层按数据重建"""
+
+    def _mk(self, command_type, reason, running, exit_code=None):
+        program = {"running": running, "ptyType": "wezterm"}
+        if exit_code is not None:
+            program["exitCode"] = exit_code
+        return SessionResult(command_type=command_type, reason=reason, program=program)
+
     def test_exec_trigger_matched(self):
-        hint = build_hint("exec", "trigger_matched", True, True)
-        assert "successfully" in hint
-        assert "trigger match" in hint
+        assert _session_reason_hint(self._mk("exec", "trigger_matched", True)) == ""
 
     def test_exec_timeout(self):
-        hint = build_hint("exec", "trigger_timeout", True, True)
-        assert "timed out" in hint
+        assert _session_reason_hint(self._mk("exec", "trigger_timeout", True)) == ""
 
     def test_send_idle_timeout(self):
-        hint = build_hint("send", "idle_timeout", True, True)
-        assert "idle" in hint
+        assert _session_reason_hint(self._mk("send", "idle_timeout", True)) == ""
 
     def test_exec_program_ended(self):
-        hint = build_hint("exec", "program_ended", False, True)
-        assert "ended" in hint
+        assert _session_reason_hint(self._mk("exec", "program_ended", False)) == ""
 
     def test_exec_crashed(self):
-        hint = build_hint("exec", "program_crashed", False, True, exit_code=1)
-        assert "crashed" in hint
+        # 崩溃消息走 _session_message（(PTY-Agent message: ...)），不再进 hint
+        hint = _session_reason_hint(
+            self._mk("exec", "program_crashed", False, exit_code=1)
+        )
+        assert hint == ""
+        msg = _session_message(
+            self._mk("exec", "program_crashed", False, exit_code=1)
+        )
+        assert msg == "Program crashed with exit code: 1."
+
+    def test_exec_crashed_no_exit_code(self):
+        assert _session_message(
+            self._mk("exec", "program_crashed", False)
+        ) == "Program crashed."
 
     def test_read_session_ended(self):
-        hint = build_hint("read", "ok", False, False)
+        hint = _session_reason_hint(self._mk("read", "ok", False))
         assert "ended" in hint
 
     def test_read_running(self):
-        hint = build_hint("read", "ok", True, False)
-        assert hint == ""
+        assert _session_reason_hint(self._mk("read", "ok", True)) == ""
 
 
-class TestRequestHandlerAuth:
+class TestDispatcherAuth:
     def test_valid_token(self):
         auth = TokenAuthenticator("my-token")
         assert auth.authenticate({"auth": {"token": "my-token"}}) is True
@@ -266,7 +297,7 @@ class TestRequestHandlerAuth:
 
     def test_no_auth_when_not_enforced(self):
         handler, _ = _setup_handler("")
-        assert handler._dispatcher._ctx.authenticator is None
+        assert handler._ctx.authenticator is None
 
     def test_add_valid_token(self):
         auth = TokenAuthenticator("old-token")
@@ -281,7 +312,7 @@ class TestRequestHandlerAuth:
         assert auth.authenticate({"auth": {"token": "old-token"}}) is False
 
 
-class TestRequestHandlerHandle:
+class TestDispatcherHandle:
     def _handle_msg(self, handler, msg_dict):
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.bind(("127.0.0.1", 0))
@@ -356,11 +387,11 @@ class TestRequestHandlerHandle:
         assert "Authentication" in resp["message"] or "认证" in resp["message"]
 
 
-class TestRequestHandlerBuildResult:
+class TestDispatcherBuildResult:
     def test_build_result_with_session(self):
         session = _MockSession("test-sess")
         mgr = _MockManager({"test-sess": session})
-        handler = RequestHandler(mgr, AuthContext())
+        handler = DaemonDispatcher(mgr, AuthContext())
         result = build_result(mgr, "test-sess", "output", True, "matched")
         assert result["commandType"] == "exec"
         assert result["sessionId"] == "test-sess"
@@ -370,7 +401,7 @@ class TestRequestHandlerBuildResult:
 
     def test_build_result_no_session(self):
         mgr = _MockManager()
-        handler = RequestHandler(mgr, AuthContext())
+        handler = DaemonDispatcher(mgr, AuthContext())
         result = build_result(mgr, "no-such", "output", False, "timeout")
         assert result["commandType"] == "exec"
         assert result["program"]["running"] is False
@@ -381,7 +412,7 @@ class TestRequestHandlerBuildResult:
         session.exit_code = 1
         session.error_message = "crashed"
         mgr = _MockManager({"test-sess": session})
-        handler = RequestHandler(mgr, AuthContext())
+        handler = DaemonDispatcher(mgr, AuthContext())
         result = build_result(mgr, "test-sess", "output", False, "crashed")
         assert result["program"]["exitCode"] == 1
         assert result["program"]["errorMessage"] == "crashed"
@@ -389,52 +420,52 @@ class TestRequestHandlerBuildResult:
     def test_build_result_with_warning(self):
         session = _MockSession("test-sess")
         mgr = _MockManager({"test-sess": session})
-        handler = RequestHandler(mgr, AuthContext())
+        handler = DaemonDispatcher(mgr, AuthContext())
         result = build_result(mgr, "test-sess", "output", True, "matched",
                                        warning="extra info")
         assert "extra info" in result["hint"]
 
 
-class TestRequestHandlerStrip:
+class TestStripIfNeeded:
     def test_strip_ansi(self):
         mgr = _MockManager()
-        handler = RequestHandler(mgr, AuthContext())
+        handler = DaemonDispatcher(mgr, AuthContext())
         result = strip_if_needed("\x1b[31mred\x1b[0m", {})
         assert result == "red"
 
     def test_keep_ansi(self):
         mgr = _MockManager()
-        handler = RequestHandler(mgr, AuthContext())
+        handler = DaemonDispatcher(mgr, AuthContext())
         result = strip_if_needed("\x1b[31mred\x1b[0m", {"keep_ansi": True})
         assert "\x1b[31m" in result
 
 
-class TestRequestHandlerGetDetail:
+class TestGetDetail:
     def test_empty_msg(self):
         mgr = _MockManager()
-        handler = RequestHandler(mgr, AuthContext())
+        handler = DaemonDispatcher(mgr, AuthContext())
         assert get_detail({}) == ""
 
     def test_msg_with_command(self):
         mgr = _MockManager()
-        handler = RequestHandler(mgr, AuthContext())
+        handler = DaemonDispatcher(mgr, AuthContext())
         detail = get_detail({"command": "echo hello"})
         assert "cmd=" in detail
 
     def test_msg_with_trigger(self):
         mgr = _MockManager()
-        handler = RequestHandler(mgr, AuthContext())
+        handler = DaemonDispatcher(mgr, AuthContext())
         detail = get_detail({"trigger": ">>>"})
         assert "trigger=" in detail
 
     def test_msg_with_encoding(self):
         mgr = _MockManager()
-        handler = RequestHandler(mgr, AuthContext())
+        handler = DaemonDispatcher(mgr, AuthContext())
         detail = get_detail({"encoding": "utf-8"})
         assert "enc=" in detail
 
 
-class TestRequestHandlerStop:
+class TestDispatcherStop:
     class _StopTrackingServer:
         def __init__(self):
             self.stop_called = False
@@ -450,7 +481,7 @@ class TestRequestHandlerStop:
     def test_stop_calls_server_stop(self):
         mgr = _MockManager()
         mock_server = self._StopTrackingServer()
-        handler = RequestHandler(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")), server=mock_server)
+        handler = DaemonDispatcher(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")), server=mock_server)
         resp = self._handle_stop(handler)
         assert resp is not None
         assert mock_server.stop_called
@@ -507,10 +538,9 @@ class TestSnapshotFlowWithTrigger:
             return session._snapshot_text
 
         def fake_set_snapshot_trigger(pattern=None, idle_timeout=None,
-                                      idle_after_first_output=False, newline=False):
+                                      idle_after_first_output=False):
             tm.set_snapshot_trigger(pattern=pattern, idle_timeout=idle_timeout,
-                                    idle_after_first_output=idle_after_first_output,
-                                    newline=newline)
+                                    idle_after_first_output=idle_after_first_output)
 
         def fake_check_snapshot_trigger(snapshot_text):
             return tm.check_snapshot(snapshot_text)
@@ -535,7 +565,7 @@ class TestSnapshotFlowWithTrigger:
     def test_snapshot_trigger_matched(self):
         session = self._make_snapshot_session()
         mgr = _MockManager({"snap-test": session})
-        handler = RequestHandler(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
+        handler = DaemonDispatcher(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
 
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.bind(("127.0.0.1", 0))
@@ -579,7 +609,7 @@ class TestSnapshotFlowWithTrigger:
     def test_snapshot_idle_timeout(self):
         session = self._make_snapshot_session()
         mgr = _MockManager({"snap-test": session})
-        handler = RequestHandler(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
+        handler = DaemonDispatcher(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
 
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.bind(("127.0.0.1", 0))
@@ -625,7 +655,7 @@ class TestSnapshotFlowWithTrigger:
     def test_snapshot_no_trigger_timeout(self):
         session = self._make_snapshot_session()
         mgr = _MockManager({"snap-test": session})
-        handler = RequestHandler(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
+        handler = DaemonDispatcher(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
 
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.bind(("127.0.0.1", 0))
@@ -712,7 +742,7 @@ class TestSnapshotReadLines:
     def test_snapshot_read_lines_last_n(self):
         session = self._make_multi_line_snapshot_session()
         mgr = _MockManager({"snap-read": session})
-        handler = RequestHandler(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
+        handler = DaemonDispatcher(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
         resp = self._handle_read(handler, {
             "type": "read", "id": "snap-read",
             "snapshot": True, "lines": 3,
@@ -723,7 +753,7 @@ class TestSnapshotReadLines:
     def test_snapshot_read_lines_range(self):
         session = self._make_multi_line_snapshot_session()
         mgr = _MockManager({"snap-read": session})
-        handler = RequestHandler(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
+        handler = DaemonDispatcher(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
         resp = self._handle_read(handler, {
             "type": "read", "id": "snap-read",
             "snapshot": True, "lines": "2:4",
@@ -734,7 +764,7 @@ class TestSnapshotReadLines:
     def test_snapshot_read_lines_larger_than_total(self):
         session = self._make_multi_line_snapshot_session()
         mgr = _MockManager({"snap-read": session})
-        handler = RequestHandler(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
+        handler = DaemonDispatcher(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
         resp = self._handle_read(handler, {
             "type": "read", "id": "snap-read",
             "snapshot": True, "lines": 99,
@@ -745,7 +775,7 @@ class TestSnapshotReadLines:
     def test_snapshot_read_no_lines(self):
         session = self._make_multi_line_snapshot_session()
         mgr = _MockManager({"snap-read": session})
-        handler = RequestHandler(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
+        handler = DaemonDispatcher(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
         resp = self._handle_read(handler, {
             "type": "read", "id": "snap-read",
             "snapshot": True,
@@ -763,13 +793,13 @@ class _RecordingSession(_MockSession):
         self.written = []
         self.stderr_read_offset = 0
 
-    def write_input(self, data):
+    def write_input(self, data, pause_offsets=None):
         self.written.append(data)
 
 
 class TestSendHandler:
     """send 请求回归：修复前 _handle_send_flow 引用未定义局部变量
-    session_id/input_text 抛 NameError，流程直接崩溃"""
+    session_id/input_text 致 NameError，流程直接崩溃"""
 
     def _handle_send(self, handler, msg_dict):
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -803,7 +833,7 @@ class TestSendHandler:
     def test_send_pty_writes_input(self):
         session = _RecordingSession("send-test")
         mgr = _MockManager({"send-test": session})
-        handler = RequestHandler(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
+        handler = DaemonDispatcher(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
         resp = self._handle_send(handler, {
             "type": "send", "id": "send-test", "input": "hello",
             "timeout": 0,
@@ -811,12 +841,13 @@ class TestSendHandler:
         assert resp is not None
         assert resp["commandType"] == "send"
         assert resp["sessionId"] == "send-test"
-        assert session.written == ["hello"]
+        # 转义展开由守护进程完成：pty 模式默认行尾 → \r
+        assert session.written == ["hello\r"]
 
     def test_send_subprocess_writes_input(self):
         session = _RecordingSession("send-sub", mode="subprocess")
         mgr = _MockManager({"send-sub": session})
-        handler = RequestHandler(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
+        handler = DaemonDispatcher(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
         resp = self._handle_send(handler, {
             "type": "send", "id": "send-sub", "input": "world",
             "timeout": 0,
@@ -824,14 +855,50 @@ class TestSendHandler:
         assert resp is not None
         assert resp["commandType"] == "send"
         assert resp["sessionId"] == "send-sub"
-        assert session.written == ["world"]
+        # 转义展开由守护进程完成：subprocess 模式默认行尾 → \n
+        assert session.written == ["world\n"]
+
+    def test_send_json_enter_pty(self):
+        session = _RecordingSession("send-pty")
+        mgr = _MockManager({"send-pty": session})
+        handler = DaemonDispatcher(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
+        resp = self._handle_send(handler, {
+            "type": "send", "id": "send-pty", "input": "{esc}:wq{enter}",
+            "json_escaping": True, "timeout": 0,
+        })
+        assert session.written == ["\x1b:wq\r"]
+
+    def test_send_json_enter_subprocess(self):
+        session = _RecordingSession("send-subb", mode="subprocess")
+        mgr = _MockManager({"send-subb": session})
+        handler = DaemonDispatcher(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
+        resp = self._handle_send(handler, {
+            "type": "send", "id": "send-subb", "input": "name{enter}",
+            "json_escaping": True, "timeout": 0,
+        })
+        # 子进程默认行尾也是 \n：{enter}→\n 与末尾 EOL 同为 \n，不重复追加
+        assert session.written == ["name\n"] or session.written == ["name\n\n"]
 
     def test_send_non_running_returns_error(self):
         session = _RecordingSession("send-dead", running=False)
         mgr = _MockManager({"send-dead": session})
-        handler = RequestHandler(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
+        handler = DaemonDispatcher(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
         resp = self._handle_send(handler, {
             "type": "send", "id": "send-dead", "input": "hello",
         })
         assert resp is not None
         assert "error" in resp["type"] or "ended" in resp["message"]
+
+    def test_send_invalid_escape_returns_error(self):
+        """advsend 遇到不可识别的 {body} 转义序列应返回明确错误而非内部 500"""
+        session = _RecordingSession("send-bad")
+        mgr = _MockManager({"send-bad": session})
+        handler = DaemonDispatcher(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
+        resp = self._handle_send(handler, {
+            "type": "send", "id": "send-bad", "input": "qq={55}",
+            "json_escaping": True, "timeout": 0,
+        })
+        assert resp is not None
+        assert resp.get("type") == "error"
+        assert "转义" in (resp.get("message") or resp.get("error") or "")
+        assert resp.get("commandType") != "send"

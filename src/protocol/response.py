@@ -87,44 +87,6 @@ class Response:
         return result
 
     @staticmethod
-    def session_program(
-        raw_start_command,
-        start_time: str,
-        now_time: str,
-        running: bool,
-        pty_type: str,
-        exit_code=None,
-        error_message=None,
-        debug_information=None,
-    ) -> dict:
-        """构造 program 子对象
-
-        Args:
-            raw_start_command: 原始启动命令。
-            start_time:        ISO 格式启动时间。
-            now_time:          ISO 格式当前时间。
-            running:           是否正在运行。
-            pty_type:          PTY 后端类型。
-            exit_code:         退出码（条件字段）。
-            error_message:     错误消息（条件字段）。
-            debug_information: 调试信息子对象（条件字段）。
-        """
-        program = {
-            "rawStartCommand": raw_start_command,
-            "startTime": start_time,
-            "nowTime": now_time,
-            "running": running,
-            "ptyType": pty_type,
-        }
-        if exit_code is not None:
-            program["exitCode"] = exit_code
-        if error_message is not None:
-            program["errorMessage"] = error_message
-        if debug_information:
-            program["debugInformation"] = debug_information
-        return program
-
-    @staticmethod
     def debug_information(
         processes=None,
         gui_windows=None,
@@ -232,10 +194,6 @@ class Response:
         return {"type": "history_list", "sessions": sessions}
 
     @staticmethod
-    def ws_history_detail(session_id: str, **fields) -> dict:
-        return {"type": "history_detail", "id": session_id, **fields}
-
-    @staticmethod
     def ws_subscribed(session_id: str, **fields) -> dict:
         return {"type": "subscribed", "sessionId": session_id, **fields}
 
@@ -269,19 +227,6 @@ class Response:
     @staticmethod
     def ws_history_deleted(session_id: str) -> dict:
         return {"type": "history_deleted", "sessionId": session_id}
-
-    @staticmethod
-    def ws_session_detail(session_id: str, source: str, **fields) -> dict:
-        return {"type": "session_detail", "id": session_id, "source": source, **fields}
-
-    @staticmethod
-    def ws_session_detail_refresh(session_id: str, tab: str, **fields) -> dict:
-        return {
-            "type": "session_detail_refresh",
-            "id": session_id,
-            "tab": tab,
-            **fields,
-        }
 
     # ════════════════════════════════════════════════════════════
     #  WebSocket 响应 — VNC 远程桌面

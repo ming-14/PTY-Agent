@@ -168,7 +168,7 @@ graph TB
 | `signing.py` | `MessageSigner`（ABC） | 消息签名器抽象接口：`sign(obj)` / `verify_and_strip(msg)` / `signature_fields`（协议域定义，auth 包实现） |
 | `ansi.py` | `strip_ansi(text)` → `str` | 去除 ANSI 颜色/样式码，保留清屏/光标等控制序列 |
 | `ansi.py` | `_ANSI_RE` | 匹配 CSI SGR + OSC 的正则（光标/清屏不匹配） |
-| `response.py` | `Response` 类 | 统一响应构造器（CLI/TCP/WS 共用）：`error` / `warning` / `info` / `pong` / `config`、TCP `command_result` / `session_program` / `debug_information` / 各 `*_result`、WS `ws_*` 系列 |
+| `response.py` | `Response` 类 | 统一响应构造器（CLI/TCP/WS 共用）：`error` / `warning` / `info` / `pong` / `config`、TCP `command_result` / `debug_information` / 各 `*_result`、WS `ws_*` 系列 |
 
 **设计要点**：
 - `Message` 维持静态类设计（无状态），所有方法为 `@staticmethod`
@@ -217,9 +217,9 @@ graph TB
 | `config_manager.py` | `ConfigManager` 类 | 客户端配置管理器，支持 `--default` 临时覆盖默认值（按 session 持久化到守护进程侧） |
 | `config_manager.py` | `ConfigManager.get()` / `set()` / `show()` | 读取/设置/展示配置 |
 | `config_manager.py` | `parse_terminal_size(size_str)` | 解析终端尺寸字符串（如 "80x24"） |
-| `input.py` | `process_input(text)` → `str` | 完整 JSON 反转移 + 控制字符展开 + 自动追加换行（用于 send 命令） |
+| `input.py` | `process_input(text, json_escaping, send_eol, enter_eol)` → tuple | 完整 JSON 反转移 + 控制字符展开 + 自动追加行尾符；**转义展开由守护进程统一调用**，`{enter}` 与默认行尾按会话模式决定（pty=`\r`、subprocess=`\n`） |
 | `input.py` | `unescape_json_string(text)` → `str` | 仅解码 `\"` 和 `\\`（用于 exec 命令，避免误转义 Windows 路径） |
-| `input.py` | `expand_control_characters(text)` | 展开 `\n`/`\r`/`\t` 等控制字符转义 |
+| `input.py` | `expand_control_characters(text)` / `expand_control_characters_full(text, enter_eol)` | 展开 `\n`/`\r`/`\t`、`{ctrl+a}`、`{enter}` 等控制字符转义（`{enter}` 展开值由 enter_eol 决定） |
 | `input.py` | `safe_print(text, **kwargs)` | 安全打印（自适应控制台编码，GBK 终端强制 UTF-8 输出） |
 | `cli_plugins.py` | `CliPluginHost` | CLI 插件宿主：加载 kind=cli 插件，执行 before_request/transform_response/render_response 三阶段钩子链；经 exec `--plugin` 或会话挂载列表 activate 后自动派发钩子 |
 
@@ -269,7 +269,7 @@ graph TB
 | `handlers/wait_handler.py` | `WaitHandler` | wait 命令处理（恒等待指定秒数） |
 | `handlers/plugin_handler.py` | `PluginHandler` | plugin 命令处理（list/ls/attach/detach/cmd：插件列表、会话挂载插件、动态挂载/卸载、插件自定义命令） |
 | `handlers/workflow_handler.py` | `WorkflowHandler` | workflow 命令处理（run/list/show/cancel；定义解析校验 + WorkflowManager 委托） |
-| `handlers/utils.py` | 处理器工具函数 | `compress_screen_buffer` / `map_reason` / `filter_snapshot_lines` / `build_hint` / `validate_field` / `attach_screen_buffer` / `build_result` / `apply_lines_grep` / `apply_client_defaults` / `format_iso_ms` / `get_session_cwd` / `check_ended_session` 等（含 Git-Bash 路径提示） |
+| `handlers/utils.py` | 处理器工具函数 | `compress_screen_buffer` / `map_reason` / `filter_snapshot_lines` / `build_hint` / `validate_field` / `attach_screen_buffer` / `build_result` / `apply_lines_grep` / `apply_client_defaults` / `format_iso_ms` / `check_ended_session` 等（含 Git-Bash 路径提示） |
 | `execution.py` | 执行原语 | `_run_snapshot_flow` / `_run_subprocess_trigger_flow` / `_run_subprocess_no_trigger_flow` / `_attach_subprocess_stderr` — exec/send/read 核心执行流程（支持 `send_response=False` 返回与 `cancel_event` 中断），由 exec/send/read handler 与 workflow 引擎共用，避免行为分叉 |
 
 **设计要点**：
@@ -315,7 +315,7 @@ graph TB
 | 模块 | 类/函数 | 职责 |
 |------|---------|------|
 | `manager.py` | `SessionManager` | `create_session(id, command, encoding, cwd, env, cols, rows, plugins, mode)` / `get_session()` / `list_sessions()` / `remove_session()` / `stop_all()`；构造注入 `history_store`（历史归档）与 `plugin_registry`（插件系统），含 `set_on_session_created/removed` 回调与 `match_auto_load()` |
-| `session/session.py` | `Session` 基类（协调器） | 属性：`id`, `uid`, `command`, `running`, `mode`(pty/subprocess), `exit_code`, `error_message`, `encoding`, `pty_type`, `output_offset`, `err_output_offset`, `gui_windows`, `processes`, `cwd`, `start_time`, `tracker`, `plugin_host`；`__init__` 装配全部子组件（按 mode 分支：subprocess 用双缓冲 `_out_buf`/`_err_buf`、无 `_screen`/`_input_encoder`）；`start()`/`stop()` 生命周期 |
+| `session/session.py` | `Session` 基类（协调器） | 属性：`id`, `uid`, `command`, `running`, `mode`(pty/subprocess), `exit_code`, `error_message`, `encoding`, `pty_type`, `output_offset`, `gui_windows`, `processes`, `cwd`, `start_time`, `tracker`, `plugin_host`；`__init__` 装配全部子组件（按 mode 分支：subprocess 用双缓冲 `_out_buf`/`_err_buf`、无 `_screen`/`_input_encoder`）；`start()`/`stop()` 生命周期 |
 | `session/session.py` | `Session.start()` / `stop()` | 创建 PTY（含 tracker 登记）+ 启动读者/监控线程 + 组件重置 / 优雅关闭（kill_tree → pty.close → tracker.close） |
 | `session/session.py` | `Session.close_window()` / `get_pty_process_list()` / `get_pty_child_pid()` | 关闭 GUI 窗口（经 tracker.close_gui_window）/ 查询 PTY 进程列表 / 子进程 PID |
 | `session/io.py` | `InputMixin`：`write_input()` / `_dispatch_input()` / `key_input()` / `key_up()` / `mouse_input()` / `send_signal()` / `perform_mouse_action()` | 输入写入（经 InputInterceptor 拦截 + 插件 on_input 链）/ 模式感知键盘/鼠标事件编码（WeztermInputEncoder）后写 PTY / 信号（Windows 走 `_win_console.send_ctrl_c`）/ 鼠标动作执行 |
@@ -602,7 +602,7 @@ class TerminalScreen:
 | `export_buffer() → dict` | 导出稀疏字符网格（仅非默认单元格，含列号 `c` 字段） |
 | `diagnostics() → dict` | 返回诊断信息（wezterm 可用性、feed 计数、display 行数等，用于调试空快照） |
 | `resize(cols, rows)` | 调整终端尺寸（wezterm-term 原生 reflow） |
-| `reset()` / `resize_and_reset()` | 重置屏幕状态 / 原子 resize+reset |
+| `reset()` | 重置屏幕状态 |
 | `capture_scrollback(keep_ansi=False) → str` | 捕获 scrollback 历史区（keep_ansi=True 为带 SGR 的 ANSI 字符串；False 为纯文本，行间 `\n`） |
 | `clear_scrollback()` | 清除 scrollback |
 | `drain_terminal_response() → bytes` | 取走终端模型生成的应答字节（reader 循环回写 PTY 输入管道） |
@@ -1106,16 +1106,21 @@ transport.print_response(resp)（经 result.from_response + presenter 渲染）
 #### send 流程
 
 ```
-用户: pty-agent send myid -i "print('hello')" -t ">>>"
+用户: pty-agent advsend myid -i "print('hello'){enter}"
 
-cli/main.py → SendCommand.run → Client.cmd_send(...)
-  → process_input("print('hello')")  → "print('hello')\n"
-  → _send_recv({"type":"send", "id":"myid", "input":"print('hello')\n", ...})
+cli/main.py → AdvSendCommand.run → Client.cmd_send(...)
+  → _send_recv({"type":"send", "id":"myid", "input":"print('hello'){enter}",
+                "json_escaping":true, "send_eol":None, ...})
+        # CLI 不再本地展开；输入文本与转义开关透传给守护进程
 
 daemon/handlers/send_handler.py:SendHandler.handle()
   → manager.get_session("myid")
-  → session.write_input("print('hello')\n")
-      → self._pty.write(data)  [写入 PTY 主端]
+  → prepare_input(session.mode, input, json_escaping=true, send_eol=None)
+      # 转义展开的守护进程侧权威落点：按会话模式决定
+      #   {enter} → pty: \r / subprocess: \n
+      #   默认行尾 → pty: \r / subprocess: \n（"print('hello'){enter}" 已含行尾，不重复追加）
+  → session.write_input(expanded, pause_offsets=[...])
+      → self._pty.write(data)  [写入 PTY 主端 / 子进程 stdin]
   → session.set_trigger(">>>")
   → matched, reason = session.wait_for_trigger(timeout)
   → output = session.get_output(from_offset=trigger_offset)
@@ -1417,8 +1422,8 @@ wait_for_trigger 轮询循环（0.1s 间隔）
 
 ## 附录 A 增补：线协议信封与分组载荷（重构后）
 
-> daemon↔CLI 的 JSON 线协议已升级为「信封 + 分组载荷」，详见
-> [PROTOCOL-REDESIGN-PLAN.md](PROTOCOL-REDESIGN-PLAN.md) 与实现 `protocol/envelope.py`。
+> daemon↔CLI 的 JSON 线协议已升级为「信封 + 分组载荷」，
+> 实现见 `protocol/envelope.py`。
 
 **信封字段**：`proto`（版本）、`dir`（request/response）、`type`（命令/事件）、`mid`（消息关联 id）、
 `ts`（时间戳）、`kind`（呈现意图）、`auth`（凭证/签名）、`payload`（业务载荷）、`error`（统一错误，可选）。

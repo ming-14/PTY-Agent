@@ -34,9 +34,6 @@ _logger = get_logger("pty-auth")
 # OpenSSH 公钥指纹前缀，与 ssh-keygen -lf 一致
 _FINGERPRINT_PREFIX = "SHA256:"
 
-# 公钥算法标识（预留扩展，当前仅 ed25519）
-ALGORITHM_ED25519 = "ed25519"
-
 # OpenSSH 公钥行类型前缀
 _SSH_KEY_TYPE_ED25519 = "ssh-ed25519"
 

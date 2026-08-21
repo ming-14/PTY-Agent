@@ -8,6 +8,7 @@ import threading
 import pytest
 
 from src.output.events import PendingEvent, _events_to_dicts
+from src.protocol.reasons import Reason
 
 
 class TestPendingEvent:
@@ -87,6 +88,9 @@ class _MockTracker:
 
     def get_work_process_list(self):
         return list(self._pids)
+
+    def is_host_process(self, pid):
+        return False
 
     def get_process_exit_code(self, pid):
         return None
@@ -275,30 +279,40 @@ class TestSessionEvents:
         assert [e["type"] for e in all1] == [e["type"] for e in all2]
 
     def test_crash_event_flag_on_crash(self, session):
-        """测试检测到崩溃时 crash_event 被设置"""
+        """测试检测到崩溃时 crash_event 被设置且 wait 返回 crashed"""
 
         assert not session.process_monitor.crash_event.is_set()
+
+        # 模拟真实崩溃：事件历史存在 process_crash（_is_real_crash 权威依据）
+        session.event_history.add_event(PendingEvent(
+            timestamp=time.time(), type="process_crash", pid=100, info="boom", detail={"exitCode": 1},
+        ))
 
         # 模拟 crash 检测逻辑：设置 crash_event
         session.process_monitor.crash_event.set()
         assert session.process_monitor.crash_event.is_set()
 
-        # wait_for_trigger 应返回 "crashed"
+        # wait_for_trigger 应返回 Reason.CRASHED
         matched, reason = session.wait_for_trigger(timeout=0.1)
-        assert reason in ("crashed",)
+        assert reason == Reason.CRASHED
 
     def test_wait_for_trigger_returns_crashed(self, session, monkeypatch):
-        """验证 wait_for_trigger 在崩溃时返回 reason=crashed"""
+        """验证 wait_for_trigger 在真实崩溃时返回 reason=Reason.CRASHED"""
 
         # 确保没有其他事件干扰
         session.trigger_matcher.event.clear()
         session.process_monitor.crash_event.clear()
 
-        # 手动触发 crash 事件
+        # 真实崩溃依据：事件历史存在 process_crash 事件
+        session.event_history.add_event(PendingEvent(
+            timestamp=time.time(), type="process_crash", pid=100, info="boom", detail={"exitCode": 1},
+        ))
+
+        # 手动触发 crash 事件（模拟监控线程检测到崩溃）
         session.process_monitor.crash_event.set()
 
         matched, reason = session.wait_for_trigger(timeout=5.0)
-        assert reason == "crashed"
+        assert reason == Reason.CRASHED
         assert matched is False
 
     def test_crash_event_cleared_on_start(self, session):

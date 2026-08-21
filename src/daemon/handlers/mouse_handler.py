@@ -2,16 +2,20 @@ import time
 from typing import Optional
 
 from ...protocol.message import Message
+from ...protocol.reasons import Reason
 from ...protocol.response import Response
 from .base import DaemonHandler, HandlerContext
 from .exec_handler import _run_snapshot_flow
-from .utils import (
-    apply_client_defaults,
+from ..filtering import strip_if_needed
+from ..response import (
     attach_screen_buffer,
     build_result,
-    check_ended_session,
+    describe_output_format,
     format_iso_ms,
-    strip_if_needed,
+)
+from .utils import (
+    apply_client_defaults,
+    check_ended_session,
     validate_request,
     validate_trigger_regex,
 )
@@ -100,37 +104,32 @@ class MouseHandler(DaemonHandler):
                     error=error,
                     matches=matches,
                     output="",
-                    reason="ok",
-                    has_trigger=False,
-                    hint=error or ("grep completed" if matches else "No match found"),
+                    reason=Reason.OK,
                 )
                 return
             # pty 恒为快照
             output = session.get_snapshot(keep_ansi=cond.keep_ansi)
             if not cond.keep_ansi:
                 output = strip_if_needed(output, msg)
-            stderr_output = ""
             resp_extra = {"performed": False}
             result_obj = build_result(
                 ctx.manager,
                 session_id,
                 output,
                 False,
-                "ok",
+                Reason.OK,
                 consume_events=True,
-                has_trigger=False,
                 result_type="mouse",
                 session=session,
                 t_start=req.t_start,
             )
             result_obj.update(resp_extra)
+            result_obj["format"] = describe_output_format(msg)
+            # 供呈现层重建命中列表前缀与"未执行"消息判定
+            result_obj["action"] = msg.get("action")
+            result_obj["grep"] = msg.get("grep")
             if matches is not None:
                 result_obj["matches"] = matches
-                # 多匹配未执行：hint 必须与 performed:false 一致，覆盖成功文案
-                result_obj["hint"] = (
-                    "Multiple matches found; please specify coordinates "
-                    "or a more specific pattern"
-                )
             if error:
                 result_obj["message"] = error
             attach_screen_buffer(result_obj, session, msg)
@@ -147,9 +146,8 @@ class MouseHandler(DaemonHandler):
                 session_id,
                 msg,
                 performed=True,
-                hint=f"Cursor at col={cursor['col']} row={cursor['row']}"
-                if cursor
-                else "Cursor location unavailable",
+                # 光标定位结果是正文（cursor 字段），不走 hint/hit 前缀
+                hint="" if cursor else "Cursor location unavailable",
                 cursor=cursor,
             )
             return
@@ -170,8 +168,7 @@ def _send_mouse_response(
     matches: Optional[list] = None,
     output: Optional[str] = None,
     matched: bool = False,
-    reason: str = "ok",
-    has_trigger: bool = False,
+    reason: Reason = Reason.OK,
     warning: Optional[str] = None,
     hint: Optional[str] = None,
     cursor: Optional[dict] = None,
@@ -188,7 +185,6 @@ def _send_mouse_response(
             matched,
             reason,
             consume_events=True,
-            has_trigger=has_trigger,
             result_type="mouse",
             warning=warning,
             session=session,
@@ -199,9 +195,16 @@ def _send_mouse_response(
             "commandType": "mouse",
             "sessionId": session_id,
             "performed": performed,
+            "triggerReturnReason": reason,
+            "format": describe_output_format(msg),
         }
 
     resp["performed"] = performed
+    if resp.get("format") is None:
+        resp["format"] = describe_output_format(msg)
+    # 供呈现层重建命中列表前缀与"未执行"消息判定
+    resp["action"] = msg.get("action")
+    resp["grep"] = msg.get("grep")
     if matches is not None:
         resp["matches"] = matches
     if cursor is not None:
@@ -217,6 +220,7 @@ def _send_mouse_response(
     program["nowTime"] = format_iso_ms(time.time())
     program["running"] = running
     program["ptyType"] = session.pty_type if session else "none"
+    program["mode"] = getattr(session, "mode", "pty") if session else "pty"
     if exit_code is not None:
         program["exitCode"] = exit_code
     if error_message is not None:
@@ -224,16 +228,8 @@ def _send_mouse_response(
     resp["program"] = program
 
     if hint is not None:
+        # 显式 hint 仅在需要透传补充信息时提供（如光标不可用），
+        # 其余成功/失败/多匹配文案由呈现层按 performed/matches/error 数据重建
         resp["hint"] = hint
-    elif performed:
-        resp["hint"] = "Mouse action performed successfully"
-    elif matches and not performed:
-        resp["hint"] = (
-            "Multiple matches found; please specify coordinates or a more specific pattern"
-        )
-    elif error:
-        resp["hint"] = error
-    else:
-        resp["hint"] = "Mouse action failed"
 
     Message.send(conn, resp)

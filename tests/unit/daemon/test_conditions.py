@@ -1,6 +1,7 @@
 """daemon/conditions.py 返回条件统一声明 单元测试"""
 
-from src.daemon.conditions import Reason, RequestContext, ReturnConditions
+from src.daemon.conditions import RequestContext, ReturnConditions
+from src.protocol.reasons import Reason
 
 
 class TestReturnConditions:

@@ -1,9 +1,9 @@
 """TCP 监听器 — 封装单端口的 accept 循环
 
 每个 Listener 负责一个 (host, port, transport, auth_context) 组合。
-TCP/TLS 传输层在此封装，accept 后派发给 RequestHandler。
+TCP/TLS 传输层在此封装，accept 后派发给 DaemonDispatcher。
 
-依赖规则：框架层对象，依赖 AuthContext（框架层）和 RequestHandler（接口适配器层）。
+依赖规则：框架层对象，依赖 AuthContext（框架层）和 DaemonDispatcher（处理入口）。
 """
 
 import socket
@@ -22,7 +22,7 @@ class Listener:
     """TCP 监听器 — 封装单端口的 accept 循环
 
     每个 Listener 负责一个 (host, port, transport, auth_context) 组合。
-    TCP/TLS 传输层在此封装，accept 后派发给 RequestHandler。
+    TCP/TLS 传输层在此封装，accept 后派发给 DaemonDispatcher。
 
     生命周期：
         1. bind()  — 创建 socket 并绑定端口（检测端口冲突），返回实际端口
@@ -83,7 +83,7 @@ class Listener:
         """开始监听并启动 accept 线程
 
         Args:
-            handler_factory: 接收 AuthContext，返回 RequestHandler 实例。
+            handler_factory: 接收 AuthContext，返回 DaemonDispatcher 实例。
                              在此调用一次，之后所有连接复用同一 handler。
         """
         self._sock.listen(SOCKET_LISTEN_BACKLOG)

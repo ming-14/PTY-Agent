@@ -108,6 +108,14 @@ class ProcessTreeTracker(ABC):
     def register_host_pid(self, pid: int):
         """登记宿主进程（如 OpenConsole），默认空实现（无宿主概念的平台忽略）。"""
 
+    def is_host_process(self, pid: int) -> bool:
+        """pid 是否为已登记的宿主进程（如 ConPTY 宿主 OpenConsole）
+
+        宿主进程不视为工作进程，其退出/崩溃不影响程序结果判定，
+        上层（ProcessMonitor）据此过滤事件；无宿主概念的平台恒 False。
+        """
+        return False
+
     def get_process_count(self) -> int:
         """获取进程树内当前进程数"""
         return len(self.get_process_list())

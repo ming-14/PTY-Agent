@@ -1,9 +1,5 @@
-# 守护进程配置 —— 仅 Daemon 进程使用的常量
-# 消费方：src/config/daemon.py
-# 协议/IPC/daemon 控制等跨侧共享常量在 shared.toml；本文件管控监听器与认证参数
+# 守护进程配置 —— 监听器与认证参数（协议/IPC/daemon 控制等跨侧共享常量见 shared.toml）
 
-# 单实例互斥锁开关（默认 true）；false 时仅 basic/tls 监听器场景生效
-# （token 监听器启用时 CLI 依赖互斥锁做发现，强制保留锁），允许多实例并存
 SINGLE_INSTANCE = true
 
 [listener]
@@ -39,10 +35,10 @@ JOB_OBJECT_NAME_PREFIX = "Local\\PTYJob_"
 MAX_SESSIONS = 50
 
 [workflow]
-WORKFLOW_MAX_RUNS         = 50
-WORKFLOW_DEFAULT_PARALLEL = 4
+WORKFLOW_MAX_RUNS          = 50
+WORKFLOW_DEFAULT_PARALLEL  = 4
 WORKFLOW_STEP_OUTPUT_LIMIT = 4096
-WORKFLOW_MAX_FILE_SIZE    = 1048576
+WORKFLOW_MAX_FILE_SIZE     = 1048576
 
 [auth]
 # Token 认证（[listener] TOKEN_ENABLED=true 时生效）

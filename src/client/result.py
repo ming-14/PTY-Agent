@@ -68,6 +68,7 @@ class SessionResult(Result):
     hint: str = ""
     terminal_state: Optional[dict] = None
     meta: dict = field(default_factory=dict)  # debug/sessionDefaults 等
+    matches: list = field(default_factory=list)  # mouse grep 命中结果（坐标区域）
 
     @property
     def running(self) -> bool:
@@ -273,6 +274,7 @@ def from_response(resp) -> Result:
             hint=resp.get("hint", ""),
             terminal_state=resp.get("terminalState"),
             meta=_collect_meta(resp),
+            matches=resp.get("matches", []) or [],
             raw=resp,
         )
     if ct == "list":
@@ -303,8 +305,10 @@ def from_response(resp) -> Result:
 
 
 def _collect_meta(resp: dict) -> dict:
+    # debugInformation 嵌套在 resp["program"] 中，由 presenter 直接从 program 取；
+    # 此处只收集顶层元信息
     meta = {}
-    for key in ("debugInformation", "sessionDefaults", "elapsedMs"):
+    for key in ("sessionDefaults", "format"):
         if resp.get(key) is not None:
             meta[key] = resp[key]
     return meta

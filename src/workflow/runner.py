@@ -129,10 +129,6 @@ class WorkflowRun:
             })
         self._log("步骤 %s 已取消" % step_id)
 
-    def step_status(self, step_id: str) -> str:
-        with self._lock:
-            return self.steps.get(step_id, {}).get("status", STEP_PENDING)
-
     def finish(self, status: str, error: Optional[str] = None):
         """终态写入：running → done/failed/cancelled（幂等）"""
         with self._lock:

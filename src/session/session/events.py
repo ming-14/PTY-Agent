@@ -10,6 +10,7 @@ from typing import List, Optional
 
 from ...output import PendingEvent, _events_to_dicts
 from ...process import _format_exit_code_message
+from ...protocol.reasons import Reason
 from .threads import (
     _capture_exit_code_retry,
     _extract_crash_error_from_output,
@@ -98,14 +99,25 @@ class EventsMixin:
         except Exception:
             return False
 
-    def resolve_exit_reason(self) -> str:
-        """统一"为何返回"的结束原因（"crashed"/"ended"）— 等待循环单一判定点
+    def resolve_exit_reason(self) -> Reason:
+        """统一"为何返回"的结束原因（Reason.CRASHED/Reason.ENDED）— 等待循环单一判定点
 
-        crash 判定以 _is_real_crash 为权威依据，正常完成返回 "ended"。
+        crash 判定以 _is_real_crash 为权威依据，正常完成返回 Reason.ENDED。
         各等待循环（子进程 trigger / pty 快照 / 无 trigger）共用，
-        避免"crashed if real_crash else ended"重复出现。
+        避免重复出现崩溃判定。
+
+        竞态兜底：自然结束时 stop() 在独立线程先把 running 置 False，再同步
+        补齐退出码（_update_exit_info）；等待循环可能在这两步之间读到
+        running=False 而 exit_code 尚为 None，把非零退出的崩溃误判为正常结束。
+        此处若观察到"已结束但退出码未补齐"，先同步补一次再判定，消除竞态。
         """
-        return "crashed" if self._is_real_crash() else "ended"
+        if (
+            getattr(self, "running", True) is False
+            and getattr(self, "exit_code", None) is None
+            and getattr(self, "_pty", None) is not None
+        ):
+            self._update_exit_info()
+        return Reason.CRASHED if self._is_real_crash() else Reason.ENDED
 
     def _update_exit_info(self):
         if not self._pty:

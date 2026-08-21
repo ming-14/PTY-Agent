@@ -3,6 +3,7 @@ import time
 
 from ...output import safe_regex_search
 from ...protocol.message import Message
+from ...protocol.reasons import Reason
 from ...protocol.response import Response
 from ..execution import (
     _run_snapshot_flow,
@@ -11,16 +12,19 @@ from ..execution import (
     assemble_response,
 )
 from .base import DaemonHandler, HandlerContext
-from .utils import (
-    _SESSION_ENDED_HINT,
-    apply_client_defaults,
+from ..filtering import (
     apply_lines_grep,
-    attach_screen_buffer,
     filter_snapshot_lines,
-    format_iso_ms,
-    resolve_output,
     strip_if_needed,
-    validate_offset_policy,
+)
+from ..output_policy import resolve_output, validate_offset_policy
+from ..response import (
+    attach_screen_buffer,
+    describe_output_format,
+    format_iso_ms,
+)
+from .utils import (
+    apply_client_defaults,
     validate_request,
     validate_trigger_regex,
 )
@@ -100,11 +104,11 @@ class ReadHandler(DaemonHandler):
                         output = filter_snapshot_lines(
                             output, msg.get("lines"), msg.get("column"), grep
                         )
-                    trigger_reason = "program_ended"
+                    trigger_reason = Reason.PROGRAM_ENDED
                     if trigger and output:
                         try:
                             if safe_regex_search(re.compile(trigger), output):
-                                trigger_reason = "trigger_matched"
+                                trigger_reason = Reason.TRIGGER_MATCHED
                         except re.error:
                             pass
                     result = {
@@ -119,8 +123,13 @@ class ReadHandler(DaemonHandler):
                             "nowTime": format_iso_ms(time.time()),
                             "running": False,
                             "ptyType": pty_type,
+                            "mode": "subprocess" if pty_type == "subprocess" else "pty",
                         },
-                        "hint": _SESSION_ENDED_HINT,
+                        # 会话结束提示由呈现层按 running/reason 数据重建（见 presenter._session_reason_hint）
+                        "format": describe_output_format(
+                            msg,
+                            is_subprocess=pty_type == "subprocess",
+                        ),
                     }
                     if pty_type == "subprocess" and stderr_text:
                         result["stderrOutput"] = stderr_text
@@ -240,9 +249,8 @@ class ReadHandler(DaemonHandler):
                 msg,
                 output=output,
                 matched=False,
-                reason="ok" if session.running else "ended",
+                reason=Reason.OK if session.running else Reason.ENDED,
                 result_type="read",
-                has_trigger=False,
                 consume_events=False,
                 output_offset=cur_offset,
                 include_debug=_include_debug(session),
@@ -260,21 +268,25 @@ class ReadHandler(DaemonHandler):
             msg,
             output=output,
             matched=False,
-            reason="ok" if session.running else "ended",
+            reason=Reason.OK if session.running else Reason.ENDED,
             result_type="read",
-            has_trigger=False,
             consume_events=False,
             include_debug=_include_debug(session),
             snapshot_diagnostics=True,
         )
 
     def _handle_subprocess_read(self, ctx, conn, session, msg: dict):
-        """子进程模式 read：增量读取 stdout + 附加 stderr
+        """子进程模式 read：增量交付 / 累积查询 + stderr
 
-        支持 --offset / --full / -l / -g / --timeout / --idle-timeout / --trigger。
+        读取策略（L2，见 Session.read_base/advance_stdout_cursor）：
+        - 默认（无返回条件、无查询参数）：对齐 exec/send，等待 1s 后增量交付，推进消费游标。
+        - --offset N：从指定绝对流偏移增量交付，推进消费游标。
+        - --full / -l / --column：累积输出查询，从保留起点读取，**不**推进消费游标。
+        - --trigger/--idle-timeout/--timeout：等待后增量交付（复用 execution 流程）。
+        - --grep：子进程模式不支持（仅终端模式可用），拒绝。
         """
         from ..conditions import RequestContext
-        from .utils import attach_screen_buffer, strip_if_needed
+        from ..filtering import strip_if_needed
 
         req = RequestContext.from_msg(msg)
         cond = req.cond
@@ -282,22 +294,35 @@ class ReadHandler(DaemonHandler):
         grep = req.grep
         offset = req.offset
         encoding = req.encoding
-        trigger = cond.trigger
         has_wait = cond.has_wait
 
-        if not validate_offset_policy(conn, offset, waiting=has_wait):
+        # --grep 仅终端模式可用（grep 基于终端可见屏幕语义；子进程无快照）
+        if grep is not None:
+            Message.send(
+                conn,
+                Response.error("子进程模式不支持 --grep（grep 仅终端模式可用）"),
+            )
+            return
+
+        if not validate_offset_policy(
+            conn,
+            offset,
+            lines=lines_param,
+            full=cond.full,
+            waiting=has_wait,
+        ):
             return
 
         if has_wait:
-            if trigger:
-                trigger_offset = 0 if cond.full else session.output_offset
+            # 等待路径：增量交付（trigger/idle/timeout），消费游标由 execution 流程推进
+            if cond.trigger:
                 result, output = _run_subprocess_trigger_flow(
                     ctx,
                     conn,
                     session,
                     msg,
-                    trigger_offset,
-                    trigger,
+                    session.read_base(cond.full),
+                    cond.trigger,
                     cond.newline,
                     # read 子进程 trigger 语义：fresh 默认 True（对齐 CLI 读取新输出）
                     msg.get("fresh", True),
@@ -313,63 +338,51 @@ class ReadHandler(DaemonHandler):
                     msg,
                     result_type="read",
                     send_response=False,
-                    from_offset=(
-                        0 if cond.full else session.output_offset
-                    ),
                 )
-            output = apply_lines_grep(
-                output, lines_param, grep, conn,
-                column_param=req.column,
-            )
-            if output is None:
-                return
+            # 等待返回的是本次交付增量；-l/--column 应用于该增量
+            if lines_param is not None or req.column is not None:
+                output = apply_lines_grep(
+                    output, lines_param, None, conn, column_param=req.column
+                )
+                if output is None:
+                    return
             result["outputStream"] = output
             attach_screen_buffer(result, session, msg)
             Message.send(conn, result)
             return
 
-        # 非等待：增量读取 stdout
-        if cond.full:
-            read_offset = 0
-        elif offset is not None:
-            read_offset = offset
-        else:
-            read_offset = session.output_offset
-
-        output, cur_offset = session.get_output_with_offset(
-            from_offset=read_offset, encoding=encoding
-        )
-        output = strip_if_needed(output, msg)
-
-        if (
-            read_offset is not None
-            and not lines_param
-            and not grep
-            and req.column is None
-        ):
-            assemble_response(
-                ctx,
-                conn,
-                session,
-                msg,
-                output=output,
-                matched=False,
-                reason="ok" if session.running else "ended",
-                result_type="read",
-                has_trigger=False,
-                consume_events=False,
-                output_offset=cur_offset,
-                include_debug=_include_debug(session),
-                attach_stderr=True,
+        # 非等待：区分"增量消费"与"累积查询"
+        if offset is not None:
+            # 显式 --offset：从指定绝对流偏移增量交付，推进消费游标
+            output, delivered_end = session.get_output_with_offset(
+                from_offset=offset, encoding=encoding
             )
-            return
+            output = strip_if_needed(output, msg)
+            session.advance_stdout_cursor(delivered_end)
+        else:
+            is_query = cond.full or lines_param is not None or req.column is not None
+            if is_query:
+                # 累积输出查询：从保留起点读取，不推进消费游标（--full 倾倒 / -l/--column 取行）
+                base = 0
+            else:
+                # 无参数：对齐 exec/send 的 1s 兜底等待后增量交付（见返回条件表"都不带→1s后返回"）
+                time.sleep(min(cond.timeout, 1.0))
+                base = session.read_base(cond.full)
+            output, delivered_end = session.get_output_with_offset(
+                from_offset=base, encoding=encoding
+            )
+            output = strip_if_needed(output, msg)
+            if not is_query:
+                session.advance_stdout_cursor(delivered_end)
+            # 累积查询仅在参数齐全时应用行/列过滤
+            if lines_param is not None or req.column is not None:
+                filtered = apply_lines_grep(
+                    output, lines_param, None, conn, column_param=req.column
+                )
+                if filtered is None:
+                    return
+                output = filtered
 
-        # 统一过滤：lines/grep/column 复用 apply_lines_grep（原内联第三份复制已去除）
-        output = apply_lines_grep(
-            output, lines_param, grep, conn, column_param=req.column
-        )
-        if output is None:
-            return
         assemble_response(
             ctx,
             conn,
@@ -377,11 +390,10 @@ class ReadHandler(DaemonHandler):
             msg,
             output=output,
             matched=False,
-            reason="ok" if session.running else "ended",
+            reason=Reason.OK if session.running else Reason.ENDED,
             result_type="read",
-            has_trigger=False,
             consume_events=False,
-            output_offset=cur_offset,
+            output_offset=delivered_end,
             include_debug=_include_debug(session),
             attach_stderr=True,
         )

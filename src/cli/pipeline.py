@@ -58,7 +58,7 @@ def apply_config_ops(args, parser) -> Optional[dict]:
 
 
 def resolve_debug_mode(args, config_overrides: dict) -> None:
-    """解析 debug 开关：--debug-output / --default debug，写入 formatter 全局状态（默认关闭）"""
+    """解析 debug 开关：--debug-output / --default debug，写入 presenter 全局状态（默认关闭）"""
     if getattr(args, "debug_output", False):
         if "debug" not in config_overrides:
             config_overrides["debug"] = True

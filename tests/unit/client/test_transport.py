@@ -337,7 +337,7 @@ class TestProcessInput:
         """raw 模式（默认）保留反斜杠"""
         from src.input.text import process_input
 
-        result = process_input("cd C:\\Users")
+        result, _ = process_input("cd C:\\Users")
         assert "C:\\Users" in result
         assert result.endswith("\r")
 
@@ -345,7 +345,7 @@ class TestProcessInput:
         """json_escaping 模式解码转义"""
         from src.input.text import process_input
 
-        result = process_input("line1\\nline2", json_escaping=True)
+        result, _ = process_input("line1\\nline2", json_escaping=True)
         assert result == "line1\nline2\r"
 
 

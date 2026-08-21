@@ -8,6 +8,8 @@
 CLIENT_LOG_LEVEL = "DEBUG"
 
 [loggers]
-# pty-auth：keygen 等本地命令经 src/auth/keys.py 使用 auth 域 logger，
+# pty-auth：keygen 等本地命令经 src/auth/keys.py 使用 auth 域 logger；
+# pty-ipc：client token 模式读 SHM 经 src/ipc/shm.py 使用；
+# pty-auth-tls：client TLS 模式经 src/auth/tls/* 使用。
 # 需在 client 侧注册，否则 get_logger 告警"日志可能丢失"且日志确实不落盘
-CLIENT_LOGGERS = ["pty-client", "pty-daemonctl", "pty-auth"]
+CLIENT_LOGGERS = ["pty-client", "pty-daemonctl", "pty-auth", "pty-ipc", "pty-auth-tls"]

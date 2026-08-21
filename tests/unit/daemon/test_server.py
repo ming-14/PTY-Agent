@@ -38,6 +38,12 @@ def _listener_patches():
 
 
 class TestDaemonServerInit:
+    @pytest.fixture(autouse=True)
+    def _no_history_store(self):
+        """测试默认不创建真实 sqlite 归档（history store 由网关探测注入）"""
+        with patch("src.optional.get_history_store_cls", return_value=None):
+            yield
+
     def test_listeners_config_three_entries(self):
         server = DaemonServer()
         assert set(server.listeners_config) == {"basic", "token", "tls"}
@@ -64,6 +70,18 @@ class TestDaemonServerInit:
         assert server._listeners == []
         assert server._shutdown_event.is_set() is False
         assert server._auth_shm is None
+
+    def test_manager_gets_history_store_injected(self):
+        """daemon 核心创建 history store 并注入 SessionManager（启动期归档立即可用）"""
+        fake = type("FakeHistoryStore", (), {})()
+        with patch("src.optional.get_history_store_cls", return_value=lambda: fake):
+            server = DaemonServer()
+        assert server.manager._history_store is fake
+
+    def test_manager_skips_history_store_when_unavailable(self):
+        """history store 模块不可导入（src/web 被裁剪）时优雅降级为 None"""
+        server = DaemonServer()
+        assert server.manager._history_store is None
 
 
 class TestDaemonServerRun:

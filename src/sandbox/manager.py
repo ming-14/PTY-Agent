@@ -74,8 +74,7 @@ class SandboxSessionManager:
         isolation: Optional[dict] = None,
         log_level: str = "info",
     ):
-        # 浅拷贝隔离策略：本管理器不修改 dict（无 path_rules 等可变字段），
-        # 拷贝仅防止调用方后续改动影响本会话
+        # 浅拷贝隔离策略：本管理器不修改 dict，拷贝仅防止调用方后续改动影响本会话
         self._quota = dict(quota or {})
         self._isolation = dict(isolation or {})
         self._log_level = log_level
