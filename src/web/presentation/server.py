@@ -21,7 +21,6 @@ from ...optional import (
 )
 from ..application.adaptive_lock import AdaptiveLockService
 from ..application.ports import EventPublisher, HistoryRepository, SessionRepository
-from ..history import HistoryStore
 from ..infrastructure import (
     EventPublisherImpl,
     FastAPIWebSocketTransport,
@@ -32,6 +31,7 @@ from ..infrastructure import (
     ThreadExecutorImpl,
     WebSocketConnectionContext,
 )
+from ..infrastructure.repositories.history_store import HistoryStore
 from ..infrastructure.auth import SessionStore
 from .controllers.auth_controller import (
     create_auth_router,

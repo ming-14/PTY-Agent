@@ -6,6 +6,7 @@
 """
 
 import os
+import time
 
 from ...config.common import IS_WINDOWS
 from ._win_console import send_ctrl_c
@@ -13,18 +14,28 @@ from ...logging import get_logger
 
 _logger = get_logger("pty-session")
 
+# 控制序列分段写入的停顿时间。一次性写入的连续字节流会被目标程序
+# 按终端转义序列解析（如 vim 将 `\x1b` + `:` 合并为 Meta 组合键），
+# 段间停顿让程序能判定独立按键（对齐真实按键的间隔节奏）。
+_CONTROL_SEQUENCE_PAUSE_S = 0.05
+
 
 class InputMixin:
     """输入写入与信号（会话组合的输入部分）"""
 
-    def write_input(self, data):
+    def write_input(self, data, pause_offsets=None):
         """写入输入到 PTY / 子进程 stdin
 
         通过 InputInterceptor 拦截 SGR 鼠标序列和键盘 VT 序列后写入（pty 模式）；
         子进程模式无终端拦截，直接写入 stdin。
 
+        pause_offsets: 可选，字符偏移列表。数据按偏移切分为多段依次写入，
+            段间停顿 _CONTROL_SEQUENCE_PAUSE_S，用于展开控制序列后与后续
+            字节分隔，避免被终端误解析为组合键序列。
+
         Args:
             data: 要写入的数据（str 或 bytes）。
+            pause_offsets: 停顿点字符偏移（仅对 str 生效）。
 
         Raises:
             RuntimeError: 会话未运行或写入失败。
@@ -37,17 +48,42 @@ class InputMixin:
                 f"输入数据必须是 str 或 bytes, 收到 {type(data).__name__}",
             )
         _logger.debug(
-            "write_input: sid=%r len=%d data=%r",
+            "write_input: sid=%r len=%d data=%r pause_offsets=%r",
             self.id,
             len(data),
             data[:200] if isinstance(data, str) else data[:200],
+            pause_offsets,
         )
 
+        if isinstance(data, str) and pause_offsets:
+            # 分段写入：控制序列与后续字节间停顿，模拟按键间隔
+            segments = self._split_by_offsets(data, pause_offsets)
+            for idx, seg in enumerate(segments):
+                if idx > 0:
+                    time.sleep(_CONTROL_SEQUENCE_PAUSE_S)
+                self._write_segment(seg)
+            return
+        self._write_segment(data)
+
+    def _split_by_offsets(self, data: str, pause_offsets) -> list:
+        """按字符偏移把输入切分为多个段（偏移越界/乱序自动规整）"""
+        offsets = sorted(int(o) for o in pause_offsets if isinstance(o, (int, float)))
+        segments = []
+        prev = 0
+        for off in offsets:
+            if off <= prev or off >= len(data):
+                continue
+            segments.append(data[prev:off])
+            prev = off
+        segments.append(data[prev:])
+        return segments
+
+    def _write_segment(self, data):
+        """写入单个输入段（拦截器编码 + 插件链分发）"""
         if self._input_interceptor is not None:
             data = self._input_interceptor.intercept(
                 data, self._child_encoding, self.encoding, self.id
             )
-
         if not self._dispatch_input(data):
             _logger.info("write_input: sid=%r 输入被插件拦截", self.id)
 

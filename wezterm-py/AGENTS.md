@@ -1,2 +1,3 @@
 - 独立项目，不受上层项目影响
 - 不要在该项目任何地方提到 PTY-Agent
+- 不要修改原wezterm：wezterm\wezterm-char-props wezterm\wezterm-dynamic wezterm\wezterm-escape-parser wezterm\wezterm-input-types wezterm\wezterm-surface wezterm\Cargo.lock wezterm\Cargo.toml wezterm\LICENSE.md wezterm\bidi wezterm\color-types wezterm\filedescriptor wezterm\pty wezterm\target wezterm\term wezterm\termwiz wezterm\vtparse wezterm\wezterm-blob-leases wezterm\wezterm-cell

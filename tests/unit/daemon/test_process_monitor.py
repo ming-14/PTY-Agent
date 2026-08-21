@@ -15,13 +15,20 @@ from src.output.events import PendingEvent
 class _MockTracker:
     """ProcessTreeTracker 最小 mock"""
 
-    def __init__(self, pids=None, exit_codes=None):
+    def __init__(self, pids=None, exit_codes=None, host_pids=None):
         self._pids = pids or []
         self._exit_codes = exit_codes or {}
+        self._host_pids = set(host_pids or [])
         self._notifications = []
 
     def get_process_list(self):
         return self._pids
+
+    def get_work_process_list(self):
+        return [p for p in self._pids if p not in self._host_pids]
+
+    def is_host_process(self, pid):
+        return pid in self._host_pids
 
     def get_process_exit_code(self, pid):
         return self._exit_codes.get(pid)

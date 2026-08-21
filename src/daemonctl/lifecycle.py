@@ -20,7 +20,8 @@ import sys
 import time
 from typing import Optional
 
-from ..auth.token import HmacMessageSigner
+from ..auth.password import PasswordCredentialProvider
+from ..auth.token import HmacMessageSigner, TokenCredentialProvider
 from ..common.process import pid_exists
 from ..common.shells import format_shell_info
 from ..config.client import (
@@ -48,30 +49,37 @@ from ..config.shared import (
 )
 from ..ipc.shm import (
     cleanup_all_shm,
-    read_auth_token,
     read_hmac_key,
 )
 from ..ipc.single_instance import SingleInstanceLock
+from ..protocol.envelope import unwrap as _env_unwrap
 from ..protocol.message import Message
+from ..client.msg import emit_message
 from ..logging import get_logger
 
 _logger = get_logger("pty-daemonctl")
 
 
 def _safe_print(text: str):
-    """安全打印：始终输出 JSON 格式到 stdout"""
-    try:
-        msg = json.dumps({"type": "info", "message": text}, ensure_ascii=False)
-        sys.stdout.buffer.write(msg.encode("utf-8") + b"\n")
-        sys.stdout.buffer.flush()
-    except Exception:
-        pass
+    """安全打印：状态/提示信息以 ``(PTY-Agent message: ...)`` 纯文本输出到 stderr
+
+    daemonctl 运行在 CLI 进程内，其 stdout 即 CLI 的 stdout——若输出到 stdout
+    会污染命令结果（如 exec 启动 daemon 时 Daemon started/Shells 混入结果流）。
+    统一走 stderr，且使用纯文本非 JSON，避免终端/工具把 JSON 提示误当结构数据。
+    格式复用公共 helper（src/client/msg.emit_message），与 presenter 消息单一实现。
+    """
+    # 剥离消息自身带的前缀（ts = "[pty-agent] ..."），统一由格式器补 "(PTY-Agent message:)" 标识
+    if text.startswith("[pty-agent] "):
+        text = text[len("[pty-agent] "):]
+    emit_message(text)
 
 
 def _print_shell_info():
-    """输出当前环境支持的 shell 列表"""
+    """输出当前环境支持的 shell 列表（无可用 shell 时不打印，避免空提示）"""
     try:
-        _safe_print(f"[pty-agent] {format_shell_info()}")
+        info = format_shell_info()
+        if info:
+            _safe_print(f"[pty-agent] {info}")
     except Exception:
         pass
 
@@ -145,7 +153,7 @@ def _daemon_ready() -> bool:
 
 
 def start_daemon():
-    """启动守护进程（以子进程方式）
+    """启动守护进程（以子进程方式），返回 bool：True=在跑/启动成功，False=启动失败
 
     监听位置完全由 daemon.toml [listener] 段控制，不传参数。
     token 模式启动前经单实例锁做硬性检查；basic/tls 模式不做锁判断
@@ -169,7 +177,6 @@ def start_daemon():
 
     if IS_WINDOWS:
         DETACHED_PROCESS = 0x00000008
-        CREATE_NEW_PROCESS_GROUP = 0x00000200
         CREATE_NO_WINDOW = 0x08000000
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= 0x00000001
@@ -178,9 +185,12 @@ def start_daemon():
             subprocess.Popen(
                 [sys.executable, "-m", "src.daemon"],
                 close_fds=True,
-                creationflags=DETACHED_PROCESS
-                | CREATE_NEW_PROCESS_GROUP
-                | CREATE_NO_WINDOW,
+                # 不能使用 CREATE_NEW_PROCESS_GROUP：该标志使 daemon 成为新进程组组长，
+                # ConPTY 会话子进程会继承该进程组 ID，而 Ctrl+C（CTRL_C_EVENT）不投递给
+                # 以 CREATE_NEW_PROCESS_GROUP 创建的进程组，导致 \x03 输入无法触发 SIGINT。
+                # daemon 自身已安装控制台处理器忽略 CTRL_C_EVENT（见 session._win_console），
+                # 不存在被 Ctrl+C 打断的风险。
+                creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=err_log,
@@ -215,13 +225,14 @@ def start_daemon():
         if _daemon_ready():
             _safe_print("[pty-agent] Daemon started")
             _print_shell_info()
-            return False
+            return True
         time.sleep(DAEMON_START_POLL_INTERVAL)
 
     _safe_print(
         f"[pty-agent] Daemon start failed (timeout), "
         f"端口 {TOKEN_PORT} may be occupied",
     )
+    return False
 
 
 def stop_daemon(force: bool = False):
@@ -285,9 +296,10 @@ def stop_daemon(force: bool = False):
                 break
             time.sleep(PROCESS_EXIT_WAIT_INTERVAL)
 
-    _cleanup_credentials()
-
     if stopped:
+        # 确认 daemon 已停止后才清理凭据 SHM；stop 失败时 daemon 仍存活，
+        # SHM 是后续重试/会话连接的凭据来源，清空会使签名与认证失效
+        _cleanup_credentials()
         _safe_print("[pty-agent] Daemon stopped")
 
 
@@ -335,9 +347,11 @@ def _stop_via_tls(force: bool):
 def _try_stop_via_basic(host: str, port: int, use_shm_credentials: bool) -> bool:
     """通过明文 TCP 连接停止守护进程
 
-    token 模式装配 HMAC 签名器（从 SHM 读取密钥）并携带 token 字段；
+    token 模式装配 HMAC 签名器（从 SHM 读取密钥）并携带 token 凭证；
     basic 模式密码认证时（BASIC_PASSWORD 非空）装配同一密码的 HMAC 签名器
-    并携带 password 字段，空密码时无认证无签名。
+    并携带 password 凭证，空密码时无认证无签名。
+    凭证统一由 CredentialProvider 注入到消息 ``auth`` 段，与 daemon 认证器
+    读取位置（auth.token / auth.password）一致。
     函数返回前恢复原签名器：签名器为线程级隐式全局状态，
     若装配后不恢复会污染调用线程后续所有收发（如测试进程）。
     """
@@ -358,13 +372,18 @@ def _try_stop_via_basic(host: str, port: int, use_shm_credentials: bool) -> bool
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(STOP_TIMEOUT)
         sock.connect((host, port))
-        token_field = read_auth_token() or "" if use_shm_credentials else ""
-        stop_msg = {"type": "stop", "token": token_field}
-        if BASIC_PASSWORD:
-            stop_msg["password"] = BASIC_PASSWORD
+        stop_msg = {"type": "stop"}
+        if use_shm_credentials:
+            TokenCredentialProvider().enrich(stop_msg)
+        elif BASIC_PASSWORD:
+            PasswordCredentialProvider(BASIC_PASSWORD).enrich(stop_msg)
         Message.send(sock, stop_msg)
         resp = Message.recv(sock)
         sock.close()
+        if resp:
+            # daemon 响应统一套信封，commandType 位于 payload 内；
+            # unwrap 对裸响应原样返回，两种形态统一收敛到扁平 body
+            _, resp, _ = _env_unwrap(resp)
         if resp and resp.get("commandType") == "stop" and resp.get("code") == 0:
             return True
         else:
@@ -419,6 +438,10 @@ def _try_stop_via_tls() -> bool:
             Message.set_outbound_signer(prev_out)
         ssl_sock.close()
 
+        if resp:
+            # daemon 响应统一套信封，commandType 位于 payload 内；
+            # unwrap 对裸响应原样返回，两种形态统一收敛到扁平 body
+            _, resp, _ = _env_unwrap(resp)
         if resp and resp.get("commandType") == "stop" and resp.get("code") == 0:
             return True
         else:
@@ -435,11 +458,18 @@ def _force_kill_pid(pid) -> bool:
         return False
     try:
         if IS_WINDOWS:
-            subprocess.run(
-                ["taskkill", "/PID", str(pid), "/F", "/T"],
-                capture_output=True,
-                check=False,
-            )
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/F", "/T"],
+                    capture_output=True,
+                    check=False,
+                    timeout=10.0,
+                )
+            except subprocess.TimeoutExpired:
+                # taskkill 偶发挂起（目标进程树异常时）：直接以系统调用
+                # 终止进程，避免 stop 流程无限阻塞（曾无超时导致 daemon
+                # 停止挂死、测试 teardown 无法执行）
+                os.kill(pid, 9)
         else:
             os.kill(pid, 9)
         _safe_print(f"[pty-agent] Daemon force-killed (PID {pid})")

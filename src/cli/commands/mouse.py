@@ -52,6 +52,18 @@ class MouseCommand(Command):
             choices=[1, 2, 3],
             help="点击次数（默认 1，仅 click 有效）",
         )
+        parser.add_argument(
+            "--direction",
+            default="down",
+            choices=["up", "down"],
+            help="滚动方向（默认 down，仅 scroll 有效）",
+        )
+        parser.add_argument(
+            "--times",
+            type=int,
+            default=1,
+            help="滚动次数（默认 1，仅 scroll 有效）",
+        )
         parser.add_argument("--ctrl", action="store_true", help="按住 Ctrl")
         parser.add_argument("--shift", action="store_true", help="按住 Shift")
         parser.add_argument("--alt", action="store_true", help="按住 Alt")
@@ -76,18 +88,8 @@ class MouseCommand(Command):
         elif args.action == "scroll":
             if not args.grep_pattern and len(mouse_args) < 1:
                 parser.error("scroll requires <coordinates> (e.g. 10,5) or --grep")
-            if len(mouse_args) < 2:
-                parser.error("scroll requires <direction> (up/down)")
-            if mouse_args[1] not in ("up", "down"):
-                parser.error("scroll direction must be up or down")
-            if len(mouse_args) < 3:
-                parser.error("scroll requires <times>")
-            try:
-                times = int(mouse_args[2])
-            except ValueError:
-                parser.error("scroll <times> must be an integer")
-            if times < 1:
-                parser.error("scroll <times> must be >= 1")
+            if args.times < 1:
+                parser.error("scroll --times must be >= 1")
         elif args.action == "drag":
             if not args.grep_pattern and len(mouse_args) < 2:
                 parser.error(
@@ -135,8 +137,8 @@ class MouseCommand(Command):
         elif args.action == "scroll":
             if not args.grep_pattern:
                 action["coords"] = _parse_coords(mouse_args[0])
-            action["direction"] = mouse_args[1]
-            action["times"] = int(mouse_args[2])
+            action["direction"] = args.direction
+            action["times"] = args.times
         elif args.action == "drag":
             if not args.grep_pattern:
                 action["coords"] = _parse_coords(mouse_args[0])

@@ -111,7 +111,12 @@ class Session(
         self._out_buf = OutputBuffer(max_size=MAX_OUTPUT_BUFFER)
         # 子进程模式：stderr 独立缓冲（stdout 用 _out_buf）
         self._err_buf = OutputBuffer(max_size=MAX_OUTPUT_BUFFER) if mode == "subprocess" else None
-        # 子进程模式 stderr 已读偏移（增量消费用；与 stdout 的 --offset 语义一致）
+        # 增量消费游标（绝对流偏移，随 stream_end 单调推进；裁剪后仍有效）：
+        #   _stdout_cursor / _stderr_cursor = 对应流"增量消费者已交付到哪"。
+        # 仅当增量读取完成交付后才推进；查询（-l/--column/--full）与重放不推进。
+        # stderr 一直有此游标（_stderr_read_offset）；stdout 原先缺失，
+        # 用写入末尾当基准导致两次调用间输出被跳过——现补对称游标 _stdout_cursor。
+        self._stdout_cursor = 0
         self._stderr_read_offset = 0
         self._trig_mat = TriggerMatcher(decode_func=self._decode_only_len)
         self._evt_hist = EventHistoryManager()
@@ -458,19 +463,41 @@ class Session(
 
     @property
     def output_offset(self) -> int:
-        return self._out_buf.length
+        """当前 stdout 流末尾的绝对流偏移（单调递增，裁剪后仍有效）
+
+        仅作大小/位置指示（Web/响应 outputOffset 用）；增量读取基准用
+        stdout_read_offset 游标，否则两次调用间写入的输出会被跳过。
+        """
+        return self._out_buf.stream_end
 
     @property
-    def err_output_offset(self) -> int:
-        """stderr 缓冲区字节长度（仅子进程模式）"""
-        return self._err_buf.length if self._err_buf else 0
+    def stdout_read_offset(self) -> int:
+        """stdout 增量消费游标：下次默认增量读取的起点（绝对流偏移）
+
+        镜像 _stderr_read_offset；随增量交付推进，仅在 advance_stdout_cursor 时更新。
+        """
+        return self._stdout_cursor
+
+    def read_base(self, full: bool = False) -> int:
+        """读取策略：增量读取的基准流偏移（满量倾倒用 0，否则用消费游标）"""
+        return 0 if full else self._stdout_cursor
+
+    def advance_stdout_cursor(self, delivered_end: int) -> None:
+        """增量交付后推进 stdout 消费游标到已交付的绝对流末尾"""
+        self._stdout_cursor = max(self._stdout_cursor, delivered_end)
+
+    @property
+    def stdout_lost_bytes(self) -> int:
+        """stdout 上因缓冲溢出头裁剪而在消费游标之前丢失的字节数（>0 表示有丢）"""
+        dropped = self._out_buf.trim_base - self._stdout_cursor
+        return dropped if dropped > 0 else 0
 
     @property
     def stderr_read_offset(self) -> int:
-        """已增量交付的 stderr 字节偏移（仅子进程模式）
+        """已增量交付的 stderr 绝对流偏移（仅子进程模式）
 
         随 read_new_err_output 推进；与 stdout 的 outputOffset 语义一致，
-        表示 read 返回的 stderrOutput 内容在 stderr 缓冲中的结束字节位置。
+        表示 read 返回的 stderrOutput 内容在 stderr 流中的结束位置。
         """
         return self._stderr_read_offset
 
@@ -545,42 +572,32 @@ class Session(
         from_offset: Optional[int] = None,
         encoding: Optional[str] = None,
     ) -> str:
-        """获取 stderr 输出（仅子进程模式；pty 模式返回空）"""
+        """获取 stderr 输出（仅子进程模式；pty 模式返回空）
+
+        from_offset 为绝对流偏移（默认 0 = 保留起点）。
+        """
         if self._err_buf is None:
             return ""
-        data = self._err_buf.get_slice(
-            start=from_offset if from_offset is not None else 0
+        data, _actual, _drop = self._err_buf.read_stream(
+            from_offset if from_offset is not None else 0
         )
         return self._enc.detect_decode(data, encoding)
 
-    def get_err_output_with_offset(
-        self,
-        from_offset: Optional[int] = None,
-        encoding: Optional[str] = None,
-    ) -> tuple:
-        """原子获取 stderr 输出及当前偏移（仅子进程模式）"""
-        if self._err_buf is None:
-            return "", 0
-        data, cur_offset = self._err_buf.get_slice_with_length(
-            start=from_offset if from_offset is not None else 0
-        )
-        return self._enc.detect_decode(data, encoding), cur_offset
-
     def read_new_err_output(self, encoding: Optional[str] = None) -> str:
-        """增量读取 stderr：返回自上次读取以来的新增内容并推进偏移
+        """增量读取 stderr：返回自上次读取以来的新增内容并推进消费游标
 
-        stdout 由调用方传 --offset 增量读取；stderr 无独立 offset 参数，
-        故由会话自身记录已读偏移（_stderr_read_offset），每次 CLI 命令
-        只返回新增 stderr，stderrOutputOffset 反映已读位置。
+        与 stdout 的增量游标同构（镜像关系）：会话自身记录已读流偏移
+        （_stderr_read_offset），每次交付只返回新增，stderrOutputOffset 反映
+        已读位置。使用流偏移读取，头裁剪后游标仍单调有效；游标之前的数据
+        若被裁剪则从保留起点继续（不重复旧内容）。
 
         Returns:
             新增 stderr 文本；无新增或非子进程模式返回空串。
         """
         if self._err_buf is None:
             return ""
-        start = self._stderr_read_offset
-        data, cur_offset = self._err_buf.get_slice_with_length(start=start)
-        self._stderr_read_offset = cur_offset
+        data, _actual, _drop = self._err_buf.read_stream(self._stderr_read_offset)
+        self._stderr_read_offset = self._err_buf.stream_end
         return self._enc.detect_decode(data, encoding)
 
     # ════════════════════════════════════════════════════════════

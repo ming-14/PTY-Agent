@@ -29,9 +29,12 @@ class OutputMixin:
         from_offset: Optional[int] = None,
         encoding: Optional[str] = None,
     ) -> str:
-        """获取会话输出"""
-        data = self._out_buf.get_slice(
-            start=from_offset if from_offset is not None else 0
+        """获取会话输出（from_offset 为绝对流偏移，默认从保留起点）
+
+        使用流偏移读取，头裁剪不会使请求位置漂移（落后于裁剪点则从保留起点取）。
+        """
+        data, _actual, _drop = self._out_buf.read_stream(
+            from_offset if from_offset is not None else 0
         )
         return self._enc.detect_decode(data, encoding)
 
@@ -40,15 +43,18 @@ class OutputMixin:
         from_offset: Optional[int] = None,
         encoding: Optional[str] = None,
     ) -> tuple:
-        """原子获取会话输出及当前偏移（消除 TOCTOU 竞态）
+        """原子获取会话输出及当前流末尾（消除 TOCTOU 竞态）
+
+        from_offset 为绝对流偏移（默认从保留起点）。返回的是解码后文本与
+        单调流末尾（stream_end），供响应 outputOffset / 游标推进使用。
 
         Returns:
-            (解码后文本, 当前缓冲区字节偏移) 元组。
+            (解码后文本, 当前流末尾绝对偏移) 元组。
         """
-        data, cur_offset = self._out_buf.get_slice_with_length(
-            start=from_offset if from_offset is not None else 0
+        data, _actual, _drop = self._out_buf.read_stream(
+            from_offset if from_offset is not None else 0
         )
-        return self._enc.detect_decode(data, encoding), cur_offset
+        return self._enc.detect_decode(data, encoding), self._out_buf.stream_end
 
     def get_snapshot(self, keep_ansi: bool = False) -> str:
         """获取终端屏幕快照（经插件 on_snapshot 变换链）

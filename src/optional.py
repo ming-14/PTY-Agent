@@ -57,7 +57,16 @@ def get_web_server_cls():
     """返回 WebServer 类；web 不可用返回 None。"""
     if not web_available():
         return None
-    return _probe("src.web.server", "WebServer")
+    return _probe("src.web.presentation.server", "WebServer")
+
+
+def get_history_store_cls():
+    """返回 HistoryStore 类；历史归档模块不可导入时返回 None（归档禁用）
+
+    历史归档属于 daemon 核心能力（会话结束即时归档 + events 回退查询），
+    独立于 web 可用性：仅 src/web 整体被裁剪时返回 None。
+    """
+    return _probe("src.web.infrastructure.repositories.history_store", "HistoryStore")
 
 
 # ────────────────────────────── vnc ──────────────────────────────
@@ -139,6 +148,7 @@ def plugins_available() -> bool:
 __all__ = [
     "cursor_locator_available",
     "get_cursor_locator_adapter_cls",
+    "get_history_store_cls",
     "get_screenshare_adapter_cls",
     "get_vnc_adapter_cls",
     "get_web_server_cls",

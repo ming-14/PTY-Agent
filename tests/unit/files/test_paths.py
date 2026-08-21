@@ -3,7 +3,7 @@
 import os
 import pytest
 
-from src.daemon.handlers.utils import has_git_bash_style_path
+from src.daemon.response import has_git_bash_style_path
 from config.plugins.files.paths import (
     resolve_session_path,
     is_within,

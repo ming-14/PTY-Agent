@@ -3,12 +3,12 @@
 通过伪终端（PTY）与交互式 CLI 程序双向通信。
 守护进程以独立子进程运行，首次执行命令时自动启动。
 
-子命令: start | stop | list | exec | send | read | kill | events | closewin | mouse | keygen
+子命令: start | stop | list | exec | send | advsend | read | kill | events | closewin | mouse | keygen
 """
 
 import sys
 
-from ..client.presenter import error_was_printed, present
+from ..client.presenter import error_seen, present
 from ..client.result import ErrorResult
 from ..client.lifecycle import setup_client_logging
 from ..client.transport import Client
@@ -70,7 +70,7 @@ def main() -> None:
     try:
         registry.dispatch(args, ctx)
         # 业务错误（error 响应）提升为进程退出码 1（缺参/用法错误为 argparse 的 2）
-        if error_was_printed():
+        if error_seen():
             sys.exit(1)
     except KeyboardInterrupt:
         present(ErrorResult(message="Interrupted by user"))

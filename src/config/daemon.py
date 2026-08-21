@@ -1,14 +1,12 @@
 """守护进程配置 —— 仅 Daemon 进程使用的常量
 
-来源: common.toml + daemon/daemon.toml + shared.toml + logging.toml + daemon/logging.toml + daemon/web.toml + 运行时计算属性
+来源: build_config 装配（common.toml + daemon/daemon.toml + shared.toml + logging.toml + daemon/logging.toml + daemon/web.toml）+ 运行时计算属性
 包含共有配置（common）与共享配置（shared）的所有常量，可直接从此模块导入。
 日志跨侧共享配置（格式/归档/异步队列）来自 logging.toml，侧专属（级别/分组）来自 daemon/logging.toml。
 """
 
-import os
-
-from . import common as _common
-from ._loader import flatten, load_toml, merge
+from ._build import build_config
+from ._loader import flatten, load_toml
 
 # web.toml 为可选配置：缺失时视为 web 未启用（ENABLE_WEB=False，其余字段给默认值），
 # 不触发 src/web 及 vnc/screenshare 等可选模块导入，主流程正常运行。
@@ -50,19 +48,11 @@ except FileNotFoundError:
 # 默认值仅兜底：文件已定义的 key 以文件为准，避免与 _WEB_DEFAULTS 在 merge 中同名冲突
 _web = {**_WEB_DEFAULTS, **_web_file}
 
-_all = merge(
-    flatten(load_toml("common.toml")),
+_all = build_config(
     flatten(load_toml("daemon.toml", "daemon")),
-    flatten(load_toml("shared.toml")),
-    flatten(load_toml("logging.toml")),
     flatten(load_toml("logging.toml", "daemon")),
     _web,
 )
-
-_all["IS_WINDOWS"] = _common.IS_WINDOWS
-_all["DATA_DIR"] = _common.DATA_DIR
-_all["PROJECT_ROOT"] = _common.PROJECT_ROOT
-_all["LOG_DIR"] = os.path.join(_common.DATA_DIR, "logs")
 
 globals().update(_all)
 __all__ = list(_all.keys())

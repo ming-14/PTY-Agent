@@ -2,7 +2,7 @@
 from ...protocol.message import Message
 from ...protocol.response import Response
 from .base import DaemonHandler, HandlerContext
-from .utils import _EVENTS_HINT, _EVENTS_NO_ARGS_HINT, _SESSION_ENDED_HINT
+from ..response import _EVENTS_NO_ARGS_HINT, _SESSION_ENDED_HINT
 from ...logging import get_logger
 
 _logger = get_logger("pty-daemon")
@@ -62,14 +62,10 @@ class EventsHandler(DaemonHandler):
             ev.pop("still_active", None)
 
         hint = ""
-        if events:
-            hint = _EVENTS_HINT
+        # 不再输出 "Events are consumed..." 提示（噪声）：事件消费语义由 events
+        # 表格本身体现即可；仅在无过滤时提示用 -l 查看完整历史
         if not has_filter:
-            hint = (
-                (hint + " " + _EVENTS_NO_ARGS_HINT).strip()
-                if hint
-                else _EVENTS_NO_ARGS_HINT
-            )
+            hint = _EVENTS_NO_ARGS_HINT
         if not session.running:
             hint = (
                 (_SESSION_ENDED_HINT + " " + hint).strip()

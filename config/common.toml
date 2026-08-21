@@ -1,5 +1,4 @@
-# 共有配置 —— daemon 与 client 均需使用的常量
-# 消费方：src/config/common.py（两侧合并加载的公共部分）
+# 共有配置 —— Daemon 与 Client 均需使用的常量（终端默认尺寸 / 压缩等级 / 输入限制）
 
 [terminal]
 DEFAULT_COLS = 80

@@ -50,7 +50,8 @@ pip install -r requirements.txt
 | 命令 | 用途 |
 |------|------|
 | `exec <id> -c "<cmd>"` | 启动会话（执行命令） |
-| `send <id> -i "<input>"` | 发送输入到运行中的会话（`-i` 必填） |
+| `send <id> -i "<input>"` | 发送输入到运行中的会话（`-i` 必填；原样发送） |
+| `advsend <id> -i "<input>"` | 同 send，但恒启用 JSON + 控制字符转义解码（`{enter}`/方向键等） |
 | `read <id>` | 读取会话输出 |
 | `list` | 列出所有会话 |
 | `status` | 查看守护进程运行状态 |

@@ -70,7 +70,7 @@ class TestConnectAutoStart:
             return None
 
         with patch("src.daemonctl._find_daemon_port", side_effect=mock_find_port), \
-             patch("src.client.transport.start_daemon", side_effect=mock_start):
+             patch("src.daemonctl.start_daemon", side_effect=mock_start):
             client = Client()
             try:
                 client._connect()
@@ -80,7 +80,7 @@ class TestConnectAutoStart:
 
     def test_exits_when_start_fails(self):
         with patch("src.daemonctl._find_daemon_port", return_value=None), \
-             patch("src.client.transport.start_daemon"):
+             patch("src.daemonctl.start_daemon"):
             client = Client()
             with pytest.raises(SystemExit):
                 client._connect()
@@ -104,7 +104,7 @@ class TestConnectZombieRecovery:
             restarted["called"] = True
 
         with patch("src.daemonctl._find_daemon_port", side_effect=mock_find_port), \
-             patch("src.client.transport.start_daemon", side_effect=mock_start):
+             patch("src.daemonctl.start_daemon", side_effect=mock_start):
             client = Client()
             try:
                 client._connect()
@@ -137,7 +137,7 @@ class TestConnectZombieRecovery:
             return real_port
 
         with patch("src.daemonctl._find_daemon_port", side_effect=mock_find_port), \
-             patch("src.client.transport.start_daemon"):
+             patch("src.daemonctl.start_daemon"):
             client = Client()
             try:
                 sock = client._connect()

@@ -204,7 +204,7 @@ class TestPluginSessionE2E:
             assert snap.endswith("[snap]")
 
             # debugInformation.plugins（build_result 路径）
-            from src.daemon.handlers.utils import build_result
+            from src.daemon.response import build_result
             result = build_result(manager, session.id, "x", True, "matched",
                                   consume_events=False, session=session)
             di = result["program"]["debugInformation"]

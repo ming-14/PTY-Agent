@@ -1,5 +1,4 @@
-# 客户端配置 —— 仅 Client 进程使用的常量
-# 消费方：src/config/client.py
+# 客户端配置 —— 连接方式与认证参数
 
 [connection]
 # 客户端连接方式，三选一，必须与 daemon 侧 [listener] 对应监听器 enabled 匹配

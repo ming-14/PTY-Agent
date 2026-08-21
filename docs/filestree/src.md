@@ -21,7 +21,7 @@ src/
 │       ├── status.py        # status 命令
 │       ├── list_.py         # list 命令
 │       ├── exec.py          # exec 命令（-c 必填校验 / idle 警告）
-│       ├── send.py          # send 命令（idle 警告）
+│       ├── send.py          # send / advsend 命令（共用实现，idle 警告）
 │       ├── read.py          # read 命令（--offset 与 --full 冲突检测）
 │       ├── kill.py          # kill 命令
 │       ├── events.py        # events 命令（时间补全 _maybe_expand_time）

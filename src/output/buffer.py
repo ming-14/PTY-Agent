@@ -38,6 +38,9 @@ class OutputBuffer:
         self._dropped_bytes = 0
         # 头部裁剪代次：溢出裁剪时递增，供 TriggerMatcher 滚动缓存失效判定
         self._trim_gen = 0
+        # 头部已裁剪的绝对流偏移：裁剪时递增，供"绝对流偏移"读取映射/丢失检测。
+        # 使增量游标在裁剪后仍单调有效（否则绝对字节偏移随头部 del 左移而失效）。
+        self._trim_base = 0
 
     @property
     def dropped_bytes(self) -> int:
@@ -49,6 +52,42 @@ class OutputBuffer:
         """头部裁剪代次（每次溢出裁剪递增；触发滚动缓存据此失效）"""
         with self._lock:
             return self._trim_gen
+
+    @property
+    def trim_base(self) -> int:
+        """头部已裁剪的绝对流偏移（从流开始计的保留数据起点）
+
+        单调递增（写入永不消失，仅裁剪最旧字节）。绝对流偏移 = trim_base + 物理下标。
+        """
+        with self._lock:
+            return self._trim_base
+
+    @property
+    def stream_end(self) -> int:
+        """当前流末尾的绝对流偏移（单调递增，不受头部裁剪影响）"""
+        with self._lock:
+            return self._trim_base + len(self._buffer)
+
+    def read_stream(self, stream_start: int) -> tuple:
+        """按绝对流偏移读取保留输出（增量/查询的基础读取）
+
+        Args:
+            stream_start: 起始绝对流偏移（负值按 0 处理）。
+
+        Returns:
+            (bytes, actual_start, dropped_before)：
+            - bytes: 自 actual_start 起的保留数据；actual_start 之前的数据已被裁剪。
+            - actual_start: 实际生效的起始流偏移（= max(stream_start, trim_base)）。
+            - dropped_before: stream_start 落在 trim_base 之前（请求起点数据已丢）为 True。
+        """
+        with self._lock:
+            start = max(stream_start, 0)
+            actual_start = start if start >= self._trim_base else self._trim_base
+            dropped_before = start < self._trim_base
+            rel = actual_start - self._trim_base
+            if rel >= len(self._buffer):
+                return b"", actual_start, dropped_before
+            return bytes(memoryview(self._buffer)[rel:]), actual_start, dropped_before
 
     def append(self, data: bytes) -> bool:
         """追加数据到缓冲区尾部
@@ -69,6 +108,7 @@ class OutputBuffer:
                 del self._buffer[:drop]
                 self._dropped_bytes += drop
                 self._trim_gen += 1
+                self._trim_base += drop
                 self._read_cycle += 1
                 self._first_output_event.set()
                 _logger.warning(

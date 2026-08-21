@@ -10,6 +10,8 @@ P0-B 完整统一：把 exec 等待循环 / 子进程 wait_for_trigger / 无 tri
 import time
 from typing import Optional
 
+from ..protocol.reasons import Reason
+
 
 class _NoReturn:
     """等待自然结束哨兵：调用方沿用初始 reason（如无 trigger 分支的静默超时）"""
@@ -40,11 +42,11 @@ def wait_reason(
 
     Args:
         deadline: 绝对截止时刻（time.time() 语义）
-        cancel_event: threading.Event；置位时以 (False, "cancelled") 提前返回
+        cancel_event: threading.Event；置位时以 (False, Reason.CANCELLED) 提前返回
         iteration: (remaining: float) -> Optional[(matched, reason)]；一轮完整迭代
             （含条件检查与等待原语），返回非 None 即作为返回原因，None 继续下一轮
         on_timeout: () -> (matched, reason)；到期返回原因。None 默认
-            (False, "timeout")；返回 NO_RETURN 表示自然结束（沿用初始 reason）
+            (False, Reason.TIMEOUT)；返回 NO_RETURN 表示自然结束（沿用初始 reason）
         on_cancel: () -> None；取消时先调用（供调用方打日志），可省略
 
     Returns:
@@ -54,11 +56,11 @@ def wait_reason(
         if cancel_event is not None and cancel_event.is_set():
             if on_cancel is not None:
                 on_cancel()
-            return False, "cancelled"
+            return False, Reason.CANCELLED
         remaining = deadline - time.time()
         if remaining <= 0:
             if on_timeout is None:
-                return False, "timeout"
+                return False, Reason.TIMEOUT
             return on_timeout()
         result = iteration(remaining)
         if result is not None:

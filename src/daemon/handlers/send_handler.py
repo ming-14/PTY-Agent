@@ -102,8 +102,24 @@ class SendHandler(DaemonHandler):
             )
             return
 
+        # 转义展开由守护进程统一完成（按会话模式决定 {enter}/默认行尾符）：
+        # pty={enter}→\r, subprocess={enter}→\n；CLI 只透传原始 input + 转义开关 + 显式 eol
+        from .utils import prepare_input
+
+        # 转义解析失败（如不可识别的 {body} 控制序列）应返回明确错误而非内部 500
         try:
-            session.write_input(input_text)
+            input_text, pause_offsets = prepare_input(
+                session.mode,
+                input_text,
+                json_escaping=req.json_escaping,
+                send_eol=req.send_eol,
+            )
+        except ValueError as e:
+            Message.send(conn, Response.error(str(e)))
+            return
+
+        try:
+            session.write_input(input_text, pause_offsets=pause_offsets)
             _logger.info("会话 '%s' 输入: %s", session_id, repr(input_text[:100]))
         except Exception as e:
             tb = traceback.format_exc()
@@ -120,7 +136,7 @@ class SendHandler(DaemonHandler):
                     conn,
                     session,
                     msg,
-                    0 if cond.full else session.output_offset,
+                    session.read_base(cond.full),
                     trigger,
                     cond.newline,
                     cond.fresh,
@@ -134,7 +150,7 @@ class SendHandler(DaemonHandler):
                     session,
                     msg,
                     result_type="send",
-                    from_offset=0 if cond.full else session.output_offset,
+                    from_offset=session.read_base(cond.full),
                 )
             return
 

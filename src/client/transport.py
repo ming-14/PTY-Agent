@@ -33,7 +33,6 @@ from ..config.client import (
     TOKEN_PORT,
 )
 from ..config.common import IS_WINDOWS
-from ..daemonctl import TLSClient
 from ..ipc.shm import read_hmac_key
 from ..protocol.envelope import request as _env_request, unwrap as _env_unwrap
 from ..protocol.message import Message
@@ -52,12 +51,10 @@ def _decompress_screen_buffer(resp: dict):
         _logger.warning("解压 screenBufferZ 失败: %s", e)
 
 
-from ..daemonctl import start_daemon, stop_daemon
 from .config_manager import _DEFAULTS as _DEFAULTS_MAP
 from .config_manager import ConfigManager
 from .presenter import present as _present
 from .result import from_response
-from ..input.text import process_input
 from ..logging import get_logger
 
 _logger = get_logger("pty-client")
@@ -245,6 +242,8 @@ class Client:
                 print_response(Response.error("daemon not running"))
                 sys.exit(1)
             _logger.info("守护进程未运行，自动启动")
+            from ..daemonctl import start_daemon
+
             start_daemon()
             port = _find_daemon_port()
             if port is None:
@@ -281,6 +280,8 @@ class Client:
                         print_response(Response.error("daemon not running"))
                         sys.exit(1)
                     _logger.info("守护进程已崩溃，自动重启")
+                    from ..daemonctl import start_daemon
+
                     start_daemon()
                     new_port = _find_daemon_port()
                     if new_port is None:
@@ -321,8 +322,10 @@ class Client:
         3. TLSClient 建立 TLS 连接 + TOFU 证书验证
         4. 装配 Ed25519 签名器与凭证提供者
         """
-        # 惰性导入：known_hosts 无 crypto 依赖，但随 tls 分支一并懒加载
+        # 惰性导入：known_hosts 无 crypto 依赖，但随 tls 分支一并懒加载；
+        # TLSClient 延迟导入避免 daemonctl(lifecycle→client.msg) 循环依赖
         from ..auth.tls.known_hosts import KnownHosts
+        from ..daemonctl import TLSClient
 
         known_hosts = KnownHosts(KNOWN_HOSTS_FILE)
         tls_client = TLSClient(TLS_HOST, TLS_PORT, known_hosts, TOFU_STRICT)
@@ -465,6 +468,10 @@ class Client:
         )
         if err:
             print_response(Response.error(err))
+        else:
+            print_response(
+                Response.info(f"Output written to {output_path}")
+            )
 
     def _send_recv(
         self,
@@ -515,16 +522,22 @@ class Client:
 
     def cmd_start(self):
         _logger.info("cmd_start")
-        already_running = start_daemon()
-        if already_running:
-            from ..daemonctl import is_running
+        from ..daemonctl import start_daemon
 
-            if is_running():
-                resp = self._send_recv({"type": "list"}, autostart=False)
-                print_response(resp)
+        started = start_daemon()
+        if not started:
+            print_response(Response.error("failed to start daemon"))
+            sys.exit(1)
+        from ..daemonctl import is_running
+
+        if is_running():
+            resp = self._send_recv({"type": "list"}, autostart=False)
+            print_response(resp)
 
     def cmd_stop(self, force: bool = False):
         _logger.info("cmd_stop force=%s", force)
+        from ..daemonctl import stop_daemon
+
         stop_daemon(force=force)
 
     def cmd_status(self):
@@ -647,6 +660,8 @@ class Client:
             "explicit_timeout": explicit_timeout,
             "mode": mode,
         }
+        if self._config.get("debug"):
+            msg["debug"] = True  # CLI 主动申请返回 debug 信息
         if trigger is not None:
             msg["trigger"] = trigger
         if encoding is not None:
@@ -812,6 +827,8 @@ class Client:
             "timeout": timeout,
             "explicit_timeout": explicit_timeout,
         }
+        if self._config.get("debug"):
+            msg["debug"] = True  # CLI 主动申请返回 debug 信息
         if trigger is not None:
             msg["trigger"] = trigger
             msg["newline"] = newline
@@ -938,34 +955,26 @@ class Client:
             send_eol,
         )
 
-        # send_eol: CLI 传入的是名称（"cr"/"lf"/"crlf"/"none"），转为实际字符
-        send_eol_char = None
-        if send_eol is not None:
-            from .config_manager import _SEND_EOL_MAP
-
-            send_eol_char = _SEND_EOL_MAP.get(send_eol, send_eol)
-
         original_timeout = timeout
-        timeout, keep_ansi, encoding, newline, send_eol_resolved = (
-            self._apply_config_defaults(
-                timeout=timeout,
-                keep_ansi=keep_ansi,
-                encoding=encoding,
-                newline=newline,
-                send_eol=send_eol_char,
-            )
+        timeout, keep_ansi, encoding, newline, _ = self._apply_config_defaults(
+            timeout=timeout,
+            keep_ansi=keep_ansi,
+            encoding=encoding,
+            newline=newline,
         )
         # 仅命令行显式传 --timeout 才进入等待模式；
         # set-default/--default 配置的 timeout 只作为等待时长的取值，
         # 不应把无触发参数的 read/exec/send 变成等待模式
         explicit_timeout = original_timeout is not None
 
-        # 处理输入文本：JSON 转义解码 + 行尾符追加
-        input_processed = process_input(
-            input_text,
-            json_escaping=json_escaping,
-            send_eol=send_eol_resolved,
-        )
+        # 转义展开由守护进程统一完成（按会话模式决定 {enter}/默认行尾符）：
+        # CLI 只透传原始 input + 转义开关 + 显式行尾符；默认行尾由 daemon 决定
+        #（pty→\r，subprocess→\n）。显式行尾符优先级：--send-eol > set-default send-eol。
+        send_eol_name = send_eol  # CLI 显式 --send-eol 名称（"cr"/"lf"/"crlf"/"none"）
+        if send_eol_name is None:
+            cfg_eol = self._config.get("send_eol")
+            if cfg_eol is not None and cfg_eol != _DEFAULTS_MAP.get("send_eol"):
+                send_eol_name = cfg_eol
 
         if response_format is None:
             response_format = self._config.get("response_format") or "stream"
@@ -978,12 +987,16 @@ class Client:
         msg = {
             "type": "send",
             "id": session_id,
-            "input": input_processed,
+            "input": input_text,               # 原始输入，转义展开由守护进程完成
+            "json_escaping": json_escaping,    # 是否展开 JSON + 控制字符转义
+            "send_eol": send_eol_name,         # 显式行尾符；None=daemon 按会话模式默认
             "full": full,
             "keep_ansi": keep_ansi,
             "timeout": timeout,
             "explicit_timeout": explicit_timeout,
         }
+        if self._config.get("debug"):
+            msg["debug"] = True  # CLI 主动申请返回 debug 信息
         if trigger is not None:
             msg["trigger"] = trigger
             msg["newline"] = newline

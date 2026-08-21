@@ -6,6 +6,7 @@
 """
 
 from ...logging import get_logger
+from ...protocol.reasons import Reason
 import threading
 import time
 from typing import Optional
@@ -28,6 +29,7 @@ class TriggerMixin:
         idle_timeout: Optional[float] = None,
         idle_after_first_output: bool = False,
     ):
+        err_buf = getattr(self, "_err_buf", None)
         self._trig_mat.set(
             pattern=pattern,
             newline=newline,
@@ -36,14 +38,23 @@ class TriggerMixin:
             idle_timeout=idle_timeout,
             idle_after_first_output=idle_after_first_output,
             buffer_length=self._out_buf.length,
+            err_buffer=err_buf,
+            err_buffer_length=err_buf.length if err_buf is not None else None,
         )
         if fresh:
             self._trig_mat.fresh_cycle = self._out_buf.read_cycle
+            if err_buf is not None:
+                self._trig_mat.fresh_cycle_err = err_buf.read_cycle
             return
 
         self._trig_mat.newline_count = self._out_buf.count_byte(ord("\n"))
         with self._out_buf.lock:
             self._trig_mat.check(self._out_buf)
+        # 子进程模式双流：stderr 中已就位但早于 set 的内容（如 Python 交互
+        # 提示符/banner）在后续新 chunk 到达前不会被再次扫描，需在此补一次检查
+        if err_buf is not None:
+            with err_buf.lock:
+                self._trig_mat.check(err_buf)
 
     def wait_for_trigger(
         self,
@@ -73,10 +84,10 @@ class TriggerMixin:
         检查顺序与事件等待原语保持原样（行为零变化）。
         """
         if self._trig_mat.matched:
-            return True, "matched"
+            return True, Reason.MATCHED
         if self._proc_mon.crash_event.is_set() and self._is_real_crash():
             self._proc_mon.clear_crash()
-            return False, "crashed"
+            return False, Reason.CRASHED
         if not self.running:
             return False, self.resolve_exit_reason()
         if (
@@ -85,7 +96,7 @@ class TriggerMixin:
             and self._gui.detected_event.is_set()
         ):
             self._gui.detected_event.clear()
-            return False, "gui_detected"
+            return False, Reason.GUI_DETECTED
 
         from ..wait import NO_RETURN, wait_reason
 
@@ -100,7 +111,7 @@ class TriggerMixin:
                     self.id,
                     self._trig_mat.idle_timeout,
                 )
-                return False, "idle_timeout"
+                return False, Reason.IDLE_TIMEOUT
 
             plugin_reason = self.plugin_host.consume_return_request()
             if plugin_reason:
@@ -113,7 +124,7 @@ class TriggerMixin:
 
             if self._proc_mon.crash_event.is_set() and self._is_real_crash():
                 self._proc_mon.clear_crash()
-                return False, "crashed"
+                return False, Reason.CRASHED
 
             self._trig_mat.event.wait(min(0.1, remaining))
             if self._trig_mat.matched:
@@ -122,7 +133,7 @@ class TriggerMixin:
                     self.id,
                     self._trig_mat.pattern,
                 )
-                return True, "matched"
+                return True, Reason.MATCHED
             if not self.running:
                 return False, self.resolve_exit_reason()
 
@@ -130,7 +141,7 @@ class TriggerMixin:
                 _last_gui_check, enabled=gui_short_circuit
             )
             if detected:
-                return False, "gui_detected"
+                return False, Reason.GUI_DETECTED
             return None
 
         def _on_cancel():
@@ -147,7 +158,7 @@ class TriggerMixin:
                 self._trig_mat.pattern,
                 timeout,
             )
-            return False, "timeout"
+            return False, Reason.TIMEOUT
 
         result = wait_reason(
             deadline=deadline,
@@ -157,7 +168,7 @@ class TriggerMixin:
             on_cancel=_on_cancel,
         )
         if result is NO_RETURN:
-            return False, "timeout"
+            return False, Reason.TIMEOUT
         return result
 
     def check_gui_detected(self, last_check_time: float, enabled: bool = True) -> tuple:
@@ -197,13 +208,11 @@ class TriggerMixin:
         pattern: Optional[str] = None,
         idle_timeout: Optional[float] = None,
         idle_after_first_output: bool = False,
-        newline: bool = False,
     ):
         self._trig_mat.set_snapshot_trigger(
             pattern=pattern,
             idle_timeout=idle_timeout,
             idle_after_first_output=idle_after_first_output,
-            newline=newline,
         )
 
     def check_snapshot_trigger(self, snapshot_text: str) -> bool:

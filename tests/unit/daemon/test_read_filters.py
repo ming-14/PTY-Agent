@@ -1,6 +1,6 @@
-"""daemon/handlers/utils.py 过滤工具单元测试 — lines/grep/column 组合语义"""
+"""daemon/filtering.py 过滤工具单元测试 — lines/grep/column 组合语义"""
 
-from src.daemon.handlers.utils import apply_lines_grep, filter_snapshot_lines
+from src.daemon.filtering import apply_lines_grep, filter_snapshot_lines
 
 
 class _NullConn:
@@ -22,12 +22,14 @@ class TestFilterSnapshotLines:
         assert out == "b\nc"
 
     def test_grep(self):
+        # grep 命中行标注行号（0-based，对齐 snapshot-diff）
         out = filter_snapshot_lines("alpha one\nbeta two\nalpha three", None, None, "alpha")
-        assert out == "alpha one\nalpha three"
+        assert out == "0:alpha one\n2:alpha three"
 
     def test_grep_after_lines(self):
+        # -l 先行切片、grep 后过滤，行号保留原输出序号
         out = filter_snapshot_lines("a1\nb2\nc3", 2, None, r"\d")
-        assert out == "b2\nc3"
+        assert out == "1:b2\n2:c3"
 
     def test_column_takes_char(self):
         # 第 N 列 = 行内第 N 个字符（1-based，终端格语义）
@@ -39,10 +41,11 @@ class TestFilterSnapshotLines:
         assert out == "\n"
 
     def test_all_combined(self):
+        # lines → grep → column 依次作用于同一行列表；grep 命中行保留原序号
         out = filter_snapshot_lines(
             "a1 x\nb2 y\nc3 z", 2, column_param=2, grep="^b"
         )
-        assert out == "2"
+        assert out == "1:2"
 
 
 class TestApplyLinesGrep:

@@ -23,10 +23,12 @@ class ExecHandler(DaemonHandler):
             MAX_PATTERN_LEN,
             MAX_SESSION_ID_LEN,
         )
-        from .utils import (
+        from ..response import (
             GIT_BASH_PATH_HINT,
-            check_ended_session,
             has_git_bash_style_path,
+        )
+        from .utils import (
+            check_ended_session,
             validate_request,
             validate_trigger_regex,
         )
@@ -155,9 +157,8 @@ class ExecHandler(DaemonHandler):
                 return
             # 子进程模式：增量输出 + stderr 分离，支持 trigger/read offset
             if trigger:
-                trigger_offset = (
-                    0 if (cond.full or not existing) else session.output_offset
-                )
+                # 增量基准用消费游标（新会话=0，已有会话=上次交付末尾）
+                trigger_offset = session.read_base(cond.full)
                 start_offset = 0 if not existing else None
                 _run_subprocess_trigger_flow(
                     ctx,
@@ -179,9 +180,7 @@ class ExecHandler(DaemonHandler):
                     session,
                     msg,
                     result_type="exec",
-                    from_offset=(
-                        0 if (cond.full or not existing) else session.output_offset
-                    ),
+                    from_offset=session.read_base(cond.full),
                 )
         else:
             # pty 模式恒为屏幕快照，trigger/idle-timeout 由 _run_snapshot_flow 内部处理

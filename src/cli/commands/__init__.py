@@ -13,7 +13,7 @@ from .list_ import ListCommand
 from .mouse import MouseCommand
 from .plugin import PluginCommand
 from .read import ReadCommand
-from .send import SendCommand
+from .send import AdvSendCommand, SendCommand
 from .set_default import SetDefaultCommand
 from .start import StartCommand
 from .status import StatusCommand
@@ -31,6 +31,7 @@ def register_all(registry) -> None:
     registry.register(ListCommand())
     registry.register(ExecCommand())
     registry.register(SendCommand())
+    registry.register(AdvSendCommand())
     registry.register(ReadCommand())
     registry.register(KillCommand())
     registry.register(EventsCommand())

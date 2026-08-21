@@ -236,11 +236,80 @@ class TestStopDaemon:
 
         with patch("src.daemonctl.lifecycle._find_daemon_port", return_value=port), \
              patch("src.daemonctl.lifecycle._find_daemon_pid", return_value=os.getpid()), \
-             patch("src.daemonctl.lifecycle.read_auth_token", return_value="test"), \
              patch("src.daemonctl.lifecycle._cleanup_credentials"):
             stop_daemon()
 
         assert any("stopped" in p.lower() or "已停止" in p for p in printed)
+        srv.close()
+        t.join(timeout=3)
+
+    def test_stop_via_tcp_envelope_response(self, monkeypatch):
+        """daemon 响应为信封形态（commandType 在 payload）时也能判定成功"""
+        printed = []
+        monkeypatch.setattr(
+            "src.daemonctl.lifecycle._safe_print",
+            lambda s: printed.append(s),
+        )
+
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+
+        def handle():
+            conn, _ = srv.accept()
+            msg = Message.recv(conn)
+            if msg and msg.get("type") == "stop":
+                Message.send(
+                    conn,
+                    {"dir": "response", "type": "stop", "payload": {
+                        "commandType": "stop", "code": 0, "msg": "ok"}},
+                )
+            conn.close()
+
+        t = threading.Thread(target=handle, daemon=True)
+        t.start()
+
+        with patch("src.daemonctl.lifecycle._find_daemon_port", return_value=port), \
+             patch("src.daemonctl.lifecycle._find_daemon_pid", return_value=os.getpid()), \
+             patch("src.daemonctl.lifecycle._cleanup_credentials"):
+            stop_daemon()
+
+        assert any("stopped" in p.lower() or "已停止" in p for p in printed)
+        srv.close()
+        t.join(timeout=3)
+
+    def test_stop_failure_keeps_shm_credentials(self, monkeypatch):
+        """stop 失败（daemon 仍存活）时不得清理凭据 SHM，保证后续重试可认证"""
+        printed = []
+        monkeypatch.setattr(
+            "src.daemonctl.lifecycle._safe_print",
+            lambda s: printed.append(s),
+        )
+
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+
+        def handle():
+            conn, _ = srv.accept()
+            Message.recv(conn)
+            Message.send(conn, {"dir": "response", "type": "error",
+                                "payload": {"type": "error",
+                                            "message": "Authentication failed"}})
+            conn.close()
+
+        t = threading.Thread(target=handle, daemon=True)
+        t.start()
+
+        cleanup = MagicMock()
+        with patch("src.daemonctl.lifecycle._find_daemon_port", return_value=port), \
+             patch("src.daemonctl.lifecycle._cleanup_credentials", cleanup):
+            stop_daemon()
+
+        cleanup.assert_not_called()
+        assert any("failed" in p.lower() or "失败" in p for p in printed)
         srv.close()
         t.join(timeout=3)
 

@@ -341,9 +341,22 @@ class TestBuildParser:
     def test_parse_mouse_scroll(self):
         """解析 mouse scroll"""
         parser = _build_parser()
-        args = parser.parse_args(["mouse", "test-id", "scroll", "10,10", "down", "3"])
+        args = parser.parse_args(
+            ["mouse", "test-id", "scroll", "10,10", "--direction", "up", "--times", "3"]
+        )
         assert args.action == "scroll"
-        assert args.args == ["10,10", "down", "3"]
+        assert args.args == ["10,10"]
+        assert args.direction == "up"
+        assert args.times == 3
+
+    def test_parse_mouse_scroll_defaults(self):
+        """scroll 默认方向 down、次数 1"""
+        parser = _build_parser()
+        args = parser.parse_args(["mouse", "test-id", "scroll", "--grep", "OK"])
+        assert args.action == "scroll"
+        assert args.grep_pattern == "OK"
+        assert args.direction == "down"
+        assert args.times == 1
 
     def test_parse_mouse_hover(self):
         """解析 mouse hover"""

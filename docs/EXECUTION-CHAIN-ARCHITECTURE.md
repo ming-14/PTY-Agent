@@ -58,6 +58,15 @@
 
 **验证**：全量单测 `1666 passed`（`tests/unit`，含新增 `RequestContext` 与 `test_wait_helpers` 用例），仅剩 2 个**环境既存失败**（`test_session_events` 崩溃判定时序，属 Windows 崩溃检测环境问题，与本次重构无关）。
 
+### 3.1 跨包散落清理（独立于执行链，同为"只归一、不改行为"）
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| **WxH 尺寸解析归一** | `config/common.py::parse_terminal_size` | 统一 `×→x`/split/int/边界检查核心（边界参数化）；`client/config_manager.py`（严格 20-500×5-200）、`daemon/handlers/utils.py::_parse_terminal_size`（宽松返回 None）、`workflow/engine.py::_parse_size`（宽松抛错）三处复制收敛为薄策略包装，各路径边界/报错语义保留 |
+| **config 合并样板归一** | `config/_build.py::build_config` | 统一 `common/shared/logging` 基线 merge + 运行时常量（IS_WINDOWS/DATA_DIR/PROJECT_ROOT/LOG_DIR）模板；`shared/client/daemon` 三个配置模块的重复合并块收敛为一处（独立于 `_loader` 与 `common`，避免循环依赖） |
+| **EOL 映射上移** | `input/text.py::SEND_EOL_MAP` | 原 `client/config_manager.py::_SEND_EOL_MAP`（下划线私有）迁至 `input/text.py` 与其消费方 `process_input` 同居并改公开名；消除 workflow 引擎反向 import client 私有常量的分层倒置，按"不留兼容接口，更新引用点"更新 transport/engine/definition 引用 |
+| **转义展开迁至守护进程** | `daemon/handlers/utils.py::prepare_input` | send 输入的全部转义展开（JSON 反转移 + `{ctrl+a}`/`{enter}` 等控制字符 + 默认行尾追加）从 CLI 端移到**守护进程**统一完成：单一事实来源在 daemon（知道会话 mode），按模式决定 `{enter}` 与默认行尾（pty=`\r`、subprocess=`\n`），CLI/workflow 只透传原始 input + 转义开关 + 显式 eol |
+
 ---
 
 ## 4. ⏸️ 暂缓（如实说明，不强行"做完"）

@@ -6,6 +6,7 @@
 配置优先级：命令行显式参数 > --default 覆盖值 > 代码内置默认值
 """
 
+from ..input.text import SEND_EOL_MAP
 from ..logging import get_logger
 import json
 import os
@@ -67,13 +68,6 @@ def save_persistent_defaults(defaults: dict) -> None:
     except OSError as e:
         _logger.warning("写入默认配置失败: %s", e)
 
-
-_SEND_EOL_MAP: dict = {
-    "lf": "\n",
-    "crlf": "\r\n",
-    "cr": "\r",
-    "none": "",
-}
 
 # on/off -> bool 映射
 _ON_OFF = {"on": True, "off": False, "true": True, "false": False}
@@ -194,12 +188,12 @@ class ConfigManager:
 
         # send_eol: 名称映射 -> 实际字符
         if key == "send_eol":
-            if isinstance(value, str) and value.lower() in _SEND_EOL_MAP:
-                value = _SEND_EOL_MAP[value.lower()]
+            if isinstance(value, str) and value.lower() in SEND_EOL_MAP:
+                value = SEND_EOL_MAP[value.lower()]
             elif isinstance(value, str) and value in ("\n", "\r\n", "\r", ""):
                 pass
             else:
-                valid = ", ".join(sorted(_SEND_EOL_MAP.keys()))
+                valid = ", ".join(sorted(SEND_EOL_MAP.keys()))
                 raise ValueError(
                     f"Invalid send-eol value: {value!r}, "
                     f"available names: {valid}; or use \\n / \\r\\n / \\r / empty string",
@@ -272,24 +266,26 @@ def _format_value(val: Any) -> str:
 
 
 def parse_terminal_size(size_str: str) -> tuple:
-    """解析终端尺寸字符串 WxH → (cols, rows)
+    """解析终端尺寸字符串 WxH → (cols, rows)（客户端严格边界 20-500×5-200）
+
+    委托共享实现 config.common.parse_terminal_size 并传入严格边界，
+    统一 WxH 解析核心，避免与 daemon/workflow 复制漂移。
 
     Args:
-        size_str: 如 "120x40" 或 "80x24"
+        size_str: 如 "120x40" 或 "80x24"。
 
     Returns:
-        (cols, rows) 整数元组
+        (cols, rows) 整数元组。
 
     Raises:
-        ValueError: 格式无效或超出范围
+        ValueError: 格式无效或超出范围。
     """
-    s = str(size_str).lower().replace("×", "x")
-    parts = s.split("x")
-    if len(parts) != 2:
-        raise ValueError(f"Invalid terminal-size format: {size_str!r}, expected WxH")
-    c, r = int(parts[0]), int(parts[1])
-    if not (20 <= c <= 500 and 5 <= r <= 200):
-        raise ValueError(
-            f"terminal-size out of range: {size_str!r}, cols 20-500, rows 5-200"
-        )
-    return c, r
+    from ..config.common import parse_terminal_size as _core
+
+    return _core(
+        size_str,
+        min_cols=20,
+        min_rows=5,
+        max_cols=500,
+        max_rows=200,
+    )

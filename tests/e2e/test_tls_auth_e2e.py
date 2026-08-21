@@ -37,9 +37,11 @@ if _PROJECT_ROOT not in sys.path:
 
 # common.toml / daemon.toml / client.toml 路径
 # 测试期间会被临时覆写，teardown 时逐一恢复
-_COMMON_TOML = Path(_PROJECT_ROOT) / "config" / "common.toml"
-_DAEMON_TOML = Path(_PROJECT_ROOT) / "config" / "daemon" / "daemon.toml"
-_CLIENT_TOML = Path(_PROJECT_ROOT) / "config" / "client" / "client.toml"
+def _cfg_path(*parts: str) -> Path:
+    """按配置目录解析文件路径（隔离临时目录优先，兜底生产 config/）"""
+    iso = os.environ.get("PTY_AGENT_CONFIG_DIR")
+    base = Path(iso) if iso else Path(_PROJECT_ROOT) / "config"
+    return base.joinpath(*parts)
 
 # 测试用 TLS 监听器端口（daemon.toml [listener] TLS_PORT 与 client.toml [connection] TLS_PORT 一致）
 _TEST_TLS_PORT = 18767
@@ -247,7 +249,7 @@ def _assert_auth_passed(result: subprocess.CompletedProcess):
 # ═══════════════════════════════════════════════════════════════
 
 @pytest.fixture
-def tls_env(tmp_path):
+def tls_env(tmp_path, config_reloader):
     """TLS 测试环境 — 支持多次启停 daemon 与证书管理
 
     与 test_pubkey_auth_e2e.py 的 auth_env 不同，本 fixture 提供更细粒度的控制：
@@ -263,9 +265,9 @@ def tls_env(tmp_path):
         SimpleNamespace(write_config, start, stop, run_cli, delete_certs, tmp_path)
     """
     # 备份三个 toml 文件（teardown 时逐字节恢复，避免污染生产配置）
-    backup_common = _COMMON_TOML.read_bytes()
-    backup_daemon = _DAEMON_TOML.read_bytes()
-    backup_client = _CLIENT_TOML.read_bytes()
+    backup_common = _cfg_path("common.toml").read_bytes()
+    backup_daemon = _cfg_path("daemon", "daemon.toml").read_bytes()
+    backup_client = _cfg_path("client", "client.toml").read_bytes()
     daemon_running = [False]
     listener_flags = {"basic": False, "token": False, "tls": False}
 
@@ -314,9 +316,9 @@ def tls_env(tmp_path):
         listener_flags["tls"] = enable_pubkey
 
         # 写入 common.toml（共享配置）
-        _COMMON_TOML.write_text(_build_common_toml(), encoding="utf-8")
+        _cfg_path("common.toml").write_text(_build_common_toml(), encoding="utf-8")
         # 写入 daemon.toml（三监听器 + 服务端认证配置）
-        _DAEMON_TOML.write_text(
+        _cfg_path("daemon", "daemon.toml").write_text(
             _build_daemon_toml(
                 basic=basic,
                 token=enable_token,
@@ -328,7 +330,7 @@ def tls_env(tmp_path):
             encoding="utf-8",
         )
         # 写入 client.toml（连接方式 + 客户端认证配置）
-        _CLIENT_TOML.write_text(
+        _cfg_path("client", "client.toml").write_text(
             _build_client_toml(
                 connect_mode=connect_mode,
                 private_key_path=pk_path,
@@ -340,6 +342,8 @@ def tls_env(tmp_path):
         ak_path = Path(authorized_keys_path)
         ak_path.parent.mkdir(parents=True, exist_ok=True)
         ak_path.write_text(authorized_keys_content, encoding="utf-8")
+        # 写入测试 config 后重载进程内 config（见 conftest.reload_config）
+        config_reloader()
 
     def start():
         """启动 daemon 并等待就绪
@@ -433,12 +437,14 @@ def tls_env(tmp_path):
             tmp_path=tmp_path,
         )
     finally:
-        if daemon_running[0]:
-            stop()
-        # 恢复三个 toml 文件（无论 daemon 是否成功停止都恢复，避免污染生产配置）
-        _COMMON_TOML.write_bytes(backup_common)
-        _DAEMON_TOML.write_bytes(backup_daemon)
-        _CLIENT_TOML.write_bytes(backup_client)
+        try:
+            if daemon_running[0]:
+                stop()
+        finally:
+            # 恢复三个 toml 文件（无论 daemon 是否成功停止都恢复，避免污染生产配置）
+            _cfg_path("common.toml").write_bytes(backup_common)
+            _cfg_path("daemon", "daemon.toml").write_bytes(backup_daemon)
+            _cfg_path("client", "client.toml").write_bytes(backup_client)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -655,16 +661,16 @@ class TestNoSingleInstance:
 
         try:
             # 同机并发第二实例：改 daemon.toml 端口 + client 指向 + 再次启动
-            daemon_content = _DAEMON_TOML.read_text(encoding="utf-8")
+            daemon_content = _cfg_path("daemon", "daemon.toml").read_text(encoding="utf-8")
             daemon_content = re.sub(
                 r"(TLS_PORT\s*=\s*)\d+", rf"\g<1>{second_port}", daemon_content
             )
-            _DAEMON_TOML.write_text(daemon_content, encoding="utf-8")
-            client_content = _CLIENT_TOML.read_text(encoding="utf-8")
+            _cfg_path("daemon", "daemon.toml").write_text(daemon_content, encoding="utf-8")
+            client_content = _cfg_path("client", "client.toml").read_text(encoding="utf-8")
             client_content = re.sub(
                 r"(TLS_PORT\s*=\s*)\d+", rf"\g<1>{second_port}", client_content
             )
-            _CLIENT_TOML.write_text(client_content, encoding="utf-8")
+            _cfg_path("client", "client.toml").write_text(client_content, encoding="utf-8")
 
             tls_env.start()
 
@@ -673,19 +679,19 @@ class TestNoSingleInstance:
             _assert_auth_passed(result2)
 
             # 第一实例仍可达（18767）
-            first_client = _CLIENT_TOML.read_text(encoding="utf-8")
+            first_client = _cfg_path("client", "client.toml").read_text(encoding="utf-8")
             first_client = re.sub(
                 r"(TLS_PORT\s*=\s*)\d+", rf"\g<1>{_TEST_TLS_PORT}", first_client
             )
-            _CLIENT_TOML.write_text(first_client, encoding="utf-8")
+            _cfg_path("client", "client.toml").write_text(first_client, encoding="utf-8")
             result1 = tls_env.run_cli("list")
             _assert_auth_passed(result1)
 
             # 清理：先停第二实例（client 指向 18768），再停第一实例（18767）
-            _CLIENT_TOML.write_text(client_content, encoding="utf-8")
+            _cfg_path("client", "client.toml").write_text(client_content, encoding="utf-8")
             stop2 = tls_env.run_cli("stop")
             assert stop2.returncode == 0, f"第二实例 stop 失败: {stop2.stderr}"
-            _CLIENT_TOML.write_text(first_client, encoding="utf-8")
+            _cfg_path("client", "client.toml").write_text(first_client, encoding="utf-8")
             stop1 = tls_env.run_cli("stop")
             assert stop1.returncode == 0, f"第一实例 stop 失败: {stop1.stderr}"
 
@@ -709,9 +715,9 @@ class TestNoSingleInstance:
                         probe.settimeout(0.3)
                         probe.connect(("127.0.0.1", port))
                         probe.close()
-                        c = _CLIENT_TOML.read_text(encoding="utf-8")
+                        c = _cfg_path("client", "client.toml").read_text(encoding="utf-8")
                         c = re.sub(r"(TLS_PORT\s*=\s*)\d+", rf"\g<1>{port}", c)
-                        _CLIENT_TOML.write_text(c, encoding="utf-8")
+                        _cfg_path("client", "client.toml").write_text(c, encoding="utf-8")
                         subprocess.run(
                             [sys.executable, "-m", "src", "stop"],
                             cwd=_PROJECT_ROOT, capture_output=True, text=True,

@@ -369,13 +369,17 @@ python app.py exec build -c "make all" --idle-timeout 10 \
 
 ---
 
-### 4.6  send - 向运行中的会话发送输入
+### 4.6  send / advsend - 向运行中的会话发送输入
 
 **用法：**
 
 ```bash
 python app.py send <id> -i <input> [选项] [公共选项]
+python app.py advsend <id> -i <input> [选项] [公共选项]
 ```
+
+`send` 原样发送输入，不做任何转义；`advsend` 与其参数完全一致，但**恒启用
+JSON + 控制字符转义解码**（等价于旧 `send -j` 模式）。
 
 **参数：**
 
@@ -388,14 +392,13 @@ python app.py send <id> -i <input> [选项] [公共选项]
 
 | 选项                              | 说明                                                                 |
 | --------------------------------- | -------------------------------------------------------------------- |
-| `--json-escaping`, `-j`           | 启用 JSON + 控制字符转义解码（见下）                                 |
-| `--send-eol {lf,crlf,cr,none}`, `-e ...` | 末尾追加的行尾符（默认 `cr=\r`，模拟终端 Enter）              |
+| `--send-eol {lf,crlf,cr,none}`, `-e ...` | 末尾追加的行尾符（默认按会话模式：pty=`\r` 模拟终端 Enter；subprocess=`\n`）              |
 
-`-j` JSON 转义支持的序列：
+`advsend` 的 JSON 转义支持的序列：
 
 ```
 \n          -> 换行
-{enter}     -> 回车
+{enter}     -> 回车（展开值按会话模式：pty=`\r`、subprocess=`\n`）
 {ctrl+a}    -> Ctrl+A
 {up}/{down}/{left}/{right}
 {f1}..{f12}
@@ -422,14 +425,14 @@ python app.py send <id> -i <input> [选项] [公共选项]
 # 发送 Python 代码
 python app.py send py -i "print(100*100)" -t ">>>"
 
-# 多行代码 (JSON 转义)
-python app.py send py -i "for i in range(3):\n    print(i)" -t ">>>" -j
+# 多行代码 (advsend JSON 转义)
+python app.py advsend py -i "for i in range(3):\n    print(i)" -t ">>>"
 
 # 发送方向键 (TUI)
-python app.py send ui -i "{down}" -j -e none
+python app.py advsend ui -i "{down}" -e none
 
-# 发送 Ctrl+C
-python app.py send job1 -i "{ctrl+c}" -e none
+# 发送 Ctrl+C（advsend 转义；send 原样时 write_ctrl_c 也适用）
+python app.py advsend job1 -i "{ctrl+c}" -e none
 
 # 发送并取屏幕快照
 python app.py send ui -i "j" --timeout 5
@@ -606,7 +609,7 @@ python app.py mouse <id> <action> [args...] [选项] [公共选项]
 | --------------------- | -------------------------------------- | -------------------------- |
 | `click`               | `<coordinates>` 如 `10,5`              | 或用 `--grep`              |
 | `drag`                | `<from> <to>` 如 `10,5 30,5`           | 或用 `--grep`              |
-| `scroll`              | `<coordinates> <direction> <times>`    | direction ∈ {up, down}，times >= 1 整数；或用 `--grep` |
+| `scroll`              | `<coordinates>` 如 `10,5`             | direction ∈ {up, down}（默认 down），times >= 1 整数（默认 1）；或用 `--grep` |
 | `hover`               | `<coordinates>`                        | 或用 `--grep`              |
 | `press`               | `<coordinates> <seconds>`              | seconds > 0 浮点；或用 `--grep` |
 | `grep`                | `<pattern>`                            | 纯查询，返回所有匹配的首/尾坐标 |
@@ -624,6 +627,8 @@ python app.py mouse <id> <action> [args...] [选项] [公共选项]
 | `--shift`                   | 按住 Shift                                       |
 | `--alt`                     | 按住 Alt                                         |
 | `--grep PATTERN`            | 用正则匹配终端屏幕内容获取坐标。多匹配时不执行动作，返回所有坐标 |
+| `--direction {up,down}`     | 滚动方向（默认 down，仅 scroll 有效）                  |
+| `--times N`                 | 滚动次数（默认 1，仅 scroll 有效）                    |
 
 **触发/输出选项：**（同 send）`--trigger / -t`、`--newline`、`--timeout`、`--idle-timeout`、`--idle-after-first-output`、`--keep-ansi`、`--snapshot-diff / -s`、`--output / -o`、`--response-format`、`--svg-compression-level`
 
@@ -645,8 +650,9 @@ python app.py mouse ui click 10,5 --button right --count 2 --ctrl --shift
 # 拖拽
 python app.py mouse ui drag 10,5 30,5 --button left
 
-# 滚动
-python app.py mouse ui scroll 10,5 down 3
+# 滚动（方向/次数为选项，坐标可用 --grep 定位）
+python app.py mouse ui scroll 10,5 --direction down --times 3
+python app.py mouse ui scroll --grep "OK" --direction up
 
 # 悬停 / 按住
 python app.py mouse ui hover 10,5
@@ -749,7 +755,7 @@ python app.py set-default <key> <value> [公共选项]
 | `keep-ansi`            | 保留 ANSI 颜色/样式码（bool）                   |
 | `encoding`             | 终端编码（如 utf-8, gbk）                       |
 | `debug`                | 启用 debug 信息输出（bool）                     |
-| `send-eol`             | 发送行尾符（lf/crlf/cr/none）                   |
+| `send-eol`             | 发送行尾符（lf/crlf/cr/none；未设时按会话模式默认：pty=cr、subprocess=lf）                   |
 | `response-format`      | 响应格式（stream/svg）                         |
 | `svg-compression-level`| SVG 压缩等级（0/1/2）                          |
 | `terminal-size`        | 终端尺寸（如 120x40）。对运行中的会话：下次 exec/send/read/mouse 携带时即刻 resize |
@@ -1117,7 +1123,7 @@ IME_KB_SCALE          = 1.0
 | `encoding`                | None      | 终端编码                   |
 | `keep_ansi`               | False     | 保留 ANSI 颜色/样式码      |
 | `debug`                   | True      | 启用 debug 信息输出        |
-| `send_eol`                | `\r` (cr) | 发送行尾符                 |
+| `send_eol`                | 按模式 | 发送行尾符（未设时按会话模式默认：pty=`\r`、subprocess=`\n`） |
 | `response_format`         | stream    | 响应格式（stream/svg）     |
 | `svg_compression_level`   | 1         | SVG 压缩等级               |
 | `terminal_size`           | 80x24     | 终端尺寸                   |
@@ -1404,7 +1410,7 @@ LANG/LC_ALL
 python app.py exec py -c "python -u -i" -t ">>>"
 python app.py send py -i "print(100*100)" -t ">>>"
 # 预期: >>> 10000\n>>>
-python app.py send py -i "for i in range(3):\n    print(i)" -t ">>>" -j
+python app.py advsend py -i "for i in range(3):\n    print(i)" -t ">>>"
 # 预期: >>> 0\n1\n2\n>>>
 python app.py read py --lines 10
 python app.py events py --last 5
@@ -1480,7 +1486,7 @@ python app.py kill dbg
 python app.py mouse ui click 10,5
 python app.py mouse ui click 10,5 --button right --count 2 --ctrl --shift
 python app.py mouse ui drag 10,5 30,5 --button left
-python app.py mouse ui scroll 10,5 down 3
+python app.py mouse ui scroll 10,5 --direction down --times 3
 python app.py mouse ui hover 10,5
 python app.py mouse ui press 10,5 2.0 --button middle
 python app.py mouse ui grep "Error"                  # 纯查询返回坐标
@@ -1490,13 +1496,13 @@ python app.py mouse ui click 10,5 --timeout 5
 python app.py mouse ui click 10,5 -t ">>>" --timeout 10
 ```
 
-### 12.9  控制字符发送（-j JSON 转义模式）
+### 12.9  控制字符发送（advsend JSON 转义模式）
 
 ```bash
-python app.py send myid -i "import os\nprint(os.name)" -t ">>>" -j
-python app.py send myid -i "{down}" -j -e none          # TUI 方向键
-python app.py send myid -i "{ctrl+c}" -e none           # 发送 Ctrl+C
-python app.py send myid -i "{enter}" -j                 # 回车
+python app.py advsend myid -i "import os\nprint(os.name)" -t ">>>"
+python app.py advsend myid -i "{down}" -e none               # TUI 方向键
+python app.py advsend myid -i "{ctrl+c}" -e none             # 发送 Ctrl+C
+python app.py advsend myid -i "{enter}"                      # 回车（pty→\r，subprocess→\n）
 ```
 
 ### 12.10  跨机 TLS 部署

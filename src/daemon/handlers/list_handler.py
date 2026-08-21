@@ -19,7 +19,6 @@ class ListHandler(DaemonHandler):
                 s["rawStartCommand"] = s.pop("command")
             if session and session.uid:
                 s["uid"] = session.uid
-        hint = "" if sessions else "No active session."
         hs = ctx.manager._history_store
         if hs:
             ended = hs.list_ended_sessions()
@@ -28,4 +27,6 @@ class ListHandler(DaemonHandler):
                 if "command" in s:
                     s["rawStartCommand"] = s.pop("command")
             sessions.extend(ended)
+        # 会话列表（含已结束）为空才提示；仅 ended 会话也算"有内容"，不提示
+        hint = "" if sessions else "No active session."
         Message.send(conn, Response.list_result(sessions, hint))

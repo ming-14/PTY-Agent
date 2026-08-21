@@ -38,9 +38,11 @@ if _PROJECT_ROOT not in sys.path:
 
 # common.toml / daemon.toml / client.toml 路径
 # 测试期间会被临时覆写，teardown 时逐一恢复
-_COMMON_TOML = Path(_PROJECT_ROOT) / "config" / "common.toml"
-_DAEMON_TOML = Path(_PROJECT_ROOT) / "config" / "daemon" / "daemon.toml"
-_CLIENT_TOML = Path(_PROJECT_ROOT) / "config" / "client" / "client.toml"
+def _cfg_path(*parts: str) -> Path:
+    """按配置目录解析文件路径（隔离临时目录优先，兜底生产 config/）"""
+    iso = os.environ.get("PTY_AGENT_CONFIG_DIR")
+    base = Path(iso) if iso else Path(_PROJECT_ROOT) / "config"
+    return base.joinpath(*parts)
 
 # 测试用 basic 监听器端口（daemon.toml [listener] BASIC_PORT）
 _TEST_BASIC_PORT = 10521
@@ -196,7 +198,7 @@ def _send_raw_request(msg: dict) -> dict:
 
 
 @pytest.fixture
-def basic_auth_env(tmp_path):
+def basic_auth_env(tmp_path, config_reloader):
     """basic 密码认证环境工厂 fixture
 
     提供 start() 与 run_list() 方法。start() 写入测试配置（common/daemon/client
@@ -206,9 +208,9 @@ def basic_auth_env(tmp_path):
         SimpleNamespace(start=..., run_list=..., tmp_path=tmp_path)
     """
     # 备份三个 toml 文件（teardown 时逐字节恢复，避免污染生产配置）
-    backup_common = _COMMON_TOML.read_bytes()
-    backup_daemon = _DAEMON_TOML.read_bytes()
-    backup_client = _CLIENT_TOML.read_bytes()
+    backup_common = _cfg_path("common.toml").read_bytes()
+    backup_daemon = _cfg_path("daemon", "daemon.toml").read_bytes()
+    backup_client = _cfg_path("client", "client.toml").read_bytes()
     started = [False]
     daemon_stopped = [False]
 
@@ -220,20 +222,22 @@ def basic_auth_env(tmp_path):
             client_password: 客户端配置的 basic 密码（空=不认证）
         """
         # 写入 common.toml（共享配置）
-        _COMMON_TOML.write_text(
+        _cfg_path("common.toml").write_text(
             _build_common_toml(),
             encoding="utf-8", errors="replace",
         )
         # 写入 daemon.toml（只开 basic 监听器 + 密码）
-        _DAEMON_TOML.write_text(
+        _cfg_path("daemon", "daemon.toml").write_text(
             _build_daemon_toml(basic_password=basic_password),
             encoding="utf-8", errors="replace",
         )
         # 写入 client.toml（basic 连接方式 + 密码）
-        _CLIENT_TOML.write_text(
+        _cfg_path("client", "client.toml").write_text(
             _build_client_toml(client_password=client_password),
             encoding="utf-8", errors="replace",
         )
+        # 写入测试 config 后重载进程内 config（见 conftest.reload_config）
+        config_reloader()
 
         # 启动 daemon（subprocess.Popen 子进程，会读新 common.toml）
         from src.daemonctl import start_daemon, is_running
@@ -288,9 +292,9 @@ def basic_auth_env(tmp_path):
     finally:
         _stop_daemon()
         # 恢复三个 toml 文件（无论 daemon 是否成功停止都恢复，避免污染生产配置）
-        _COMMON_TOML.write_bytes(backup_common)
-        _DAEMON_TOML.write_bytes(backup_daemon)
-        _CLIENT_TOML.write_bytes(backup_client)
+        _cfg_path("common.toml").write_bytes(backup_common)
+        _cfg_path("daemon", "daemon.toml").write_bytes(backup_daemon)
+        _cfg_path("client", "client.toml").write_bytes(backup_client)
 
 
 def _assert_auth_passed(result: subprocess.CompletedProcess):

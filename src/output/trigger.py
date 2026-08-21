@@ -136,6 +136,11 @@ class TriggerMatcher:
         self._matched = False
         self._event = threading.Event()
         self._start_offset = 0
+        # 第二缓冲（子进程模式 stderr）：独立扫描起始偏移与新鲜周期，
+        # 保证 stdout/stderr 双流都按各自"当前末尾"起算等待窗口
+        self._err_buffer: Optional[OutputBuffer] = None
+        self._err_start_offset = 0
+        self._fresh_cycle_err = 0
         self._on_newline = False
         self._newline_count = 0
         self._newline_first_ok = False
@@ -161,10 +166,7 @@ class TriggerMatcher:
         self._idle_last_activity = 0.0
         self._idle_had_output = False
 
-        # 快照模式换行语义（set_snapshot_trigger 专用，与流式 _on_newline 独立）
-        self._snapshot_newline = False
-
-    # ── 公开接口 ──
+        # ── 公开接口 ──
 
     def set(
         self,
@@ -175,6 +177,8 @@ class TriggerMatcher:
         idle_timeout: Optional[float] = None,
         idle_after_first_output: bool = False,
         buffer_length: int = 0,
+        err_buffer=None,
+        err_buffer_length: Optional[int] = None,
     ):
         """设置触发条件
 
@@ -190,7 +194,7 @@ class TriggerMatcher:
         with self._state_lock:
             self._pattern = pattern
             try:
-                self._regex = re.compile(pattern)
+                self._regex = re.compile(pattern, re.MULTILINE)
                 if not _check_regex_complexity(pattern):
                     _logger.warning(
                         "TriggerMatcher.set: 正则可能存在 ReDoS 风险，已降级为子串匹配: %r",
@@ -203,6 +207,13 @@ class TriggerMatcher:
             self._event.clear()
             self._start_offset = (
                 start_offset if start_offset is not None else buffer_length
+            )
+            # 第二缓冲（子进程 stderr）：start_offset 语义与主缓冲一致
+            self._err_buffer = err_buffer
+            self._err_start_offset = (
+                start_offset
+                if (start_offset is not None and err_buffer is not None)
+                else (err_buffer_length if err_buffer_length is not None else 0)
             )
             self._on_newline = newline
 
@@ -270,10 +281,13 @@ class TriggerMatcher:
             pattern = self._pattern
             regex = self._regex
             matched = self._matched
-            start_offset = self._start_offset
+            is_second = (
+                self._err_buffer is not None and output_buffer is self._err_buffer
+            )
+            start_offset = self._err_start_offset if is_second else self._start_offset
             on_newline = self._on_newline
             fresh = self._fresh
-            fresh_cycle = self._fresh_cycle
+            fresh_cycle = self._fresh_cycle_err if is_second else self._fresh_cycle
             scan_buf = self._scan_buf
             scan_gen = self._scan_gen
             scan_end = self._scan_end
@@ -405,11 +419,13 @@ class TriggerMatcher:
             self._regex = None
             self._matched = False
             self._fresh = False
+            self._err_buffer = None
+            self._err_start_offset = 0
+            self._fresh_cycle_err = 0
             self._idle_timeout = None
             self._idle_after_first = False
             self._idle_had_output = False
             self._idle_last_activity = 0.0
-            self._snapshot_newline = False
             self._reset_scan_cache_locked()
         self._event.clear()
 
@@ -418,7 +434,6 @@ class TriggerMatcher:
         pattern: Optional[str] = None,
         idle_timeout: Optional[float] = None,
         idle_after_first_output: bool = False,
-        newline: bool = False,
     ):
         """设置快照模式触发条件
 
@@ -426,14 +441,15 @@ class TriggerMatcher:
             pattern:              正则表达式模式（匹配快照文本）。
             idle_timeout:         快照静默超时（秒）。
             idle_after_first_output: 是否在首次快照变化后才开始检测静默超时。
-            newline:              仅在快照尾部为完整行（以换行结尾）时才检查
-                                  触发条件（等价流式触发的"换行后才检查"）。
+
+        ``--newline`` 换行语义由调用方（``_run_snapshot_flow``）按
+        "换行计数增量后才检查"（对齐流式模式）在传入 check_snapshot 前处理。
         """
         with self._state_lock:
             if pattern is not None:
                 self._pattern = pattern
                 try:
-                    self._regex = re.compile(pattern)
+                    self._regex = re.compile(pattern, re.MULTILINE)
                     if not _check_regex_complexity(pattern):
                         _logger.warning(
                             "set_snapshot_trigger: ReDoS 风险，降级为子串匹配: %r",
@@ -448,7 +464,6 @@ class TriggerMatcher:
             self._idle_after_first = idle_after_first_output
             self._idle_had_output = False
             self._idle_last_activity = time.monotonic()
-            self._snapshot_newline = newline
             self._reset_scan_cache_locked()
 
     def check_snapshot(self, text: str) -> bool:
@@ -463,14 +478,8 @@ class TriggerMatcher:
         with self._state_lock:
             pattern = self._pattern
             regex = self._regex
-            newline = self._snapshot_newline
 
         if not pattern:
-            return False
-
-        # 换行语义：快照尾部必须是完整行才检查（末行未以换行收尾时
-        # 视为输出未完成，等待下一轮快照变化后再判定）
-        if newline and not text.endswith("\n"):
             return False
 
         if regex:

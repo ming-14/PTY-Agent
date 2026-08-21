@@ -13,10 +13,13 @@ except ModuleNotFoundError:
 # 发布形态（BUILD.ps1）中 config/ 与 src/ 同级，同规则生效。
 # 按侧分离：daemon 专属配置在 config/daemon/，client 专属在 config/client/，
 # 共享配置（common/shared/transfer.toml）留在 config/ 根。
-_CONFIG_DIR = os.path.join(
+# 测试隔离：PTY_AGENT_CONFIG_DIR 环境变量可重定向配置目录（e2e 测试用临时
+# 目录，避免写入/污染生产配置）；生产环境不设置，行为不变。
+_BASE_CONFIG_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "config",
 )
+_CONFIG_DIR = os.environ.get("PTY_AGENT_CONFIG_DIR") or _BASE_CONFIG_DIR
 
 
 @functools.lru_cache(maxsize=64)

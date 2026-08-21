@@ -101,11 +101,20 @@ class ProcessMonitor:
 
     # ── 公开方法 ──
 
+    def _is_host_process(self, pid: int) -> bool:
+        """pid 是否为宿主进程（tracker 能力缺失时按非宿主处理）"""
+        try:
+            return bool(self._tracker.is_host_process(pid))
+        except Exception:
+            return False
+
     def drain_notifications(self):
         """从 tracker 排空实时进程事件（统一通知）
 
         Windows：IOCP 推送（含 name/path 尽力填充）
         Unix：进程列表 diff + waitpid 结果
+        宿主进程（ConPTY OpenConsole 等）不属于工作进程，其退出码
+        （恒非 0）不得触发崩溃判定，统一在此过滤。
         """
         try:
             notifs = self._tracker.drain_notifications()
@@ -116,6 +125,8 @@ class ProcessMonitor:
 
         now = time.time()
         for n in notifs:
+            if n.pid and self._is_host_process(n.pid):
+                continue
             if n.is_spawn() and n.pid:
                 name = n.process_name or ""
                 path = n.process_path or ""
@@ -176,6 +187,7 @@ class ProcessMonitor:
             force: 为 True 时绕过节流，确保在 reader 退出路径中不遗漏事件。
             pids:  调用方已获取的进程树 PID 列表（同一 tick 复用，
                    避免与 get_process_list 重复扫描）；None 时自行查询。
+                   （含宿主进程时在本方法内统一过滤，结果等价于工作进程列表。）
         """
         now_ms = time.monotonic()
         if not force and now_ms - self._last_process_check_ms < 2.0:
@@ -184,12 +196,17 @@ class ProcessMonitor:
         self._last_process_check_ms = now_ms
 
         if pids is None:
+            # 工作进程列表：宿主进程（OpenConsole）退出码恒非 0，若计入
+            # 会被误判为崩溃（宿主随 pty.close 正常终止）
             try:
-                current_pids = set(self._tracker.get_process_list())
+                current_pids = set(self._tracker.get_work_process_list())
             except Exception:
-                return
+                try:
+                    current_pids = set(self._tracker.get_process_list())
+                except Exception:
+                    return
         else:
-            current_pids = set(pids)
+            current_pids = {p for p in pids if not self._is_host_process(p)}
         old_pids = self._last_pid_snapshot
         if not old_pids and not current_pids:
             return
@@ -225,11 +242,16 @@ class ProcessMonitor:
             )
 
         for pid in gone_pids:
+            # 兜底过滤：宿主 PID 可能经 drain 竞态早期进入快照（登记前），
+            # 其消亡不属于工作进程事件，直接丢弃
+            if self._is_host_process(pid):
+                self._iocp_exited_pids.discard(pid)
+                continue
             if pid in self._iocp_exited_pids:
                 self._iocp_exited_pids.discard(pid)
                 continue
             name = self._process_names.pop(pid, _get_process_name(pid))
-            cached_detail = self._process_details.pop(pid, None)
+            self._process_details.pop(pid, None)
             exit_code = None
             try:
                 exit_code = self._tracker.get_process_exit_code(pid)

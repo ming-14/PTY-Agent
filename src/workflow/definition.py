@@ -78,12 +78,6 @@ class WorkflowDefinition:
         self.max_parallel = max_parallel
         self.steps = steps
 
-    def step_by_id(self, step_id: str) -> Optional[ParsedStep]:
-        for s in self.steps:
-            if s.id == step_id:
-                return s
-        return None
-
 
 def _require_yaml():
     if yaml is None:
@@ -155,7 +149,7 @@ def _validate_step(idx: int, raw: dict) -> ParsedStep:
             raise _err("步骤 '%s' 缺少必填字段: %s" % (step_id, field))
 
     if step_type == "send":
-        # eol/json 与 CLI send 对齐：名称映射见 client.config_manager._SEND_EOL_MAP
+        # eol/json 与 CLI send 对齐：名称映射见 input.text.SEND_EOL_MAP
         eol = raw.get("eol", "cr")
         if eol not in ("lf", "crlf", "cr", "none"):
             raise _err(

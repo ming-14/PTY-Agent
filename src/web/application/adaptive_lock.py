@@ -80,14 +80,6 @@ class AdaptiveLockService:
             return True
         return False
 
-    def release_if_owner(self, session_id: str, client_uid: Optional[str]) -> bool:
-        """连接断开时清理：如果该 client_uid 是持有者则释放锁。
-
-        注意：调用方应先检查该 client_uid 是否还有其他活跃连接订阅了该 sid，
-        若有则不应调用此方法（锁由其他连接继承）。本方法仅做释放，不做连接检查。
-        """
-        return self.release(session_id, client_uid)
-
     def clear(self, session_id: str) -> Optional[str]:
         """强制清空会话的自适应锁（接管操作使用）。
 

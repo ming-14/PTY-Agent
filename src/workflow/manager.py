@@ -10,7 +10,6 @@ import time
 from typing import Dict, Optional
 
 from ..config.daemon import (
-    WORKFLOW_DEFAULT_PARALLEL,
     WORKFLOW_MAX_RUNS,
     WORKFLOW_STEP_OUTPUT_LIMIT,
 )
@@ -27,14 +26,9 @@ class WorkflowManager:
     """workflow 运行注册表（daemon 持有，线程安全）"""
 
     def __init__(self, session_manager, max_runs: Optional[int] = None,
-                 default_parallel: Optional[int] = None,
                  step_output_limit: Optional[int] = None):
         self._session_manager = session_manager
         self._max_runs = max_runs if max_runs is not None else WORKFLOW_MAX_RUNS
-        self._default_parallel = (
-            default_parallel if default_parallel is not None
-            else WORKFLOW_DEFAULT_PARALLEL
-        )
         self._step_output_limit = (
             step_output_limit if step_output_limit is not None
             else WORKFLOW_STEP_OUTPUT_LIMIT
@@ -138,16 +132,4 @@ class WorkflowManager:
             _logger.info("workflow %s 取消请求已发送", run_id)
         else:
             _logger.info("workflow %s 已处于终态 (%s)，无需取消", run_id, run.status)
-        return True
-
-    def remove_run(self, run_id: str) -> bool:
-        """移除运行记录（仅终态可移除），返回是否移除"""
-        run = self.get_run(run_id)
-        if run is None:
-            return False
-        if run.status == RUN_RUNNING:
-            return False
-        with self._lock:
-            self._runs.pop(run_id, None)
-        _logger.info("workflow %s 记录已移除", run_id)
         return True
