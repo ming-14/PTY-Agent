@@ -169,12 +169,11 @@ def build_cursor_seq(x, y, visible) -> str:
 
     坐标 0-based 输入，输出 1-based（与 xterm.js CPR 一致）。
     光标不可用时返回 ""。
+    委托 pywezterm.cursor_seq（下沉绑定层，与 leaf/ptyagent 共用）。
     """
     if x is None or y is None:
         return ""
-    seq = f"\x1b[{y + 1};{x + 1}H"
-    seq += "\x1b[?25h" if visible else "\x1b[?25l"
-    return seq
+    return pywezterm.cursor_seq(y, x, visible)
 
 
 def render_plain(cells_rows) -> str:
@@ -328,6 +327,29 @@ class ScreenBackend:
     def scrollback_lines_count(self) -> int:  # pragma: no cover
         raise NotImplementedError
 
+    # —— 选区（阶段4：wezterm 后端透传 pywezterm.Terminal.selection_*）——
+    def selection_set(self, anchor_row, anchor_col, end_row, end_col):  # pragma: no cover
+        raise NotImplementedError
+
+    def selection_select_word(self, row, col):  # pragma: no cover
+        raise NotImplementedError
+
+    def selection_select_line(self, row, col):  # pragma: no cover
+        raise NotImplementedError
+
+    def selection_text(self):  # pragma: no cover
+        raise NotImplementedError
+
+    def selection_active(self):  # pragma: no cover
+        raise NotImplementedError
+
+    def selection_clear(self):  # pragma: no cover
+        raise NotImplementedError
+
+    def set_clipboard_callback(self, callback):  # pragma: no cover
+        """OSC 52 剪贴板写回调；底层 Terminal 收到 OSC 52 时调用 callback(selection, data)"""
+        raise NotImplementedError
+
 
 class WeztermBackend(ScreenBackend):
     """wezterm-py 后端（wezterm-term 终端模型）"""
@@ -419,6 +441,43 @@ class WeztermBackend(ScreenBackend):
         if self._term is None:
             return 0
         return self._term.scrollback_count()
+
+    # —— 选区（阶段4：透传 pywezterm.Terminal.selection_*）——
+    def selection_set(self, anchor_row, anchor_col, end_row, end_col):
+        if self._term is None:
+            return
+        self._term.selection_set(anchor_row, anchor_col, end_row, end_col)
+
+    def selection_select_word(self, row, col):
+        if self._term is None:
+            return
+        self._term.selection_select_word(row, col)
+
+    def selection_select_line(self, row, col):
+        if self._term is None:
+            return
+        self._term.selection_select_line(row, col)
+
+    def selection_text(self) -> str:
+        if self._term is None:
+            return ""
+        return self._term.selection_text()
+
+    def selection_active(self) -> bool:
+        if self._term is None:
+            return False
+        return bool(self._term.selection_active())
+
+    def selection_clear(self) -> None:
+        if self._term is None:
+            return
+        self._term.selection_clear()
+
+    def set_clipboard_callback(self, callback):
+        """OSC 52 剪贴板写回调：底层 Terminal 收到 OSC 52 时调 callback(selection, data)"""
+        if self._term is None:
+            return
+        self._term.set_clipboard_callback(callback)
 
 
 def create_backend(

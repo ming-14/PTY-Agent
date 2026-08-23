@@ -2066,8 +2066,13 @@ dependencies = [
 name = "pywezterm"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "log",
  "portable-pty",
  "pyo3",
+ "termwiz",
+ "wezterm-char-props",
+ "wezterm-escape-parser",
  "wezterm-surface",
  "wezterm-term",
  "winapi",

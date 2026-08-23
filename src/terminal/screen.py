@@ -375,6 +375,85 @@ class TerminalScreen:
                 pass
         return ""
 
+    # ── 选区 / 剪贴板（阶段4：透传 wezterm 后端 selection_*）────────────────
+
+    def selection_set(self, anchor_row, anchor_col, end_row, end_col) -> None:
+        """区域选择：anchor → end（stable 行坐标，跨 scrollback 与可见区）"""
+        if not self.available:
+            return
+        with self._lock:
+            try:
+                self._backend.selection_set(
+                    anchor_row, anchor_col, end_row, end_col
+                )
+            except Exception as e:
+                _logger.debug("selection_set 异常: %s", e)
+
+    def selection_select_word(self, row, col) -> None:
+        """双击选词（stable 行坐标）"""
+        if not self.available:
+            return
+        with self._lock:
+            try:
+                self._backend.selection_select_word(row, col)
+            except Exception as e:
+                _logger.debug("selection_select_word 异常: %s", e)
+
+    def selection_select_line(self, row, col) -> None:
+        """三击选行（stable 行坐标）"""
+        if not self.available:
+            return
+        with self._lock:
+            try:
+                self._backend.selection_select_line(row, col)
+            except Exception as e:
+                _logger.debug("selection_select_line 异常: %s", e)
+
+    def selection_text(self) -> str:
+        """当前选区纯文本（无选区返回空串）"""
+        if not self.available:
+            return ""
+        with self._lock:
+            try:
+                return self._backend.selection_text()
+            except Exception as e:
+                _logger.debug("selection_text 异常: %s", e)
+                return ""
+
+    def selection_active(self) -> bool:
+        """是否有活动选区"""
+        if not self.available:
+            return False
+        with self._lock:
+            try:
+                return bool(self._backend.selection_active())
+            except Exception:
+                return False
+
+    def selection_clear(self) -> None:
+        """清除选区"""
+        if not self.available:
+            return
+        with self._lock:
+            try:
+                self._backend.selection_clear()
+            except Exception as e:
+                _logger.debug("selection_clear 异常: %s", e)
+
+    def set_clipboard_callback(self, callback) -> None:
+        """OSC 52 剪贴板写回调：底层 Terminal 收到 OSC 52 时调 callback(selection, data)
+
+        回调在终端 feed 的调用线程（reader）中执行，仅做轻量转发（如入队/推送），
+        禁止在回调内查询本 screen 或长时间阻塞。
+        """
+        if not self.available:
+            return
+        with self._lock:
+            try:
+                self._backend.set_clipboard_callback(callback)
+            except Exception as e:
+                _logger.debug("set_clipboard_callback 异常: %s", e)
+
     def export_buffer(self) -> dict:
         """导出字符网格为可序列化字典（供客户端渲染图片用）
 

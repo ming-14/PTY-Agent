@@ -3,7 +3,7 @@
 通过伪终端（PTY）与交互式 CLI 程序双向通信。
 守护进程以独立子进程运行，首次执行命令时自动启动。
 
-子命令: start | stop | list | exec | send | advsend | read | kill | events | closewin | mouse | keygen
+子命令: start | stop | list | exec | send | advsend | read | kill | events | closewin | mouse | attend | keygen
 """
 
 import sys

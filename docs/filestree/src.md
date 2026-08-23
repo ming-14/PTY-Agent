@@ -27,6 +27,7 @@ src/
 │       ├── events.py        # events 命令（时间补全 _maybe_expand_time）
 │       ├── closewin.py      # closewin 命令
 │       ├── mouse.py         # mouse 命令（坐标解析 + 动作构建/参数校验）
+│       ├── attend.py        # attend 命令（接管会话为完整实时终端）
 │       ├── wait.py          # wait 命令
 │       ├── keygen.py        # keygen 命令（本地命令，生成 Ed25519 密钥对）
 │       ├── set_default.py   # set-default 命令（本地命令，持久化默认配置）
@@ -101,6 +102,7 @@ src/
 │   ├── __init__.py
 │   ├── lifecycle.py         # 客户端日志配置（setup_client_logging；daemon 控制见 daemonctl 包）
 │   ├── transport.py         # TCP/TLS 连接管理 + Client 类（自动启动守护进程，按 CONNECT_MODE 三路路由；信封封装接缝）
+│   ├── attend.py            # attend 交互引擎（ReadConsoleInputW 输入 + 原始字节透传渲染 + 帧循环）
 │   ├── result.py            # 类型化结果模型（Result / from_response 工厂，含稳定错误码）
 │   ├── presenter.py         # 人类可读渲染层（内容→stdout / 元信息→stderr / 错误+退出码）
 │   ├── cli_plugins.py       # CLI 插件宿主（CliPluginHost，kind=cli 钩子链）
@@ -135,6 +137,7 @@ src/
 │       ├── stop_handler.py  # stop 命令处理
 │       ├── closewin_handler.py # closewin 命令处理
 │       ├── mouse_handler.py # mouse 命令处理
+│       ├── attend_handler.py # attend 命令处理（CLI 接管会话为完整实时终端，长连接原始字节透传）
 │       ├── plugin_handler.py # plugin 命令处理（list/ls/attach/detach/cmd 插件管理）
 │       ├── workflow_handler.py # workflow 命令处理（run/list/show/cancel）
 │       ├── status_handler.py # status 命令处理

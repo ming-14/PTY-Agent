@@ -10,6 +10,7 @@ from ...protocol.message import Message
 from ...protocol.response import Response
 from ...session.manager import SessionManager
 from .base import DaemonHandler, HandlerContext
+from .attend_handler import AttendHandler
 from .closewin_handler import CloseWinHandler
 from .events_handler import EventsHandler
 from .exec_handler import ExecHandler
@@ -89,6 +90,7 @@ class DaemonDispatcher:
             "wait": WaitHandler(),
             "plugin": PluginHandler(),
             "workflow": WorkflowHandler(),
+            "attend": AttendHandler(),
         }
         # 进程级插件路由：插件声明的 message_types 注册到派发表；
         # 与内置 handler 冲突时内置优先（核心命令权威），记录警告

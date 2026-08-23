@@ -1,13 +1,15 @@
 # BUILD.ps1 - wezterm-py 构建脚本
 # 功能：编译 pywezterm（pyo3/abi3，portable-pty + wezterm-term），
-#       产物完整 pywezterm 包复制到项目根 <project>/bin/pywezterm/
-#       （vendored，src 侧经 sys.path 加载，不依赖 pip 安装全局包）
+#       产物完整 pywezterm 包复制到 -VendorDir（默认 <wezterm-py 上级>/bin/pywezterm，
+#       vendored，src 侧经 sys.path 加载，不依赖 pip 安装全局包）
 # 依赖：Rust（cargo/rustc，rustup 安装）、Visual Studio（vcvars64.bat）、
 #       Python 3.8+ 与 maturin（缺失时自动 pip 安装）
 #
 # 参数：
 #   -Config <Debug|Release>   构建类型（默认 Release）
 #   -Rebuild                  清理编译缓存后全新构建
+#   -VendorDir <path>         产物部署目录（默认 <wezterm-py 上级>/bin/pywezterm，
+#                             供 leaf/PTY-Agent 共用；其他项目可显式指定）
 #   -Vcvars <path>            手动指定 vcvars64.bat 路径（默认自动探测）
 #   -CargoDir <path>          手动指定 cargo 所在目录（默认探测 ~/.cargo/bin）
 #   -Python <path>            手动指定 python 可执行文件（默认取 PATH）
@@ -16,10 +18,12 @@
 #   .\BUILD.ps1
 #   .\BUILD.ps1 -Config Debug
 #   .\BUILD.ps1 -Rebuild -Vcvars "D:\VS\VC\Auxiliary\Build\vcvars64.bat"
+#   .\BUILD.ps1 -VendorDir "D:\apps\myapp\vendor\pywezterm"
 
 param(
     [ValidateSet("Debug", "Release")] [string]$Config = "Release",
     [switch]$Rebuild,
+    [string]$VendorDir = "",
     [string]$Vcvars = "",
     [string]$CargoDir = "",
     [string]$Python = ""
@@ -29,9 +33,14 @@ param(
 $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$projectRoot = Split-Path $scriptDir -Parent
 $wheelsDir = Join-Path $scriptDir "target\wheels"
-$vendorDst = Join-Path $projectRoot "bin\pywezterm"
+if ($VendorDir) {
+    $vendorDst = $VendorDir
+} else {
+    # 默认：<wezterm-py 上级>/bin/pywezterm（leaf/PTY-Agent 共用同一产物）
+    $projectRoot = Split-Path $scriptDir -Parent
+    $vendorDst = Join-Path $projectRoot "bin\pywezterm"
+}
 
 # ===== 工具检查：python =====
 $pyExe = if ($Python) { $Python } else { (Get-Command python -ErrorAction SilentlyContinue)?.Source }
@@ -125,6 +134,11 @@ try {
     $pkgSrc = Join-Path $extract "pywezterm"
     if (-not (Test-Path $pkgSrc)) { throw "wheel 缺少 pywezterm 包" }
     New-Item -ItemType Directory -Path (Split-Path $vendorDst -Parent) -Force | Out-Null
+    # 先删旧目标再复制：Copy-Item -Recurse 在目标已存在时会把源目录嵌进目标
+    # 内部（pywezterm\pywezterm\...）而非平铺覆盖，反复构建会产生深层嵌套
+    if (Test-Path $vendorDst) {
+        Remove-Item -Path $vendorDst -Recurse -Force
+    }
     Copy-Item -Path $pkgSrc -Destination $vendorDst -Recurse -Force
     Write-Host "[wezterm-py] 编译完成: $($whl.Name) -> $vendorDst"
 } finally {

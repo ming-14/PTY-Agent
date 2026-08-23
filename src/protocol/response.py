@@ -221,6 +221,16 @@ class Response:
         return {"type": "session_event", "sessionId": session_id, "event": event}
 
     @staticmethod
+    def ws_clipboard(session_id: str, selection: str, data: str) -> dict:
+        """OSC 52 剪贴板写推送（应用 → 终端 → 前端写系统剪贴板）"""
+        return {
+            "type": "clipboard",
+            "sessionId": session_id,
+            "selection": selection,
+            "data": data,
+        }
+
+    @staticmethod
     def ws_unsubscribed() -> dict:
         return {"type": "unsubscribed"}
 

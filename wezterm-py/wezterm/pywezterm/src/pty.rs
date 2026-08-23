@@ -34,6 +34,78 @@ struct PtyInner {
     reader_thread: Arc<Mutex<Option<usize>>>,
 }
 
+/// 侧载 conpty.dll + OpenConsole.exe（与模块包同目录），让 portable-pty
+/// 优先使用 wezterm 自带 OpenConsole 宿主而非系统 conhost。
+/// 须在模块初始化（__file__ 可用）后调用一次；Mux 建 pane 复用同一份。
+pub(crate) fn ensure_conpty_dir(py: Python) {
+    #[cfg(windows)]
+    {
+        if portable_pty::CONPTY_DIR.get().is_none() {
+            if let Ok(m) = py.import("pywezterm") {
+                if let Ok(fname) = m.getattr("__file__") {
+                    if let Ok(s) = fname.extract::<String>() {
+                        if let Some(dir) = std::path::Path::new(&s).parent() {
+                            portable_pty::set_conpty_dir(dir.to_path_buf());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 复制当前线程句柄（GetCurrentThread 为伪句柄，须复制成跨线程有效句柄），
+/// 供 close 时 CancelSynchronousIo 取消该线程的阻塞读。返回句柄（0 = 失败）。
+#[cfg(windows)]
+pub(crate) fn duplicate_current_thread_handle() -> usize {
+    unsafe {
+        let mut h = std::ptr::null_mut();
+        let ok = winapi::um::handleapi::DuplicateHandle(
+            winapi::um::processthreadsapi::GetCurrentProcess(),
+            winapi::um::processthreadsapi::GetCurrentThread(),
+            winapi::um::processthreadsapi::GetCurrentProcess(),
+            &mut h,
+            0,
+            0,
+            winapi::um::winnt::DUPLICATE_SAME_ACCESS,
+        );
+        if ok != 0 { h as usize } else { 0 }
+    }
+}
+
+/// 关闭已复制的 reader 线程句柄（reader 线程退出时调用）
+#[cfg(windows)]
+pub(crate) fn close_thread_handle(h: usize) {
+    unsafe {
+        winapi::um::handleapi::CloseHandle(h as winapi::um::winnt::HANDLE);
+    }
+}
+
+/// 取消 reader 线程的同步阻塞 ReadFile（按线程取消），并用 eof 标志确认
+/// reader 已从 read 返回后再继续，规避「取消瞬间 reader 恰在两次 read 之间」
+/// 的竞态。最多重试 200ms。
+#[cfg(windows)]
+pub(crate) fn cancel_reader_thread(
+    reader_thread: &Arc<Mutex<Option<usize>>>,
+    eof: &Arc<AtomicBool>,
+) {
+    let h = reader_thread
+        .lock()
+        .unwrap()
+        .map(|h| h as winapi::um::winnt::HANDLE);
+    if let Some(h) = h {
+        for _ in 0..200 {
+            unsafe {
+                winapi::um::ioapiset::CancelSynchronousIo(h);
+            }
+            if eof.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+}
+
 /// 伪终端实例（多线程安全：各字段 Mutex 包裹，Sync）
 #[pyclass(name = "Pty")]
 pub struct PyPty {
@@ -46,24 +118,9 @@ impl PyPty {
     #[new]
     #[pyo3(signature = (cols=80, rows=24))]
     fn new(py: Python, cols: u16, rows: u16) -> PyResult<Self> {
-        // 指定侧载 conpty.dll + OpenConsole.exe 的目录（与模块包同目录），
-        // 让 portable-pty 优先使用 wezterm 自带 OpenConsole 宿主而非系统 conhost。
-        // 须在首次创建 Pty 时（模块已初始化、__file__ 可用）解析；
-        // pymodule init 阶段 __file__ 尚未设置，故不能放那里。
-        #[cfg(windows)]
-        {
-            if portable_pty::CONPTY_DIR.get().is_none() {
-                if let Ok(m) = py.import("pywezterm") {
-                    if let Ok(fname) = m.getattr("__file__") {
-                        if let Ok(s) = fname.extract::<String>() {
-                            if let Some(dir) = std::path::Path::new(&s).parent() {
-                                portable_pty::set_conpty_dir(dir.to_path_buf());
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // 首次创建 Pty 时解析侧载目录（模块已初始化、__file__ 可用；
+        // pymodule init 阶段 __file__ 尚未设置，故不能放那里）。
+        ensure_conpty_dir(py);
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -102,21 +159,9 @@ impl PyPty {
         std::thread::spawn(move || {
             #[cfg(windows)]
             {
-                // GetCurrentThread 为伪句柄，须复制成跨线程有效句柄
-                unsafe {
-                    let mut h = std::ptr::null_mut();
-                    let ok = winapi::um::handleapi::DuplicateHandle(
-                        winapi::um::processthreadsapi::GetCurrentProcess(),
-                        winapi::um::processthreadsapi::GetCurrentThread(),
-                        winapi::um::processthreadsapi::GetCurrentProcess(),
-                        &mut h,
-                        0,
-                        0,
-                        winapi::um::winnt::DUPLICATE_SAME_ACCESS,
-                    );
-                    if ok != 0 {
-                        *reader_thread.lock().unwrap() = Some(h as usize);
-                    }
+                let h = duplicate_current_thread_handle();
+                if h != 0 {
+                    *reader_thread.lock().unwrap() = Some(h);
                 }
             }
             loop {
@@ -141,9 +186,7 @@ impl PyPty {
             #[cfg(windows)]
             {
                 if let Some(h) = reader_thread.lock().unwrap().take() {
-                    unsafe {
-                        winapi::um::handleapi::CloseHandle(h as winapi::um::winnt::HANDLE);
-                    }
+                    close_thread_handle(h);
                 }
             }
         });
@@ -316,23 +359,9 @@ impl PyPty {
         *self.inner.writer.lock().unwrap() = None;
         // 取消 reader 线程的同步阻塞 ReadFile，再关闭伪控制台，避免
         // ClosePseudoConsole 与 pending read 相互等待（ConPTY 死锁）。
-        // 同步读须用 CancelSynchronousIo（按线程取消）；用 eof 标志确认
-        // reader 已从 read 返回后再继续，规避「取消瞬间 reader 恰在
-        // 两次 read 之间」的竞态。
         #[cfg(windows)]
         {
-            let h = self.inner.reader_thread.lock().unwrap().map(|h| h as winapi::um::winnt::HANDLE);
-            if let Some(h) = h {
-                for _ in 0..200 {
-                    unsafe {
-                        winapi::um::ioapiset::CancelSynchronousIo(h);
-                    }
-                    if self.inner.eof.load(Ordering::SeqCst) {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
-            }
+            cancel_reader_thread(&self.inner.reader_thread, &self.inner.eof);
         }
         // 释放 master 与 slave 持有的同一 HPCON 引用 → Inner drop →
         // ClosePseudoConsole → conhost 退出 → reader 线程退出

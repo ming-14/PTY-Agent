@@ -4,6 +4,7 @@ register_all() 注册全部命令到 registry；注册顺序 = 帮助显示顺�
 """
 
 from .closewin import ClosewinCommand
+from .attend import AttendCommand
 from .events import EventsCommand
 from .exec import ExecCommand
 from .file import FileCommand
@@ -36,6 +37,7 @@ def register_all(registry) -> None:
     registry.register(KillCommand())
     registry.register(EventsCommand())
     registry.register(ClosewinCommand())
+    registry.register(AttendCommand())
     registry.register(MouseCommand())
     registry.register(WaitCommand())
     registry.register(KeygenCommand())

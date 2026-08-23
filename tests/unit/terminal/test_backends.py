@@ -187,3 +187,52 @@ def test_screen_bracketed_paste_mode():
     assert "\x1b[?2004h" in s.mode_restore_seq()
     s.feed(b"\x1b[?2004l")
     assert s.mode_restore_seq() == ""
+
+
+# ── 选区 / OSC 52 剪贴板（阶段4）────────────────────────────────────────
+
+
+def test_screen_selection_region_text():
+    """TerminalScreen 选区：区域选择 → 取选中文本"""
+    s = TerminalScreen(cols=40, rows=8)
+    s.feed(b"hello world\r\nsecond line\r\n")
+    assert not s.selection_active()
+    assert s.selection_text() == ""
+    s.selection_set(0, 6, 0, 10)
+    assert s.selection_active()
+    assert s.selection_text() == "world"
+    s.selection_clear()
+    assert not s.selection_active()
+    assert s.selection_text() == ""
+
+
+def test_screen_selection_word_and_line():
+    s = TerminalScreen(cols=40, rows=8)
+    s.feed(b"foo bar\r\nthird\r\n")
+    s.selection_select_word(0, 4)  # "bar"
+    assert s.selection_text() == "bar"
+    s.selection_select_line(0, 0)
+    assert s.selection_text() == "foo bar\n"
+
+
+def test_screen_clipboard_callback_osc52():
+    """OSC 52 剪贴板写 → TerminalScreen 回调收到 (selection, data)"""
+    import base64
+
+    s = TerminalScreen(cols=40, rows=8)
+    got = []
+    s.set_clipboard_callback(lambda sel, data: got.append((sel, data)))
+    payload = base64.b64encode("剪贴板内容".encode()).decode()
+    s.feed(f"\x1b]52;c;{payload}\x07".encode())
+    assert got, "OSC 52 应触发剪贴板回调"
+    assert got[-1] == ("clipboard", "剪贴板内容"), got[-1]
+
+
+def test_screen_selection_unavailable_backend():
+    """后端不可用时选区/剪贴板接口静默降级"""
+    s = TerminalScreen(cols=40, rows=8)
+    s._backend = None
+    s.selection_set(0, 0, 1, 1)  # 不应抛异常
+    assert s.selection_text() == ""
+    assert s.selection_active() is False
+    s.set_clipboard_callback(lambda sel, data: None)  # 不应抛异常

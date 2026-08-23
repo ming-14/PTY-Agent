@@ -466,6 +466,28 @@ class SubscribeSessionHandler(MessageHandler):
             except Exception:
                 _logger.exception("event callback error sid=%s", session_id)
 
+        # 注册尺寸变更回调（程序/客户端发起 resize 后广播，web 端立即响应）
+        def _on_resized(_session, cols, rows, snapshot=""):
+            try:
+                text = snapshot or _session.get_snapshot(keep_ansi=True)
+                ctx.publisher.publish_session_resized(
+                    session_id=session_id,
+                    cols=cols,
+                    rows=rows,
+                    snapshot=text,
+                    scrollback="",
+                    exclude_conn_id=None,
+                )
+            except Exception:
+                _logger.exception("resized callback error sid=%s", session_id)
+
+        # 注册 OSC 52 剪贴板写回调（应用 → 前端写系统剪贴板）
+        def _on_clipboard(selection, data):
+            try:
+                ctx.enqueue(Response.ws_clipboard(session_id, selection, data))
+            except Exception:
+                _logger.exception("clipboard callback error sid=%s", session_id)
+
         # 按 session_id 存储回调
         ctx.connection.set_callbacks(
             session_id,
@@ -473,12 +495,20 @@ class SubscribeSessionHandler(MessageHandler):
                 "output": _on_data,
                 "end": _on_end,
                 "event": _on_event,
+                "resized": _on_resized,
+                "clipboard": _on_clipboard,
             },
         )
 
         session.publisher.subscribe(_on_data)
         session.publisher.add_on_end_callback(_on_end)
+        session.publisher.add_on_resized_callback(_on_resized)
         session.event_history.add_event_listener(_on_event)
+        # OSC 52 剪贴板回调（reader 线程入队，非阻塞）
+        try:
+            session.set_clipboard_callback(_on_clipboard)
+        except Exception:
+            _logger.exception("set clipboard callback error sid=%s", session_id)
 
         pty_type = session.pty_type
         output_offset = session.output_offset
@@ -543,6 +573,7 @@ class UnsubscribeSessionHandler(MessageHandler):
             cb = callbacks.get("output")
             end_cb = callbacks.get("end")
             event_cb = callbacks.get("event")
+            resized_cb = callbacks.get("resized")
 
             # 释放订阅期间持有的会话：使用连接上下文保存的引用
             # （会话结束被移出仓库后 get_session 已取不到，须凭持有凭证释放）
@@ -557,6 +588,8 @@ class UnsubscribeSessionHandler(MessageHandler):
                         session.publisher.unsubscribe(cb)
                     if end_cb:
                         session.publisher.remove_on_end_callback(end_cb)
+                    if resized_cb:
+                        session.publisher.remove_on_resized_callback(resized_cb)
                     if event_cb:
                         try:
                             session.event_history.remove_event_listener(event_cb)

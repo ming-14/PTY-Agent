@@ -20,7 +20,7 @@
    - 4.0 [workflow](#40-workflow---workflow-脚本编排) · 4.1 [start](#41-start---启动后台守护进程) · 4.2 [stop](#42-stop---停止后台守护进程) · 4.3 [status](#43-status---查看守护进程运行状态) · 4.4 [list](#44-list---列出所有活跃会话)
    - 4.5 [exec](#45-exec---启动或附加到会话) · 4.6 [send](#46-send---向运行中的会话发送输入) · 4.7 [read](#47-read---读取会话终端输出) · 4.8 [kill](#48-kill---终止指定会话)
    - 4.9 [events](#49-events---查看会话事件) · 4.10 [closewin](#410-closewin---关闭指定-gui-窗口) · 4.11 [mouse](#411-mouse---发送鼠标动作到-pty-会话) · 4.12 [wait](#412-wait---恒等待指定秒数)
-   - 4.13 [keygen](#413-keygen---生成-ed25519-公私钥对) · 4.14 [set-default](#414-set-default---覆盖默认配置-会话级) · 4.15 [file](#415-file---文件工具) · 4.16 [plugin](#416-plugin---插件管理)
+   - 4.13 [keygen](#413-keygen---生成-ed25519-公私钥对) · 4.14 [set-default](#414-set-default---覆盖默认配置-会话级) · 4.15 [file](#415-file---文件工具) · 4.16 [plugin](#416-plugin---插件管理) · 4.17 [attend](#417-attend---接管会话为完整实时终端)
 5. [公共选项参考](#5-公共选项参考)
 6. [配置系统](#6-配置系统)
 7. [认证模式](#7-认证模式)
@@ -99,6 +99,7 @@ python app.py --show-config timeout
 | `closewin <id> <hwnd>` | 关闭指定 GUI 窗口                 |
 | `mouse <id> <action>`  | 发送鼠标动作到 PTY 会话           |
 | `wait`                 | 恒等待指定秒数（守护进程侧等待）  |
+| `attend <id>`          | 接管会话为完整实时终端（镜像 + 输入/鼠标/resize，不影响 web 端） |
 | `workflow <run\|list\|show\|cancel>` | workflow 脚本编排（YAML 定义 + DAG 并行 + 条件/变量/重试） |
 | `plugin <list\|ls\|attach\|detach\|cmd>` | 插件管理（列出/挂载/卸载/调用插件命令） |
 | `file <read\|write\|edit\|grep\|glob\|upload\|download>` | 文件工具（读/写/唯一匹配替换/内容搜索/文件名匹配/上传/下载） |
@@ -854,6 +855,28 @@ python app.py plugin ls myapp
 python app.py plugin attach myapp files
 python app.py plugin cmd myapp files <command>
 ```
+
+### 4.17  attend - 接管会话为完整实时终端
+
+把当前终端接管为会话的完整实时终端：镜像显示（daemon 原始字节流透传，由本机终端原生渲染，与直接运行一致）+ 输入/鼠标/resize 接管。**不影响 web 端**与其他 CLI 读（走 publisher 推送，不消费共享输出游标）。
+
+```bash
+python app.py attend <id> [公共选项]
+```
+
+**交互行为：**
+
+- 进入即把会话 PTY resize 到当前终端尺寸，并持续跟随窗口尺寸变化
+- `Ctrl+\` 分离（回到原 shell，会话继续运行）
+- `Ctrl+C` 透传给会话（与直接运行一致）
+- 鼠标：应用启用鼠标追踪时交还应用（点击/滚轮/拖拽）；未启用时可文本选择
+- 会话自然结束/被 kill 时自动退出并恢复终端
+
+**说明：**
+
+- 输出为原始字节透传，滚动历史从 attach 起由本机终端累积
+- 输入可打印字符（含中文/IME）与特殊键走 daemon 模式感知编码（DECCKM/kitty/CSI-u 全处理）
+- subprocess 模式会话：退化为基础文本流（stdout/stderr 双流透传 + 写 stdin），无终端语义
 
 ---
 

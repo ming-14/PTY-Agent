@@ -1,5 +1,5 @@
 # wezterm-py 库级自测：wezterm-term 终端模型 + 输入编码
-# 独立于任何调用方（PTY-Agent 不参与），仅验证库自身行为。
+# 独立于任何调用方，仅验证库自身行为。
 
 import pywezterm
 

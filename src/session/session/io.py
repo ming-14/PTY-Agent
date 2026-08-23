@@ -152,6 +152,55 @@ class InputMixin:
         if data and not self._dispatch_input(data):
             _logger.info("mouse_input: sid=%r 输入被插件拦截", self.id)
 
+    # ── 选区 / OSC 52 剪贴板（阶段4：委托 TerminalScreen）────────────────
+
+    def selection_set(self, anchor_row: int, anchor_col: int, end_row: int, end_col: int) -> None:
+        """区域选择：anchor → end（stable 行坐标，跨 scrollback 与可见区）
+
+        选区属于终端模型（不写 pty）；宿主据此取选中文本复制到系统剪贴板。
+        """
+        if self._screen is None:
+            raise RuntimeError("子进程模式无终端，不支持选区")
+        self._screen.selection_set(anchor_row, anchor_col, end_row, end_col)
+
+    def selection_select_word(self, row: int, col: int) -> None:
+        """双击选词（stable 行坐标）"""
+        if self._screen is None:
+            raise RuntimeError("子进程模式无终端，不支持选区")
+        self._screen.selection_select_word(row, col)
+
+    def selection_select_line(self, row: int, col: int) -> None:
+        """三击选行（stable 行坐标）"""
+        if self._screen is None:
+            raise RuntimeError("子进程模式无终端，不支持选区")
+        self._screen.selection_select_line(row, col)
+
+    def selection_text(self) -> str:
+        """当前选区纯文本（无选区返回空串）"""
+        if self._screen is None:
+            return ""
+        return self._screen.selection_text()
+
+    def selection_active(self) -> bool:
+        """是否有活动选区"""
+        if self._screen is None:
+            return False
+        return self._screen.selection_active()
+
+    def selection_clear(self) -> None:
+        """清除选区"""
+        if self._screen is None:
+            return
+        self._screen.selection_clear()
+
+    def set_clipboard_callback(self, callback) -> None:
+        """注册 OSC 52 剪贴板写回调：应用（如 tmux set-clipboard on）发 OSC 52
+        时回调 (selection, data)；回调在 reader 线程执行，仅做轻量转发。
+        """
+        if self._screen is None:
+            return
+        self._screen.set_clipboard_callback(callback)
+
     def send_signal(self, sig: str):
         """向子进程发送信号（如 SIGINT）
 

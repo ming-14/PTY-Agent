@@ -336,6 +336,27 @@ class OutputMixin:
             _logger.warning("resize: 返回 snapshot 失败: %s", e)
             return ""
 
+    def _apply_program_resize(self, cols: int, rows: int) -> None:
+        """应用程序发起的尺寸变更（CSI 8;rows;colst）并广播
+
+        wezterm 终端模型忽略窗口操作序列，程序请求的尺寸需在此落到
+        PTY/屏幕，并经 publisher 通知（web 端据此立即响应）。
+        """
+        cols = max(1, min(int(cols), 1000))
+        rows = max(1, min(int(rows), 1000))
+        if (cols, rows) == (self._cols, self._rows):
+            return
+        _logger.info("会话 '%s': 应用程序 resize -> %dx%d", self.id, cols, rows)
+        try:
+            snapshot = self.resize(cols, rows)
+        except Exception as e:
+            _logger.warning("会话 '%s': 程序 resize 失败: %s", self.id, e)
+            return
+        try:
+            self._publisher.notify_resized(self, cols, rows, snapshot)
+        except Exception as e:
+            _logger.warning("会话 '%s': 广播程序 resize 失败: %s", self.id, e)
+
     def cursor_position(self):
         """获取终端当前光标位置与可见性
 

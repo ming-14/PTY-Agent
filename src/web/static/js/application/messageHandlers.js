@@ -52,6 +52,9 @@ export function handleMsg(msg) {
     case 'session_event':
       handleSessionEvent(msg);
       break;
+    case 'clipboard':
+      handleClipboard(msg);
+      break;
     case 'session_detail_refresh':
       ports.detail.applyDetailRefresh(msg);
       break;
@@ -606,6 +609,24 @@ export function handleSessionEvent(msg) {
     ports.terminal.setAppMouseMode(sid, enabled);
   }
   ports.detail.appendDetailEvent(ev);
+}
+
+/**
+ * 处理 clipboard 消息（OSC 52 剪贴板写）：应用（如 tmux set-clipboard on）请求
+ * 写入系统剪贴板。浏览器权限允许时直接写 navigator.clipboard；拒绝时静默降级
+ * （不打扰用户，错误仅记日志）。
+ *
+ * @param {object} msg { sessionId, selection, data }
+ */
+export function handleClipboard(msg) {
+  const { selection, data } = msg;
+  if (selection !== 'clipboard' || !data) return;
+  debug('clipboard', 'recv OSC 52 write sid=%s len=%d', msg.sessionId, data.length);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(data).catch(err => {
+      warn('clipboard', 'OSC 52 clipboard write failed: %s', err && err.message);
+    });
+  }
 }
 
 /**

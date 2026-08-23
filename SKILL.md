@@ -54,6 +54,28 @@ python -c "import sys,importlib.util as u; print('[FAIL] Python >= 3.8 required,
 
 注意：不要使用子进程模式运行需要TTY的会话！
 
+## 命令速查
+
+| 命令 | 用途 | 典型选项 | 示例 |
+|------|------|----------|------|
+| `start/stop [options]` | 手动启动/停止守护进程；启动守护进程`exec`可直接启动，一般无需手动。未经用户运行，不要随便结束守护进程 | `stop --force` | |
+| `status` | 查看守护进程状态 | | |
+| `exec <new-session-id> <options>` | 执行命令以启动会话 | `-c "<command>"`(-c req), `-t "<regex>"`, `--cwd <path>`, `--env KEY=VALUE`, `--subprocess`, `--plugin <name>` | `exec id_py -c "python -i" -t ">>>"` |
+| `send <session-id> <options>` | 发送输入到运行中的会话（原样，不转义） | `-i "<content>"`(-i req), `-e <lf|crlf|cr|none>`, `-t "<regex>"` | `send id_py -i "print(1)" -t ">>>"` |
+| `advsend <session-id> <options>` | 发送输入到运行中的会话（JSON + 控制字符转义解码） | 同 `send` | `advsend server -i "{ctrl+c}" -e none` |
+| `read <session-id> [options]` | 读取会话输出 | `-l <N>`, `-g "<regex>"`, `-o <path>` | `read myid -l 10` |
+| `list` | 列出所有会话 | | |
+| `kill <session-id>` | 终止会话 | | |
+| `events <session-id> [options]` | 查看会话运行程序生命周期事件 | `-l <N>`, `--since <iso-datetime\|HH:MM>` | `events myid -l 10` |
+| `closewin <session-id> <window-handle>` | 关闭 GUI 窗口；`<window-handle>`支持十进制或 0x十六进制| | |
+| `mouse <session-id> <action>` | 发送鼠标动作到 PTY 会话 | `--button`, `--count`, `--ctrl`, `--shift`, `--alt`, `--grep` | `mouse myid click 10,5 --button right` / `mouse myid _get_cursor_location` |
+| `wait [--timeout <seconds>]` | 恒等待指定秒数（守护进程侧等待） | `--timeout <seconds>` | `wait --timeout 5` |
+| `workflow <run\|list\|show\|cancel>` | workflow 脚本编排 | `run <file>`（`--vars K=V`, `--parallel N`） / `list` / `show <run-id>` / `cancel <run-id>` | `workflow run build.yaml`；`workflow show wf-1786777600000-1` |
+| `attend <sid>` | 附加到某个会话（注意：这是给用户使用的不是给你用的）| | |
+| `keygen [-f] [--key-dir <dir>] [-C <comment>]` | 生成 Ed25519 公私钥对（TLS 跨机认证用） | `-f`, `--key-dir <dir>`, `-C "<comment>"` | `keygen -C "user@host"` |
+| `plugin <list\|ls\|attach\|detach\|cmd>` | 插件管理 | `plugin list` / `plugin ls <id>` / `plugin attach <id> <name>` / `plugin detach <id> <name>` / `plugin cmd <id> <name> <command> [args...]` | `plugin list` |
+| `set-default <KEY> <VALUE>` | 覆盖全局默认配置（即只影响之后新建的会话的默认值） | | `set-default timeout 30` |
+
 ## *返回条件参数
 
 命令执行后，程序满足设定的返回条件参数会携带消息返回，之后你可继续操作该会话
@@ -129,26 +151,22 @@ python -c "import sys,importlib.util as u; print('[FAIL] Python >= 3.8 required,
 
 首次调用返回完整快照，后续只返回变化行，格式为 `行号:内容`
 
-## 命令速查
+## 返回结果示例
 
-| 命令 | 用途 | 典型选项 | 示例 |
-|------|------|----------|------|
-| `start/stop [options]` | 手动启动/停止守护进程；启动守护进程`exec`可直接启动，一般无需手动 | `stop --force` | |
-| `status` | 查看守护进程状态 | | |
-| `exec <new-session-id> <options>` | 执行命令以启动会话 | `-c "<command>"`(-c req), `-t "<regex>"`, `--cwd <path>`, `--env KEY=VALUE`, `--subprocess`, `--plugin <name>` | `exec id_py -c "python -i" -t ">>>"` |
-| `send <session-id> <options>` | 发送输入到运行中的会话（原样，不转义） | `-i "<content>"`(-i req), `-e <lf|crlf|cr|none>`, `-t "<regex>"` | `send id_py -i "print(1)" -t ">>>"` |
-| `advsend <session-id> <options>` | 发送输入到运行中的会话（JSON + 控制字符转义解码） | 同 `send` | `advsend server -i "{ctrl+c}" -e none` |
-| `read <session-id> [options]` | 读取会话输出 | `-l <N>`, `-g "<regex>"`, `-o <path>` | `read myid -l 10` |
-| `list` | 列出所有会话 | | |
-| `kill <session-id>` | 终止会话 | | |
-| `events <session-id> [options]` | 查看会话运行程序生命周期事件 | `-l <N>`, `--since <iso-datetime\|HH:MM>` | `events myid -l 10` |
-| `closewin <session-id> <window-handle>` | 关闭 GUI 窗口；`<window-handle>`支持十进制或 0x十六进制| | |
-| `mouse <session-id> <action>` | 发送鼠标动作到 PTY 会话 | `--button`, `--count`, `--ctrl`, `--shift`, `--alt`, `--grep` | `mouse myid click 10,5 --button right` / `mouse myid _get_cursor_location` |
-| `wait [--timeout <seconds>]` | 恒等待指定秒数（守护进程侧等待） | `--timeout <seconds>` | `wait --timeout 5` |
-| `workflow <run\|list\|show\|cancel>` | workflow 脚本编排：YAML 定义多步骤（exec/send/read/kill/wait），daemon 后台执行，支持依赖图并行/变量传递/条件判定/重试；执行状态可查询、可取消 | `run <file>`（`--vars K=V`, `--parallel N`） / `list` / `show <run-id>` / `cancel <run-id>` | `workflow run build.yaml`；`workflow show wf-1786777600000-1` |
-| `keygen [-f] [--key-dir <dir>] [-C <comment>]` | 生成 Ed25519 公私钥对（TLS 跨机认证用） | `-f`, `--key-dir <dir>`, `-C "<comment>"` | `keygen -C "user@host"` |
-| `plugin <list\|ls\|attach\|detach\|cmd>` | 插件管理 | `plugin list` / `plugin ls <id>` / `plugin attach <id> <name>` / `plugin detach <id> <name>` / `plugin cmd <id> <name> <command> [args...]` | `plugin list` |
-| `set-default <KEY> <VALUE>` | 覆盖默认配置（sid会话级） | | `set-default timeout 30` |
+```
+                                   (过滤条件)
+────────────────────────────────── lines:0:2 ───────────────────────────────────
+Python 3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (
+AMD64)] on win32
+(输出结果)
+────────────────────────────────────────────────────────────────────────────────
+[read · ok · 0.00s]  py1  running  pty
+[(命令类型) · (返回原因) · (执行时间)]  (sid)  (当前程序状态)  (运行模式)
+
+(PTY-Agent message: 系统消息)
+
+(hit: 系统提示)
+```
 
 ## 引号处理规则（**你的**Shell命令行层）
 
@@ -171,8 +189,6 @@ python -c "import sys,importlib.util as u; print('[FAIL] Python >= 3.8 required,
 - `--size <WxH>` 终端尺寸（如 `120x40`，默认 `80x24`；仅 pty 模式，**仅会话创建时生效**；运行中调整请用 `--default terminal-size NxN`）
 - `-o/--output <path>` 输出到文件（.txt/.log=纯文本; .svg=矢量图; .png/.jpg/.bmp=位图，需 Pillow）
 
-`-c "<command>"`必填
-
 **运行TUI程序建议使用终端模式**
 如果是简单的字符流程序，使用 `--subprocess` 子进程模式，只读取增量输出
 
@@ -183,18 +199,15 @@ python -c "import sys,importlib.util as u; print('[FAIL] Python >= 3.8 required,
 
 * `send` 原样发送输入，简单输入，不做任何转义；
 * `advsend` 参数与 `send` 完全一致，但**恒启用JSON + 控制字符转义解码**（`\n`、`\t`、`\uXXXX` 等 JSON 反转移 + `{ctrl+a}`、`{enter}`、方向键、`{f1}~{f12}` 等控制字符语法）。需要发送多行、控制字符或按键序列时，使用`advsend`；普通文本用 `send` 即可。
-     转义展开（含 `{enter}` 与默认行尾符）统一由**守护进程**按会话模式完成：pty=`\r`、subprocess=`\n`（见下）。
 
 send 通过 `-i`/`--input` 参数（必填）指定要发送的输入文本，例如 `send id_py -i "print(1)" -t ">>>"`
 
 选项：
 - 支持*返回条件参数
 - *返回结果处理参数
-- `-e/--send-eol <lf|crlf|cr|none>` 末尾追加的行尾符（默认按会话模式：pty=`\r` 模拟终端 Enter；subprocess=`\n`；可选 `cr`=`\r`；`lf`=`\n`；`crlf`=`\r\n`；`none`=不追加）
+- `-e/--send-eol <lf|crlf|cr|none>` 末尾追加的行尾符（可选 `cr`=`\r`；`lf`=`\n`；`crlf`=`\r\n`；`none`=不追加）
 
 默认情况下，`send` 发送的"<content>"是不转义输入；如果需要输入控制字符、多行（`\r`），必须改用 `advsend`（恒转义）
-
-`-i "<content>" `必填
 
 #### advsend JSON + 控制字符转义模式
 
@@ -204,7 +217,7 @@ send 通过 `-i`/`--input` 参数（必填）指定要发送的输入文本，�
 |------|------|------|
 | `{ctrl+a}` | Ctrl+字母 → ASCII 控制字符 |
 | `{ctrl+alt+s}` | 修饰键用 `+` 连接；`alt` 前缀 ESC |
-| `{enter}` | 回车，展开值按会话模式：pty=`\r`、subprocess=`\n`；若已用 `{enter}` 收尾，默认行尾不会重复追加 |
+| `{enter}` | 回车，终端模式代表`\r`、子进程模式代表`\n` |
 | `{backtab}` | Shift+Tab |
 | `{space}` | 空格；直接输入字符串` `就好了 |
 | `{up}`/`{down}`/`{left}`/`{right}`、`{home}`/`{end}`、`{pageup}`/`{pagedown}`、`{insert}`/`{delete}`、`{f1}`~`{f12}`、`{esc}`、`{tab}`、`{backspace}` | |
@@ -216,7 +229,7 @@ send 通过 `-i`/`--input` 参数（必填）指定要发送的输入文本，�
 
 #### `<content>` 追加字符
 
-`<content>`末尾自动追加行尾符（默认按会话模式：pty=`\r`、subprocess=`\n`），可通过`--default send-eol`配置，`--send-eol <lf|crlf|cr|none>`覆盖本次：
+`<content>`末尾自动追加行尾符（终端模式`\r`，子进程模式`\n`），可通过`--default send-eol`配置，`--send-eol <lf|crlf|cr|none>`覆盖本次：
 - `cr` — 追加 `\r`（终端 Enter 键，pty 默认）
 - `lf` — 追加 `\n`（subprocess 默认）
 - `crlf` — 追加 `\r\n`

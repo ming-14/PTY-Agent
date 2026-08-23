@@ -23,6 +23,10 @@ class SessionPublisher:
         self._on_end_callbacks: List[Callable] = []
         self._on_end_snapshot: List[Callable] = []
         self._on_end_lock = threading.Lock()
+        # 尺寸变更回调（程序/客户端发起 resize 后广播，web 端立即响应）
+        self._on_resized_callbacks: List[Callable] = []
+        self._on_resized_snapshot: List[Callable] = []
+        self._on_resized_lock = threading.Lock()
 
     def subscribe(self, callback):
         """注册输出订阅者"""
@@ -71,5 +75,30 @@ class SessionPublisher:
         for cb in self._on_end_snapshot:
             try:
                 cb(session)
+            except Exception:
+                pass
+
+    def add_on_resized_callback(self, callback: Callable):
+        """注册尺寸变更回调（web 端订阅，收到后广播 session_resized）"""
+        with self._on_resized_lock:
+            if callback not in self._on_resized_callbacks:
+                self._on_resized_callbacks.append(callback)
+                self._on_resized_snapshot = list(self._on_resized_callbacks)
+
+    def remove_on_resized_callback(self, callback: Callable):
+        """移除尺寸变更回调"""
+        with self._on_resized_lock:
+            try:
+                self._on_resized_callbacks.remove(callback)
+            except ValueError:
+                pass
+            else:
+                self._on_resized_snapshot = list(self._on_resized_callbacks)
+
+    def notify_resized(self, session, cols: int, rows: int, snapshot: str = ""):
+        """通知所有尺寸变更回调（程序/客户端发起 resize 后调用）"""
+        for cb in self._on_resized_snapshot:
+            try:
+                cb(session, cols, rows, snapshot)
             except Exception:
                 pass

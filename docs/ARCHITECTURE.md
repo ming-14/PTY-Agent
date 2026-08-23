@@ -8,7 +8,7 @@
 
 PTY-Agent 是一个通过伪终端（PTY）与交互式 CLI 程序双向通信的命令行代理。守护进程以独立子进程运行，首次执行命令时自动启动。支持 basic/token/tls 三监听器模型（明文共享密码认证、本机 Token + HMAC 认证、跨机 TLS + Ed25519 认证），并提供 Web 管理界面、Screenshare 屏幕流、VNC 远程桌面、workflow 脚本编排等扩展能力。伪终端统一由 wezterm-py 提供（Windows: OpenConsole 宿主；Unix: portable-pty openpty），进程树追踪位于 `process/` 包（Job Object / process group / 沙箱委派）。
 
-**子命令**：`start | stop | status | list | exec | send | read | kill | events | closewin | mouse | wait | plugin <list|ls|attach|detach|cmd> | file <read|write|edit|grep|glob|upload|download> | workflow <run|list|show|cancel> | set-default | keygen`
+**子命令**：`start | stop | status | list | exec | send | read | kill | events | closewin | mouse | attend | wait | plugin <list|ls|attach|detach|cmd> | file <read|write|edit|grep|glob|upload|download> | workflow <run|list|show|cancel> | set-default | keygen`
 
 **会话模式**：`exec` 支持两种运行模式——**pty**（默认，伪终端+屏幕快照，TUI 交互）与 **subprocess**（`--subprocess`，Popen 捕获 stdout/stderr，增量输出 + stderr 分离）。子进程模式由 `pty/subprocess_pty.py` 后端实现，Session 按 `mode` 装配组件。
 

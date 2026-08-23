@@ -1382,6 +1382,23 @@ class Client:
             except OSError:
                 pass
 
+    def cmd_attend(self, session_id: str) -> int:
+        """接管会话为完整实时终端（镜像 + 输入/鼠标/resize，不影响 web 端）
+
+        长连接交互：进入后把 daemon 透传的原始输出字节流写入本机终端，
+        控制台输入事件映射为帧发给 daemon。Ctrl+\\ 分离，Ctrl+C 透传会话。
+
+        Returns:
+            进程退出码（0=正常结束/分离，1=失败）。
+        """
+        _logger.info("cmd_attend: id=%r", session_id)
+        if not session_id or not isinstance(session_id, str):
+            print_response(Response.error("invalid session id"))
+            return 1
+        from .attend import run_attend
+
+        return run_attend(self, session_id)
+
     def cmd_kill(self, session_id: str):
         """终止指定会话"""
         _logger.info("cmd_kill: id=%r", session_id)

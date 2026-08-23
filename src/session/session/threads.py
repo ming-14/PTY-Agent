@@ -27,6 +27,32 @@ if TYPE_CHECKING:
 
 _logger = get_logger("pty-session")
 
+# 程序发起的尺寸变更（CSI 8;rows;colst，xterm 文本区 resize 请求）。
+# wezterm 终端模型忽略该序列，需在 reader 侧解析并落到 PTY/屏幕。
+_PROGRAM_RESIZE_RE = re.compile(rb"\x1b\[8;(\d+);(\d+)t")
+
+
+def _detect_program_resize(data: bytes, comp) -> None:
+    """检测程序发起的尺寸变更（CSI 8;rows;colst）并应用
+
+    解析后调用 session._apply_program_resize：更新 PTY/屏幕并经
+    publisher 广播（web 端立即响应）。
+    """
+    m = _PROGRAM_RESIZE_RE.search(data)
+    if not m:
+        return
+    rows, cols = int(m.group(1)), int(m.group(2))
+    _logger.info(
+        "会话 '%s': 检测到程序尺寸变更 %dx%d", comp.session_id, cols, rows
+    )
+    session = comp.session_ref()
+    if session is None:
+        return
+    try:
+        session._apply_program_resize(cols, rows)
+    except Exception as e:
+        _logger.warning("会话 '%s': 程序尺寸变更应用失败: %s", comp.session_id, e)
+
 
 @dataclass
 class Components:
@@ -321,6 +347,9 @@ class Threads:
                     )
             except Exception as e:
                 _logger.warning("会话 '%s': 终端应答回写失败: %s", session_id, e)
+
+            # ── 程序发起尺寸变更检测（CSI 8;rows;colst）──
+            _detect_program_resize(data, comp)
 
         # 通知订阅者（Web WS 实时推送）
         try:

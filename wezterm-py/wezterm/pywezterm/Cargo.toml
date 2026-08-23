@@ -12,6 +12,11 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3.workspace = true
 portable-pty.workspace = true
+termwiz.workspace = true
 wezterm-term.workspace = true
 wezterm-surface.workspace = true
-winapi = { workspace = true, features = ["winbase", "winnt", "ioapiset", "handleapi", "processthreadsapi"] }
+wezterm-char-props.workspace = true
+wezterm-escape-parser.workspace = true
+anyhow.workspace = true
+log.workspace = true
+winapi = { workspace = true, features = ["winbase", "winnt", "ioapiset", "handleapi", "processthreadsapi", "consoleapi", "wincon", "synchapi", "winuser"] }
