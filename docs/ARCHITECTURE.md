@@ -617,7 +617,7 @@ class TerminalScreen:
 - `export_buffer()` 使用稀疏格式：仅传输非默认单元格（空格+default颜色+非粗体），每个单元格含 `c`（列号）、`d`（字符）、`f`（前景色）、`b`（背景色）、`bo`（粗体）。典型 80×24 终端从全量 1920 项减少到数十项
 - 服务端通过 `_compress_screen_buffer()` 对稀疏 JSON 进行 gzip+base64 压缩，客户端通过 `_decompress_screen_buffer()` 解压
 - `client/renderer/` 中 `_expand_lines()` 将稀疏格式展开为全量二维数组
-- 可见区/scrollback 以 `List[List[ScreenCell]]` 稀疏网格暴露（见 `backends.py`），渲染（纯文本 / 带 SGR 颜色 / 光标序列 / scrollback）由模块级函数完成（`render_plain` / `render_ansi` / `render_scrollback` / `cell_to_sgr` / `color_to_sgr` / `build_cursor_seq` / `is_default_cell`）
+- 可见区/scrollback 以 `List[List[ScreenCell]]` 稀疏网格暴露（见 `backends.py`），渲染（纯文本 / 带 SGR 颜色 / 光标序列 / scrollback）下沉 pywezterm 绑定层完成（`Terminal.render_plain` / `render_ansi` / `render_scrollback` / `mode_restore_seq` / `get_mouse_encoding` / `cursor_seq`），宿主仅透传/查询，不手写终端渲染与 VT 嗅探
 
 ### 4.10 PTY 屏幕快照（恒返回）
 

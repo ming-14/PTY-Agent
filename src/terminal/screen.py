@@ -12,37 +12,23 @@
 - wezterm-term: 完整 VT 解析 + 光标/scrollback 语义
 """
 
-import re
 import threading
 
 from ..config.common import DEFAULT_COLS, DEFAULT_ROWS
 from .backends import (
-    _CELL_DATA,
     _CELL_BG,
     _CELL_BOLD,
     _CELL_COL,
+    _CELL_DATA,
     _CELL_FG,
     _HAS_WEZTERM,
     build_cursor_seq,
     create_backend,
     is_default_cell,
-    render_ansi,
-    render_plain,
 )
 from ..logging import get_logger
 
 _logger = get_logger("pty-session")
-
-# 备用屏幕切换序列（vim/htop/less 等 TUI 应用）
-_ALT_ON_RE = re.compile(rb"\x1b\[\?(1049|1047|47|1048)h")
-_ALT_OFF_RE = re.compile(rb"\x1b\[\?(1049|1047|47|1048)l")
-
-# DECSET/DECRST 通用模式序列（用于订阅时向新订阅者恢复终端模式状态）
-# 跟踪：鼠标追踪（1000/1002/1003，互斥取最后激活）、SGR 鼠标编码（1006）、
-# 光标可见（25）、bracketed paste（2004）、备用屏幕（1049/1047/47，见上）
-_DECSET_RE = re.compile(rb"\x1b\[\?(\d+(?:;\d+)*)([hl])")
-
-_ALT_TAIL_WINDOW = 64
 
 # scrollback 历史行上限（参考 tmux default history-limit 2000；10000 行 ≈ 60KB
 # 文本，黑盒实测 `seq 1 100000` 仅尾部约万行可取回，前部输出丢失。调至 30000
@@ -79,14 +65,6 @@ class TerminalScreen:
         self._feed_errors = 0
         self._change_event = threading.Event()
         self._backend = create_backend(cols, rows, hlimit)
-        # 备用屏幕状态：feed 时对原始 VT 流跟踪 \x1b[?1049/1047/47/1048 开关
-        self._alt_screen = False
-        self._alt_tail = b""
-        # DECSET 模式状态：订阅时据此生成模式恢复序列（鼠标/光标/paste 等）
-        self._mouse_tracking_ps = 0  # 0=关闭，1000/1002/1003
-        self._cursor_visible = True
-        self._bracketed_paste = False
-        self._sgr_mouse = False
         # 渲染缓存：屏幕内容仅随 feed（feed_count）或 resize（cols/rows）变化，
         # 版本键一致时直接复用渲染结果（snapshot 为不可变 str；export_buffer
         # 返回只读 dict，调用方仅序列化/压缩，不原地修改）
@@ -148,28 +126,8 @@ class TerminalScreen:
             return
         self._feed_count += 1
         self._feed_bytes += len(data)
-        # alt screen 切换检测（尾部窗口拼接处理跨 feed 边界；同窗口多序列取最后者）
-        self._alt_tail = (self._alt_tail + data)[-_ALT_TAIL_WINDOW:]
-        m_on = _ALT_ON_RE.search(self._alt_tail)
-        m_off = _ALT_OFF_RE.search(self._alt_tail)
-        if m_on and (not m_off or m_on.end() > m_off.end()):
-            self._alt_screen = True
-        elif m_off and (not m_on or m_off.end() > m_on.end()):
-            self._alt_screen = False
-        # DECSET 模式跟踪：鼠标追踪（1000/1002/1003 互斥）、SGR 编码（1006）、
-        # 光标可见（25）、bracketed paste（2004）——订阅时恢复新 viewer 的模式状态
-        for m in _DECSET_RE.finditer(self._alt_tail):
-            params = [int(p) for p in m.group(1).split(b";")]
-            enable = m.group(2) == b"h"
-            for ps in params:
-                if ps in (1000, 1002, 1003):
-                    self._mouse_tracking_ps = ps if enable else 0
-                elif ps == 1006:
-                    self._sgr_mouse = enable
-                elif ps == 25:
-                    self._cursor_visible = enable
-                elif ps == 2004:
-                    self._bracketed_paste = enable
+        # 备用屏幕/鼠标追踪/光标/paste 模式状态由 pywezterm 绑定层跟踪
+        # （feed 时扫描 DECSET，暴露 mode_restore_seq/get_mouse_encoding 查询）
         # 诊断日志：记录每次 feed 的摘要（识别 ConPTY repaint vs 用户输出）
         try:
             preview = data[:120].decode("utf-8", errors="replace")
@@ -203,14 +161,10 @@ class TerminalScreen:
                 cached = self._snapshot_cache
                 if cached is not None and cached[0] == key:
                     return cached[1]
-                cells = self._backend.cells()
                 if keep_ansi:
-                    cursor = self._backend.cursor() if include_cursor else None
-                    text = render_ansi(
-                        cells, include_cursor=include_cursor, cursor=cursor
-                    )
+                    text = self._backend.render_ansi(include_cursor=include_cursor)
                 else:
-                    text = render_plain(cells)
+                    text = self._backend.render_plain()
                     if include_cursor:
                         text += build_cursor_seq(*self._backend.cursor())
                 self._snapshot_cache = (key, text)
@@ -272,43 +226,48 @@ class TerminalScreen:
                 return (None, None, None)
 
     def is_alt_screen(self) -> bool:
-        """备用屏幕是否激活（\x1b[?1049/1047/47/1048 开关序列跟踪）
+        """备用屏幕是否激活（wezterm 终端状态查询）
 
         供外部（插件等）判断 TUI 应用（vim/htop/less）是否处于备用屏幕。
         任意线程可调用。
         """
-        return self._alt_screen
+        if not self.available:
+            return False
+        try:
+            return bool(self._backend.emulator.is_alt_screen_active())
+        except Exception:
+            return False
 
     def is_mouse_tracking(self) -> bool:
         """TUI 应用是否激活鼠标追踪（\x1b[?1000/1002/1003 跟踪）
 
         供 web 订阅响应携带当前鼠标模式，前端据此恢复鼠标输入状态。
         """
-        return self._mouse_tracking_ps > 0
+        if not self.available:
+            return False
+        try:
+            mode, _ = self._backend.get_mouse_encoding()
+            return mode > 0
+        except Exception:
+            return False
 
     def mode_restore_seq(self) -> str:
         """生成终端模式恢复序列（新订阅者重建 xterm 状态用）
 
         网页刷新/重连后 xterm 实例重建，replay 只含屏幕内容，不含模式状态：
         鼠标追踪、光标可见性、bracketed paste、备用屏幕等全部回到默认。
-        本方法根据 feed 时跟踪的 DECSET 状态生成恢复前缀，
+        下沉 pywezterm 绑定层跟踪的模式状态生成恢复前缀，
         订阅响应将其拼在 replay 前，前端 xterm 与应用模式状态一致。
 
         Returns:
             模式恢复 VT 序列（如 "\\x1b[?1049h\\x1b[?1002h\\x1b[?25h"），无模式时为 ""。
         """
-        parts = []
-        if self._alt_screen:
-            parts.append("\x1b[?1049h")
-        if self._mouse_tracking_ps:
-            parts.append("\x1b[?%dh" % self._mouse_tracking_ps)
-            if self._sgr_mouse:
-                parts.append("\x1b[?1006h")
-        if self._bracketed_paste:
-            parts.append("\x1b[?2004h")
-        if not self._cursor_visible:
-            parts.append("\x1b[?25l")
-        return "".join(parts)
+        if not self.available:
+            return ""
+        try:
+            return self._backend.mode_restore_seq()
+        except Exception:
+            return ""
 
     def capture_scrollback(self, keep_ansi: bool = False) -> str:
         """捕获 scrollback 历史区

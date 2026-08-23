@@ -10,8 +10,6 @@ import pytest
 
 from src.terminal.backends import (
     WeztermBackend,
-    render_plain,
-    render_ansi,
     build_cursor_seq,
 )
 from src.terminal.screen import TerminalScreen
@@ -24,7 +22,7 @@ pytestmark = pytest.mark.skipif(not _backends_mod._HAS_WEZTERM, reason="wezterm-
 def test_backend_basic_text():
     backend = WeztermBackend(40, 10)
     backend.feed(b"Hello World\r\nSecond line")
-    text = render_plain(backend.cells())
+    text = backend.render_plain()
     assert text == "Hello World\nSecond line", text
     # 光标位于第二行末尾（0-based row=1）
     x, y, visible = backend.cursor()
@@ -36,14 +34,14 @@ def test_backend_cjk_no_extra_space():
     """CJK 宽字符不得在字符间产生占位空格（历史 bug 回归）"""
     backend = WeztermBackend(40, 10)
     backend.feed("我喜欢你".encode("utf-8"))
-    text = render_plain(backend.cells())
+    text = backend.render_plain()
     assert text == "我喜欢你", repr(text)
 
 
 def test_backend_color_ansi():
     backend = WeztermBackend(40, 10)
     backend.feed(b"\x1b[31mRed Text\x1b[0m")
-    ansi = render_ansi(backend.cells())
+    ansi = backend.render_ansi()
     assert "Red Text" in ansi
     assert "\x1b[" in ansi
 
@@ -59,7 +57,7 @@ def test_backend_scrollback_and_clear():
     backend.clear_scrollback()
     assert backend.scrollback_lines_count == 0
     # 清 scrollback 后可见区仍保留最后一行
-    text = render_plain(backend.cells())
+    text = backend.render_plain()
     assert "line 19" in text, text
 
 
@@ -67,7 +65,7 @@ def test_backend_reset():
     backend = WeztermBackend(40, 10)
     backend.feed(b"Hello")
     backend.reset()
-    text = render_plain(backend.cells())
+    text = backend.render_plain()
     assert "Hello" not in text, repr(text)
 
 
@@ -133,20 +131,18 @@ def test_default_backend_prefers_wezterm():
     assert screen.backend_name == "wezterm"
 
 def test_color_to_sgr_rgb_hex():
-    """RGB 真彩色（wezterm "#rrggbb" 格式）应转换为 38;2 序列"""
-    from src.terminal.backends import color_to_sgr
-    assert color_to_sgr("#ff0000", is_fg=True) == "38;2;255;0;0"
-    assert color_to_sgr("#00ff00", is_fg=False) == "48;2;0;255;0"
-    assert color_to_sgr("ff0000", is_fg=True) == "38;2;255;0;0"
-    assert color_to_sgr("#invalid", is_fg=True) == ""
-    assert color_to_sgr("#ff000", is_fg=True) == ""
+    """RGB 真彩色（wezterm "#rrggbb" 格式）应渲染为 38;2 序列（经后端 render_ansi）"""
+    backend = WeztermBackend(40, 10)
+    backend.feed(b"\x1b[38;2;255;0;0mRED\x1b[0m")
+    ansi = backend.render_ansi()
+    assert "\x1b[38;2;255;0;0mRED" in ansi, ansi
 
 
 def test_render_ansi_rgb_truecolor():
     """RGB 真彩色内容应完整渲染为 38;2 序列（回归：刷新后颜色消失）"""
     backend = WeztermBackend(40, 10)
     backend.feed(b"\x1b[38;2;255;0;0mRED\x1b[0m\x1b[48;2;0;0;255mBG\x1b[0m")
-    ansi = render_ansi(backend.cells())
+    ansi = backend.render_ansi()
     assert "\x1b[38;2;255;0;0mRED" in ansi, ansi
     assert "\x1b[48;2;0;0;255mBG" in ansi, ansi
 

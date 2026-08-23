@@ -107,6 +107,129 @@ pub(crate) fn cells_of_line(line: &Line) -> Vec<CellTuple> {
         .collect()
 }
 
+/// 单元格是否默认空白（无字符、无样式）——渲染剪枝用
+fn is_default_cell(cell: &CellTuple) -> bool {
+    (cell.1.is_empty() || cell.1 == " ")
+        && (cell.2.is_empty() || cell.2 == "default")
+        && (cell.3.is_empty() || cell.3 == "default")
+        && !cell.4
+        && !cell.5
+        && !cell.6
+        && !cell.7
+        && !cell.8
+}
+
+/// 应用单个 DECSET/DECRST 模式
+fn apply_mode(m: &mut TermModeState, ps: u16, enable: bool) {
+    match ps {
+        1000 | 1002 | 1003 => m.mouse_tracking = if enable { ps } else { 0 },
+        1006 => m.sgr_mouse = enable,
+        1049 | 1047 | 47 => m.alt_screen = enable,
+        25 => m.cursor_visible = enable,
+        2004 => m.bracketed_paste = enable,
+        _ => {}
+    }
+}
+
+/// 扫描字节流中的 DECSET/DECRST 序列（\x1b[?NNNNh/l），更新模式状态。
+/// 与宿主侧（ptyagent）此前手写的正则嗅探语义一致：备用屏幕、鼠标追踪
+/// （1000/1002/1003 互斥）、SGR 鼠标（1006）、光标可见（25）、paste（2004）。
+fn update_mode_state(mode: &Mutex<TermModeState>, data: &[u8]) {
+    let mut m = mode.lock().unwrap();
+    let mut i = 0usize;
+    while i < data.len() {
+        if data[i] == 0x1b && i + 2 < data.len() && data[i + 1] == b'[' && data[i + 2] == b'?' {
+            let mut j = i + 3;
+            let mut params: Vec<u16> = Vec::new();
+            let mut cur: u16 = 0;
+            let mut has_digit = false;
+            while j < data.len() {
+                let c = data[j];
+                if c.is_ascii_digit() {
+                    cur = cur.saturating_mul(10).saturating_add((c - b'0') as u16);
+                    has_digit = true;
+                    j += 1;
+                } else if c == b';' {
+                    params.push(cur);
+                    cur = 0;
+                    has_digit = false;
+                    j += 1;
+                } else if c == b'h' || c == b'l' {
+                    if has_digit || !params.is_empty() {
+                        params.push(cur);
+                    }
+                    let enable = c == b'h';
+                    for ps in params {
+                        apply_mode(&mut m, ps, enable);
+                    }
+                    j += 1;
+                    break;
+                } else {
+                    break;
+                }
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// 单元格样式 → SGR 序列（\x1b[...m）；全默认返回 \x1b[0m（与宿主渲染语义一致）
+fn cell_sgr(cell: &CellTuple) -> String {
+    let mut attrs: Vec<String> = Vec::new();
+    if cell.4 {
+        attrs.push("1".to_string());
+    }
+    if cell.5 {
+        attrs.push("3".to_string());
+    }
+    if cell.6 {
+        attrs.push("4".to_string());
+    }
+    if cell.7 {
+        attrs.push("7".to_string());
+    }
+    if cell.8 {
+        attrs.push("9".to_string());
+    }
+    if let Some(s) = sgr_color(&cell.2, true) {
+        attrs.push(s);
+    }
+    if let Some(s) = sgr_color(&cell.3, false) {
+        attrs.push(s);
+    }
+    if attrs.is_empty() {
+        return "\x1b[0m".to_string();
+    }
+    format!("\x1b[{}m", attrs.join(";"))
+}
+
+/// 颜色字符串 → SGR 颜色段（None = default，不输出）
+fn sgr_color(color: &str, is_fg: bool) -> Option<String> {
+    let prefix = if is_fg { "38" } else { "48" };
+    match color {
+        "default" => None,
+        _ if color.starts_with('p') => {
+            // wezterm 调色板索引 "pN"（N ∈ 0-255）
+            color[1..].parse::<u8>().ok().map(|n| format!("{prefix};5;{n}"))
+        }
+        _ if color.starts_with('#') => {
+            // #rrggbb 真彩色
+            let hex = &color[1..];
+            if hex.len() == 6 {
+                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+                Some(format!("{prefix};2;{r};{g};{b}"))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 /// 解析按键描述字符串 → KeyCode
 pub(crate) fn parse_keycode(s: &str) -> PyResult<KeyCode> {
     use KeyCode::*;
@@ -161,6 +284,21 @@ pub(crate) fn parse_mouse_button(s: &str) -> PyResult<MouseButton> {
     })
 }
 
+/// 终端模式状态（feed 时跟踪 DECSET/DECRST，供订阅恢复/查询）
+#[derive(Clone, Copy, Default)]
+struct TermModeState {
+    /// 鼠标追踪模式（0=关闭，1000/1002/1003）
+    mouse_tracking: u16,
+    /// SGR 鼠标编码（DECSET 1006）
+    sgr_mouse: bool,
+    /// 备用屏幕激活（1049/1047/47）
+    alt_screen: bool,
+    /// 光标可见（DECSET 25）
+    cursor_visible: bool,
+    /// bracketed paste（DECSET 2004）
+    bracketed_paste: bool,
+}
+
 /// 终端模拟器实例（Mutex 包裹以支持多线程访问）
 #[pyclass(name = "Terminal")]
 pub struct PyTerminal {
@@ -169,6 +307,10 @@ pub struct PyTerminal {
     view_offset: Mutex<usize>,
     /// 选区状态（stable 行 + 列；跨 scrollback 与可见区）
     selection: Mutex<SelectionState>,
+    /// feed 时跟踪的 DECSET 模式状态（备用屏幕/鼠标/光标/paste）
+    mode: Mutex<TermModeState>,
+    /// 跨 feed 边界的 DECSET 序列尾部窗口（最多 64 字节，拼接后扫描）
+    mode_tail: Mutex<Vec<u8>>,
     /// 剪贴板/下载/设备控制/通知回调（OSC 52 等），替换旧引用即释放
     clipboard_cb: Mutex<Option<Py<PyAny>>>,
     download_cb: Mutex<Option<Py<PyAny>>>,
@@ -224,6 +366,11 @@ impl PyTerminal {
             capture,
             view_offset: Mutex::new(0),
             selection: Mutex::new(SelectionState::default()),
+            mode: Mutex::new(TermModeState {
+                cursor_visible: true,
+                ..Default::default()
+            }),
+            mode_tail: Mutex::new(Vec::with_capacity(64)),
             clipboard_cb: Mutex::new(None),
             download_cb: Mutex::new(None),
             device_control_cb: Mutex::new(None),
@@ -231,8 +378,17 @@ impl PyTerminal {
         })
     }
 
-    /// 喂入程序输出的 VT 字节流
+    /// 喂入程序输出的 VT 字节流（同步跟踪 DECSET 模式状态）
     fn feed(&self, data: &[u8]) {
+        // 尾部窗口拼接（跨 feed 边界的 DECSET 序列，如 \x1b[?10 + 03h）
+        let mut tail = self.mode_tail.lock().unwrap();
+        tail.extend_from_slice(data);
+        while tail.len() > 64 {
+            let drop = tail.len() - 64;
+            tail.drain(0..drop);
+        }
+        update_mode_state(&self.mode, &tail);
+        drop(tail);
         self.terminal.lock().unwrap().advance_bytes(data);
     }
 
@@ -376,6 +532,118 @@ impl PyTerminal {
         screen.scrollback_rows().saturating_sub(screen.physical_rows)
     }
 
+    /// 可见屏幕 ANSI 渲染：每行前 CSI row+1;1H 定位 + SGR 文本，截断末尾空行。
+    /// 末尾可选追加光标定位序列（include_cursor=true）。
+    fn render_ansi(&self, include_cursor: bool) -> String {
+        let term = self.terminal.lock().unwrap();
+        let screen = term.screen();
+        let total = screen.scrollback_rows();
+        let rows = screen.physical_rows;
+        let offset = self._view_size(total, rows);
+        let end = total.saturating_sub(offset);
+        let start = end.saturating_sub(rows);
+        let mut line_results: Vec<(usize, String, bool)> = Vec::new();
+        let mut last_non_empty: usize = 0;
+        for (li, line) in screen.lines_in_phys_range(start..end).iter().enumerate() {
+            let cells = cells_of_line(line);
+            let mut line_parts = String::new();
+            let mut last_sgr = String::new();
+            let mut has_content = false;
+            for cell in &cells {
+                if cell.1.is_empty() {
+                    continue;
+                }
+                if !has_content && !is_default_cell(cell) {
+                    has_content = true;
+                }
+                let sgr = cell_sgr(cell);
+                if sgr != last_sgr {
+                    line_parts.push_str(&sgr);
+                    last_sgr = sgr;
+                }
+                line_parts.push_str(&cell.1);
+            }
+            if !last_sgr.is_empty() {
+                line_parts.push_str("\x1b[0m");
+            }
+            if has_content {
+                last_non_empty = li;
+            }
+            line_results.push((li, line_parts, has_content));
+        }
+        let mut out = String::new();
+        for (li, rendered, _) in line_results {
+            if li > last_non_empty {
+                break;
+            }
+            out.push_str(&format!("\x1b[{};1H", li + 1));
+            out.push_str(&rendered);
+        }
+        if include_cursor {
+            let c = term.cursor_pos();
+            out.push_str(&crate::cursor_seq(
+                c.y.max(0) as usize,
+                c.x,
+                matches!(c.visibility, wezterm_surface::CursorVisibility::Visible),
+            ));
+        }
+        out
+    }
+
+    /// scrollback 历史区渲染：keep_ansi=false 纯文本（行间 \n，去尾空白）；
+    /// keep_ansi=true 每行 SGR 文本 + \r\n（供前端恢复 scrollback）。
+    fn render_scrollback(&self, keep_ansi: bool) -> String {
+        let term = self.terminal.lock().unwrap();
+        let screen = term.screen();
+        let total = screen.scrollback_rows();
+        let rows = screen.physical_rows;
+        let start = total.saturating_sub(rows);
+        let mut out = String::new();
+        for line in screen.lines_in_phys_range(0..start).iter() {
+            let cells = cells_of_line(line);
+            if !keep_ansi {
+                let mut s = String::new();
+                for cell in &cells {
+                    s.push_str(&cell.1);
+                }
+                while s.ends_with(' ') {
+                    s.pop();
+                }
+                out.push_str(&s);
+                out.push('\n');
+            } else {
+                let mut line_parts = String::new();
+                let mut last_sgr = String::new();
+                for cell in &cells {
+                    if cell.1.is_empty() {
+                        continue;
+                    }
+                    let sgr = cell_sgr(cell);
+                    if sgr != last_sgr {
+                        line_parts.push_str(&sgr);
+                        last_sgr = sgr;
+                    }
+                    line_parts.push_str(&cell.1);
+                }
+                if !last_sgr.is_empty() {
+                    line_parts.push_str("\x1b[0m");
+                }
+                out.push_str(&line_parts);
+                out.push_str("\r\n");
+            }
+        }
+        if !keep_ansi {
+            // 剔除末尾空行
+            while out.ends_with("\n\n") {
+                out.pop();
+            }
+            if out.ends_with('\n') {
+                out.pop();
+            }
+        }
+        out
+    }
+
     /// 滚动查看历史：delta>0 上滚（查看更早），delta<0 回落。clamp 到合法范围。
     fn scroll(&self, delta: i64) {
         let max_hist = self.scrollback_count();
@@ -493,6 +761,37 @@ impl PyTerminal {
     /// 应用是否接管鼠标（DECSET 1000/1002/1003 追踪模式）
     fn is_mouse_grabbed(&self) -> bool {
         self.terminal.lock().unwrap().is_mouse_grabbed()
+    }
+
+    /// 鼠标追踪模式与 SGR 编码状态（feed 时跟踪）：
+    /// 返回 (mode, sgr)——mode ∈ {0, 1000, 1002, 1003}，sgr = DECSET 1006 是否启用。
+    /// 供宿主订阅时恢复具体模式（is_mouse_grabbed 仅布尔，不含模式号）。
+    fn get_mouse_encoding(&self) -> (u16, bool) {
+        let m = self.mode.lock().unwrap();
+        (m.mouse_tracking, m.sgr_mouse)
+    }
+
+    /// 生成终端模式恢复序列（新订阅者重建 xterm 状态用）：
+    /// 备用屏幕/鼠标追踪+SGR/光标可见/paste 的 DECSET 恢复前缀。
+    fn mode_restore_seq(&self) -> String {
+        let m = self.mode.lock().unwrap();
+        let mut parts: Vec<String> = Vec::new();
+        if m.alt_screen {
+            parts.push("\x1b[?1049h".to_string());
+        }
+        if m.mouse_tracking > 0 {
+            parts.push(format!("\x1b[?{}h", m.mouse_tracking));
+            if m.sgr_mouse {
+                parts.push("\x1b[?1006h".to_string());
+            }
+        }
+        if m.bracketed_paste {
+            parts.push("\x1b[?2004h".to_string());
+        }
+        if !m.cursor_visible {
+            parts.push("\x1b[?25l".to_string());
+        }
+        parts.concat()
     }
 
     /// 当前键盘编码协议名：xterm / csi-u / win32 / kitty
