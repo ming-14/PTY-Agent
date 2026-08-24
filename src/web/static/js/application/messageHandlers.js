@@ -165,8 +165,14 @@ export function handleSessionList(list) {
         history: false,
       };
       if (!state.tabOrder.includes(uid)) {
-        state.tabOrder.push(uid);
-        saveTabState();
+        // 恢复阶段（刷新首次加载，restoreState.pending=true）不自动加入：
+        // 用户已关闭的标签（tabOrder 已保存为空/子集）不应被 session_list
+        // 全部重新加回（会话关闭标签后仍运行，刷新会"又冒出来好多标签页"）。
+        // 恢复完成后新出现的会话（其他客户端创建）在后续 list 更新时加入。
+        if (!state.restoreState.pending) {
+          state.tabOrder.push(uid);
+          saveTabState();
+        }
       }
     } else {
       const prev = state.sessions[uid];
