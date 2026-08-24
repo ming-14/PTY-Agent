@@ -212,9 +212,13 @@ export function applyTerminalFontSize(uid) {
     return;
   }
   inst._pendingFontSize = undefined;
-  // 缩放前记录视图是否在底部：字号变化 → canvas 高度变化 → 视口像素滚动位置
-  // 不再对应"底部"（内容变短时视口停在原位置），缩放完成后恢复锚定。
+  // 缩放前记录视图是否在底部，并在字号变更前同步 scrollToBottom：
+  // 视口从底部出发，xterm 内部按新 rowHeight 重算 scrollTop 时保持底部，
+  // 避免"先跳顶/上移再被事后锚定拉回"的可见瞬移（闪烁）。
   inst._wasAtBottom = isTermAtBottom(inst.term);
+  if (inst._wasAtBottom) {
+    try { scrollTermToBottom(inst.term); } catch (_) {}
+  }
   // 变更前 canvas 尺寸（设字体前读取，作为轮询对比基准）
   const beforeCanvas = getCanvasSize(inst.term);
   try {
@@ -240,21 +244,14 @@ function _waitCanvasChange(uid, before, attempts, intervalMs) {
     const changed = before && now && (Math.abs(now.w - before.w) > 0.5 || Math.abs(now.h - before.h) > 0.5);
     if (changed || waited >= attempts) {
       try { applyTerminalFrameSize(uid); } catch (_) {}
-      // 缩放前在底部则缩放完成后锚定回底部（canvas 高度变化导致视口漂移）。
-      // 延迟多帧：字号变化还会触发容器变化 → ResizeObserver → onResize 自动回退
-      // （term.resize reflow 重置视口），必须等回退链完成后锚定才不被冲掉。
+      // 事后保险锚定：缩放前已在底部（事前锚定已让视口从底部出发），
+      // canvas 变化后再确认一次。延迟 1 帧等 xterm 内部 scrollTop 重算完成，
+      // 不再多帧延迟（会放大"先上移再拉回"的可见窗口）。
       if (inst._wasAtBottom) {
         inst._wasAtBottom = false;
-        let frames = 3;
-        const reanchor = () => {
-          if (!state.termInstances[uid]) return;
-          if (frames-- > 0) {
-            requestAnimationFrame(reanchor);
-            return;
-          }
+        requestAnimationFrame(() => {
           try { scrollTermToBottom(inst.term); } catch (_) {}
-        };
-        requestAnimationFrame(reanchor);
+        });
       }
       return;
     }
