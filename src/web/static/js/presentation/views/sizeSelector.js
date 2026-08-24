@@ -20,7 +20,7 @@
  *   后端据此维护 AdaptiveLockService 锁状态并广播 size_mode_changed 通知其他客户端。
  */
 
-import { getSessionSizeConfigByUid } from '../../domain/state.js';
+import { getSessionSizeConfigByUid, isSizeUILocked, setSizeMode, setFixedSize, setCustomSize } from '../../domain/state.js';
 import { TERMINAL_SIZE_PRESETS, ADAPTIVE_MIN_COLS, ADAPTIVE_MIN_ROWS } from '../../domain/constants.js';
 import { $, showToast } from '../../infrastructure/domUtils.js';
 import { getHandlerBySid } from './sessionHandlers.js';

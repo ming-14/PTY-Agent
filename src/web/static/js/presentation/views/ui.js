@@ -5,7 +5,7 @@
  * 依赖领域状态、基础设施的 DOM/传输/终端适配器。
  */
 
-import { state, saveTabState, getSessionSizeConfigByUid } from '../../domain/state.js';
+import { state, saveTabState, getSessionSizeConfigByUid, getUidBySid, getHistoryUidBySid } from '../../domain/state.js';
 import { escHtml, escAttr } from '../../domain/formatters.js';
 import { t } from '../../domain/i18n.js';
 import { ICON_CLOSE } from '../../domain/constants.js';
