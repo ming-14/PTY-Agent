@@ -669,13 +669,18 @@ export function handleResizeComplete(msg) {
   const isHistory = !!(s && s.history);
   const snapshot = msg.snapshot || '';
   const scrollbackAnsi = msg.scrollback || '';
+  // resize 场景：不重建 scrollback（restoreScrollbackAndSnapshot 传 false）——
+  // 前端 xterm 的 scrollback 在 term.resize reflow 后已保留，后端 ConPTY 模型
+  // scrollback 常为空，若按空 scrollback 重建（\x1b[3J）会清空前端历史
   if (snapshot.length > 0 || scrollbackAnsi.length > 0) {
     try {
       const scrollbackLines = scrollbackAnsi ? scrollbackAnsi.split('\r\n') : [];
       if (scrollbackLines.length > 0 && scrollbackLines[scrollbackLines.length - 1] === '') {
         scrollbackLines.pop();
       }
-      ports.terminal.restoreScrollbackAndSnapshot(inst.term, scrollbackLines, snapshot, isHistory);
+      debug('resize', 'resize_complete rebuild uid=%s scrollback_lines=%d snapshot_len=%d (keep existing scrollback)',
+            uid, scrollbackLines.length, snapshot.length);
+      ports.terminal.restoreScrollbackAndSnapshot(inst.term, scrollbackLines, snapshot, isHistory, false);
     } catch (e) {
       error('session', 'resize_complete apply scrollback+snapshot failed: %s', e && e.message);
     }
@@ -741,7 +746,10 @@ export function handleSessionResized(msg) {
       if (scrollbackLines.length > 0 && scrollbackLines[scrollbackLines.length - 1] === '') {
         scrollbackLines.pop();
       }
-      ports.terminal.restoreScrollbackAndSnapshot(inst.term, scrollbackLines, snapshot, false);
+      debug('resize', 'session_resized rebuild uid=%s scrollback_lines=%d snapshot_len=%d (keep existing scrollback)',
+            uid, scrollbackLines.length, snapshot.length);
+      // resize 广播场景同样不重建 scrollback（保留前端已有历史）
+      ports.terminal.restoreScrollbackAndSnapshot(inst.term, scrollbackLines, snapshot, false, false);
     } catch (e) {
       error('session', 'session_resized apply scrollback+snapshot failed: %s', e && e.message);
     }

@@ -316,7 +316,7 @@ export function applyReadonlyState(sid, readonly) {
  * @param {string} snapshot 后端返回的屏幕快照（含 VT 序列与光标定位）
  * @param {boolean} isHistory 是否历史会话（true 滚到顶端，false 滚到底部）
  */
-export function restoreScrollbackAndSnapshot(term, scrollbackLines, snapshot, isHistory = false) {
+export function restoreScrollbackAndSnapshot(term, scrollbackLines, snapshot, isHistory = false, restoreScrollback = true) {
   const hasScrollback = !!(scrollbackLines && scrollbackLines.length > 0);
 
   // 视口修复：write 完成后再 scroll，避免 \x1b[3J 重置 ydisp=0 后视口停在顶端
@@ -326,6 +326,23 @@ export function restoreScrollbackAndSnapshot(term, scrollbackLines, snapshot, is
       else scrollTermToBottom(term);
     } catch (_) {}
   };
+
+  if (!restoreScrollback) {
+    // resize 场景：不重建 scrollback——前端 xterm 的 scrollback 在
+    // term.resize() reflow 后已保留（订阅期间累积的完整历史），
+    // 后端模型的 scrollback 在 ConPTY 下常为空，若执行 \x1b[3J 重建
+    // 会把前端历史清空（"resize 后 scrollback 被清空"）。
+    // 只清可见区 + 写后端 snapshot（resize 后的权威可见区）。
+    debug('terminal', 'restoreScrollback: resize mode, keep existing scrollback (lines=%d)',
+      scrollbackLines ? scrollbackLines.length : 0);
+    if (snapshot && snapshot.length > 0) {
+      term.write('\x1b[2J\x1b[1;1H' + snapshot, doScroll);
+    } else {
+      doScroll();
+    }
+    try { term.refresh(0, term.rows - 1); } catch (_) {}
+    return;
+  }
 
   if (hasScrollback) {
     // 模式 A：有 scrollback，清空 + 恢复 + 写 snapshot
@@ -352,12 +369,12 @@ export function restoreScrollbackAndSnapshot(term, scrollbackLines, snapshot, is
       term.write('', doScroll);
     }
   } else {
-    // 模式 B：无 scrollback，清空 scrollback + 可见屏幕 + 写 snapshot
-    // \x1b[3J 清 xterm.js scrollback（term.resize() 重排可能残留旧内容），
-    // \x1b[2J 清可见区，确保 snapshot 写入前 buffer 完全干净
-    debug('terminal', 'restoreScrollback: no capture, clear scrollback + visible');
+    // 模式 B：无 scrollback 且需要重建（首次订阅）——新终端本就无
+    // scrollback，\x1b[3J 无效果；不清空已有内容（resize 场景已在上方
+    // 提前 return，不会走到这里）
+    debug('terminal', 'restoreScrollback: no capture, clear visible + write snapshot');
     if (snapshot && snapshot.length > 0) {
-      term.write('\x1b[3J\x1b[2J\x1b[1;1H' + snapshot, doScroll);
+      term.write('\x1b[2J\x1b[1;1H' + snapshot, doScroll);
     } else {
       doScroll();
     }
