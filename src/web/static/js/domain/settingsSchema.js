@@ -468,7 +468,7 @@ export const SETTINGS_SCHEMA = [
     label: t('settings.bufferSize'),
     desc: t('settings.desc.bufferSize'),
     type: SETTING_TYPES.STEPPER,
-    default: 1000,
+    default: 4000,
     min: 200,
     max: 5000,
     step: 100,

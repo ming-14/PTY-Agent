@@ -7,7 +7,7 @@
  * - API 请求（/ws, /api/*）直接走网络，不缓存
  */
 
-const CACHE_NAME = 'pty-agent-v44';
+const CACHE_NAME = 'pty-agent-v45';
 
 // 安装时预缓存的资源列表
 const PRECACHE_URLS = [

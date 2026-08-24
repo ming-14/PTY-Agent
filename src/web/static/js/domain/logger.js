@@ -85,7 +85,7 @@ let _level = LEVELS.NONE;
 let _captureLevel = LEVELS.DEBUG;
 
 // ── 环形缓冲区：固定容量，超出丢弃最旧 ──
-const DEFAULT_BUFFER_CAPACITY = 1000;
+const DEFAULT_BUFFER_CAPACITY = 4000;
 let _bufferCapacity = DEFAULT_BUFFER_CAPACITY;
 let _buffer = [];
 

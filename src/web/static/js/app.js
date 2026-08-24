@@ -374,7 +374,7 @@ async function init() {
 
   // 初始化开发者设置（应用 settingStore 中持久化的值，确保刷新后生效）
   setLogLevel(_levelNameToNum(settingsStore.get('developer.logLevel') || 'none'));
-  setBufferSize(settingsStore.get('developer.bufferSize') || 1000);
+  setBufferSize(settingsStore.get('developer.bufferSize') || 4000);
 
   // 先注册连接成功钩子，再发起 WebSocket 连接，避免本地极速连接导致钩子未就绪
   window.__onWsOpen__ = () => {
