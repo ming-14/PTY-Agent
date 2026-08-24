@@ -439,6 +439,8 @@ export function removeSessionTab(sid, render) {
   // 标记用户已关闭：阻止关闭后到达的 subscribe/history_detail 响应把会话
   // 重新加回 tabOrder（快速连续关闭时标签"复活"的竞态）
   state.closedTabs.add(sid);
+  // 清除残留的 pendingSwitch：否则晚到的响应走 pendingSwitch 分支重新激活
+  if (state.pendingSwitch === sid) state.pendingSwitch = null;
   const idx = state.tabOrder.indexOf(sid);
   if (idx >= 0) state.tabOrder.splice(idx, 1);
 

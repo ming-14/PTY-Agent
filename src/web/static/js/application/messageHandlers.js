@@ -369,12 +369,15 @@ export function handleSubscribed(msg) {
     }
   }
 
-  if (state.pendingSwitch === uid) {
+  if (state.pendingSwitch === uid && state.tabOrder.includes(uid)) {
     state.pendingSwitch = null;
     ports.ui.switchTab(uid);
   } else if (state.activeTab === uid) {
     ports.ui.switchTab(uid);
-  } else if (state.activeTab === null) {
+  } else if (state.activeTab === null && state.tabOrder.includes(uid)) {
+    // 仅当会话仍在标签栏时激活：关闭所有标签后（activeTab=null），
+    // 关闭前发出的 subscribe 响应晚到——若直接 switchTab 会把已关闭会话
+    // 设为活动标签（标签栏无它，stage 却显示终端）
     ports.ui.switchTab(uid);
   } else {
     ports.ui.renderTabs();
@@ -455,12 +458,14 @@ export function handleHistoryDetail(msg) {
   s.adaptiveOwnerUid = null;
   setLocalAdaptiveOwner(uid, false);
 
-  if (state.pendingSwitch === uid) {
+  if (state.pendingSwitch === uid && state.tabOrder.includes(uid)) {
     state.pendingSwitch = null;
     ports.ui.switchTab(uid);
   } else if (state.activeTab === uid) {
     ports.ui.switchTab(uid);
-  } else if (state.activeTab === null) {
+  } else if (state.activeTab === null && state.tabOrder.includes(uid)) {
+    // 同 handleSubscribed：关闭所有标签后 history_detail 响应晚到，
+    // 仅当会话仍在标签栏时才激活（否则 stage 显示终端但标签栏无它）
     state.activeTab = uid;
     saveTabState();
     ports.ui.switchTab(uid);
