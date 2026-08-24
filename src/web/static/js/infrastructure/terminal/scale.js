@@ -68,8 +68,10 @@ function getCanvasSize(term) {
 /**
  * 应用终端框尺寸：从 xterm canvas 权威尺寸跟随（无 DOM 布局时序依赖）。
  *
- * frame 始终 = 终端内容实际渲染区（canvas 尺寸），长宽比按 cols×rows 键锁定，
- * 防止字体度量取整导致缩放时框变形。不与其他元素（如 .xterm）产生循环依赖。
+ * frame 宽高 = canvas 实际渲染尺寸（ceil 取整），精确贴合内容——
+ * 不做任何比例推导/长宽比锁定：推导会让框高偏离 canvas（长宽比锁定 +
+ * 字体度量漂移 → 框底边裁剪 canvas 底部，内容显示不全，且裁剪量随字号变化）。
+ * 长宽比由缩放模型的等比字号步进自然保持（cell 度量与字号近似线性）。
  */
 export function applyTerminalFrameSize(uid) {
   const inst = state.termInstances[uid];
@@ -91,18 +93,9 @@ export function applyTerminalFrameSize(uid) {
     }
     return;
   }
-  // 长宽比锁定（防字体度量取整导致缩放时变形）：以 cols×rows 为键，
-  // 首次渲染（或 resize 后）锁定基准长宽比。
-  const aspectKey = inst.term.cols + 'x' + inst.term.rows;
-  if (inst._frameAspectKey !== aspectKey) {
-    inst._frameAspectKey = aspectKey;
-    inst._frameAspect = canvas.w / canvas.h;
-  }
-  const aspect = inst._frameAspect || (canvas.w / canvas.h);
-  const w = Math.ceil(canvas.w);
-  const h = Math.max(1, Math.round(w / aspect));
-  frame.style.width = w + 'px';
-  frame.style.height = h + 'px';
+  // 宽高均取 canvas 实际值（ceil 防亚像素），精确贴合，不裁剪内容
+  frame.style.width = Math.ceil(canvas.w) + 'px';
+  frame.style.height = Math.ceil(canvas.h) + 'px';
   frame.style.maxWidth = '';
   frame.style.maxHeight = '';
 
