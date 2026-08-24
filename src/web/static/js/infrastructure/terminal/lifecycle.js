@@ -62,6 +62,11 @@ export function ensureTerminal(uid) {
     cursorBlink: true,
     cursorStyle: 'bar',
     cursorInactiveStyle: 'block',
+    // 历史会话初始即禁用 stdin：避免 term.open() 后同步改 options.disableStdin
+    // 触发 _handleOptionsChanged → _fireOnCanvasResize，其异步 rAF 在 renderer
+    // 首帧渲染前（dimensions.css 未就绪）读 device/css 抛 TypeError
+    // （xterm 渲染链挂死）。applyReadonlyState 仅处理运行时转变。
+    disableStdin: !!(s && s.history),
     scrollback: 10000,
     allowProposedApi: true,
     allowTransparency: true,
@@ -242,7 +247,16 @@ export function applyReadonlyState(sid, readonly) {
   const inst = state.termInstances[sid];
   if (!inst) return;
   inst._readonly = readonly;
-  inst.term.options.disableStdin = readonly;
+  // disableStdin 是 options：变更触发 _handleOptionsChanged → _fireOnCanvasResize，
+  // 其异步 rAF 在 renderer 首帧渲染前（dimensions.css 未就绪）读 device/css 抛
+  // TypeError。历史会话的初始值已在构造函数设置（ensureTerminal 按 s.history 预置），
+  // 此处仅对"renderer 已就绪"的运行时转变（如会话自然结束）赋值。
+  const core = inst.term._core;
+  const rendererReady = !!(core && core._renderService && core._renderService.dimensions
+    && core._renderService.dimensions.css);
+  if (rendererReady) {
+    inst.term.options.disableStdin = readonly;
+  }
   inst.div.classList.toggle('readonly', readonly);
   inst.div.tabIndex = readonly ? -1 : 0;
   // 注意：不能通过运行时修改 options.theme 隐藏光标——
