@@ -53,11 +53,11 @@ export function ensureTerminal(uid) {
   const term = new Terminal({
     theme: currentTheme(),
     fontFamily: getTerminalFontFamily(),
-    // 字号按会话独立维护（state.sessionFontSizes[sid]）。
+    // 字号按会话独立维护（state.sessionFontSizes[uid]）。
     // 新会话首次打开时未设置 → getSessionFontSize 返回 DEFAULT_FONT_SIZE，
     // 随后 ensureTerminal 末尾的 applySessionFrameRatio 会用渲染后的 cell 尺寸
     // 反算 frameRatio 并保存；再次打开该会话时按保存的 ratio 反算字号恢复框大小。
-    fontSize: getSessionFontSize(sid),
+    fontSize: getSessionFontSize(uid),
     fontWeight: 'normal',
     cursorBlink: true,
     cursorStyle: 'bar',
