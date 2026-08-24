@@ -83,13 +83,16 @@ function captureTerminalText(term) {
     // 当前行 wrapped=false 且已累积了内容（上一行 wrapped=false 或为累积起点）
     // → 上一行累积结束，输出逻辑行
     if (!line.isWrapped && pending) {
-      parts.push(pending);
+      // trimEnd：逻辑行行尾空格（原宽度的尾部填充）在新宽度下会超宽 wrap，
+      // 产生空格空行——去掉后重放按新宽度正常折行
+      parts.push(pending.trimEnd());
       parts.push('\r\n');
       pending = '';
     }
+    // translateToString(false) 保留行内空格（<DIR> 行对齐），仅行尾 trim
     pending += line.translateToString(false);
   }
-  if (pending) parts.push(pending);
+  if (pending) parts.push(pending.trimEnd());
   return parts.join('');
 }
 
