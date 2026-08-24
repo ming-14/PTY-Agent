@@ -224,7 +224,8 @@ export function handleSessionList(list) {
       s.history = true;
       if (!state.history[key]) {
         state.history[key] = {
-          id: key,
+          id: s.id,
+          uid: s.uid,
           command: s.command || '',
           ptyType: s.ptyType,
           encoding: s.encoding || 'utf-8',
@@ -284,7 +285,7 @@ export function handleHistoryList(list) {
 export function initSessionState(key, msg, isHistory) {
   if (!state.sessions[key]) {
     state.sessions[key] = {
-      id: key,
+      id: msg.sessionId || msg.id || key,
       uid: msg.uid || msg.sessionUid || '',
       command: msg.command || '',
       running: msg.running,

@@ -34,6 +34,7 @@ import {
 } from './shared.js';
 import {
   DEFAULT_FONT_SIZE,
+  MIN_FONT_SIZE, MAX_FONT_SIZE,
   FRAME_RATIO_MIN, FRAME_RATIO_MAX,
 } from '../../domain/constants.js';
 

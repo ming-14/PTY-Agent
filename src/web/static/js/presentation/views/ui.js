@@ -611,18 +611,20 @@ export function renderHistoryDropdown() {
       toggleHistory(false);
     };
     const delBtn = item.querySelector('.history-item-delete');
-    delBtn.onclick = e => {
-      e.stopPropagation();
-      const delKey = delBtn.dataset.uid;
-      sendToSession(delKey, { type: 'delete_history' });
-      delete state.history[delKey];
-      if (state.sessions[delKey] && state.sessions[delKey].history) {
-        removeSessionTab(delKey, false);
-      }
-      renderHistoryDropdown();
-      renderTabs();
-      renderSidebar();
-    };
+    if (delBtn) {
+      delBtn.onclick = e => {
+        e.stopPropagation();
+        const delKey = delBtn.dataset.uid;
+        sendToSession(delKey, { type: 'delete_history' });
+        delete state.history[delKey];
+        if (state.sessions[delKey] && state.sessions[delKey].history) {
+          removeSessionTab(delKey, false);
+        }
+        renderHistoryDropdown();
+        renderTabs();
+        renderSidebar();
+      };
+    }
     dd.appendChild(item);
   });
 }
