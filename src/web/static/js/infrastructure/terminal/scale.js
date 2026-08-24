@@ -212,12 +212,8 @@ export function applyTerminalFontSize(uid) {
     return;
   }
   inst._pendingFontSize = undefined;
-  // 字号变化前：cell 尺寸与字号近似线性（rowHeight ≈ fontSize × 常量），
-  // 记录当前 cell 高度与字号，用于变化后同步预测新 rowHeight 并设置 scrollTop
-  // ——消除"canvas 已变高但 scrollTop 未跟上"的中间帧（漂移根因）。
+  // 记录缩放前视图是否在底部（供字号变化后同步修正 scrollTop）
   const wasAtBottom = isTermAtBottom(inst.term);
-  const oldFontSize = inst.term.options.fontSize || fontSize;
-  const oldCell = getTerminalCellSize(inst.term);
   // 变更前 canvas 尺寸（设字体前读取，作为轮询对比基准）
   const beforeCanvas = getCanvasSize(inst.term);
   try {
@@ -225,17 +221,24 @@ export function applyTerminalFontSize(uid) {
   } catch (e) {
     console.error('set fontSize failed', e);
   }
-  // 同步锚定（漂移根因修复）：字号已变、xterm 的 scrollTop 更新在其内部
-  // rAF 链中（晚于 canvas 渲染一帧）——此刻立即按预测 rowHeight 设置
-  // scrollTop，浏览器下一帧绘制时视口已在底部，不存在中间帧上移。
-  if (wasAtBottom && oldCell.h > 0 && oldFontSize > 0) {
+  // 同步修正 scrollTop（漂移根因修复）：
+  // fontSize setter 的同步链中 DomRenderer._updateDimensions 已同步更新
+  // dimensions.css.cell（实测验证），而 xterm 的 scrollTop 更新（_innerRefresh）
+  // 在其内部 rAF 中（下一帧）——中间帧 canvas 已变高但 scrollTop 未跟上，
+  // 放大时视口相对上移。此处立即用新 cell 高度设置 scrollTop，
+  // 浏览器下一帧绘制时视口已在底部，不存在中间帧。
+  // 注意：必须用 buf.viewportY（xterm 5.x public API），buf.ydisp 是 undefined，
+  // undefined × number = NaN → scrollTop=NaN → 浏览器视为 0 → 视图跳顶！
+  if (wasAtBottom) {
     const vp = inst.term.element
       ? inst.term.element.querySelector('.xterm-viewport')
       : null;
     if (vp) {
-      const predictedRowH = oldCell.h * (fontSize / oldFontSize);
+      const newCell = getTerminalCellSize(inst.term);
       const buf = inst.term.buffer.active;
-      vp.scrollTop = buf.ydisp * predictedRowH;
+      if (newCell.h > 0 && buf) {
+        vp.scrollTop = buf.viewportY * newCell.h;
+      }
     }
   }
   // 轮询 canvas 尺寸直到实际变化（或超时），再更新 frame：
