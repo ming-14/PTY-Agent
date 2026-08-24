@@ -669,14 +669,15 @@ export function handleResizeComplete(msg) {
   //（scrollback 行数），对比后端返回的 scrollback，判断 reflow 是否丢行/错乱
   try {
     const buf = inst.term.buffer.active;
-    debug('resize', 'resize_complete audit uid=%s term=%dx%d msg=%dx%d bufLines=%d ybase=%d ydisp=%d',
+    const ybaseEst = Math.max(0, buf.length - inst.term.rows);
+    debug('resize', 'resize_complete audit uid=%s term=%dx%d msg=%dx%d bufLines=%d ybaseEst=%d ydisp=%d',
           uid, inst.term.cols, inst.term.rows, msg.cols, msg.rows,
-          buf.length, buf.ybase, buf.viewportY);
+          buf.length, ybaseEst, buf.viewportY);
     // scrollback 内容 dump：resize 后 scrollback 区域前后各 3 行文本，
     // 确认 reflow 合并是否正确（行尾空格行拆分后是否恢复完整行）
     const dump = [];
-    const start = Math.max(0, buf.ybase - 3);
-    const end = Math.min(buf.length - 1, buf.ybase + 3);
+    const start = Math.max(0, ybaseEst - 3);
+    const end = Math.min(buf.length - 1, ybaseEst + 3);
     for (let i = start; i <= end; i++) {
       const line = buf.getLine(i);
       dump.push(line ? line.translateToString(true).trimEnd() : '<null>');
@@ -688,10 +689,23 @@ export function handleResizeComplete(msg) {
   const isHistory = !!(s && s.history);
   const snapshot = msg.snapshot || '';
   const scrollbackAnsi = msg.scrollback || '';
-  // resize 场景用后端 scrollback 重建（后端 pywezterm reflow 权威正确，
-  // 无 xterm.js 行尾空格合并缺陷）；后端 scrollback 为空时保留前端
-  //（不清空——模式 B 的 \x1b[3J 会清掉前端订阅累积的历史）
-  if (snapshot.length > 0 || scrollbackAnsi.length > 0) {
+  // resize 场景重建 scrollback：
+  // 优先重放 resize 前本地捕获的完整内容（_preResizeText，含 wrap 结构——
+  // xterm 按新宽度重新 wrap，不依赖 pywezterm/xterm reflow 的合并正确性，
+  // 彻底避免行尾空格/中文结尾拆分行残留）；无本地捕获时回退后端 scrollback
+  //（非空才重建，空则保留前端不清空）。
+  const preText = inst._preResizeText;
+  inst._preResizeText = null;
+  if (preText) {
+    try {
+      debug('resize', 'resize_complete replay uid=%s preTextLen=%d snapshot_len=%d',
+            uid, preText.length, snapshot.length);
+      ports.terminal.restoreScrollbackAndSnapshot(
+        inst.term, [preText], snapshot, isHistory, false);
+    } catch (e) {
+      error('session', 'resize_complete replay failed: %s', e && e.message);
+    }
+  } else if (snapshot.length > 0 || scrollbackAnsi.length > 0) {
     try {
       const scrollbackLines = scrollbackAnsi ? scrollbackAnsi.split('\r\n') : [];
       if (scrollbackLines.length > 0 && scrollbackLines[scrollbackLines.length - 1] === '') {
@@ -751,6 +765,8 @@ export function handleSessionResized(msg) {
   s.rows = newRows;
   if (inst.term.cols !== newCols || inst.term.rows !== newRows) {
     inst._externalResize = true;
+    // resize 前捕获完整内容（供 rebuild 重放，不依赖 reflow 合并）
+    ports.terminal.snapshotScrollbackForResize(uid);
     inst.term.resize(newCols, newRows);
   }
   if (state.activeTab === uid) {

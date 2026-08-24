@@ -66,6 +66,37 @@ function getCanvasSize(term) {
 }
 
 /**
+ * 捕获终端完整内容（scrollback + 可见区）为原始文本（含 wrap 结构）。
+ *
+ * 每行 translateToString(false)（保留行尾空格），wrapped 行（续行）之间
+ * 不加 \r\n（保持原 wrap 结构）——重放时 xterm 按当前宽度重新 wrap，
+ * 内容不丢、不产生 reflow 合并残留（pywezterm/xterm 的 reflow 对行尾
+ * 空格/中文结尾的拆分行合并不完整）。
+ */
+function captureTerminalText(term) {
+  const buf = term.buffer.active;
+  const parts = [];
+  for (let i = 0; i < buf.length; i++) {
+    const line = buf.getLine(i);
+    if (!line) continue;
+    parts.push(line.translateToString(false));
+    if (!line.isWrapped) parts.push('\r\n');
+  }
+  return parts.join('');
+}
+
+/** 在 term.resize 前保存当前内容，供 resize 后重放 */
+export function snapshotScrollbackForResize(uid) {
+  const inst = state.termInstances[uid];
+  if (!inst || !inst.term) return;
+  try {
+    inst._preResizeText = captureTerminalText(inst.term);
+  } catch (e) {
+    inst._preResizeText = null;
+  }
+}
+
+/**
  * 应用终端框尺寸：从 xterm canvas 权威尺寸跟随（无 DOM 布局时序依赖）。
  *
  * frame 宽高 = canvas 实际渲染尺寸（ceil 取整），精确贴合内容——
@@ -155,7 +186,10 @@ export function applyTerminalSize(uid, force, opts) {
   if (!size) {
     // 理论不会到这里（adaptive 已在上面处理），保险起见调用 fit
     const fit = getFitAddon(uid);
-    if (fit) { try { fit.fit(); } catch (_) {} }
+    if (fit) {
+      snapshotScrollbackForResize(uid);
+      try { fit.fit(); } catch (_) {}
+    }
     return;
   }
   const cols = size.cols;
@@ -172,6 +206,14 @@ export function applyTerminalSize(uid, force, opts) {
       setTimeout(() => { if (state.termInstances[uid]) state.termInstances[uid]._pendingDaemonResize = false; }, 300);
       debug('resize', 'applyTerminalSize DELIBERATE %s sid=%s %dx%d (flag set, term.resize)',
             mode, uid, cols, rows);
+      // reflow 宽度审计：term.resize 前打印会话期望尺寸与当前 xterm 尺寸，
+      // 确认 reflow 是否按后端实际尺寸进行（宽度不一致 → scrollback 重排错乱）
+      debug('resize', 'reflowAudit uid=%s mode=%s target=%dx%d termNow=%dx%d s.cols=%s s.rows=%s',
+            uid, mode, cols, rows, inst.term.cols, inst.term.rows,
+            s.cols, s.rows);
+      // resize 前捕获完整内容：resize 后由 handleResizeComplete 按原样重放
+      //（不依赖 xterm/pywezterm reflow 的合并正确性）
+      snapshotScrollbackForResize(uid);
       inst.term.resize(cols, rows);
       debug('terminal', 'applyTerminalSize %s → term.resize sid=%s %dx%d (onResize will send)',
             mode, uid, cols, rows);
@@ -430,6 +472,7 @@ export function applySessionFrameRatio(uid) {
       // fit() 是有意重算 cols/rows（自适应模式设计）→ 标记后 onResize 发后端
       inst._pendingDaemonResize = true;
       debug('resize', 'applySessionFrameRatio adaptive INIT fit() uid=%s (flag set)', uid);
+      snapshotScrollbackForResize(uid);
       try { fit.fit(); } catch (e) { error('resize', 'fit failed: %s', e && e.message); }
       requestAnimationFrame(() => { try { applyTerminalFrameSize(uid); } catch (_) {} });
       return true;
@@ -448,6 +491,7 @@ export function applySessionFrameRatio(uid) {
     // fit() 是有意重算 cols/rows（自适应模式设计）→ 标记后 onResize 发后端
     inst._pendingDaemonResize = true;
     debug('resize', 'applySessionFrameRatio adaptive fit() uid=%s (flag set)', uid);
+    snapshotScrollbackForResize(uid);
     try { fit.fit(); } catch (e) { error('resize', 'fit failed: %s', e && e.message); }
     // fit() 触发 onResize → applyTerminalFrameSize（rAF）
     requestAnimationFrame(() => { try { applyTerminalFrameSize(uid); } catch (_) {} });
