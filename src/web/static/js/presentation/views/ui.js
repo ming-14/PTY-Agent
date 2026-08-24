@@ -242,6 +242,8 @@ export function openSessionInTab(sid) {
   let s = state.sessions[sid];
   const inHistory = !!state.history[sid];
   const isAlreadyActive = state.activeTab === sid;
+  // 用户主动重新打开：清除"已关闭"标记，恢复自动加入 tabOrder 语义
+  state.closedTabs.delete(sid);
   debug('session',
         'openSessionInTab START sid=%s inSessions=%s history=%s inHistory=%s tabOrder=%o activeTab=%s',
         sid, !!s, s && s.history, inHistory, state.tabOrder, state.activeTab);
@@ -434,6 +436,9 @@ export function removeSessionTab(sid, render) {
   debug('session', 'removeSessionTab sid=%s render=%s', sid, render);
   disposeTerminal(sid);
   delete state.sessions[sid];
+  // 标记用户已关闭：阻止关闭后到达的 subscribe/history_detail 响应把会话
+  // 重新加回 tabOrder（快速连续关闭时标签"复活"的竞态）
+  state.closedTabs.add(sid);
   const idx = state.tabOrder.indexOf(sid);
   if (idx >= 0) state.tabOrder.splice(idx, 1);
 

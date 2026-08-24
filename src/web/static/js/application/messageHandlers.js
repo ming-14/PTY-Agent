@@ -303,8 +303,13 @@ export function initSessionState(key, msg, isHistory) {
       history: isHistory,
     };
     if (!state.tabOrder.includes(key)) {
-      state.tabOrder.push(key);
-      saveTabState();
+      // 用户已关闭的标签不自动加回：关闭后到达的 subscribe/history_detail
+      // 响应会重建 sessions 对象（原对象已被 removeSessionTab 删除），
+      // 若此时 push 回 tabOrder，快速连续关闭时标签会"复活"冒出更多。
+      if (!state.closedTabs.has(key)) {
+        state.tabOrder.push(key);
+        saveTabState();
+      }
     }
   }
   const s = state.sessions[key];

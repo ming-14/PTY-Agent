@@ -136,6 +136,10 @@ export const state = {
   restartTargetSid: null,
   isResizingSidebar: false,
   restoreState: { pending: false, gotList: false, gotHistory: false },
+  // 用户已关闭标签的会话 uid 集合：关闭后到达的 subscribe/history_detail
+  // 响应（initSessionState）不得把会话重新加回 tabOrder（快速连续关闭时
+  // 的竞态——标签"复活"冒出更多）。用户重新打开时清除标记。
+  closedTabs: new Set(),
   closedSessionToastSet: new Set(),
   availableShells: (() => {
     try {
