@@ -66,22 +66,30 @@ function getCanvasSize(term) {
 }
 
 /**
- * 捕获终端完整内容（scrollback + 可见区）为原始文本（含 wrap 结构）。
+ * 捕获终端完整内容（scrollback + 可见区）为原始文本，按逻辑行合并。
  *
- * 每行 translateToString(false)（保留行尾空格），wrapped 行（续行）之间
- * 不加 \r\n（保持原 wrap 结构）——重放时 xterm 按当前宽度重新 wrap，
- * 内容不丢、不产生 reflow 合并残留（pywezterm/xterm 的 reflow 对行尾
- * 空格/中文结尾的拆分行合并不完整）。
+ * xterm 的 reflow 拆分后，最后一段也被标记 isWrapped=true（bug），
+ * 导致简单基于 isWrapped 的拼接错误地把不同逻辑行的段合并（错位）。
+ * 修复：当 wrapped=false 且 上一行也是 wrapped=false 时结束逻辑行——
+ * 即只在"两个连续独立行"之间插入 \r\n，确保逻辑行完整。
  */
 function captureTerminalText(term) {
   const buf = term.buffer.active;
   const parts = [];
+  let pending = '';
   for (let i = 0; i < buf.length; i++) {
     const line = buf.getLine(i);
     if (!line) continue;
-    parts.push(line.translateToString(false));
-    if (!line.isWrapped) parts.push('\r\n');
+    // 当前行 wrapped=false 且已累积了内容（上一行 wrapped=false 或为累积起点）
+    // → 上一行累积结束，输出逻辑行
+    if (!line.isWrapped && pending) {
+      parts.push(pending);
+      parts.push('\r\n');
+      pending = '';
+    }
+    pending += line.translateToString(false);
   }
+  if (pending) parts.push(pending);
   return parts.join('');
 }
 
