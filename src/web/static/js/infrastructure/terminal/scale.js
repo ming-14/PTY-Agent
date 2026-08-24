@@ -37,7 +37,6 @@ import {
   MIN_FONT_SIZE, MAX_FONT_SIZE,
   FRAME_RATIO_MIN, FRAME_RATIO_MAX,
 } from '../../domain/constants.js';
-import { isTermAtBottom, scrollTermToBottom } from './scroll.js';
 
 /**
  * 通过 FitAddon 获取终端实例。
@@ -212,18 +211,12 @@ export function applyTerminalFontSize(uid) {
     return;
   }
   inst._pendingFontSize = undefined;
-  // 记录缩放前视口是否在底部：xterm 的 scrollTop = ydisp × rowHeight（行数不变），
-  // 但底部 = scrollH - clientH 随字号取整差异不成比例变化——缩小后 ydisp 不再是
-  // 精确底部（视口停在"上面一点点"且 xterm 不再修正）。canvas 变化后需外部锚定。
-  inst._wasAtBottom = isTermAtBottom(inst.term);
-  {
-    const buf0 = inst.term.buffer.active;
-    debug('zoom', 'wasAtBottomCheck uid=%s vpY=%d rows=%d len=%d -> %s',
-      uid, buf0 ? buf0.viewportY : -1, inst.term.rows, buf0 ? buf0.length : -1, inst._wasAtBottom);
-  }
+  // 像素判定视口是否在底部：xterm 的 ydisp 与像素底部（scrollH - clientH）
+  // 因 scrollArea 取整不一致（在底部时 viewportY 可能 < length - rows），
+  // 行级判定会误判，须用像素判定（scrollTop 距底部 ≤2px）。
+  inst._wasAtBottom = _isViewportAtBottom(inst);
   // 变更前 canvas 尺寸（设字体前读取，作为轮询对比基准）
   const beforeCanvas = getCanvasSize(inst.term);
-  const oldFontSizeForLog = inst.term.options.fontSize;
   try {
     inst.term.options.fontSize = fontSize;
   } catch (e) {
@@ -231,104 +224,91 @@ export function applyTerminalFontSize(uid) {
   }
   // 同步触发 xterm 视口刷新（漂移根因修复）：
   // fontSize setter 同步链中 DomRenderer._updateDimensions 已同步更新
-  // dimensions（实测验证），但 xterm 的视口更新（syncScrollArea → _innerRefresh）
-  // 在其内部 rAF 中（下一帧）——中间帧 canvas 已变高但 scrollArea 高度与
-  // scrollTop 未跟上：放大时视口相对上移；且事后单独设置 scrollTop 会被
-  // 旧的 scrollHeight clamp（scrollArea 未更新），xterm 更新 scrollH 后
-  // scrollTop 停留被 clamp 的旧值（"上面一点点"）。
-  // syncScrollArea(true) 同步执行 _innerRefresh：更新 scrollArea 高度 +
-  // scrollTop = ydisp × newRowHeight（xterm 自身公式，无取整/clamp 偏差），
-  // 任意滚动位置都保持相对位置，不限于底部。
-  // 注意：core 已在函数顶部声明（rendererReady 检查），此处直接复用
+  // dimensions，但 xterm 的 scrollTop 更新（_innerRefresh）在其内部 rAF 中
+  // （下一帧）——中间帧 canvas 已变高但 scrollArea/scrollTop 未跟上，
+  // 放大时视口相对上移（漂移）。syncScrollArea(true) 同步执行 _innerRefresh：
+  // 更新 scrollArea 高度 + scrollTop = ydisp × newRowHeight 一步到位
+  // （xterm 自身公式，无取整/clamp 偏差），任意滚动位置保持相对位置。
   if (core && core.viewport && typeof core.viewport.syncScrollArea === 'function') {
-    const vp = inst.term.element
-      ? inst.term.element.querySelector('.xterm-viewport')
-      : null;
-    const cellBefore = getTerminalCellSize(inst.term);
-    const vpBefore = vp ? { top: vp.scrollTop, h: vp.scrollHeight, c: vp.clientHeight } : null;
     try {
       core.viewport.syncScrollArea(true);
-      const cellAfter = getTerminalCellSize(inst.term);
-      const vpAfter = vp ? { top: vp.scrollTop, h: vp.scrollHeight, c: vp.clientHeight } : null;
-      debug('zoom', 'syncScrollArea uid=%s fontSize=%d oldFontSize=%s cellH %s->%s scrollTop %s->%s scrollH %s->%s clientH %s->%s',
-        uid, fontSize, oldFontSizeForLog,
-        cellBefore.h, cellAfter.h,
-        vpBefore ? vpBefore.top : '?', vpAfter ? vpAfter.top : '?',
-        vpBefore ? vpBefore.h : '?', vpAfter ? vpAfter.h : '?',
-        vpBefore ? vpBefore.c : '?', vpAfter ? vpAfter.c : '?');
     } catch (e) {
-      error('zoom', 'syncScrollArea failed', e);
+      error('zoom', 'syncScrollArea failed: %s', e && e.message);
     }
-  } else {
-    debug('zoom', 'syncScrollArea unavailable uid=%s', uid);
   }
-  // 轮询 canvas 尺寸直到实际变化（或超时），再更新 frame：
-  // 修复"框大小不变只有字体变小"——renderer 重算 dimensions 是异步的，
-  // 直接 rAF 一次可能读到旧 canvas 尺寸；轮询保证 frame 跟随最终渲染结果。
+  // 轮询 canvas 尺寸直到实际变化（或超时），再更新 frame 并锚定底部
   _waitCanvasChange(uid, beforeCanvas, 8, 40);
-  debug('terminal', 'applyTerminalFontSize uid=%s → %s', uid, fontSize);
+  debug('zoom', 'fontSize uid=%s -> %d', uid, fontSize);
 }
 
-/** 轮询等待 canvas 尺寸变化（最多 attempts 次、每次间隔 ms），变化后应用 frame */
+/** 视口是否在像素底部（scrollTop 距底部 ≤2px） */
+function _isViewportAtBottom(inst) {
+  const vp = inst.term.element
+    ? inst.term.element.querySelector('.xterm-viewport')
+    : null;
+  if (!vp) return false;
+  return (vp.scrollHeight - vp.clientHeight - vp.scrollTop) <= 2;
+}
+
+/**
+ * 轮询等待 canvas 尺寸变化（最多 attempts 帧，intervalMs 超时兜底），
+ * 变化后应用 frame；若缩放前视口在底部，同步锚定回像素底部。
+ */
 function _waitCanvasChange(uid, before, attempts, intervalMs) {
   const inst = state.termInstances[uid];
   if (!inst || !inst.term) return;
   let waited = 0;
   let finished = false;
-  const finish = (changedFlag) => {
+  const finish = () => {
     if (finished) return;
     finished = true;
     clearTimeout(timer);
     try { applyTerminalFrameSize(uid); } catch (_) {}
-    // 缩放前在底部 && canvas 变化后：xterm 的 scrollTop 基于 ydisp（不变），
-    // 但底部 = scrollH - clientH 因字号取整变化——此时 scrollH/clientH 已是
-    // 新值（renderer rAF 已更新），同步设 scrollTop 为精确底部 + scrollToBottom
-    // 修正 ydisp，防 xterm 后续 rAF 覆盖（日志证实 settle 后 xterm 不再覆盖）。
     if (inst._wasAtBottom) {
       inst._wasAtBottom = false;
-      const vp = inst.term.element
-        ? inst.term.element.querySelector('.xterm-viewport')
-        : null;
-      if (vp) {
-        vp.scrollTop = vp.scrollHeight - vp.clientHeight;
-        try { scrollTermToBottom(inst.term); } catch (_) {}
-        // 确认 2 帧防 xterm 残留覆盖
-        let cf = 2;
-        const confirm = () => {
-          if (cf-- <= 0) return;
-          if (!state.termInstances[uid]) return;
-          const v2 = state.termInstances[uid].term.element
-            ? state.termInstances[uid].term.element.querySelector('.xterm-viewport')
-            : null;
-          if (v2) v2.scrollTop = v2.scrollHeight - v2.clientHeight;
-          requestAnimationFrame(confirm);
-        };
-        requestAnimationFrame(confirm);
-        debug('zoom', 'anchorBottom uid=%s scrollH-clientH=%d', uid, vp.scrollHeight - vp.clientHeight);
-      }
+      _anchorViewportToBottom(uid);
     }
-    const cell = getTerminalCellSize(inst.term);
-    const vp = inst.term.element
-      ? inst.term.element.querySelector('.xterm-viewport')
-      : null;
-    const scroll = vp ? { top: vp.scrollTop, h: vp.scrollHeight, c: vp.clientHeight } : null;
-    debug('zoom', 'settle uid=%s canvasChanged=%s cellH=%s scrollTop=%s scrollH=%s clientH=%s',
-      uid, changedFlag, cell.h,
-      scroll ? scroll.top : '?', scroll ? scroll.h : '?', scroll ? scroll.c : '?');
   };
-  const timer = setTimeout(() => finish(false), attempts * intervalMs);
+  const timer = setTimeout(finish, attempts * intervalMs);
   const tick = () => {
     if (!state.termInstances[uid]) return;
     const now = getCanvasSize(inst.term);
     const changed = before && now && (Math.abs(now.w - before.w) > 0.5 || Math.abs(now.h - before.h) > 0.5);
     if (changed || waited >= attempts) {
-      finish(changed);
+      finish();
       return;
     }
     waited += 1;
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
+}
+
+/**
+ * 锚定视口到像素底部（scrollTop = scrollH - clientH），并确认 2 帧防 xterm
+ * 残留 rAF 覆盖。不调用 scrollToBottom：ydisp 与像素底部因取整不一致，
+ * 触发 scroll 事件会反向把 ydisp 同步回 scrollTop/rowH，破坏一致性。
+ */
+function _anchorViewportToBottom(uid) {
+  const inst = state.termInstances[uid];
+  if (!inst || !inst.term) return;
+  const vp = inst.term.element
+    ? inst.term.element.querySelector('.xterm-viewport')
+    : null;
+  if (!vp) return;
+  vp.scrollTop = vp.scrollHeight - vp.clientHeight;
+  let cf = 2;
+  const confirm = () => {
+    if (cf-- <= 0) return;
+    if (!state.termInstances[uid]) return;
+    const v2 = state.termInstances[uid].term.element
+      ? state.termInstances[uid].term.element.querySelector('.xterm-viewport')
+      : null;
+    if (v2) v2.scrollTop = v2.scrollHeight - v2.clientHeight;
+    requestAnimationFrame(confirm);
+  };
+  requestAnimationFrame(confirm);
+  debug('zoom', 'anchorBottom uid=%s scrollH-clientH=%d', uid, vp.scrollHeight - vp.clientHeight);
 }
 
 /**
