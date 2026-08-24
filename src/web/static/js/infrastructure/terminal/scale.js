@@ -129,6 +129,13 @@ export function applyTerminalSize(uid, force, opts) {
   const inst = state.termInstances[uid];
   if (!s || !inst) return;
 
+  // 子进程模式无终端（PTY）：不发送 resize（后端会拒绝并报错）。
+  // 子进程会话的 termInstance 仅用于显示输出，无 cols/rows 语义。
+  if (s.mode === 'subprocess' || s.ptyType === 'subprocess') {
+    debug('terminal', 'applyTerminalSize skip: subprocess sid=%s', uid);
+    return;
+  }
+
   const skipDaemonResize = !!(opts && opts.skipDaemonResize);
   const forceDaemonResize = !!force;
   const cfg = getSessionSizeConfigByUid(uid);

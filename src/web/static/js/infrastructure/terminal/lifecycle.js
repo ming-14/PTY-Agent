@@ -209,6 +209,11 @@ export function ensureTerminal(uid) {
         debug('resize', 'onResize deliberate: session not active, skip');
         return;
       }
+      if (s2.mode === 'subprocess' || s2.ptyType === 'subprocess') {
+        // 子进程模式无终端：不发送 resize（后端拒绝）
+        debug('resize', 'onResize deliberate: subprocess, skip');
+        return;
+      }
       if (isSizeUILocked(uid)) {
         debug('resize', 'onResize deliberate: locked by another connection, skip');
         return;
