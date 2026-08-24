@@ -188,6 +188,21 @@ export function applyTerminalFontSize(uid) {
   const inst = state.termInstances[uid];
   if (!inst || !inst.term) return;
   const fontSize = getSessionFontSize(uid);
+  // fontSize 是 options：变更触发 _handleOptionsChanged → _fireOnCanvasResize，
+  // 其异步 rAF 在 renderer 首帧前（dimensions.css 未就绪）访问 dimensions 崩溃
+  // （同 disableStdin 问题——xterm renderer 惰性创建）。未就绪时记录待应用字号，
+  // 下一帧重试，保证防溢出缩放（大尺寸终端反算字号）不会因 renderer 时序丢失。
+  const core = inst.term._core;
+  const rendererReady = !!(core && core._renderService && core._renderService.dimensions
+    && core._renderService.dimensions.css && core._renderService.dimensions.css.cell);
+  if (!rendererReady) {
+    inst._pendingFontSize = fontSize;
+    requestAnimationFrame(() => {
+      try { applyTerminalFontSize(uid); } catch (_) {}
+    });
+    return;
+  }
+  inst._pendingFontSize = undefined;
   try {
     inst.term.options.fontSize = fontSize;
   } catch (e) {
@@ -201,7 +216,7 @@ export function applyTerminalFontSize(uid) {
       try { applyTerminalFrameSize(uid); } catch (_) {}
     });
   });
-  debug('terminal', 'applyTerminalFontSize sid=%s → %s', uid, fontSize);
+  debug('terminal', 'applyTerminalFontSize uid=%s → %s', uid, fontSize);
 }
 
 /**

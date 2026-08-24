@@ -180,13 +180,15 @@ export function switchTab(sid) {
       // 用 rAF 在下一帧渲染前触发尺寸更新（比 setTimeout 更稳定）
       // 再等一帧确保 xterm 内部 dimensions 刷新后再算 frame
       requestAnimationFrame(() => {
-        applyTerminalFrameSize(sid);
-        applyTerminalSize(sid, false);
+        // 防御：单步失败不中断整条缩放链（任一异常都会导致 frame 保持
+        // 未约束尺寸 → 终端框溢出 stage）
+        try { applyTerminalFrameSize(sid); } catch (_) {}
+        try { applyTerminalSize(sid, false); } catch (_) {}
         // 切换标签后按该会话保存的 frameRatio + 当前 stage 尺寸恢复框大小。
         // - adaptive 模式：按 ratio 设 frame 尺寸 + fit() 算 cols/rows（cols/rows 变）
         // - 非 adaptive 模式：按 ratio 反算字号（cols/rows 不变）
         // 不同会话 cols/rows 不同，ratio 不同，切换后需重新应用。
-        applySessionFrameRatio(sid);
+        try { applySessionFrameRatio(sid); } catch (_) {}
         try { inst.term.refresh(0, inst.term.rows - 1); } catch (_) {}
         if (isHistory) scrollTermToTop(inst.term);
       });
