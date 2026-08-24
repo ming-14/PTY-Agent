@@ -228,7 +228,7 @@ export function applyTerminalFontSize(uid) {
   // syncScrollArea(true) 同步执行 _innerRefresh：更新 scrollArea 高度 +
   // scrollTop = ydisp × newRowHeight（xterm 自身公式，无取整/clamp 偏差），
   // 任意滚动位置都保持相对位置，不限于底部。
-  const core = inst.term._core;
+  // 注意：core 已在函数顶部声明（rendererReady 检查），此处直接复用
   if (core && core.viewport && typeof core.viewport.syncScrollArea === 'function') {
     try {
       core.viewport.syncScrollArea(true);
