@@ -37,7 +37,6 @@ import {
   MIN_FONT_SIZE, MAX_FONT_SIZE,
   FRAME_RATIO_MIN, FRAME_RATIO_MAX,
 } from '../../domain/constants.js';
-import { isTermAtBottom } from './scroll.js';
 
 /**
  * 通过 FitAddon 获取终端实例。
@@ -212,8 +211,6 @@ export function applyTerminalFontSize(uid) {
     return;
   }
   inst._pendingFontSize = undefined;
-  // 记录缩放前视图是否在底部（供字号变化后同步修正 scrollTop）
-  const wasAtBottom = isTermAtBottom(inst.term);
   // 变更前 canvas 尺寸（设字体前读取，作为轮询对比基准）
   const beforeCanvas = getCanvasSize(inst.term);
   try {
@@ -221,25 +218,26 @@ export function applyTerminalFontSize(uid) {
   } catch (e) {
     console.error('set fontSize failed', e);
   }
-  // 同步修正 scrollTop（漂移根因修复）：
-  // fontSize setter 的同步链中 DomRenderer._updateDimensions 已同步更新
-  // dimensions.css.cell（实测验证），而 xterm 的 scrollTop 更新（_innerRefresh）
-  // 在其内部 rAF 中（下一帧）——中间帧 canvas 已变高但 scrollTop 未跟上，
-  // 放大时视口相对上移。此处立即用新 cell 高度设置 scrollTop，
-  // 浏览器下一帧绘制时视口已在底部，不存在中间帧。
-  // 注意：必须用 buf.viewportY（xterm 5.x public API），buf.ydisp 是 undefined，
-  // undefined × number = NaN → scrollTop=NaN → 浏览器视为 0 → 视图跳顶！
-  if (wasAtBottom) {
-    const vp = inst.term.element
-      ? inst.term.element.querySelector('.xterm-viewport')
-      : null;
-    if (vp) {
-      const newCell = getTerminalCellSize(inst.term);
-      const buf = inst.term.buffer.active;
-      if (newCell.h > 0 && buf) {
-        vp.scrollTop = buf.viewportY * newCell.h;
-      }
+  // 同步触发 xterm 视口刷新（漂移根因修复）：
+  // fontSize setter 同步链中 DomRenderer._updateDimensions 已同步更新
+  // dimensions（实测验证），但 xterm 的视口更新（syncScrollArea → _innerRefresh）
+  // 在其内部 rAF 中（下一帧）——中间帧 canvas 已变高但 scrollArea 高度与
+  // scrollTop 未跟上：放大时视口相对上移；且事后单独设置 scrollTop 会被
+  // 旧的 scrollHeight clamp（scrollArea 未更新），xterm 更新 scrollH 后
+  // scrollTop 停留被 clamp 的旧值（"上面一点点"）。
+  // syncScrollArea(true) 同步执行 _innerRefresh：更新 scrollArea 高度 +
+  // scrollTop = ydisp × newRowHeight（xterm 自身公式，无取整/clamp 偏差），
+  // 任意滚动位置都保持相对位置，不限于底部。
+  const core = inst.term._core;
+  if (core && core.viewport && typeof core.viewport.syncScrollArea === 'function') {
+    try {
+      core.viewport.syncScrollArea(true);
+      console.log('[zoom] syncScrollArea(true) uid=%s fontSize=%d done', uid, fontSize);
+    } catch (e) {
+      console.error('[zoom] syncScrollArea failed', e);
     }
+  } else {
+    console.log('[zoom] syncScrollArea unavailable uid=%s', uid);
   }
   // 轮询 canvas 尺寸直到实际变化（或超时），再更新 frame：
   // 修复"框大小不变只有字体变小"——renderer 重算 dimensions 是异步的，
