@@ -27,7 +27,6 @@ import {
   restoreScrollbackAndSnapshot,
   reapplyAllTerminalSizes,
   applySessionFrameRatio,
-  snapshotScrollbackForResize,
 } from './infrastructure/terminalAdapter.js';
 import { showToast, updateSystemStatsUI } from './infrastructure/domUtils.js';
 import {
@@ -192,7 +191,6 @@ initPorts({
     restoreScrollbackAndSnapshot,
     reapplyAllTerminalSizes,
     applySessionFrameRatio,
-    snapshotScrollbackForResize,
   },
   ui: {
     renderTabs,

@@ -27,7 +27,6 @@ export {
   applySessionFrameRatio, // 切标签/stage 变化时恢复框大小（adaptive 设 frame+fit 改 cols/rows；非 adaptive 反算字号）
   zoomActiveSession,       // Ctrl+滚轮统一缩放入口（所有模式按 ratio 反算字号，cols/rows 不变）
   resetActiveSessionZoom,  // Ctrl+0 重置（所有模式字号回默认再反算 ratio，cols/rows 不变）
-  snapshotScrollbackForResize, // term.resize 前捕获完整内容（resize 后重放）
 } from './terminal/scale.js';
 
 // 终端尺寸模式相关纯函数

@@ -66,73 +66,6 @@ function getCanvasSize(term) {
 }
 
 /**
- * 捕获终端完整内容（scrollback + 可见区）为原始文本，按逻辑行合并。
- *
- * xterm 的 reflow 拆分后，最后一段也被标记 isWrapped=true（bug），
- * 导致简单基于 isWrapped 的拼接错误地把不同逻辑行的段合并（错位）。
- * 修复：当 wrapped=false 且 上一行也是 wrapped=false 时结束逻辑行——
- * 即只在"两个连续独立行"之间插入 \r\n，确保逻辑行完整。
- */
-/** CJK 等宽字符显示宽度（近似 wcwidth） */
-function displayWidth(s) {
-  let w = 0;
-  for (const ch of s) {
-    const c = ch.codePointAt(0);
-    w += (c >= 0x1100 && (c <= 0x115F || c === 0x2329 || c === 0x232A ||
-      (c >= 0x2E80 && c <= 0xA4CF && c !== 0x303F) ||
-      (c >= 0xAC00 && c <= 0xD7A3) || (c >= 0xF900 && c <= 0xFAFF) ||
-      (c >= 0xFE30 && c <= 0xFE4F) || (c >= 0xFF00 && c <= 0xFF60) ||
-      (c >= 0xFFE0 && c <= 0xFFE6) || (c >= 0x20000 && c <= 0x2FFFD) ||
-      (c >= 0x30000 && c <= 0x3FFFD))) ? 2 : 1;
-  }
-  return w;
-}
-
-/**
- * 捕获终端完整内容（scrollback + 可见区）为原始文本，按逻辑行合并。
- *
- * 逻辑行边界判定：行显示宽度（去尾空格）< 列宽 = 逻辑行末尾（续行一定
- * 满列）；满列且 isWrapped=false 且下一行也是满列独立 → 独立满列行也结束。
- * 不用 isWrapped 单独判定——xterm 多次 reflow 后 wrap 标志不可靠
- *（最后一段被误标 wrapped），导致捕获段跨逻辑行错位。
- */
-function captureTerminalText(term) {
-  const buf = term.buffer.active;
-  const cols = term.cols;
-  const parts = [];
-  let pending = '';
-  for (let i = 0; i < buf.length; i++) {
-    const line = buf.getLine(i);
-    if (!line) continue;
-    const next = buf.getLine(i + 1);
-    const isFull = displayWidth(line.translateToString(true)) >= cols;
-    const isSegmentEnd = !isFull || (!line.isWrapped && next && !next.isWrapped);
-    // translateToString(false) 保留行内空格（<DIR> 行对齐）
-    pending += line.translateToString(false);
-    if (isSegmentEnd) {
-      // trimEnd：逻辑行行尾空格（原宽度尾部填充）在新宽度下超宽 wrap
-      // 产生空格空行；行内 <DIR> 对齐空格保留
-      parts.push(pending.trimEnd());
-      parts.push('\r\n');
-      pending = '';
-    }
-  }
-  if (pending) parts.push(pending.trimEnd());
-  return parts.join('');
-}
-
-/** 在 term.resize 前保存当前内容，供 resize 后重放 */
-export function snapshotScrollbackForResize(uid) {
-  const inst = state.termInstances[uid];
-  if (!inst || !inst.term) return;
-  try {
-    inst._preResizeText = captureTerminalText(inst.term);
-  } catch (e) {
-    inst._preResizeText = null;
-  }
-}
-
-/**
  * 应用终端框尺寸：从 xterm canvas 权威尺寸跟随（无 DOM 布局时序依赖）。
  *
  * frame 宽高 = canvas 实际渲染尺寸（ceil 取整），精确贴合内容——
@@ -222,10 +155,7 @@ export function applyTerminalSize(uid, force, opts) {
   if (!size) {
     // 理论不会到这里（adaptive 已在上面处理），保险起见调用 fit
     const fit = getFitAddon(uid);
-    if (fit) {
-      snapshotScrollbackForResize(uid);
-      try { fit.fit(); } catch (_) {}
-    }
+    if (fit) { try { fit.fit(); } catch (_) {} }
     return;
   }
   const cols = size.cols;
@@ -247,9 +177,6 @@ export function applyTerminalSize(uid, force, opts) {
       debug('resize', 'reflowAudit uid=%s mode=%s target=%dx%d termNow=%dx%d s.cols=%s s.rows=%s',
             uid, mode, cols, rows, inst.term.cols, inst.term.rows,
             s.cols, s.rows);
-      // resize 前捕获完整内容：resize 后由 handleResizeComplete 按原样重放
-      //（不依赖 xterm/pywezterm reflow 的合并正确性）
-      snapshotScrollbackForResize(uid);
       inst.term.resize(cols, rows);
       debug('terminal', 'applyTerminalSize %s → term.resize sid=%s %dx%d (onResize will send)',
             mode, uid, cols, rows);
@@ -508,7 +435,6 @@ export function applySessionFrameRatio(uid) {
       // fit() 是有意重算 cols/rows（自适应模式设计）→ 标记后 onResize 发后端
       inst._pendingDaemonResize = true;
       debug('resize', 'applySessionFrameRatio adaptive INIT fit() uid=%s (flag set)', uid);
-      snapshotScrollbackForResize(uid);
       try { fit.fit(); } catch (e) { error('resize', 'fit failed: %s', e && e.message); }
       requestAnimationFrame(() => { try { applyTerminalFrameSize(uid); } catch (_) {} });
       return true;
@@ -527,7 +453,6 @@ export function applySessionFrameRatio(uid) {
     // fit() 是有意重算 cols/rows（自适应模式设计）→ 标记后 onResize 发后端
     inst._pendingDaemonResize = true;
     debug('resize', 'applySessionFrameRatio adaptive fit() uid=%s (flag set)', uid);
-    snapshotScrollbackForResize(uid);
     try { fit.fit(); } catch (e) { error('resize', 'fit failed: %s', e && e.message); }
     // fit() 触发 onResize → applyTerminalFrameSize（rAF）
     requestAnimationFrame(() => { try { applyTerminalFrameSize(uid); } catch (_) {} });

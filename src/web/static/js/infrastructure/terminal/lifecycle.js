@@ -316,7 +316,7 @@ export function applyReadonlyState(sid, readonly) {
  * @param {string} snapshot 后端返回的屏幕快照（含 VT 序列与光标定位）
  * @param {boolean} isHistory 是否历史会话（true 滚到顶端，false 滚到底部）
  */
-export function restoreScrollbackAndSnapshot(term, scrollbackLines, snapshot, isHistory = false, restoreScrollback = true) {
+export function restoreScrollbackAndSnapshot(term, scrollbackLines, snapshot, isHistory = false, shouldRebuild = true) {
   const hasScrollback = !!(scrollbackLines && scrollbackLines.length > 0);
 
   // 视口修复：write 完成后再 scroll，避免 \x1b[3J 重置 ydisp=0 后视口停在顶端
@@ -327,20 +327,10 @@ export function restoreScrollbackAndSnapshot(term, scrollbackLines, snapshot, is
     } catch (_) {}
   };
 
-  if (!restoreScrollback) {
-    // resize 场景：
-    // - preText 重放模式（scrollbackLines[0] 是含 \r\n 的完整文本）：清空后
-    //   写入捕获内容（含 wrap 结构），xterm 按当前宽度重新 wrap——内容完整、
-    //   无 reflow 合并残留（pywezterm/xterm 对行尾空格/中文结尾行合并不完整）
-    // - 否则（无本地捕获、后端 scrollback 为空）：保留前端已有 scrollback，
-    //   只清可见区 + 写 snapshot（不清空——模式 B 的 \x1b[3J 会清掉前端历史）
-    const isPreText = scrollbackLines && scrollbackLines.length === 1
-      && typeof scrollbackLines[0] === 'string'
-      && scrollbackLines[0].indexOf('\r\n') >= 0;
-    if (isPreText && snapshot && snapshot.length > 0) {
-      debug('terminal', 'restoreScrollback: replay preResizeText len=%d', scrollbackLines[0].length);
-      term.write('\x1b[3J\x1b[2J\x1b[1;1H' + scrollbackLines[0] + '\x1b[2J' + snapshot, doScroll);
-    } else if (snapshot && snapshot.length > 0) {
+  if (!shouldRebuild) {
+    // resize 场景且后端 scrollback 为空：保留前端已有 scrollback，
+    // 只清可见区 + 写 snapshot（不清空——\x1b[3J 会清掉前端历史）
+    if (snapshot && snapshot.length > 0) {
       debug('terminal', 'restoreScrollback: resize mode, keep existing scrollback');
       term.write('\x1b[2J\x1b[1;1H' + snapshot, doScroll);
     } else {

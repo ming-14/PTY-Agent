@@ -689,23 +689,10 @@ export function handleResizeComplete(msg) {
   const isHistory = !!(s && s.history);
   const snapshot = msg.snapshot || '';
   const scrollbackAnsi = msg.scrollback || '';
-  // resize 场景重建 scrollback：
-  // 优先重放 resize 前本地捕获的完整内容（_preResizeText，含 wrap 结构——
-  // xterm 按新宽度重新 wrap，不依赖 pywezterm/xterm reflow 的合并正确性，
-  // 彻底避免行尾空格/中文结尾拆分行残留）；无本地捕获时回退后端 scrollback
-  //（非空才重建，空则保留前端不清空）。
-  const preText = inst._preResizeText;
-  inst._preResizeText = null;
-  if (preText) {
-    try {
-      debug('resize', 'resize_complete replay uid=%s preTextLen=%d snapshot_len=%d head=%s',
-            uid, preText.length, snapshot.length, preText.slice(0, 160).replace(/\x1b/g, '\\e'));
-      ports.terminal.restoreScrollbackAndSnapshot(
-        inst.term, [preText], snapshot, isHistory, false);
-    } catch (e) {
-      error('session', 'resize_complete replay failed: %s', e && e.message);
-    }
-  } else if (snapshot.length > 0 || scrollbackAnsi.length > 0) {
+  // resize 场景用后端 scrollback 重建（后端 pywezterm 模型权威——验证脚本
+  // 确认多次 resize 后 scrollback 完整，无拆分残留）；后端 scrollback 为空
+  // 时保留前端已有内容（不清空——模式 B 的 \x1b[3J 会清掉前端历史）
+  if (snapshot.length > 0 || scrollbackAnsi.length > 0) {
     try {
       const scrollbackLines = scrollbackAnsi ? scrollbackAnsi.split('\r\n') : [];
       if (scrollbackLines.length > 0 && scrollbackLines[scrollbackLines.length - 1] === '') {
@@ -765,8 +752,6 @@ export function handleSessionResized(msg) {
   s.rows = newRows;
   if (inst.term.cols !== newCols || inst.term.rows !== newRows) {
     inst._externalResize = true;
-    // resize 前捕获完整内容（供 rebuild 重放，不依赖 reflow 合并）
-    ports.terminal.snapshotScrollbackForResize(uid);
     inst.term.resize(newCols, newRows);
   }
   if (state.activeTab === uid) {

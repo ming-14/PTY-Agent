@@ -17,8 +17,6 @@ export const ports = {
     applyTerminalFrameSize: null,
     // scrollback + snapshot 重建 xterm buffer
     restoreScrollbackAndSnapshot: null,
-    // term.resize 前捕获完整内容（resize 后重放，不依赖 reflow 合并）
-    snapshotScrollbackForResize: null,
     // 重新应用所有终端尺寸（被降级到 fixed 时调用，触发 fixed 模式 resize 同步守护进程）
     reapplyAllTerminalSizes: null,
     // 按会话保存的 frameRatio 恢复框/stage 占比（被降级到 fixed 时调用，保持比例不变）
