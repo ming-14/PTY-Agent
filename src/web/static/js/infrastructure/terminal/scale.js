@@ -22,7 +22,7 @@
  */
 
 import { state, getSessionSizeConfigByUid, getSessionFontSize, setSessionFontSize,
-         getSessionFrameRatio, setActiveSessionFrameRatio } from '../../domain/state.js';
+         getSessionFrameRatio, setActiveSessionFrameRatio, DEFAULT_FRAME_RATIO } from '../../domain/state.js';
 import { debug } from '../../domain/logger.js';
 import { $ } from '../domUtils.js';
 import { sendToSession } from '../wsClient.js';
@@ -310,7 +310,10 @@ export function applySessionFrameRatio(uid) {
       // 与已有 ratio 分支一致：设 frame 尺寸 + fit() 算新 cols/rows + applyTerminalFrameSize 跟随。
       const frameW = cell.w * inst.term.cols;
       const frameH = cell.h * inst.term.rows;
-      const ratio = computeFrameRatio(frameW, frameH, contentW, contentH);
+      // 默认比例上限 0.8：首次打开时即使 frame ≥ stage（大尺寸终端），
+      // 也不撑满（clamp 到 1.0），而是默认占 stage 80%（用户可 Ctrl+滚轮调节）。
+      // 自然尺寸小于 0.8 的终端保持自然比例。
+      const ratio = Math.min(computeFrameRatio(frameW, frameH, contentW, contentH), DEFAULT_FRAME_RATIO);
       setActiveSessionFrameRatio(ratio);
       debug('terminal', 'applySessionFrameRatio adaptive INIT sid=%s ratio=%.3f (frame=%dx%d stage=%dx%d)',
             uid, ratio, Math.round(frameW), Math.round(frameH),
@@ -358,7 +361,8 @@ export function applySessionFrameRatio(uid) {
     // 否则首次渲染时 frame 溢出 stage。
     const frameW = cell.w * inst.term.cols;
     const frameH = cell.h * inst.term.rows;
-    const ratio = computeFrameRatio(frameW, frameH, contentW, contentH);
+    // 默认比例上限 0.8（同 adaptive INIT）：大尺寸终端首次打开不撑满 stage
+    const ratio = Math.min(computeFrameRatio(frameW, frameH, contentW, contentH), DEFAULT_FRAME_RATIO);
     setActiveSessionFrameRatio(ratio);
 
     // frameW > contentW || frameH > contentH

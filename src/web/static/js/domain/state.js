@@ -24,8 +24,9 @@ import { warn } from './logger.js';
 // 切换回去时按比例恢复框大小，不再填满 stage。
 const DEFAULT_SIZE_MODE = 'default';
 
-// frameRatio 兜底值：1.0 表示撑满 stage；null 表示未设置（首次打开用默认字号反算后写入）
-const DEFAULT_FRAME_RATIO = null;
+// frameRatio 兜底值：0.8 表示新会话默认框占 stage 内容区 80%，
+// 用户可通过 Ctrl+滚轮调节并存回 localStorage；null 表示未设置（首次打开用 0.8 后写入）
+export const DEFAULT_FRAME_RATIO = 0.8;
 
 // 单个会话的默认尺寸配置（结构定义 & 回退值）
 const DEFAULT_SIZE_CONFIG = {

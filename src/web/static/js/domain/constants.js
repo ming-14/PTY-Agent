@@ -78,8 +78,11 @@ export const DEFAULT_ROWS = 24;
 
 export const DEFAULT_FONT_SIZE = 14;
 // 字号缩放范围（Ctrl+滚轮 / Ctrl+-/+/0 / 触摸捏合调整）
+// 下限 1px：允许大尺寸终端通过极小字号适配到指定 frameRatio（如 0.8），
+// 若下限过高（如 8px）则 200 列终端的反算字号被 clamp 在 8px，
+// frame 宽度 = 200 × 8px_cell ≈ 1600px，远超 stage 宽度 → 框溢出。
 // 与 ttyd/WT 一致：通过 fontSize 控制字符显示大小，xterm 内部 cols/rows 跟随容器自动适配
-export const MIN_FONT_SIZE = 8;
+export const MIN_FONT_SIZE = 1;
 export const MAX_FONT_SIZE = 32;
 export const FONT_SIZE_STEP = 1;       // Ctrl+滚轮 每次调整步长（adaptive 模式下直接调字号用）
 export const FONT_SIZE_PINCH_STEP = 1; // 触摸捏合每档步长
