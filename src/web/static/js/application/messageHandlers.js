@@ -698,8 +698,8 @@ export function handleResizeComplete(msg) {
   inst._preResizeText = null;
   if (preText) {
     try {
-      debug('resize', 'resize_complete replay uid=%s preTextLen=%d snapshot_len=%d',
-            uid, preText.length, snapshot.length);
+      debug('resize', 'resize_complete replay uid=%s preTextLen=%d snapshot_len=%d head=%s',
+            uid, preText.length, snapshot.length, preText.slice(0, 160).replace(/\x1b/g, '\\e'));
       ports.terminal.restoreScrollbackAndSnapshot(
         inst.term, [preText], snapshot, isHistory, false);
     } catch (e) {
