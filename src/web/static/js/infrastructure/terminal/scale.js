@@ -212,19 +212,32 @@ export function applyTerminalFontSize(uid) {
     return;
   }
   inst._pendingFontSize = undefined;
-  // 缩放前记录视图是否在底部，并在字号变更前同步 scrollToBottom：
-  // 视口从底部出发，xterm 内部按新 rowHeight 重算 scrollTop 时保持底部，
-  // 避免"先跳顶/上移再被事后锚定拉回"的可见瞬移（闪烁）。
+  // 缩放前记录视图是否在底部（供字号变化后同步锚定）
   inst._wasAtBottom = isTermAtBottom(inst.term);
-  if (inst._wasAtBottom) {
-    try { scrollTermToBottom(inst.term); } catch (_) {}
-  }
+  // 字号变化前：cell 尺寸与字号近似线性（rowHeight ≈ fontSize × 常量），
+  // 记录当前 cell 高度与字号，用于变化后同步预测新 rowHeight 并设置 scrollTop
+  // ——消除"canvas 已变高但 scrollTop 未跟上"的中间帧（漂移根因）。
+  const oldFontSize = inst.term.options.fontSize || fontSize;
+  const oldCell = getTerminalCellSize(inst.term);
   // 变更前 canvas 尺寸（设字体前读取，作为轮询对比基准）
   const beforeCanvas = getCanvasSize(inst.term);
   try {
     inst.term.options.fontSize = fontSize;
   } catch (e) {
     console.error('set fontSize failed', e);
+  }
+  // 同步锚定（漂移根因修复）：字号已变、xterm 的 scrollTop 更新在其内部
+  // rAF 链中（晚于 canvas 渲染一帧）——此刻立即按预测 rowHeight 设置
+  // scrollTop，浏览器下一帧绘制时视口已在底部，不存在中间帧上移。
+  if (inst._wasAtBottom && oldCell.h > 0 && oldFontSize > 0) {
+    const vp = inst.term.element
+      ? inst.term.element.querySelector('.xterm-viewport')
+      : null;
+    if (vp) {
+      const predictedRowH = oldCell.h * (fontSize / oldFontSize);
+      const buf = inst.term.buffer.active;
+      vp.scrollTop = buf.ydisp * predictedRowH;
+    }
   }
   // 轮询 canvas 尺寸直到实际变化（或超时），再更新 frame：
   // 修复"框大小不变只有字体变小"——renderer 重算 dimensions 是异步的，
@@ -238,27 +251,33 @@ function _waitCanvasChange(uid, before, attempts, intervalMs) {
   const inst = state.termInstances[uid];
   if (!inst || !inst.term) return;
   let waited = 0;
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    try { applyTerminalFrameSize(uid); } catch (_) {}
+    // 精确锚定：此刻 dimensions 已是新 cell 尺寸，同步设置 scrollTop
+    // （xterm 内部 _innerRefresh 的 rAF 可能晚于本 tick，先同步纠正，
+    // 视口在底部时后续 _innerRefresh 设置相同值，不会再次漂移）
+    if (inst._wasAtBottom) {
+      inst._wasAtBottom = false;
+      try { scrollTermToBottom(inst.term); } catch (_) {}
+    }
+  };
+  const timer = setTimeout(finish, attempts * intervalMs);
   const tick = () => {
     if (!state.termInstances[uid]) return;
     const now = getCanvasSize(inst.term);
     const changed = before && now && (Math.abs(now.w - before.w) > 0.5 || Math.abs(now.h - before.h) > 0.5);
     if (changed || waited >= attempts) {
-      try { applyTerminalFrameSize(uid); } catch (_) {}
-      // 事后保险锚定：缩放前已在底部（事前锚定已让视口从底部出发），
-      // canvas 变化后再确认一次。延迟 1 帧等 xterm 内部 scrollTop 重算完成，
-      // 不再多帧延迟（会放大"先上移再拉回"的可见窗口）。
-      if (inst._wasAtBottom) {
-        inst._wasAtBottom = false;
-        requestAnimationFrame(() => {
-          try { scrollTermToBottom(inst.term); } catch (_) {}
-        });
-      }
+      finish();
       return;
     }
     waited += 1;
-    setTimeout(tick, intervalMs);
+    requestAnimationFrame(tick);
   };
-  tick();
+  requestAnimationFrame(tick);
 }
 
 /**
