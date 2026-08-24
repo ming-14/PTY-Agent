@@ -685,6 +685,7 @@ export function handleSessionResized(msg) {
     debug('session', 'session_resized uid=%s skipped: no session or history', uid);
     return;
   }
+  console.log('[resize] handleSessionResized uid=%s cols=%d rows=%d (backend broadcast)', uid, msg.cols, msg.rows);
   const inst = state.termInstances[uid];
   if (!inst) {
     s.cols = msg.cols;

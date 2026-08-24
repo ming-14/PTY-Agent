@@ -161,6 +161,8 @@ export function applyTerminalSize(uid, force, opts) {
       // 标记为有意 resize：onResize 据此发后端（区分 xterm 容器自动 resize——
       // 后者来自 Ctrl+滚轮缩放/框变化，必须回退而非同步 PTY）
       inst._pendingDaemonResize = true;
+      console.log('[resize] applyTerminalSize DELIBERATE %s sid=%s %dx%d (flag set, term.resize)',
+            mode, uid, cols, rows);
       inst.term.resize(cols, rows);
       debug('terminal', 'applyTerminalSize %s → term.resize sid=%s %dx%d (onResize will send)',
             mode, uid, cols, rows);
@@ -351,6 +353,7 @@ export function applySessionFrameRatio(uid) {
       }
       // fit() 是有意重算 cols/rows（自适应模式设计）→ 标记后 onResize 发后端
       inst._pendingDaemonResize = true;
+      console.log('[resize] applySessionFrameRatio adaptive INIT fit() uid=%s (flag set)', uid);
       try { fit.fit(); } catch (e) { console.error('fit failed', e); }
       requestAnimationFrame(() => { try { applyTerminalFrameSize(uid); } catch (_) {} });
       return true;
@@ -368,6 +371,7 @@ export function applySessionFrameRatio(uid) {
     }
     // fit() 是有意重算 cols/rows（自适应模式设计）→ 标记后 onResize 发后端
     inst._pendingDaemonResize = true;
+    console.log('[resize] applySessionFrameRatio adaptive fit() uid=%s (flag set)', uid);
     try { fit.fit(); } catch (e) { console.error('fit failed', e); }
     // fit() 触发 onResize → applyTerminalFrameSize（rAF）
     requestAnimationFrame(() => { try { applyTerminalFrameSize(uid); } catch (_) {} });
