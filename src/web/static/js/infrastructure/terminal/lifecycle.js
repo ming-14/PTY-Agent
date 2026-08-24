@@ -186,7 +186,7 @@ export function ensureTerminal(uid) {
     const s2 = state.sessions[uid];
     const wantCols = s2 ? s2.cols : 0;
     const wantRows = s2 ? s2.rows : 0;
-    console.log('[resize] onResize uid=%s cols=%d rows=%d wantCols=%d wantRows=%d pendingDaemon=%s external=%s',
+    debug('resize', 'onResize uid=%s cols=%d rows=%d wantCols=%d wantRows=%d pendingDaemon=%s external=%s',
           uid, cols, rows, wantCols, wantRows, !!inst._pendingDaemonResize, !!inst._externalResize);
 
     // 外部 resize（session_resized / resize_complete 已含完整 snapshot，
@@ -194,27 +194,27 @@ export function ensureTerminal(uid) {
     // buffer 被写两遍 + _resizePending 竞态）
     if (inst._externalResize) {
       inst._externalResize = false;
-      console.log('[resize] onResize -> external, skip');
+      debug('resize', 'onResize -> external, skip');
       return;
     }
 
     // ── 有意 resize（applyTerminalSize / fit 等显式调用）→ 正常同步后端 ──
     if (inst._pendingDaemonResize) {
       inst._pendingDaemonResize = false;
-      console.log('[resize] onResize -> DELIBERATE uid=%s cols=%d rows=%d (send backend)', uid, cols, rows);
+      debug('resize', 'onResize -> DELIBERATE uid=%s cols=%d rows=%d (send backend)', uid, cols, rows);
       requestAnimationFrame(() => {
         try { applyTerminalFrameSize(uid); } catch (_) {}
       });
       if (!s2 || !s2.running || s2.history || s2.closing) {
-        console.log('[resize] onResize deliberate: session not active, skip');
+        debug('resize', 'onResize deliberate: session not active, skip');
         return;
       }
       if (isSizeUILocked(uid)) {
-        console.log('[resize] onResize deliberate: locked by another connection, skip');
+        debug('resize', 'onResize deliberate: locked by another connection, skip');
         return;
       }
       if (inst._resizePending && inst._resizeBuffer.length > 0) {
-        console.log('[resize] onResize deliberate: nested resize, discard %d buffered', inst._resizeBuffer.length);
+        debug('resize', 'onResize deliberate: nested resize, discard %d buffered', inst._resizeBuffer.length);
         inst._resizeBuffer = [];
       }
       inst._resizePending = true;
@@ -228,14 +228,14 @@ export function ensureTerminal(uid) {
     // ── 容器自动 resize（xterm ResizeObserver 触发，来自字体/框变化）──
     // PTY 尺寸是权威，回退到会话尺寸，绝不向后端发送。
     if (wantCols && (cols !== wantCols || rows !== wantRows)) {
-      console.log('[resize] onResize -> AUTO-REVERT uid=%s %dx%d -> %dx%d (suppress backend resize)',
+      debug('resize', 'onResize -> AUTO-REVERT uid=%s %dx%d -> %dx%d (suppress backend resize)',
             uid, cols, rows, wantCols, wantRows);
       try { inst.term.resize(wantCols, wantRows); } catch (_) {}
       return;
     }
 
     // 回退完成 / 尺寸一致：仅跟随 frame
-    console.log('[resize] onResize -> match, follow frame uid=%s cols=%d rows=%d', uid, cols, rows);
+    debug('resize', 'onResize -> match, follow frame uid=%s cols=%d rows=%d', uid, cols, rows);
     requestAnimationFrame(() => {
       try { applyTerminalFrameSize(uid); } catch (_) {}
     });

@@ -643,11 +643,11 @@ export function handleResizeComplete(msg) {
     // 注意：本端发起的 resize 依赖此响应恢复 scrollback，若被丢弃
     // 且无后续响应 → scrollback 丢失（此场景需由后续 session_resized
     // 广播或再次 resize 恢复）。
-    console.log('[resize] resize_complete uid=%s STALE dropped: msg=%dx%d term=%dx%d scrollback_len=%d',
+    debug('resize', 'resize_complete uid=%s STALE dropped: msg=%dx%d term=%dx%d scrollback_len=%d',
           uid, msg.cols, msg.rows, inst.term.cols, inst.term.rows, (msg.scrollback || '').length);
     return;
   }
-  console.log('[resize] resize_complete uid=%s %dx%d snapshot_len=%d scrollback_len=%d',
+  debug('resize', 'resize_complete uid=%s %dx%d snapshot_len=%d scrollback_len=%d',
         uid, msg.cols, msg.rows, (msg.snapshot || '').length, (msg.scrollback || '').length);
   const s = state.sessions[uid];
   const isHistory = !!(s && s.history);
@@ -695,7 +695,7 @@ export function handleSessionResized(msg) {
     debug('session', 'session_resized uid=%s skipped: no session or history', uid);
     return;
   }
-  console.log('[resize] handleSessionResized uid=%s cols=%d rows=%d (backend broadcast)', uid, msg.cols, msg.rows);
+  debug('resize', 'handleSessionResized uid=%s cols=%d rows=%d (backend broadcast)', uid, msg.cols, msg.rows);
   const inst = state.termInstances[uid];
   if (!inst) {
     s.cols = msg.cols;

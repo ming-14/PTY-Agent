@@ -193,7 +193,7 @@ export function sendToSession(uid, payload, displayName) {
     if (s && s.id) payload.sessionId = s.id;
   }
   if (payload.type === 'resize') {
-    console.log('[resize] sendToSession uid=%s → backend resize cols=%d rows=%d',
+    debug('resize', 'sendToSession uid=%s → backend resize cols=%d rows=%d',
           uid, payload.cols, payload.rows);
   }
   wsSend(payload);

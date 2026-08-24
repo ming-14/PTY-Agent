@@ -23,7 +23,7 @@
 
 import { state, getSessionSizeConfigByUid, getSessionFontSize, setSessionFontSize,
          getSessionFrameRatio, setActiveSessionFrameRatio, DEFAULT_FRAME_RATIO } from '../../domain/state.js';
-import { debug } from '../../domain/logger.js';
+import { debug, error } from '../../domain/logger.js';
 import { $ } from '../domUtils.js';
 import { sendToSession } from '../wsClient.js';
 import {
@@ -37,6 +37,7 @@ import {
   MIN_FONT_SIZE, MAX_FONT_SIZE,
   FRAME_RATIO_MIN, FRAME_RATIO_MAX,
 } from '../../domain/constants.js';
+import { isTermAtBottom, scrollTermToBottom } from './scroll.js';
 
 /**
  * 通过 FitAddon 获取终端实例。
@@ -163,7 +164,7 @@ export function applyTerminalSize(uid, force, opts) {
       inst._pendingDaemonResize = true;
       // 超时保险：onResize 未触发时清除标志，防止残留导致后续自动 resize 误发
       setTimeout(() => { if (state.termInstances[uid]) state.termInstances[uid]._pendingDaemonResize = false; }, 300);
-      console.log('[resize] applyTerminalSize DELIBERATE %s sid=%s %dx%d (flag set, term.resize)',
+      debug('resize', 'applyTerminalSize DELIBERATE %s sid=%s %dx%d (flag set, term.resize)',
             mode, uid, cols, rows);
       inst.term.resize(cols, rows);
       debug('terminal', 'applyTerminalSize %s → term.resize sid=%s %dx%d (onResize will send)',
@@ -211,8 +212,13 @@ export function applyTerminalFontSize(uid) {
     return;
   }
   inst._pendingFontSize = undefined;
+  // 记录缩放前视口是否在底部：xterm 的 scrollTop = ydisp × rowHeight（行数不变），
+  // 但底部 = scrollH - clientH 随字号取整差异不成比例变化——缩小后 ydisp 不再是
+  // 精确底部（视口停在"上面一点点"且 xterm 不再修正）。canvas 变化后需外部锚定。
+  inst._wasAtBottom = isTermAtBottom(inst.term);
   // 变更前 canvas 尺寸（设字体前读取，作为轮询对比基准）
   const beforeCanvas = getCanvasSize(inst.term);
+  const oldFontSizeForLog = inst.term.options.fontSize;
   try {
     inst.term.options.fontSize = fontSize;
   } catch (e) {
@@ -230,14 +236,26 @@ export function applyTerminalFontSize(uid) {
   // 任意滚动位置都保持相对位置，不限于底部。
   // 注意：core 已在函数顶部声明（rendererReady 检查），此处直接复用
   if (core && core.viewport && typeof core.viewport.syncScrollArea === 'function') {
+    const vp = inst.term.element
+      ? inst.term.element.querySelector('.xterm-viewport')
+      : null;
+    const cellBefore = getTerminalCellSize(inst.term);
+    const vpBefore = vp ? { top: vp.scrollTop, h: vp.scrollHeight, c: vp.clientHeight } : null;
     try {
       core.viewport.syncScrollArea(true);
-      console.log('[zoom] syncScrollArea(true) uid=%s fontSize=%d done', uid, fontSize);
+      const cellAfter = getTerminalCellSize(inst.term);
+      const vpAfter = vp ? { top: vp.scrollTop, h: vp.scrollHeight, c: vp.clientHeight } : null;
+      debug('zoom', 'syncScrollArea uid=%s fontSize=%d oldFontSize=%s cellH %s->%s scrollTop %s->%s scrollH %s->%s clientH %s->%s',
+        uid, fontSize, oldFontSizeForLog,
+        cellBefore.h, cellAfter.h,
+        vpBefore ? vpBefore.top : '?', vpAfter ? vpAfter.top : '?',
+        vpBefore ? vpBefore.h : '?', vpAfter ? vpAfter.h : '?',
+        vpBefore ? vpBefore.c : '?', vpAfter ? vpAfter.c : '?');
     } catch (e) {
-      console.error('[zoom] syncScrollArea failed', e);
+      error('zoom', 'syncScrollArea failed', e);
     }
   } else {
-    console.log('[zoom] syncScrollArea unavailable uid=%s', uid);
+    debug('zoom', 'syncScrollArea unavailable uid=%s', uid);
   }
   // 轮询 canvas 尺寸直到实际变化（或超时），再更新 frame：
   // 修复"框大小不变只有字体变小"——renderer 重算 dimensions 是异步的，
@@ -252,19 +270,54 @@ function _waitCanvasChange(uid, before, attempts, intervalMs) {
   if (!inst || !inst.term) return;
   let waited = 0;
   let finished = false;
-  const finish = () => {
+  const finish = (changedFlag) => {
     if (finished) return;
     finished = true;
     clearTimeout(timer);
     try { applyTerminalFrameSize(uid); } catch (_) {}
+    // 缩放前在底部 && canvas 变化后：xterm 的 scrollTop 基于 ydisp（不变），
+    // 但底部 = scrollH - clientH 因字号取整变化——此时 scrollH/clientH 已是
+    // 新值（renderer rAF 已更新），同步设 scrollTop 为精确底部 + scrollToBottom
+    // 修正 ydisp，防 xterm 后续 rAF 覆盖（日志证实 settle 后 xterm 不再覆盖）。
+    if (inst._wasAtBottom) {
+      inst._wasAtBottom = false;
+      const vp = inst.term.element
+        ? inst.term.element.querySelector('.xterm-viewport')
+        : null;
+      if (vp) {
+        vp.scrollTop = vp.scrollHeight - vp.clientHeight;
+        try { scrollTermToBottom(inst.term); } catch (_) {}
+        // 确认 2 帧防 xterm 残留覆盖
+        let cf = 2;
+        const confirm = () => {
+          if (cf-- <= 0) return;
+          if (!state.termInstances[uid]) return;
+          const v2 = state.termInstances[uid].term.element
+            ? state.termInstances[uid].term.element.querySelector('.xterm-viewport')
+            : null;
+          if (v2) v2.scrollTop = v2.scrollHeight - v2.clientHeight;
+          requestAnimationFrame(confirm);
+        };
+        requestAnimationFrame(confirm);
+        debug('zoom', 'anchorBottom uid=%s scrollH-clientH=%d', uid, vp.scrollHeight - vp.clientHeight);
+      }
+    }
+    const cell = getTerminalCellSize(inst.term);
+    const vp = inst.term.element
+      ? inst.term.element.querySelector('.xterm-viewport')
+      : null;
+    const scroll = vp ? { top: vp.scrollTop, h: vp.scrollHeight, c: vp.clientHeight } : null;
+    debug('zoom', 'settle uid=%s canvasChanged=%s cellH=%s scrollTop=%s scrollH=%s clientH=%s',
+      uid, changedFlag, cell.h,
+      scroll ? scroll.top : '?', scroll ? scroll.h : '?', scroll ? scroll.c : '?');
   };
-  const timer = setTimeout(finish, attempts * intervalMs);
+  const timer = setTimeout(() => finish(false), attempts * intervalMs);
   const tick = () => {
     if (!state.termInstances[uid]) return;
     const now = getCanvasSize(inst.term);
     const changed = before && now && (Math.abs(now.w - before.w) > 0.5 || Math.abs(now.h - before.h) > 0.5);
     if (changed || waited >= attempts) {
-      finish();
+      finish(changed);
       return;
     }
     waited += 1;
@@ -384,7 +437,7 @@ export function applySessionFrameRatio(uid) {
       }
       // fit() 是有意重算 cols/rows（自适应模式设计）→ 标记后 onResize 发后端
       inst._pendingDaemonResize = true;
-      console.log('[resize] applySessionFrameRatio adaptive INIT fit() uid=%s (flag set)', uid);
+      debug('resize', 'applySessionFrameRatio adaptive INIT fit() uid=%s (flag set)', uid);
       try { fit.fit(); } catch (e) { console.error('fit failed', e); }
       requestAnimationFrame(() => { try { applyTerminalFrameSize(uid); } catch (_) {} });
       return true;
@@ -402,7 +455,7 @@ export function applySessionFrameRatio(uid) {
     }
     // fit() 是有意重算 cols/rows（自适应模式设计）→ 标记后 onResize 发后端
     inst._pendingDaemonResize = true;
-    console.log('[resize] applySessionFrameRatio adaptive fit() uid=%s (flag set)', uid);
+    debug('resize', 'applySessionFrameRatio adaptive fit() uid=%s (flag set)', uid);
     try { fit.fit(); } catch (e) { console.error('fit failed', e); }
     // fit() 触发 onResize → applyTerminalFrameSize（rAF）
     requestAnimationFrame(() => { try { applyTerminalFrameSize(uid); } catch (_) {} });
