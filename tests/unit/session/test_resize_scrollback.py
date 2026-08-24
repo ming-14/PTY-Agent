@@ -75,15 +75,17 @@ def test_resize_returns_snapshot_and_scrollback():
     assert scrollback == "line-001\r\nline-002\r\nline-003\r\n"
 
 
-def test_resize_order_screen_capture_pty_clear():
-    """调用顺序：screen.resize → capture（pty 之前）→ pty.resize → clear → snapshot"""
+def test_resize_order_screen_capture_pty_no_clear():
+    """调用顺序：screen.resize → capture（pty 之前）→ pty.resize → snapshot。
+    不清除模型 scrollback：模型是权威历史（前端重建依赖它），
+    ConPTY repaint 冗余行仅使 scrollback 略长，无害。"""
     s = _StubSession()
     s.resize(120, 40)
     assert s._screen.resize_called == (120, 40)
     assert s._pty.resize_called == (120, 40)
     assert s._input_interceptor.resize_called == (120, 40)
-    # 模型 scrollback 清除（防 repaint 冗余），返回的是捕获副本
-    assert s._screen.cleared
+    # 模型 scrollback 保留（不清除）
+    assert not s._screen.cleared
 
 
 def test_resize_subprocess_raises():

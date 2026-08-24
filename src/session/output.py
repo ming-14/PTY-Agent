@@ -310,19 +310,12 @@ class OutputMixin:
             pass
 
         _logger.debug("resize: END, returning snapshot")
+        # 不清除终端模型 scrollback：模型是权威历史（前端重建依赖它）。
+        # ConPTY repaint 推入的冗余行（可见区顶部）仅使 scrollback 略长，
+        # 无害；若清除，模型历史丢失 → 后续 resize 返回空 scrollback →
+        # 前端无法重建（只能用 xterm.js 自身 reflow——其对行尾空格行的
+        # 合并有缺陷，resize 后 dir 等输出行拆开不合并，显示错乱）。
         try:
-            # 清除终端模型 scrollback：resize 后 ConPTY repaint 可能触发 index()
-            # 将可见区顶部行推入模型 scrollback，导致模型 scrollback 与 snapshot
-            # （读终端模型可见区）内容重叠 —— 若不清除，后续订阅/--full 的
-            # capture_scrollback 会包含这些冗余行。
-            # 本 resize 返回的 scrollback 是第 1.5 步捕获的干净副本，不受影响；
-            # 模型 scrollback 清除后由后续正常输出滚动重新产生。
-            try:
-                self._screen.clear_scrollback()
-                _logger.debug("resize: cleared model scrollback after repaint wait")
-            except Exception as e:
-                _logger.debug("resize: clear_scrollback failed (non-fatal): %s", e)
-
             # 关键：snapshot 必须来自终端模型（ConPTY 真实可见区状态）。
             # wezterm 终端模型 resize 已按 ConPTY 语义原生 reflow，
             # 此处读出的内容和光标与 ConPTY 坐标系完全一致，
