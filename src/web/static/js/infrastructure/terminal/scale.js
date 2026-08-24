@@ -73,24 +73,49 @@ function getCanvasSize(term) {
  * 修复：当 wrapped=false 且 上一行也是 wrapped=false 时结束逻辑行——
  * 即只在"两个连续独立行"之间插入 \r\n，确保逻辑行完整。
  */
+/** CJK 等宽字符显示宽度（近似 wcwidth） */
+function displayWidth(s) {
+  let w = 0;
+  for (const ch of s) {
+    const c = ch.codePointAt(0);
+    w += (c >= 0x1100 && (c <= 0x115F || c === 0x2329 || c === 0x232A ||
+      (c >= 0x2E80 && c <= 0xA4CF && c !== 0x303F) ||
+      (c >= 0xAC00 && c <= 0xD7A3) || (c >= 0xF900 && c <= 0xFAFF) ||
+      (c >= 0xFE30 && c <= 0xFE4F) || (c >= 0xFF00 && c <= 0xFF60) ||
+      (c >= 0xFFE0 && c <= 0xFFE6) || (c >= 0x20000 && c <= 0x2FFFD) ||
+      (c >= 0x30000 && c <= 0x3FFFD))) ? 2 : 1;
+  }
+  return w;
+}
+
+/**
+ * 捕获终端完整内容（scrollback + 可见区）为原始文本，按逻辑行合并。
+ *
+ * 逻辑行边界判定：行显示宽度（去尾空格）< 列宽 = 逻辑行末尾（续行一定
+ * 满列）；满列且 isWrapped=false 且下一行也是满列独立 → 独立满列行也结束。
+ * 不用 isWrapped 单独判定——xterm 多次 reflow 后 wrap 标志不可靠
+ *（最后一段被误标 wrapped），导致捕获段跨逻辑行错位。
+ */
 function captureTerminalText(term) {
   const buf = term.buffer.active;
+  const cols = term.cols;
   const parts = [];
   let pending = '';
   for (let i = 0; i < buf.length; i++) {
     const line = buf.getLine(i);
     if (!line) continue;
-    // 当前行 wrapped=false 且已累积了内容（上一行 wrapped=false 或为累积起点）
-    // → 上一行累积结束，输出逻辑行
-    if (!line.isWrapped && pending) {
-      // trimEnd：逻辑行行尾空格（原宽度的尾部填充）在新宽度下会超宽 wrap，
-      // 产生空格空行——去掉后重放按新宽度正常折行
+    const next = buf.getLine(i + 1);
+    const isFull = displayWidth(line.translateToString(true)) >= cols;
+    const isSegmentEnd = !isFull || (!line.isWrapped && next && !next.isWrapped);
+    // translateToString(false) 保留行内空格（<DIR> 行对齐）
+    pending += line.translateToString(false);
+    if (isSegmentEnd) {
+      // trimEnd：逻辑行行尾空格（原宽度尾部填充）在新宽度下超宽 wrap
+      // 产生空格空行；行内 <DIR> 对齐空格保留
       parts.push(pending.trimEnd());
       parts.push('\r\n');
       pending = '';
     }
-    // translateToString(false) 保留行内空格（<DIR> 行对齐），仅行尾 trim
-    pending += line.translateToString(false);
   }
   if (pending) parts.push(pending.trimEnd());
   return parts.join('');
