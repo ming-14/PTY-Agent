@@ -269,7 +269,7 @@ async function init() {
   try {
     await settingsStore.load();
   } catch (e) {
-    console.warn('settingsStore load failed, using defaults:', e);
+    warn('settings', 'settingsStore load failed, using defaults: %s', e && e.message);
   }
 
   // 应用主题（从 settingsStore 读取）

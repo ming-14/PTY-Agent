@@ -10,7 +10,7 @@
  */
 
 import { state, saveTabState, getSessionSizeConfigByUid, setSessionSizeConfig, setLocalAdaptiveOwner, isLocalAdaptiveOwner, resolveMsgUid, getUidBySid } from '../domain/state.js';
-import { debug, info, warn } from '../domain/logger.js';
+import { debug, info, warn, error } from '../domain/logger.js';
 import { DEFAULT_COLS, DEFAULT_ROWS } from '../domain/constants.js';
 import { t, i18nError } from '../domain/i18n.js';
 import { ports } from './ports.js';
@@ -528,7 +528,7 @@ export function handleError(msg) {
     return;
   }
   ports.notification.showToast(message, 'error');
-  console.error('ws error:', message);
+  error('ws', 'ws error: %s', message);
   ports.ui.renderTabs();
   ports.ui.renderSidebar();
 }
@@ -661,7 +661,7 @@ export function handleResizeComplete(msg) {
       }
       ports.terminal.restoreScrollbackAndSnapshot(inst.term, scrollbackLines, snapshot, isHistory);
     } catch (e) {
-      console.error('resize_complete: apply scrollback+snapshot failed', e);
+      error('session', 'resize_complete apply scrollback+snapshot failed: %s', e && e.message);
     }
   }
   // resize 期间缓冲的输出：不丢弃，重建后写入终端。
@@ -680,7 +680,7 @@ export function handleResizeComplete(msg) {
       debug('session', 'resize_complete uid=%s: replayed %d buffered outputs (len=%d)',
             uid, buffered.length, buffered.reduce((a, b) => a + b.length, 0));
     } catch (e) {
-      console.error('resize_complete: replay buffered outputs failed', e);
+      error('session', 'resize_complete replay buffered outputs failed: %s', e && e.message);
     }
   }
   requestAnimationFrame(() => {
@@ -727,7 +727,7 @@ export function handleSessionResized(msg) {
       }
       ports.terminal.restoreScrollbackAndSnapshot(inst.term, scrollbackLines, snapshot, false);
     } catch (e) {
-      console.error('session_resized: apply scrollback+snapshot failed', e);
+      error('session', 'session_resized apply scrollback+snapshot failed: %s', e && e.message);
     }
   }
   if (state.activeTab === uid) {

@@ -123,7 +123,7 @@ export function ensureTerminal(uid) {
       term.resize(initCols, initRows);
     }
   } catch (e) {
-    console.error('initial resize failed', e);
+    error('resize', 'initial resize failed: %s', e && e.message);
   }
 
   // 若当前会话不是活动标签，恢复隐藏状态
@@ -390,7 +390,7 @@ export function replayPending(sid) {
       debug('terminal', 'replayPending sid=%s: wrote scrollback=%d lines + replay len=%d',
             sid, scrollbackLines.length, s.pendingReplay.length);
     } catch (e) {
-      console.error('replayPending: restoreScrollbackAndSnapshot failed', e);
+      error('terminal', 'replayPending restoreScrollbackAndSnapshot failed: %s', e && e.message);
       // 回退：只写 replay
       try { inst.term.clear(); } catch (_) {}
       inst.term.write(s.pendingReplay);

@@ -170,7 +170,7 @@ export function applyTerminalSize(uid, force, opts) {
       debug('terminal', 'applyTerminalSize %s → term.resize sid=%s %dx%d (onResize will send)',
             mode, uid, cols, rows);
     } catch (e) {
-      console.error('resize failed', e);
+      error('resize', 'resize failed: %s', e && e.message);
     }
   } else if (forceDaemonResize && !skipDaemonResize && s.running && !s.history) {
     // 尺寸未变化但 force=true：用户显式选择相同尺寸，仍需同步守护进程
@@ -216,13 +216,18 @@ export function applyTerminalFontSize(uid) {
   // 但底部 = scrollH - clientH 随字号取整差异不成比例变化——缩小后 ydisp 不再是
   // 精确底部（视口停在"上面一点点"且 xterm 不再修正）。canvas 变化后需外部锚定。
   inst._wasAtBottom = isTermAtBottom(inst.term);
+  {
+    const buf0 = inst.term.buffer.active;
+    debug('zoom', 'wasAtBottomCheck uid=%s vpY=%d rows=%d len=%d -> %s',
+      uid, buf0 ? buf0.viewportY : -1, inst.term.rows, buf0 ? buf0.length : -1, inst._wasAtBottom);
+  }
   // 变更前 canvas 尺寸（设字体前读取，作为轮询对比基准）
   const beforeCanvas = getCanvasSize(inst.term);
   const oldFontSizeForLog = inst.term.options.fontSize;
   try {
     inst.term.options.fontSize = fontSize;
   } catch (e) {
-    console.error('set fontSize failed', e);
+    error('zoom', 'set fontSize failed: %s', e && e.message);
   }
   // 同步触发 xterm 视口刷新（漂移根因修复）：
   // fontSize setter 同步链中 DomRenderer._updateDimensions 已同步更新
@@ -438,7 +443,7 @@ export function applySessionFrameRatio(uid) {
       // fit() 是有意重算 cols/rows（自适应模式设计）→ 标记后 onResize 发后端
       inst._pendingDaemonResize = true;
       debug('resize', 'applySessionFrameRatio adaptive INIT fit() uid=%s (flag set)', uid);
-      try { fit.fit(); } catch (e) { console.error('fit failed', e); }
+      try { fit.fit(); } catch (e) { error('resize', 'fit failed: %s', e && e.message); }
       requestAnimationFrame(() => { try { applyTerminalFrameSize(uid); } catch (_) {} });
       return true;
     }
@@ -456,7 +461,7 @@ export function applySessionFrameRatio(uid) {
     // fit() 是有意重算 cols/rows（自适应模式设计）→ 标记后 onResize 发后端
     inst._pendingDaemonResize = true;
     debug('resize', 'applySessionFrameRatio adaptive fit() uid=%s (flag set)', uid);
-    try { fit.fit(); } catch (e) { console.error('fit failed', e); }
+    try { fit.fit(); } catch (e) { error('resize', 'fit failed: %s', e && e.message); }
     // fit() 触发 onResize → applyTerminalFrameSize（rAF）
     requestAnimationFrame(() => { try { applyTerminalFrameSize(uid); } catch (_) {} });
     debug('terminal', 'applySessionFrameRatio adaptive sid=%s ratio=%.3f frame=%dx%d → fit %dx%d',
