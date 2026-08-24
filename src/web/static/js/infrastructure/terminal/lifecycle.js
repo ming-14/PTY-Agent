@@ -115,6 +115,8 @@ export function ensureTerminal(uid) {
   bindTerminalEvents(term, inst, uid);
 
   try {
+    // 初始化为会话尺寸：有意 resize（onResize 据此发后端，与订阅一致）
+    inst._pendingDaemonResize = true;
     term.resize(initCols, initRows);
   } catch (e) {
     console.error('initial resize failed', e);
@@ -177,52 +179,60 @@ export function ensureTerminal(uid) {
   });
 
   term.onResize(({ cols, rows }) => {
-    // 单路径同步（与 ttyd 一致）：
-    //   所有 resize 都通过此回调统一发送给守护进程
-    //   FitAddon.fit() / 用户切模式 / 窗口 resize 都会触发此回调
-    debug('terminal', 'onResize uid=%s cols=%s rows=%s', uid, cols, rows);
+    const s2 = state.sessions[uid];
+    const wantCols = s2 ? s2.cols : 0;
+    const wantRows = s2 ? s2.rows : 0;
+
     // 外部 resize（session_resized / resize_complete 已含完整 snapshot，
     // 不需要再向服务端发 resize，否则会触发冗余的 resize_complete 导致
     // buffer 被写两遍 + _resizePending 竞态）
     if (inst._externalResize) {
       inst._externalResize = false;
-      debug('terminal', 'onResize skipped: uid=%s external resize (session_resized)', uid);
+      debug('terminal', 'onResize external: uid=%s (session_resized)', uid);
       return;
     }
-    // frame 尺寸需跟随 cell 像素变化（fontSize 不变时 cell 尺寸也不变，但 cols/rows 变了）
-    // 用 requestAnimationFrame 避免在 resize 内同步触发布局抖动
+
+    // ── 有意 resize（applyTerminalSize / fit 等显式调用）→ 正常同步后端 ──
+    if (inst._pendingDaemonResize) {
+      inst._pendingDaemonResize = false;
+      debug('terminal', 'onResize deliberate uid=%s cols=%s rows=%s', uid, cols, rows);
+      // frame 尺寸需跟随 cell 像素变化（fontSize 不变时 cell 尺寸也不变，但 cols/rows 变了）
+      requestAnimationFrame(() => {
+        try { applyTerminalFrameSize(uid); } catch (_) {}
+      });
+      if (!s2 || !s2.running || s2.history || s2.closing) return;
+      if (isSizeUILocked(uid)) {
+        debug('terminal', 'onResize deliberate skipped: uid=%s locked', uid);
+        return;
+      }
+      if (inst._resizePending && inst._resizeBuffer.length > 0) {
+        debug('terminal', 'onResize deliberate uid=%s: nested resize, discard %d buffered outputs',
+              uid, inst._resizeBuffer.length);
+        inst._resizeBuffer = [];
+      }
+      inst._resizePending = true;
+      inst._resizeStartedAt = Date.now();
+      s2.cols = cols;
+      s2.rows = rows;
+      sendToSession(uid, { type: 'resize', cols: cols, rows: rows });
+      return;
+    }
+
+    // ── 容器自动 resize（xterm ResizeObserver 触发，来自字体/框变化）──
+    // PTY 尺寸是权威，回退到会话尺寸，绝不向后端发送。
+    // 否则 Ctrl+滚轮缩放/切标签等会导致 PTY 列数被重算（终端宽度变化 →
+    // dir 输出折行错乱；"终端尺寸又没有变为什么重算"）。
+    if (wantCols && (cols !== wantCols || rows !== wantRows)) {
+      debug('terminal', 'onResize auto-revert uid=%s %dx%d → %dx%d (suppress backend resize)',
+            uid, cols, rows, wantCols, wantRows);
+      try { inst.term.resize(wantCols, wantRows); } catch (_) {}
+      return;
+    }
+
+    // 回退完成 / 尺寸一致：仅跟随 frame
     requestAnimationFrame(() => {
       try { applyTerminalFrameSize(uid); } catch (_) {}
     });
-    const s2 = state.sessions[uid];
-    if (!s2 || !s2.running || s2.history || s2.closing) return;
-
-    // 本端未持自适应锁时，禁止向后端发送 resize。
-    // 被锁期间 onResize 仍可能由 FitAddon.fit() / ResizeObserver / 窗口 resize 触发，
-    // 若放行会导致后端 ResizeHandler 拒绝并回弹"另一端正在自适应控制尺寸，请先接管"错误提示。
-    // 直接 return：不设 _resizePending、不更新 s2.cols/rows、不发 wsSend，
-    // 后续由 size_mode_changed 触发的 reapplyAllTerminalSizes 将 xterm 尺寸纠正回 fixed 模式。
-    if (isSizeUILocked(uid)) {
-      debug('terminal', 'onResize skipped: uid=%s locked by another connection', uid);
-      return;
-    }
-
-    // 标记 resize 进行中，缓冲后续 ConPTY output。
-    // rapid adaptive resize 场景：多次 onResize 连续触发时，前一次 resize 期间缓冲的
-    // output 对应旧尺寸，已被新 resize 取代 → 丢弃旧缓冲，重新开始收集。
-    if (inst._resizePending && inst._resizeBuffer.length > 0) {
-      debug('terminal',
-            'onResize uid=%s: nested resize, discard %d buffered outputs (old size)',
-            uid, inst._resizeBuffer.length);
-      inst._resizeBuffer = [];
-    }
-    inst._resizePending = true;
-    inst._resizeStartedAt = Date.now();
-
-    // 更新会话状态缓存
-    s2.cols = cols;
-    s2.rows = rows;
-    sendToSession(uid, { type: 'resize', cols: cols, rows: rows });
   });
 
   state.termInstances[uid] = inst;
