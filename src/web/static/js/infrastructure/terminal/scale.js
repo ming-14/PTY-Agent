@@ -89,11 +89,24 @@ export function applyTerminalFrameSize(uid) {
       }
       return;
     }
+    // 长宽比锁定（防字体度量取整导致 Ctrl+滚轮缩放时框变形）：
+    // 字号变化时浏览器对 cellW/cellH 的非线性取整会使内容长宽比漂移
+    // （小字号尤其明显）。以 cols×rows 变化为键锁定基准长宽比：
+    // 宽度跟随 xterm 实际渲染宽度，高度按基准比例推导，
+    // 缩放时框保持恒定长宽比；resize（cols/rows 变化）后重新锁定。
+    const aspectKey = inst.term.cols + 'x' + inst.term.rows;
+    if (inst._frameAspectKey !== aspectKey) {
+      inst._frameAspectKey = aspectKey;
+      inst._frameAspect = rect.width / rect.height;
+    }
+    const aspect = inst._frameAspect || (rect.width / rect.height);
+    const w = Math.ceil(rect.width);
+    const h = Math.max(1, Math.round(w / aspect));
     // frame 无 border（CSS 用 box-shadow 外部投影代替），box-sizing: content-box
     // frame width = .xterm-screen width，frame 内容区 = .xterm-screen 尺寸
     // .xterm (100%) = frame 内容区 = .xterm-screen，xterm 内部 canvas 渲染区与 buffer 完全匹配
-    frame.style.width = Math.ceil(rect.width) + 'px';
-    frame.style.height = Math.ceil(rect.height) + 'px';
+    frame.style.width = w + 'px';
+    frame.style.height = h + 'px';
     frame.style.maxWidth = '';
     frame.style.maxHeight = '';
   });
@@ -465,32 +478,31 @@ export function zoomActiveSession(deltaRatio) {
   if (!ctx) return false;
   const { contentW, contentH, cellW, cellH, inst } = ctx;
 
-  // 读当前 ratio（未设置则用当前渲染状态反算作为基准）
-  let baseRatio = getSessionFrameRatio(s.uid);
-  if (baseRatio == null) {
-    const frameW = cellW * inst.term.cols;
-    const frameH = cellH * inst.term.rows;
-    baseRatio = computeFrameRatio(frameW, frameH, contentW, contentH);
-  }
+  // 当前实际帧尺寸比（按渲染后的 cell 度量，不依赖保存的 ratio——
+  // 保存值可能因字体度量取整与实际渲染有偏差；用实际值保证每 tick 自校正）
+  const frameW = cellW * inst.term.cols;
+  const frameH = cellH * inst.term.rows;
+  const currentRatio = Math.max(computeFrameRatio(frameW, frameH, contentW, contentH), FRAME_RATIO_MIN);
 
-  const nextRatio = Math.max(FRAME_RATIO_MIN, Math.min(FRAME_RATIO_MAX, baseRatio + deltaRatio));
-  if (Math.abs(nextRatio - baseRatio) < 1e-4) return false;
+  const nextRatio = Math.max(FRAME_RATIO_MIN, Math.min(FRAME_RATIO_MAX, currentRatio + deltaRatio));
+  if (Math.abs(nextRatio - currentRatio) < 1e-4) return false;
+
+  // 按比例缩放字号（等比例缩放帧尺寸，保持长宽比）：
+  // 不用 stage 反算字号——computeFontSizeFromRatio 的 min(fontSizeByW, fontSizeByH)
+  // + floor 会产生"连续 tick 无变化然后跳变"的非线性死区；
+  // 按当前字号 × (nextRatio/currentRatio) 等比缩放，每 tick 帧尺寸
+  // 变化 ∝ 当前尺寸（等比线性），且不改变长宽比。
+  const currentFontSize = getSessionFontSize(sid);
+  const targetFontSize = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE,
+    Math.round(currentFontSize * (nextRatio / currentRatio))));
+  if (targetFontSize === currentFontSize) return false;
 
   // 保存 ratio（持久化）
   setActiveSessionFrameRatio(nextRatio);
-
-  // 所有模式统一按 ratio 反算字号（cols/rows 不变）。
-  // adaptive 模式的"自适应 stage 宽高比"由 applySessionFrameRatio 在切标签/stage 变化时通过 fit() 完成，
-  // Ctrl+滚轮只调整框占 stage 的真实大小（通过字号），不改 cols/rows。
-  const currentFontSize = getSessionFontSize(sid);
-  const targetFontSize = computeFontSizeFromRatio(
-    contentW, contentH, inst.term.cols, inst.term.rows, nextRatio,
-    cellW, cellH, currentFontSize
-  );
   setSessionFontSize(sid, targetFontSize);
   applyTerminalFontSize(sid);
   debug('terminal', 'zoomActiveSession sid=%s mode=%s ratio %.3f → %.3f fontSize %d → %d (cols/rows unchanged)',
-        sid, getSessionSizeConfigByUid(sid).mode, baseRatio, nextRatio, currentFontSize, targetFontSize);
+        sid, getSessionSizeConfigByUid(sid).mode, currentRatio, nextRatio, currentFontSize, targetFontSize);
   return true;
 }
 
