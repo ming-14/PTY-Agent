@@ -3,7 +3,8 @@
 import time
 import pytest
 
-from src.output.events import PendingEvent, EventHistoryManager, _events_to_dicts
+from src.process.base import PendingEvent
+from src.session.events_history import EventHistoryManager, _events_to_dicts
 
 
 class TestPendingEvent:

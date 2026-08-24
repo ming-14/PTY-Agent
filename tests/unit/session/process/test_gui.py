@@ -3,7 +3,7 @@
 import pytest
 
 from src.process.gui import GuiDetector
-from src.output.events import PendingEvent
+from src.process.base import PendingEvent
 
 
 class TestGuiDetectorInit:

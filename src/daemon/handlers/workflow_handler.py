@@ -11,7 +11,8 @@ workflow run/list/show/cancel 消息路由：
 from ...config.daemon import WORKFLOW_MAX_FILE_SIZE
 from ...protocol.message import Message
 from ...protocol.response import Response
-from .base import DaemonHandler, HandlerContext
+from .base import DaemonHandler
+from ...execution.context import HandlerContext
 from ...logging import get_logger
 
 _logger = get_logger("pty-daemon")

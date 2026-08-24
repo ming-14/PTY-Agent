@@ -7,7 +7,7 @@ import os
 
 import pytest
 
-from config.plugins.files.config import MAX_PATH_LEN
+from config.plugins.files.settings import settings
 from src.plugins.base import ProcessPluginContext
 from config.plugins.files.files_plugin import FilesPlugin
 from config.plugins.files.state import get_default_store
@@ -84,7 +84,7 @@ class TestFileReadHandler:
         assert resp["type"] == "error"
 
     def test_too_long_path(self, plugin, ctx, text_file):
-        resp = _call(plugin, ctx, path=text_file + "x" * MAX_PATH_LEN)
+        resp = _call(plugin, ctx, path=text_file + "x" * settings.max_path_len)
         assert resp["type"] == "error"
 
     def test_missing_cwd_session(self, plugin, ctx, text_file):

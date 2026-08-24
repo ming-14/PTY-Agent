@@ -1,6 +1,10 @@
 """会话管理器 — SessionManager
 
 管理所有 PTY 会话的创建、获取、列出、移除和批量停止。
+
+身份模型：会话以 uid（uuid4，Session 构造时生成）为主键唯一索引；
+sid（用户自定义名）经 _sid_index 映射到 uid，同一时刻一个 sid 只能对应
+一个活跃会话（CLI 等旧调用方仍可按 sid 查找，web 层按 uid 操作）。
 """
 
 import threading
@@ -20,21 +24,26 @@ class SessionManager:
     """
 
     def __init__(self, history_store=None, plugin_registry=None):
-        self._sessions: dict = {}
+        # 主注册表：uid → Session（uid 为唯一稳定标识，sid 可复用）
+        self._sessions: dict[str, Session] = {}
+        # sid → uid 索引（一个 sid 同一时刻最多对应一个活跃会话）
+        self._sid_index: dict[str, str] = {}
         self._lock = threading.Lock()
         self._history_store = history_store
         self.plugin_registry = plugin_registry
-        self._on_session_created: Optional[Callable[[str], None]] = None
+        self._on_session_created: Optional[Callable[[str, str], None]] = None
         self._on_session_removed: Optional[
-            Callable[[str, Optional[int], Optional[str]], None]
+            Callable[[str, str, Optional[int], Optional[str]], None]
         ] = None
 
-    def set_on_session_created(self, cb: Optional[Callable[[str], None]]):
+    def set_on_session_created(self, cb: Optional[Callable[[str, str], None]]):
+        """设置会话创建回调（参数：uid, sid）"""
         self._on_session_created = cb
 
     def set_on_session_removed(
-        self, cb: Optional[Callable[[str, Optional[int], Optional[str]], None]]
+        self, cb: Optional[Callable[[str, str, Optional[int], Optional[str]], None]]
     ):
+        """设置会话移除回调（参数：uid, sid, exit_code, error_message）"""
         self._on_session_removed = cb
 
     def create_session(
@@ -66,7 +75,7 @@ class SessionManager:
                 mode,
             )
             with self._lock:
-                if session_id in self._sessions:
+                if session_id in self._sid_index:
                     _logger.warning(
                         "create_session: session already exists sid=%r", session_id
                     )
@@ -88,10 +97,28 @@ class SessionManager:
                     rows=rows,
                     cli_plugins=cli_plugins,
                     mode=mode,
+                    plugin_env=(
+                        self.plugin_registry.environment
+                        if self.plugin_registry is not None
+                        else None
+                    ),
                 )
-                self._sessions[session_id] = s
+                self._sessions[s.uid] = s
+                self._sid_index[session_id] = s.uid
             if plugins:
                 self._attach_plugins(s, plugins)
+            # 会话创建事件发布到 daemon 事件总线（session.created）
+            self._publish_session_event(
+                "session.created",
+                {
+                    "sessionId": s.id,
+                    "uid": s.uid,
+                    "command": (
+                        command if isinstance(command, str) else " ".join(command)
+                    ),
+                    "mode": mode,
+                },
+            )
             s._publisher.add_on_end_callback(lambda sess: self._on_session_ended(sess))
             # 创建期预持有：把"create_session 返回 → 调用方首个 hold"之间的
             # 空窗并入持有。子进程在 start 期间快速退出时 reader 线程会走完
@@ -109,17 +136,24 @@ class SessionManager:
                     "create_session: start failed sid=%r, removing tombstone", session_id
                 )
                 with self._lock:
-                    self._sessions.pop(session_id, None)
+                    self._sessions.pop(s.uid, None)
+                    if self._sid_index.get(session_id) == s.uid:
+                        self._sid_index.pop(session_id, None)
                 try:
                     s.stop()
                 except Exception:
                     pass
                 s.release_creation_hold()
                 raise
-            _logger.info("create_session: started sid=%r pty=%s", session_id, s.pty_type)
+            _logger.info(
+                "create_session: started sid=%r uid=%s pty=%s",
+                session_id,
+                s.uid,
+                s.pty_type,
+            )
             if self._on_session_created:
                 try:
-                    self._on_session_created(session_id)
+                    self._on_session_created(s.uid, s.id)
                 except Exception:
                     _logger.exception("on_session_created callback error")
             return s
@@ -147,23 +181,54 @@ class SessionManager:
             return []
         return self.plugin_registry.match_auto_load(command, cwd, env)
 
-    def get_session(self, session_id: str) -> Optional[Session]:
-        """获取指定会话
+    def _publish_session_event(self, topic: str, payload: dict) -> None:
+        """发布会话事件到插件事件总线（插件系统未启用时静默跳过）"""
+        if self.plugin_registry is None:
+            return
+        try:
+            self.plugin_registry.environment.events.publish(
+                topic, payload, source="manager"
+            )
+        except Exception:
+            _logger.exception("会话事件发布失败: %s", topic)
+
+    def _lookup(self, identifier: str) -> Optional[Session]:
+        """按 uid 或 sid 查找会话（内部，须在持锁上下文中调用）"""
+        s = self._sessions.get(identifier)
+        if s is not None:
+            return s
+        uid = self._sid_index.get(identifier)
+        if uid is not None:
+            return self._sessions.get(uid)
+        return None
+
+    def get_session(self, identifier: str) -> Optional[Session]:
+        """获取指定会话（兼容 uid 或 sid 两种标识）
 
         Args:
-            session_id: 会话标识符。
+            identifier: 会话 uid 或 sid。
 
         Returns:
             Session 实例，不存在时返回 None。
         """
         with self._lock:
-            return self._sessions.get(session_id)
+            return self._lookup(identifier)
+
+    def get_by_uid(self, uid: str) -> Optional[Session]:
+        """按 uid 精确获取会话（web 层主路径）"""
+        with self._lock:
+            return self._sessions.get(uid)
+
+    def resolve_sid(self, sid: str) -> Optional[str]:
+        """解析 sid 对应的活跃会话 uid，不存在时返回 None"""
+        with self._lock:
+            return self._sid_index.get(sid)
 
     def list_sessions(self) -> list:
         """列出所有会话（含已结束但未移除的）
 
         Returns:
-            dict 列表，每项包含 id/command/running/startTime 字段。
+            dict 列表，每项包含 id/uid/command/running/startTime 字段。
         """
         with self._lock:
             return [
@@ -186,9 +251,11 @@ class SessionManager:
         session.stop 已支持由当前线程调用（见 threads.Threads.stop）。
         """
         with self._lock:
-            if session.id not in self._sessions:
+            if session.uid not in self._sessions:
                 return  # 已被 remove_session 处理
-            self._sessions.pop(session.id, None)
+            self._sessions.pop(session.uid, None)
+            if self._sid_index.get(session.id) == session.uid:
+                self._sid_index.pop(session.id, None)
 
         # 释放会话资源（含沙箱进程），避免自然结束的会话泄漏
         try:
@@ -206,7 +273,7 @@ class SessionManager:
         if self._on_session_removed:
             try:
                 self._on_session_removed(
-                    session.id, session.exit_code, session.error_message
+                    session.uid, session.id, session.exit_code, session.error_message
                 )
             except Exception:
                 _logger.exception("on_session_removed callback error")
@@ -214,50 +281,56 @@ class SessionManager:
         # 最终移除：断开会话组件循环引用，让对象图可被引用计数立即回收
         session.release_components()
 
-    def remove_session(self, session_id: str):
+    def remove_session(self, identifier: str):
         """移除并停止指定会话（移除前持久化到历史）
 
         Args:
-            session_id: 会话标识符。
+            identifier: 会话 uid 或 sid。
         """
         import time as _time
 
         _t0 = _time.monotonic()
-        _logger.info("remove_session: sid=%r", session_id)
+        _logger.info("remove_session: id=%r", identifier)
         with self._lock:
-            s = self._sessions.pop(session_id, None)
+            s = self._lookup(identifier)
+            if s is not None:
+                self._sessions.pop(s.uid, None)
+                if self._sid_index.get(s.id) == s.uid:
+                    self._sid_index.pop(s.id, None)
         if s:
             if self._history_store:
                 try:
                     self._history_store.archive_session(s, tag="history")
                     _logger.debug(
                         "remove_session: archived sid=%r took %.3fs",
-                        session_id,
+                        s.id,
                         _time.monotonic() - _t0,
                     )
                 except Exception as e:
-                    _logger.warning("持久化会话 '%s' 时异常: %s", session_id, e)
+                    _logger.warning("持久化会话 '%s' 时异常: %s", s.id, e)
             _t1 = _time.monotonic()
             try:
                 s.stop()
                 _logger.info(
                     "remove_session: stopped sid=%r stop took %.3fs",
-                    session_id,
+                    s.id,
                     _time.monotonic() - _t1,
                 )
             except Exception as e:
-                _logger.warning("移除会话 '%s' 时异常: %s", session_id, e)
+                _logger.warning("移除会话 '%s' 时异常: %s", s.id, e)
             _t2 = _time.monotonic()
             if self._on_session_removed:
                 try:
-                    self._on_session_removed(session_id, s.exit_code, s.error_message)
+                    self._on_session_removed(
+                        s.uid, s.id, s.exit_code, s.error_message
+                    )
                 except Exception:
                     _logger.exception("on_session_removed callback error")
             # 最终移除：断开会话组件循环引用，让对象图可被引用计数立即回收
             s.release_components()
             _logger.info(
                 "remove_session: done sid=%r total %.3fs on_removed %.3fs",
-                session_id,
+                s.id,
                 _time.monotonic() - _t0,
                 _time.monotonic() - _t2,
             )
@@ -265,7 +338,7 @@ class SessionManager:
     def stop_all(self):
         """停止所有会话"""
         with self._lock:
-            ids = list(self._sessions.keys())
-        _logger.info("stop_all: stopping %d sessions", len(ids))
-        for sid in ids:
-            self.remove_session(sid)
+            uids = list(self._sessions.keys())
+        _logger.info("stop_all: stopping %d sessions", len(uids))
+        for uid in uids:
+            self.remove_session(uid)

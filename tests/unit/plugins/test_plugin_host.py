@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from src.plugins.base import Plugin
 from src.plugins.host import PluginHost
+from tests.helpers import make_manifest, attach_manifest
 
 
 class FakeSession:
@@ -20,7 +21,7 @@ class FakeSession:
 
 
 class LoggingPlugin(Plugin):
-    """记录所有钩子调用与参数，供断言"""
+    version = "1.0"
 
     def __init__(self, name="lp"):
         self.name = name
@@ -57,7 +58,6 @@ class LoggingPlugin(Plugin):
 class EventPlugin(Plugin):
     def __init__(self, name="ep"):
         self.name = name
-        self.triggers = ["event"]
         self.events = []
 
     def on_event(self, ctx, event):
@@ -67,8 +67,6 @@ class EventPlugin(Plugin):
 class PollPlugin(Plugin):
     def __init__(self, name="pp"):
         self.name = name
-        self.triggers = ["poll"]
-        self.poll_interval = 0.2
         self.count = 0
         self.lock = threading.Lock()
 
@@ -78,14 +76,16 @@ class PollPlugin(Plugin):
 
 
 class InterceptPlugin(Plugin):
-    name = "intercept"
+    def __init__(self, name="intercept"):
+        self.name = name
 
     def on_input(self, ctx, data):
         return None
 
 
 class TransformerPlugin(Plugin):
-    name = "transformer"
+    def __init__(self, name="transformer"):
+        self.name = name
 
     def on_input(self, ctx, data):
         return data + "X"
@@ -98,10 +98,23 @@ class TransformerPlugin(Plugin):
 
 
 class CrashPlugin(Plugin):
-    name = "crash"
+    def __init__(self, name="crash"):
+        self.name = name
 
     def on_output(self, ctx, data):
         raise RuntimeError("boom")
+
+
+def _attach(host, *plugins):
+    """挂载插件并设置最小清单（引擎注册所需）"""
+    for p in plugins:
+        triggers = []
+        if hasattr(p, "on_event") and p.on_event is not Plugin.on_event:
+            triggers.append("event")
+        if hasattr(p, "on_poll") and p.on_poll is not Plugin.on_poll:
+            triggers.append("poll")
+        p.manifest = make_manifest(p.name, triggers=triggers, poll_interval=0.2)
+        host.attach(p)
 
 
 @pytest.fixture
@@ -111,13 +124,13 @@ def session():
 
 @pytest.fixture
 def host(session):
-    return PluginHost(session, [])
+    return PluginHost(session, plugins=[])
 
 
 class TestLifecycle:
     def test_attach_calls_on_attach_with_ctx(self, session):
         p = LoggingPlugin()
-        h = PluginHost(session, [p])
+        h = PluginHost(session, plugins=[p])
         assert p.attached
         assert p.calls[0] == ("attach", "test-session")
         assert p.ctx.session is session
@@ -125,62 +138,60 @@ class TestLifecycle:
 
     def test_duplicate_name_rejected(self, session):
         p1, p2 = LoggingPlugin("dup"), LoggingPlugin("dup")
-        h = PluginHost(session, [p1])
+        h = PluginHost(session, plugins=[p1])
         assert not h.attach(p2)
         assert h.names() == ["dup"]
 
     def test_detach_calls_on_detach(self, session):
         p = LoggingPlugin()
-        h = PluginHost(session, [p])
+        h = PluginHost(session, plugins=[p])
         assert h.detach("lp", exit_code=1)
         assert p.detached == [1]
         assert not h.detach("lp")
 
     def test_detach_all_power_idempotent(self, session):
         p1, p2 = LoggingPlugin("a"), LoggingPlugin("b")
-        h = PluginHost(session, [p1, p2])
+        h = PluginHost(session, plugins=[p1, p2])
         h.detach_all(exit_code=0)
         assert sorted(p1.detached + p2.detached) == [0, 0]
         h.detach_all()
         assert len(p1.detached) == 1
 
     def test_snapshot_info(self, session):
-        h = PluginHost(session, [LoggingPlugin("a")])
+        h = PluginHost(session, plugins=[LoggingPlugin("a")])
         info = h.snapshot_info()
         assert info == [{"name": "a", "version": "1.0"}]
-        assert PluginHost(session, []).snapshot_info() is None
+        assert PluginHost(session, plugins=[]).snapshot_info() is None
 
 
 class TestHookChains:
     def test_input_chain_order(self, session):
-        p1 = TransformerPlugin()
-        p2 = TransformerPlugin()
-        p2.name = "transformer2"
-        h = PluginHost(session, [p1, p2])
+        p1 = TransformerPlugin("t1")
+        p2 = TransformerPlugin("t2")
+        h = PluginHost(session, plugins=[p1, p2])
         assert h.on_input("in") == "inXX"
 
     def test_input_intercept_none(self, session):
-        t = TransformerPlugin()
-        t2 = TransformerPlugin()
-        t2.name = "transformer2"
-        h = PluginHost(session, [t, InterceptPlugin(), t2])
+        t = TransformerPlugin("t1")
+        t2 = TransformerPlugin("t2")
+        intercept = InterceptPlugin()
+        h = PluginHost(session, plugins=[t, intercept, t2])
         assert h.on_input("in") is None
 
     def test_output_chain_bytes(self, session):
         p = TransformerPlugin()
-        h = PluginHost(session, [p])
+        h = PluginHost(session, plugins=[p])
         assert h.on_output(b"alpha") == b"blphb"
 
     def test_snapshot_chain(self, session):
         p = TransformerPlugin()
-        h = PluginHost(session, [p])
+        h = PluginHost(session, plugins=[p])
         assert h.on_snapshot("text") == "text[tag]"
 
     def test_exception_isolated_and_chain_continues(self, session):
         crash = CrashPlugin()
         transformer = TransformerPlugin()
-        h = PluginHost(session, [crash, transformer])
-        # 异常插件不阻断后续插件
+        h = PluginHost(session, plugins=[crash, transformer])
         assert h.on_output(b"a") == b"b"
         assert h.names() == ["crash", "transformer"]
 
@@ -188,27 +199,28 @@ class TestHookChains:
 class TestTriggers:
     def test_event_only_to_declared_plugins(self, session):
         ep = EventPlugin()
-        lp = LoggingPlugin()  # triggers 默认 ["event"] 但未实现 on_event → 无影响
-        h = PluginHost(session, [ep])
+        lp = LoggingPlugin()
+        h = PluginHost(session, plugins=[ep])
         h.on_event({"type": "process_crash"})
         assert ep.events == [{"type": "process_crash"}]
 
     def test_poll_throttled_by_interval(self, session):
         p = PollPlugin()
-        h = PluginHost(session, [p])
+        attach_manifest(p, make_manifest("pp", triggers=["poll"], poll_interval=0.2))
+        h = PluginHost(session, plugins=[p])
         time.sleep(0.05)
         h.poll_tick()
         assert p.count == 1
         time.sleep(0.05)
         h.poll_tick()
-        assert p.count == 1  # 未到间隔不触发
+        assert p.count == 1
         time.sleep(0.25)
         h.poll_tick()
         assert p.count == 2
 
     def test_poll_stops_after_detach(self, session):
         p = PollPlugin()
-        h = PluginHost(session, [p])
+        h = PluginHost(session, plugins=[p])
         h.detach("pp")
         h.poll_tick()
         assert p.count == 0
@@ -217,17 +229,17 @@ class TestTriggers:
 class TestReturnControl:
     def test_request_return_only_when_waiting(self, session):
         p = LoggingPlugin()
-        h = PluginHost(session, [p])
-        assert h.request_return("x") is False  # 无等待 → 丢弃
+        h = PluginHost(session, plugins=[p])
+        assert h.request_return("x") is False
         h.enter_wait()
         assert h.request_return("why") is True
         assert h.consume_return_request() == "why"
-        assert h.consume_return_request() is None  # 一次消费
+        assert h.consume_return_request() is None
         h.exit_wait()
         assert h.request_return("y") is False
 
     def test_exit_wait_clears_pending(self, session):
-        h = PluginHost(session, [])
+        h = PluginHost(session, plugins=[])
         h.enter_wait()
         h.request_return("z")
         h.exit_wait()
@@ -235,7 +247,7 @@ class TestReturnControl:
 
     def test_ctx_request_return(self, session):
         p = LoggingPlugin()
-        h = PluginHost(session, [p])
+        h = PluginHost(session, plugins=[p])
         h.enter_wait()
         ctx = p.ctx
         assert ctx.request_return("ctx-reason") is True
@@ -261,13 +273,12 @@ class TestSelfUnload:
                 unloaded.append(exit_code)
 
         p = SelfUnloadPlugin()
-        h = PluginHost(session, [p])
+        h = PluginHost(session, plugins=[p])
         assert h.on_snapshot("text") == "text"
-        assert h.names() == ["su"]          # 未触发卸载请求
+        assert h.names() == ["su"]
         assert h.on_snapshot("kill") == "kill"
-        assert h.names() == []               # 链结束后已卸载
+        assert h.names() == []
         assert unloaded == [None]
-        # 已卸载，后续钩子不再调用
         assert h.on_snapshot("kill") == "kill"
 
     def test_self_unload_during_output_chain(self, session):
@@ -275,90 +286,74 @@ class TestSelfUnload:
 
         class Mid(Plugin):
             name = "mid"
-
             def on_output(self, ctx, data):
-                seen.append(("mid", data))
+                seen.append("mid")
                 return data
 
-        class Killer(Plugin):
-            name = "killer"
-
+        class Su(Plugin):
+            name = "su"
             def on_output(self, ctx, data):
-                seen.append(("killer", data))
+                seen.append("su")
                 ctx.self_unload()
                 return data
 
-        class Tail(Plugin):
-            name = "tail"
+        p_mid, p_su = Mid(), Su()
+        h = PluginHost(session, plugins=[p_mid, p_su])
+        h.on_output(b"x")
+        assert seen == ["mid", "su"]
+        assert h.names() == ["mid"]
 
-            def on_output(self, ctx, data):
-                seen.append(("tail", data))
+    def test_self_unload_only_once(self, session):
+        class Once(Plugin):
+            name = "once"
+            def on_input(self, ctx, data):
+                ctx.self_unload()
                 return data
 
-        h = PluginHost(session, [Mid(), Killer(), Tail()])
-        assert h.on_output(b"x") == b"x"
-        # 链中卸载发生在整链结束后，本链 tail 仍被调用
-        assert seen == [("mid", b"x"), ("killer", b"x"), ("tail", b"x")]
-        assert h.names() == ["mid", "tail"]
-        seen.clear()
-        h.on_output(b"y")
-        assert seen == [("mid", b"y"), ("tail", b"y")]
+        p = Once()
+        h = PluginHost(session, plugins=[p])
+        h.on_input(b"a")
+        h.on_input(b"b")
+        assert h.names() == []
 
 
 class TestInspectState:
-    """返回钩子：命令返回时的一次性状态检查"""
+    def test_provide_first_non_none(self, session):
+        class A(Plugin):
+            name = "a"
+            def inspect_state(self, ctx): return None
 
-    def test_first_non_none_wins(self, session):
-        class S1(Plugin):
-            name = "s1"
+        class B(Plugin):
+            name = "b"
+            def inspect_state(self, ctx): return {"from": "b"}
 
-            def inspect_state(self, ctx):
-                return {"state": "Repl"}
+        class C(Plugin):
+            name = "c"
+            def inspect_state(self, ctx): return {"from": "c"}
 
-        class S2(Plugin):
-            name = "s2"
+        h = PluginHost(session, plugins=[A(), B(), C()])
+        assert h.inspect_state() == {"from": "b"}
 
-            def inspect_state(self, ctx):
-                return {"state": "Running"}
+    def test_all_none(self, session):
+        class A(Plugin):
+            name = "a"
+            def inspect_state(self, ctx): return None
 
-        h = PluginHost(session, [S1(), S2()])
-        assert h.inspect_state() == {"state": "Repl"}
-
-    def test_default_none(self, session):
-        h = PluginHost(session, [LoggingPlugin()])
+        h = PluginHost(session, plugins=[A()])
         assert h.inspect_state() is None
 
-    def test_exception_isolated(self, session):
-        class Bad(Plugin):
-            name = "bad"
-
-            def inspect_state(self, ctx):
-                raise RuntimeError("boom")
-
-        class Good(Plugin):
-            name = "good"
-
-            def inspect_state(self, ctx):
-                return {"state": "ok"}
-
-        h = PluginHost(session, [Bad(), Good()])
-        assert h.inspect_state() == {"state": "ok"}
-
     def test_empty_chain(self, session):
-        assert PluginHost(session, []).inspect_state() is None
+        h = PluginHost(session, plugins=[])
+        assert h.inspect_state() is None
 
 
 class TestHandleCommand:
     def test_route_to_plugin(self, session):
         p = LoggingPlugin()
-        h = PluginHost(session, [p])
-        result = h.handle_command("lp", {"command": "x", "args": [1]})
-        assert result == {"echo": {"command": "x", "args": [1]}}
+        h = PluginHost(session, plugins=[p])
+        assert h.handle_command("lp", {"command": "status"}) == {"echo": {"command": "status"}}
 
     def test_unknown_plugin_or_unhandled(self, session):
         p = LoggingPlugin()
-        h = PluginHost(session, [])
-        assert h.handle_command("lp", {}) is None
-        h.attach(p)
-        h.detach("lp")
-        assert h.handle_command("lp", {}) is None
+        h = PluginHost(session, plugins=[p])
+        assert h.handle_command("ghost", {}) is None

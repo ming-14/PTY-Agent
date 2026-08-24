@@ -1,29 +1,30 @@
 import re
 import time
 
-from ...output import safe_regex_search
+from ...session.trigger_matcher import safe_regex_search
 from ...protocol.message import Message
 from ...protocol.reasons import Reason
 from ...protocol.response import Response
-from ..execution import (
+from ...execution import (
     _run_snapshot_flow,
     _run_subprocess_no_trigger_flow,
     _run_subprocess_trigger_flow,
     assemble_response,
 )
-from .base import DaemonHandler, HandlerContext
-from ..filtering import (
+from .base import DaemonHandler
+from ...execution.context import HandlerContext
+from ...execution.filtering import (
     apply_lines_grep,
     filter_snapshot_lines,
     strip_if_needed,
 )
-from ..output_policy import resolve_output, validate_offset_policy
-from ..response import (
+from ...execution.output_policy import resolve_output, validate_offset_policy
+from ...execution.response import (
     attach_screen_buffer,
     describe_output_format,
     format_iso_ms,
 )
-from .utils import (
+from ...execution.utils import (
     apply_client_defaults,
     validate_request,
     validate_trigger_regex,
@@ -161,7 +162,7 @@ class ReadHandler(DaemonHandler):
 
     def _handle_read_flow(self, ctx, conn, session, msg):
         """read 会话处理主体（已持有 session.hold）"""
-        from ..conditions import RequestContext
+        from ...execution.conditions import RequestContext
 
         if not apply_client_defaults(session, msg, conn):
             return
@@ -285,8 +286,8 @@ class ReadHandler(DaemonHandler):
         - --trigger/--idle-timeout/--timeout：等待后增量交付（复用 execution 流程）。
         - --grep：子进程模式不支持（仅终端模式可用），拒绝。
         """
-        from ..conditions import RequestContext
-        from ..filtering import strip_if_needed
+        from ...execution.conditions import RequestContext
+        from ...execution.filtering import strip_if_needed
 
         req = RequestContext.from_msg(msg)
         cond = req.cond

@@ -14,7 +14,7 @@
     sandbox.py  ← daemon/sandbox.toml（可选）  沙箱域（Windows 专属，daemon 侧；文件不存在时 ENABLED=false）
     transfer.py ← transfer.toml              传输协议域（daemon/CLI 两端共享）
 
-- 插件业务参数由插件自包含配置提供（如 config/plugins/files/files.toml），不进本目录。
+- 插件业务参数由插件自包含配置提供（plugin.json config.defaults + 插件目录 config.yaml），不进本目录。
 
 - vnc.toml / vnc.example.toml 不属于本体系：它们是 winvnc.exe 的运行时配置（位于 daemon/ 子目录），
   不经过 _loader.py 加载（Python 侧 VNC 开关在 daemon/web.toml [vnc] 节，见 daemon.py）。

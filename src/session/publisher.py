@@ -95,10 +95,16 @@ class SessionPublisher:
             else:
                 self._on_resized_snapshot = list(self._on_resized_callbacks)
 
-    def notify_resized(self, session, cols: int, rows: int, snapshot: str = ""):
-        """通知所有尺寸变更回调（程序/客户端发起 resize 后调用）"""
+    def notify_resized(
+        self, session, cols: int, rows: int, snapshot: str = "", scrollback: str = ""
+    ):
+        """通知所有尺寸变更回调（程序/客户端发起 resize 后调用）
+
+        scrollback 为 resize 时保留的 reflow 历史（ANSI + \\r\\n），
+        回调方（web 订阅）据此广播给前端重建 buffer。
+        """
         for cb in self._on_resized_snapshot:
             try:
-                cb(session, cols, rows, snapshot)
+                cb(session, cols, rows, snapshot, scrollback)
             except Exception:
                 pass

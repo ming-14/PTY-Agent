@@ -21,11 +21,11 @@
  *   前端 term.resize(cols, rows) → term.onResize 回调 → wsSend(resize) → 守护进程 PTY resize
  */
 
-import { state, getSessionSizeConfigBySid, getSessionFontSize, setSessionFontSize,
+import { state, getSessionSizeConfigByUid, getSessionFontSize, setSessionFontSize,
          getSessionFrameRatio, setActiveSessionFrameRatio } from '../../domain/state.js';
 import { debug } from '../../domain/logger.js';
 import { $ } from '../domUtils.js';
-import { wsSend } from '../wsClient.js';
+import { sendToSession } from '../wsClient.js';
 import {
   applyTerminalSizeFromSession,
   getTerminalCellSize,
@@ -42,8 +42,8 @@ import {
  * FitAddon 在 lifecycle.ensureTerminal 中通过 term.loadAddon(fitAddon) 加载，
  * 并把引用挂在 inst.fitAddon 上。
  */
-function getFitAddon(sid) {
-  const inst = state.termInstances[sid];
+function getFitAddon(uid) {
+  const inst = state.termInstances[uid];
   return inst && inst.fitAddon ? inst.fitAddon : null;
 }
 
@@ -57,8 +57,8 @@ function getFitAddon(sid) {
  *
  * @param {string} sid 会话 ID
  */
-export function applyTerminalFrameSize(sid) {
-  const inst = state.termInstances[sid];
+export function applyTerminalFrameSize(uid) {
+  const inst = state.termInstances[uid];
   if (!inst || !inst.term) return;
   const frame = $('terminal-frame');
   if (!frame) return;
@@ -72,8 +72,8 @@ export function applyTerminalFrameSize(sid) {
     : null;
   if (!termEl) {
     // xterm 尚未渲染，仅活动标签需要重试（非活动标签 div 隐藏，无需设置 frame）
-    if (state.activeTab === sid) {
-      requestAnimationFrame(() => applyTerminalFrameSize(sid));
+    if (state.activeTab === uid) {
+      requestAnimationFrame(() => applyTerminalFrameSize(uid));
     }
     return;
   }
@@ -84,8 +84,8 @@ export function applyTerminalFrameSize(sid) {
       // div 为 display:none 时 .xterm-screen 尺寸为 0。
       // 仅当 sid 是当前活动标签时才重试（切标签后 div 刚可见但尚未渲染），
       // 非活动标签的 div 本就是隐藏的，无需设置 frame，直接返回避免无限 rAF 循环
-      if (state.activeTab === sid) {
-        requestAnimationFrame(() => applyTerminalFrameSize(sid));
+      if (state.activeTab === uid) {
+        requestAnimationFrame(() => applyTerminalFrameSize(uid));
       }
       return;
     }
@@ -98,7 +98,7 @@ export function applyTerminalFrameSize(sid) {
     frame.style.maxHeight = '';
   });
 
-  if (state.activeTab === sid) {
+  if (state.activeTab === uid) {
     frame.style.display = 'block';
     const empty = $('empty-state');
     if (empty) empty.style.display = 'none';
@@ -123,22 +123,22 @@ export function applyTerminalFrameSize(sid) {
  * @param {boolean} force 是否强制向守护进程发送 resize（用户显式选择尺寸时为 true）
  * @param {object} opts { skipDaemonResize: boolean } 跳过向守护进程发送 resize
  */
-export function applyTerminalSize(sid, force, opts) {
-  const s = state.sessions[sid];
-  const inst = state.termInstances[sid];
+export function applyTerminalSize(uid, force, opts) {
+  const s = state.sessions[uid];
+  const inst = state.termInstances[uid];
   if (!s || !inst) return;
 
   const skipDaemonResize = !!(opts && opts.skipDaemonResize);
   const forceDaemonResize = !!force;
-  const cfg = getSessionSizeConfigBySid(sid);
+  const cfg = getSessionSizeConfigByUid(uid);
   // 历史会话原先是自适应的，固定显示会话生前最后的尺寸。
   const mode = s.history ? 'default' : cfg.mode;
 
   // adaptive 模式调 applySessionFrameRatio（按 ratio 设 frame + fit；Ctrl+滚轮不走这里）
   if (mode === 'adaptive') {
-    applySessionFrameRatio(sid);
+    applySessionFrameRatio(uid);
     debug('terminal', 'applyTerminalSize adaptive → applySessionFrameRatio sid=%s (force=%s)',
-          sid, forceDaemonResize);
+          uid, forceDaemonResize);
     return;
   }
 
@@ -146,7 +146,7 @@ export function applyTerminalSize(sid, force, opts) {
   const size = applyTerminalSizeFromSession(s);
   if (!size) {
     // 理论不会到这里（adaptive 已在上面处理），保险起见调用 fit
-    const fit = getFitAddon(sid);
+    const fit = getFitAddon(uid);
     if (fit) { try { fit.fit(); } catch (_) {} }
     return;
   }
@@ -159,19 +159,19 @@ export function applyTerminalSize(sid, force, opts) {
     try {
       inst.term.resize(cols, rows);
       debug('terminal', 'applyTerminalSize %s → term.resize sid=%s %dx%d (onResize will send)',
-            mode, sid, cols, rows);
+            mode, uid, cols, rows);
     } catch (e) {
       console.error('resize failed', e);
     }
   } else if (forceDaemonResize && !skipDaemonResize && s.running && !s.history) {
     // 尺寸未变化但 force=true：用户显式选择相同尺寸，仍需同步守护进程
     // （此场景 onResize 不会触发，需要主动发送）
-    wsSend({ type: 'resize', session_id: sid, cols: cols, rows: rows });
+    sendToSession(uid, { type: 'resize', cols: cols, rows: rows });
     debug('terminal', 'applyTerminalSize %s force send sid=%s %dx%d',
-          mode, sid, cols, rows);
+          mode, uid, cols, rows);
   } else {
     debug('terminal', 'applyTerminalSize %s skip resize sid=%s (size unchanged)',
-          mode, sid);
+          mode, uid);
   }
 }
 
@@ -184,10 +184,10 @@ export function applyTerminalSize(sid, force, opts) {
  *
  * @param {string} sid 会话 ID
  */
-export function applyTerminalFontSize(sid) {
-  const inst = state.termInstances[sid];
+export function applyTerminalFontSize(uid) {
+  const inst = state.termInstances[uid];
   if (!inst || !inst.term) return;
-  const fontSize = getSessionFontSize(sid);
+  const fontSize = getSessionFontSize(uid);
   try {
     inst.term.options.fontSize = fontSize;
   } catch (e) {
@@ -195,13 +195,13 @@ export function applyTerminalFontSize(sid) {
   }
   // 不 fit，cols/rows 不变，frame 跟随新 cell 像素
   requestAnimationFrame(() => {
-    try { applyTerminalFrameSize(sid); } catch (_) {}
+    try { applyTerminalFrameSize(uid); } catch (_) {}
     // 再等一帧，确保 xterm 内部完全刷新（有些渲染器要两帧）
     requestAnimationFrame(() => {
-      try { applyTerminalFrameSize(sid); } catch (_) {}
+      try { applyTerminalFrameSize(uid); } catch (_) {}
     });
   });
-  debug('terminal', 'applyTerminalFontSize sid=%s → %s', sid, fontSize);
+  debug('terminal', 'applyTerminalFontSize sid=%s → %s', uid, fontSize);
 }
 
 /**
@@ -214,11 +214,11 @@ export function applyTerminalFontSize(sid) {
  * @param {boolean} force 是否强制向守护进程发送 resize（用户显式选择尺寸时为 true）
  * @param {string} [sid] 可选：仅对指定会话应用；省略则遍历所有 termInstances
  */
-export function reapplyAllTerminalSizes(force, sid) {
-  if (sid) {
-    if (state.termInstances[sid]) {
-      applyTerminalSize(sid, force);
-      applyTerminalFrameSize(sid);
+export function reapplyAllTerminalSizes(force, uid) {
+  if (uid) {
+    if (state.termInstances[uid]) {
+      applyTerminalSize(uid, force);
+      applyTerminalFrameSize(uid);
     }
     return;
   }
@@ -249,13 +249,13 @@ export function reapplyAllTerminalSizes(force, sid) {
  * @param {string} sid 会话 ID
  * @returns {boolean} 是否改变了尺寸（字号或 cols/rows）
  */
-export function applySessionFrameRatio(sid) {
-  const inst = state.termInstances[sid];
+export function applySessionFrameRatio(uid) {
+  const inst = state.termInstances[uid];
   if (!inst || !inst.term) return false;
-  const s = state.sessions[sid];
+  const s = state.sessions[uid];
   if (!s || !s.uid) return false;
 
-  const cfg = getSessionSizeConfigBySid(sid);
+  const cfg = getSessionSizeConfigByUid(uid);
   // 历史会话原先是自适应的，固定显示会话生前最后的尺寸。
   // 允许 Ctrl+滚轮缩放字号（按 frameRatio 反算），且记忆 frameRatio。
   const isHistory = !!s.history;
@@ -274,8 +274,8 @@ export function applySessionFrameRatio(sid) {
   const cell = getTerminalCellSize(inst.term);
   if (!cell.w || !cell.h) {
     // xterm 尚未渲染，下一帧重试（仅活动标签需要）
-    if (state.activeTab === sid) {
-      requestAnimationFrame(() => applySessionFrameRatio(sid));
+    if (state.activeTab === uid) {
+      requestAnimationFrame(() => applySessionFrameRatio(uid));
     }
     return false;
   }
@@ -285,7 +285,7 @@ export function applySessionFrameRatio(sid) {
   // ── adaptive 模式：按 ratio 设 frame 尺寸，fit() 算 cols/rows ──
   // 历史会话强制非 adaptive：固定生前最后 cols/rows，不 fit 自适应 stage
   if (cfg.mode === 'adaptive' && !isHistory) {
-    const fit = getFitAddon(sid);
+    const fit = getFitAddon(uid);
     if (!fit) return false;
 
     if (savedRatio == null) {
@@ -298,7 +298,7 @@ export function applySessionFrameRatio(sid) {
       const ratio = computeFrameRatio(frameW, frameH, contentW, contentH);
       setActiveSessionFrameRatio(ratio);
       debug('terminal', 'applySessionFrameRatio adaptive INIT sid=%s ratio=%.3f (frame=%dx%d stage=%dx%d)',
-            sid, ratio, Math.round(frameW), Math.round(frameH),
+            uid, ratio, Math.round(frameW), Math.round(frameH),
             Math.round(contentW), Math.round(contentH));
       // 用算出的 ratio 设 frame 尺寸 + fit()，确保 frame ≤ stage content（防溢出）
       const targetW = Math.floor(contentW * ratio);
@@ -311,7 +311,7 @@ export function applySessionFrameRatio(sid) {
         frame.style.maxHeight = '';
       }
       try { fit.fit(); } catch (e) { console.error('fit failed', e); }
-      requestAnimationFrame(() => { try { applyTerminalFrameSize(sid); } catch (_) {} });
+      requestAnimationFrame(() => { try { applyTerminalFrameSize(uid); } catch (_) {} });
       return true;
     }
 
@@ -327,14 +327,14 @@ export function applySessionFrameRatio(sid) {
     }
     try { fit.fit(); } catch (e) { console.error('fit failed', e); }
     // fit() 触发 onResize → applyTerminalFrameSize（rAF）
-    requestAnimationFrame(() => { try { applyTerminalFrameSize(sid); } catch (_) {} });
+    requestAnimationFrame(() => { try { applyTerminalFrameSize(uid); } catch (_) {} });
     debug('terminal', 'applySessionFrameRatio adaptive sid=%s ratio=%.3f frame=%dx%d → fit %dx%d',
-          sid, savedRatio, targetW, targetH, inst.term.cols, inst.term.rows);
+          uid, savedRatio, targetW, targetH, inst.term.cols, inst.term.rows);
     return true;
   }
 
   // ── 非 adaptive 模式：按 ratio 反算字号 ──
-  const currentFontSize = getSessionFontSize(sid);
+  const currentFontSize = getSessionFontSize(uid);
 
   if (savedRatio == null) {
     // 首次打开：用当前字号渲染后的 frame 尺寸反算 ratio 并保存。
@@ -355,10 +355,10 @@ export function applySessionFrameRatio(sid) {
         cell.w, cell.h, currentFontSize
       );
       if (targetFontSize !== currentFontSize) {
-        setSessionFontSize(sid, targetFontSize);
-        applyTerminalFontSize(sid);
+        setSessionFontSize(uid, targetFontSize);
+        applyTerminalFontSize(uid);
         debug('terminal', 'applySessionFrameRatio sid=%s INIT OVERFLOW fontSize %d → %d (ratio=%.3f frame=%dx%d stage=%dx%d)',
-              sid, currentFontSize, targetFontSize, ratio,
+              uid, currentFontSize, targetFontSize, ratio,
               Math.round(frameW), Math.round(frameH),
               Math.round(contentW), Math.round(contentH));
         return true;
@@ -366,10 +366,10 @@ export function applySessionFrameRatio(sid) {
     }
 
     debug('terminal', 'applySessionFrameRatio sid=%s INIT ratio=%.3f (fontSize=%d frame=%dx%d stage=%dx%d)',
-          sid, ratio, currentFontSize,
+          uid, ratio, currentFontSize,
           Math.round(frameW), Math.round(frameH),
           Math.round(contentW), Math.round(contentH));
-    requestAnimationFrame(() => applyTerminalFrameSize(sid));
+    requestAnimationFrame(() => applyTerminalFrameSize(uid));
     return false;
   }
 
@@ -380,17 +380,17 @@ export function applySessionFrameRatio(sid) {
   );
 
   if (targetFontSize !== currentFontSize) {
-    setSessionFontSize(sid, targetFontSize);
-    applyTerminalFontSize(sid);
+    setSessionFontSize(uid, targetFontSize);
+    applyTerminalFontSize(uid);
     debug('terminal', 'applySessionFrameRatio sid=%s fontSize %d → %d (ratio=%.3f stage=%dx%d cols=%dx%d cell=%.1fx%.1f)',
-          sid, currentFontSize, targetFontSize, savedRatio,
+          uid, currentFontSize, targetFontSize, savedRatio,
           Math.round(contentW), Math.round(contentH),
           inst.term.cols, inst.term.rows, cell.w, cell.h);
     return true;
   }
 
   // 字号未变，仅触发 frame 跟随
-  requestAnimationFrame(() => applyTerminalFrameSize(sid));
+  requestAnimationFrame(() => applyTerminalFrameSize(uid));
   return false;
 }
 
@@ -471,7 +471,7 @@ export function zoomActiveSession(deltaRatio) {
   setSessionFontSize(sid, targetFontSize);
   applyTerminalFontSize(sid);
   debug('terminal', 'zoomActiveSession sid=%s mode=%s ratio %.3f → %.3f fontSize %d → %d (cols/rows unchanged)',
-        sid, getSessionSizeConfigBySid(sid).mode, baseRatio, nextRatio, currentFontSize, targetFontSize);
+        sid, getSessionSizeConfigByUid(sid).mode, baseRatio, nextRatio, currentFontSize, targetFontSize);
   return true;
 }
 
@@ -503,7 +503,7 @@ export function resetActiveSessionZoom() {
     const ratio = computeFrameRatio(frameW, frameH, contentW, contentH);
     setActiveSessionFrameRatio(ratio);
     debug('terminal', 'resetActiveSessionZoom sid=%s mode=%s → fontSize=%d ratio=%.3f (cols/rows unchanged)',
-          sid, getSessionSizeConfigBySid(sid).mode, DEFAULT_FONT_SIZE, ratio);
+          sid, getSessionSizeConfigByUid(sid).mode, DEFAULT_FONT_SIZE, ratio);
   });
   return true;
 }

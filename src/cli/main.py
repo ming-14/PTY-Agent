@@ -29,6 +29,13 @@ _logger = get_logger("pty-client")
 
 def main() -> None:
     """CLI 入口"""
+    # 统一 UTF-8 输出：Windows 控制台（含 PowerShell 7 / 管道捕获）按 UTF-8
+    # 解码，GBK 编码（sys.stdout 默认随代码页 936）会使中文 help/输出乱码
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
     setup_client_logging()
     _logger.info("pty-agent CLI 启动, argv=%s", sys.argv)
     fix_windows_exec_quoting()

@@ -1,4 +1,5 @@
-from .base import DaemonHandler, HandlerContext
+from .base import DaemonHandler
+from ...execution.context import HandlerContext
 from .closewin_handler import CloseWinHandler
 from .dispatcher import DaemonDispatcher
 from .events_handler import EventsHandler

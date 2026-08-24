@@ -16,7 +16,7 @@
 
 from typing import List, Optional
 
-from src.transfer.common import ENTRY_DIR, ENTRY_FILE
+from src.client.transfer.common import ENTRY_DIR, ENTRY_FILE
 
 # classify 结果
 TRANSFER = "transfer"

@@ -12,7 +12,7 @@
 
 | 编号 | 问题 | 严重度 |
 |------|------|--------|
-| P0-A | 响应组装（选源→过滤→build_result→attach_screen→send）在 `execution.py` / `read_handler.py` / `workflow/engine.py` **三处各写一遍** | 🔴 |
+| P0-A | 响应组装（选源→过滤→build_result→attach_screen→send）在 `execution/execution.py` / `read_handler.py` / `workflow/engine.py` **三处各写一遍** | 🔴 |
 | P0-B | "为何返回"的判定在 exec 等待循环、TriggerMatcher/wait_for_trigger、后台监控线程 **三个循环各算一遍** | 🔴 |
 | P1-C | `build_result` 双职责 + crash 判定在两层各算一次 | 🟠 |
 | P1-D | 请求字段（id/command/input/encoding/cwd/env/mode/...）靠 `msg.get` 在各 handler **散落读取** | 🟠 |
@@ -47,16 +47,16 @@
 
 | 改动 | 文件 | 说明 |
 |------|------|------|
-| **输出过滤统一** | `src/daemon/handlers/utils.py` | 新增核心 `_apply_line_filters`（lines/grep/column，非法抛 `ValueError`）；`filter_snapshot_lines`（静默版）、`apply_lines_grep`（报错版）降为**薄包装**；删除 `read_handler` 的内联第三份复制（改用 `apply_lines_grep`） |
-| **① 返回条件声明** | `src/daemon/conditions.py::ReturnConditions` | `from_msg(msg)` 一处解析 trigger/newline/fresh/idle/full/keep_ansi/snapshot_diff/explicit_timeout；`Reason` 统一"为何返回"词表 |
-| **P0-A 步1 取源统一** | `utils.py::resolve_output` | 统一 `snapshot / full / diff` 选源（含 read 的 `--lines` 隐式 full 语义 `force_full`）；`execution.py` / `read_handler.py` / `workflow/engine.py` 三处选择分支 → 一处 |
-| **P2-E 偏移互斥校验** | `utils.py::validate_offset_policy` | 统一 `--offset` 与 `--lines/--full/--snapshot-diff/等待模式` 的互斥策略；`read_handler` 多处内联校验收敛 |
-| **P1-D 请求契约 VO** | `src/daemon/conditions.py::RequestContext` | `RequestContext.from_msg(msg)` 一次解析 id/command/input/encoding/cwd/env/mode/cols/rows/plugins/lines/grep/column/offset/action/t_start，内嵌 `ReturnConditions`；exec/send/read/mouse 四 handler 与 `execution.py` 三流程收敛散落 `msg.get`（read 子进程 trigger 的 `fresh` 默认 True 语义保留在调用点） |
-| **P0-A 步2 响应装配统一** | `src/daemon/execution.py::assemble_response` | build_result → (snapshotDiagnostics/stderr) → attach_screen → extra_fields → send/return 收敛为一处；`execution.py` 三流程 + `read_handler` 四处 + `workflow._read_type` 接入；read 路径 `consume_events=False`、workflow `send_response=False` 保持原语义 |
+| **输出过滤统一** | `src/execution/utils.py` | 新增核心 `_apply_line_filters`（lines/grep/column，非法抛 `ValueError`）；`filter_snapshot_lines`（静默版）、`apply_lines_grep`（报错版）降为**薄包装**；删除 `read_handler` 的内联第三份复制（改用 `apply_lines_grep`） |
+| **① 返回条件声明** | `src/execution/conditions.py::ReturnConditions` | `from_msg(msg)` 一处解析 trigger/newline/fresh/idle/full/keep_ansi/snapshot_diff/explicit_timeout；`Reason` 统一"为何返回"词表 |
+| **P0-A 步1 取源统一** | `execution/output_policy.py::resolve_output` | 统一 `snapshot / full / diff` 选源（含 read 的 `--lines` 隐式 full 语义 `force_full`）；`execution/execution.py` / `read_handler.py` / `workflow/engine.py` 三处选择分支 → 一处 |
+| **P2-E 偏移互斥校验** | `execution/output_policy.py::validate_offset_policy` | 统一 `--offset` 与 `--lines/--full/--snapshot-diff/等待模式` 的互斥策略；`read_handler` 多处内联校验收敛 |
+| **P1-D 请求契约 VO** | `src/execution/conditions.py::RequestContext` | `RequestContext.from_msg(msg)` 一次解析 id/command/input/encoding/cwd/env/mode/cols/rows/plugins/lines/grep/column/offset/action/t_start，内嵌 `ReturnConditions`；exec/send/read/mouse 四 handler 与 `execution/execution.py` 三流程收敛散落 `msg.get`（read 子进程 trigger 的 `fresh` 默认 True 语义保留在调用点） |
+| **P0-A 步2 响应装配统一** | `src/execution/execution.py::assemble_response` | build_result → (snapshotDiagnostics/stderr) → attach_screen → extra_fields → send/return 收敛为一处；`execution/execution.py` 三流程 + `read_handler` 四处 + `workflow._read_type` 接入；read 路径 `consume_events=False`、workflow `send_response=False` 保持原语义 |
 | **P0-B 判定单源化** | `session/events.py::resolve_exit_reason` + `session/trigger.py::check_gui_detected` | crash/ended 判定（原 4 处重复）→ `resolve_exit_reason()` 一处；GUI 检测（原 3 处）→ `check_gui_detected()` 一处（保留 1s 节流与 `enabled` 语义：未启用短路时仍轮询但不清空事件）；**保留** exec 等待循环 vs 后台监控线程 2s 兜底冗余（设计性并存，未做硬去重） |
 | **P0-B 完整等待引擎统一** | `src/session/wait.py::wait_reason` | 新增统一迭代骨架 `wait_reason`（cancel 检查 / remaining/timeout 判定 / 循环单源）；`session/trigger.py::_wait_for_trigger_inner` 与 `execution.py::_run_snapshot_flow` 两个等待分支全部收敛到骨架，各循环检查顺序与等待原语经 `iteration` 回调保留（行为零变化）。线程职责：请求线程主判定、后台 `_monitor_loop` 只投喂事件做 2s 兜底，冗余按设计保留不硬去重 |
 
-**验证**：全量单测 `1666 passed`（`tests/unit`，含新增 `RequestContext` 与 `test_wait_helpers` 用例），仅剩 2 个**环境既存失败**（`test_session_events` 崩溃判定时序，属 Windows 崩溃检测环境问题，与本次重构无关）。
+
 
 ### 3.1 跨包散落清理（独立于执行链，同为"只归一、不改行为"）
 

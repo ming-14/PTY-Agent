@@ -164,7 +164,10 @@ class PluginResult(Result):
     session_id: str = ""
     action: str = ""
     plugins: list = field(default_factory=list)
+    info: dict = field(default_factory=dict)
+    config: dict = field(default_factory=dict)
     message: str = ""
+    result: Any = None
 
     @property
     def ok(self) -> bool:
@@ -185,6 +188,17 @@ class FileResult(Result):
     @property
     def kind(self) -> str:
         return "file"
+
+
+@dataclass
+class WaitResult(Result):
+    """wait 命令：请求等待秒数 + 实际耗时"""
+    timeout: float = 0.0
+    elapsed: float = 0.0
+
+    @property
+    def kind(self) -> str:
+        return "wait"
 
 
 @dataclass
@@ -259,6 +273,31 @@ def from_response(resp) -> Result:
             web_url=resp.get("webUrl", ""),
             raw=resp,
         )
+    if rtype == "wait":
+        return WaitResult(
+            timeout=resp.get("timeout", 0.0),
+            elapsed=resp.get("elapsed", 0.0),
+            raw=resp,
+        )
+    if rtype == "svg":
+        # 带会话上下文的 svg 响应（exec/send/read/mouse --response-format svg）：
+        # 走 SessionResult 渲染（svg 标签框 + 状态行）；否则裸 svg 文本
+        if resp.get("commandType"):
+            return SessionResult(
+                command_type=resp.get("commandType", ""),
+                session_id=resp.get("sessionId", ""),
+                uid=resp.get("uid", ""),
+                output=resp.get("data", "") or resp.get("outputStream", ""),
+                stderr=resp.get("stderrOutput", ""),
+                reason=resp.get("triggerReturnReason", ""),
+                program=resp.get("program", {}),
+                hint=resp.get("hint", ""),
+                terminal_state=resp.get("terminalState"),
+                meta=_collect_meta(resp),
+                matches=[],
+                raw=resp,
+            )
+        return MessageResult(msg_type="svg", text=resp.get("data", ""), raw=resp)
 
     ct = resp.get("commandType", "")
     if ct in _SESSION_CMDS:
@@ -293,13 +332,26 @@ def from_response(resp) -> Result:
     if ct == "closewin":
         return CloseWinResult(closed=bool(resp.get("closed")), hwnd=resp.get("hwnd"), message=resp.get("message", ""), raw=resp)
     if ct == "plugin":
-        return PluginResult(session_id=resp.get("sessionId", ""), action=resp.get("action", ""), plugins=resp.get("plugins", []), message=resp.get("message", ""), raw=resp)
+        return PluginResult(
+            session_id=resp.get("sessionId", ""),
+            action=resp.get("action", ""),
+            plugins=resp.get("plugins", []),
+            info=resp.get("info") or {},
+            config=resp.get("config") or {},
+            message=resp.get("message", ""),
+            result=resp.get("result"),
+            raw=resp,
+        )
     if ct and ct.startswith("file_"):
-        return FileResult(command_type=ct, body=resp.get("content") or resp.get("stdout") or "", summary=_file_summary(ct, resp), raw=resp)
+        body = resp.get("content") or resp.get("stdout") or ""
+        if not body:
+            if ct == "file_grep":
+                body = _format_grep_matches(resp.get("matches", []))
+            elif ct == "file_glob":
+                body = "\n".join(resp.get("files", []))
+        return FileResult(command_type=ct, body=body, summary=_file_summary(ct, resp), raw=resp)
     if ct == "workflow":
         return WorkflowResult(action=resp.get("action", ""), data=resp.get("result", resp), raw=resp)
-    if rtype == "svg":
-        return MessageResult(msg_type="svg", text=resp.get("data", ""), raw=resp)
     # 兜底：未知/其他 → 展示原始 JSON 的关键信息，不原样 dump
     return MessageResult(msg_type="raw", text=_fallback_text(resp), raw=resp)
 
@@ -321,6 +373,14 @@ def _file_summary(ct: str, resp: dict) -> str:
         n = len(resp.get("matches", []) or resp.get("files", []))
         return f"{n} match(es)" if n else ""
     return resp.get("result", "") or resp.get("message", "") or ""
+
+
+def _format_grep_matches(matches: list) -> str:
+    """file_grep 匹配列表 → 文本行（path:lineNumber: content）"""
+    return "\n".join(
+        "%s:%s: %s" % (m.get("path", ""), m.get("lineNumber", ""), m.get("content", ""))
+        for m in matches
+    )
 
 
 def _fallback_text(resp: dict) -> str:

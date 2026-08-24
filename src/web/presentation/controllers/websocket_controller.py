@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from ....protocol.response import Response
 from ...application.adaptive_lock import AdaptiveLockService
 from ...application.dispatcher import MessageDispatcher
-from ...application.handlers import HandlerContext
+from ...application.handlers.base import HandlerContext
 from ...application.ports import (
     ConnectionContext,
     CursorLocatorServicePort,
@@ -283,7 +283,7 @@ class WebSocketController:
         - A 端持锁 + A 端关闭所有标签页：无其他连接，释放锁并广播
         - B 端刷新（不持锁）：_cleanup 时 is_owner=False，不释放 A 的锁
         """
-        from ...application.handlers import UnsubscribeSessionHandler
+        from ...application.handlers.session import UnsubscribeSessionHandler
 
         # 先快照订阅列表（unsubscribe 后会清空）
         client_uid = context.client_uid
@@ -294,44 +294,46 @@ class WebSocketController:
 
         # 释放自适应锁：仅清理当前 client_uid 持有的锁
         if ctx.adaptive_lock is not None:
-            for sid in subscribed_sids:
-                if not ctx.adaptive_lock.is_owner(sid, client_uid):
+            for uid in subscribed_sids:
+                if not ctx.adaptive_lock.is_owner(uid, client_uid):
                     continue
-                # 检查该 client_uid 是否还有其他活跃连接订阅了该 sid
+                # 检查该 client_uid 是否还有其他活跃连接订阅了该 uid
                 # 若有 → 锁由其他连接继承，不释放（同用户多标签页场景）
                 # 若无 → 释放锁并广播（所有连接已关闭）
-                if self._has_other_active_subscriber(sid, client_uid):
+                if self._has_other_active_subscriber(uid, client_uid):
                     _logger.info(
-                        "cleanup: keep adaptive lock sid=%s uid=%s (other conn active)",
-                        sid,
+                        "cleanup: keep adaptive lock uid=%s client_uid=%s (other conn active)",
+                        uid,
                         client_uid,
                     )
                     continue
-                if ctx.adaptive_lock.release(sid, client_uid):
+                if ctx.adaptive_lock.release(uid, client_uid):
                     _logger.info(
-                        "cleanup: release adaptive lock sid=%s uid=%s (no other conn)",
-                        sid,
+                        "cleanup: release adaptive lock uid=%s client_uid=%s (no other conn)",
+                        uid,
                         client_uid,
                     )
                     try:
+                        session = ctx.session_repo.get_by_uid(uid)
                         ctx.publisher.publish_size_mode_changed(
-                            session_id=sid,
+                            session_uid=uid,
+                            session_id=session.id if session else uid,
                             adaptive_owner_active=False,
                         )
                     except Exception as e:
                         _logger.exception(
-                            "cleanup: publish_size_mode_changed failed sid=%s: %s",
-                            sid,
+                            "cleanup: publish_size_mode_changed failed uid=%s: %s",
+                            uid,
                             e,
                         )
 
     def _has_other_active_subscriber(
-        self, session_id: str, client_uid: Optional[str]
+        self, session_uid: str, client_uid: Optional[str]
     ) -> bool:
         """检查指定 client_uid 是否还有其他活跃连接订阅了该 session。
 
         _cleanup 时判断锁是否应由同 uid 的其他连接继承。
-        遍历 connections 字典，找 uid 相同且订阅了该 sid 的其他连接。
+        遍历 connections 字典，找 uid 相同且订阅了该 session 的其他连接。
         注意：调用时本连接的订阅已被 unsub.handle 清空，不会误匹配自己。
         """
         if not client_uid or not self._connections:
@@ -343,7 +345,7 @@ class WebSocketController:
             try:
                 if context.client_uid != client_uid:
                     continue
-                if session_id in context.subscribed_session_ids:
+                if session_uid in context.subscribed_session_ids:
                     return True
             except Exception as e:
                 _logger.debug("has_other_active_subscriber: check error: %s", e)

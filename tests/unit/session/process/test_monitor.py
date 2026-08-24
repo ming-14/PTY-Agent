@@ -5,7 +5,7 @@ import pytest
 
 from src.process.monitor import ProcessMonitor
 from src.process.base import ProcessNotification, NOTIF_SPAWN, NOTIF_EXIT, NOTIF_CRASH
-from src.output.events import PendingEvent
+from src.process.base import PendingEvent
 
 
 class _MockTracker:

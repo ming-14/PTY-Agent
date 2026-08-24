@@ -9,7 +9,8 @@ from ...protocol.envelope import unwrap as _env_unwrap, wrap_response as _env_wr
 from ...protocol.message import Message
 from ...protocol.response import Response
 from ...session.manager import SessionManager
-from .base import DaemonHandler, HandlerContext
+from .base import DaemonHandler
+from ...execution.context import HandlerContext
 from .attend_handler import AttendHandler
 from .closewin_handler import CloseWinHandler
 from .events_handler import EventsHandler
@@ -22,7 +23,7 @@ from .read_handler import ReadHandler
 from .send_handler import SendHandler
 from .status_handler import StatusHandler
 from .stop_handler import StopHandler
-from .utils import get_detail
+from ...execution.utils import get_detail
 from .wait_handler import WaitHandler
 from .workflow_handler import WorkflowHandler
 from ...logging import get_logger, bind, unbind
@@ -43,8 +44,14 @@ class PluginMessageHandler(DaemonHandler):
         self._plugin = plugin
 
     def handle(self, ctx: HandlerContext, conn, msg: dict):
-        io = PluginIO(conn) if self._plugin.needs_io else None
-        pctx = ProcessPluginContext(ctx.manager, self._plugin, io)
+        manifest = getattr(self._plugin, "manifest", None)
+        io = PluginIO(conn) if manifest is not None and manifest.needs_io else None
+        env = None
+        if ctx.manager is not None:
+            pr = getattr(ctx.manager, "plugin_registry", None)
+            if pr is not None:
+                env = pr.environment
+        pctx = ProcessPluginContext(ctx.manager, self._plugin, io, environment=env)
         try:
             result = self._plugin.handle_message(pctx, msg)
         except Exception:
@@ -73,6 +80,8 @@ class DaemonDispatcher:
         # AuthContext 持有签名器与认证器，认证器解包给 HandlerContext 供业务层使用
         self._auth_context = auth_context
         self._ctx = HandlerContext(manager, auth_context.authenticator, server)
+        self._builtin_types: set = set()
+        self._plugin_handlers: dict = {}  # 进程级插件消息类型 → PluginMessageHandler
         self._registry: dict[str, DaemonHandler] = self._build_registry()
 
     def _build_registry(self) -> dict[str, DaemonHandler]:
@@ -92,6 +101,7 @@ class DaemonDispatcher:
             "workflow": WorkflowHandler(),
             "attend": AttendHandler(),
         }
+        self._builtin_types = set(registry)
         # 进程级插件路由：插件声明的 message_types 注册到派发表；
         # 与内置 handler 冲突时内置优先（核心命令权威），记录警告
         plugin_registry = (
@@ -100,18 +110,43 @@ class DaemonDispatcher:
             else None
         )
         if plugin_registry is not None:
-            for name, inst in plugin_registry.process_instances().items():
-                for mtype in inst.message_types:
-                    if mtype in registry:
+            plugin_registry.set_change_callback(self._sync_plugin_handlers)
+            self._sync_plugin_handlers()
+        return registry
+
+    def _sync_plugin_handlers(self) -> None:
+        """同步进程级插件消息路由（enable/disable/reload 后由注册表回调）
+
+        与内置 handler 冲突时内置优先；插件间同类型冲突按插件名序先者胜。
+        """
+        new: dict = {}
+        plugin_registry = (
+            getattr(self._ctx.manager, "plugin_registry", None)
+            if self._ctx.manager
+            else None
+        )
+        if plugin_registry is not None:
+            for name in sorted(plugin_registry.process_instances()):
+                inst = plugin_registry.process_instances()[name]
+                for mtype in inst.manifest.message_types:
+                    if mtype in self._builtin_types:
                         _logger.warning(
                             "消息类型 %s 已被内置 handler 占用，插件 %s 的声明跳过",
                             mtype,
                             name,
                         )
                         continue
-                    registry[mtype] = PluginMessageHandler(inst)
+                    if mtype in new:
+                        _logger.warning(
+                            "消息类型 %s 已被插件 %s 占用，插件 %s 的声明跳过",
+                            mtype,
+                            new[mtype]._plugin.name,
+                            name,
+                        )
+                        continue
+                    new[mtype] = PluginMessageHandler(inst)
                     _logger.debug("消息类型 %s 由进程级插件 %s 接管", mtype, name)
-        return registry
+        self._plugin_handlers = new
 
     def dispatch(self, conn, body: dict, type_: str = None):
         body = body if isinstance(body, dict) else {}
@@ -127,6 +162,8 @@ class DaemonDispatcher:
             return
 
         handler = self._registry.get(msg_type)
+        if handler is None:
+            handler = self._plugin_handlers.get(msg_type)
         if handler:
             handler.handle(self._ctx, conn, body)
         else:

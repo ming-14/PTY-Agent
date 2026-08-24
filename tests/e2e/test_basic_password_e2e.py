@@ -240,7 +240,7 @@ def basic_auth_env(tmp_path, config_reloader):
         config_reloader()
 
         # 启动 daemon（subprocess.Popen 子进程，会读新 common.toml）
-        from src.daemonctl import start_daemon, is_running
+        from src.client.daemonctl import start_daemon, is_running
         start_daemon()
 
         # 轮询等待 daemon 就绪（basic 监听端口 TCP 可达即就绪）
@@ -278,7 +278,7 @@ def basic_auth_env(tmp_path, config_reloader):
 
     def _stop_daemon():
         if started[0] and not daemon_stopped[0]:
-            from src.daemonctl import stop_daemon, is_running
+            from src.client.daemonctl import stop_daemon, is_running
             stop_daemon(force=True)
             # 轮询等待 daemon 完全停止
             for _ in range(30):

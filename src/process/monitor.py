@@ -20,15 +20,14 @@ from threading import Event
 from typing import Callable, Dict, Optional, Set
 
 from ..config.common import IS_WINDOWS
-from ..output.events import PendingEvent
-from .base import ProcessTreeTracker
+from .base import PendingEvent, ProcessTreeTracker
 from .info import _get_process_detail, _get_process_name, _signal_name
 from ..logging import get_logger
 
 _logger = get_logger("pty-session")
 
 if IS_WINDOWS:
-    from .win32_error import (
+    from .windows.win32_error import (
         STILL_ACTIVE,
         translate_windows_error,
     )

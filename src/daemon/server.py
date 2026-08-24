@@ -45,7 +45,12 @@ from ..config.daemon import (
     WEB_PORT,
 )
 from ..config.plugins import ENABLED as PLUGINS_ENABLED
-from ..config.plugins import PLUGIN_PATHS
+from ..config.plugins import (
+    PLUGIN_DIRS,
+    PLUGIN_STATES,
+    POLICY,
+    PluginStateStore,
+)
 from ..ipc.shm import (
     generate_auth_token,
     update_auth_token,
@@ -143,11 +148,16 @@ class DaemonServer:
     def _create_plugin_registry(self) -> Optional[PluginRegistry]:
         """创建进程级插件注册表；禁用或初始化异常时返回 None（插件系统关闭）"""
         if not PLUGINS_ENABLED:
-            _logger.info("插件系统已禁用 (plugins.enabled=false)")
+            _logger.info("插件系统已禁用 (registry.json 缺失或 enabled=false)")
             return None
         try:
-            registry = PluginRegistry(PLUGIN_PATHS)
-            _logger.info("插件注册表初始化完成，位置: %s", PLUGIN_PATHS)
+            registry = PluginRegistry(
+                PLUGIN_DIRS,
+                states=PLUGIN_STATES,
+                policy=POLICY,
+                state_store=PluginStateStore(),
+            )
+            _logger.info("插件注册表初始化完成，位置: %s", PLUGIN_DIRS)
             return registry
         except Exception:
             _logger.exception("插件注册表初始化失败，插件系统禁用")

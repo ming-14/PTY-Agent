@@ -211,7 +211,8 @@ class TestDaemonServerPing:
     def test_responds_to_ping(self):
         with patch("src.daemon.server.write_auth_token") as mock_auth, \
              patch("src.daemon.server.write_hmac_key") as mock_hmac, \
-             patch("src.daemon.server.signal.signal"):
+             patch("src.daemon.server.signal.signal"), \
+             patch("src.optional.get_web_server_cls", return_value=None):
             mock_auth.return_value = MagicMock()
             mock_hmac.return_value = MagicMock()
 

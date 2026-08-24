@@ -44,7 +44,7 @@ def _strip_ansi(s: str) -> str:
 
 @pytest.fixture()
 def daemon():
-    from src.daemonctl import is_running, start_daemon, stop_daemon
+    from src.client.daemonctl import is_running, start_daemon, stop_daemon
 
     started = False
     if not is_running():

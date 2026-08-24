@@ -1,8 +1,12 @@
-"""进程管理层抽象端口 — ProcessNotification 统一通知实体 + ProcessTreeTracker 抽象基类
+"""进程管理层抽象端口 — 进程事件实体 + ProcessTreeTracker 抽象基类
 
 进程树追踪、批量终止、实时通知、退出码查询统一抽象为 ProcessTreeTracker 端口，
 由各平台实现（Windows Job Object / Unix process group / 未来 winsandbox 委派），
 上层（ProcessMonitor / GuiDetector / Session）只依赖本抽象，不感知具体实现。
+
+进程事件实体（ProcessNotification / PendingEvent）定义于本模块：
+- ProcessNotification：tracker 层原始通知（spawn/exit/crash）
+- PendingEvent：上层会话事件（进程/GUI 事件），供 EventHistoryManager 消费
 
 生命周期约定：
 - tracker 由 Session 创建并持有（owner）
@@ -12,6 +16,7 @@
 
 from ..logging import get_logger
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import List, Optional
 
 _logger = get_logger("process-base")
@@ -61,6 +66,18 @@ class ProcessNotification:
             f"ProcessNotification({self.type}, pid={self.pid}, "
             f"exit_code={self.exit_code})"
         )
+
+
+@dataclass
+class PendingEvent:
+    """待处理事件 — 进程创建/退出、GUI 窗口出现等（EventHistoryManager 消费）"""
+
+    timestamp: float
+    type: str
+    pid: int = 0
+    info: str = ""
+    hwnd: int = 0
+    detail: dict = None
 
 
 class ProcessTreeTracker(ABC):

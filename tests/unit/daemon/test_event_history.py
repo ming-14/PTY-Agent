@@ -7,7 +7,8 @@ import time
 import threading
 import pytest
 
-from src.output.events import EventHistoryManager, PendingEvent, _events_to_dicts
+from src.session.events_history import EventHistoryManager, _events_to_dicts
+from src.process.base import PendingEvent
 
 
 class TestPendingEvent:

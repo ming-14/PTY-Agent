@@ -10,24 +10,24 @@ import { decodeWriteData } from './shared.js';
 
 // 调试钩子：记录影响光标样式/闪烁的 VT 序列，便于排查光标不闪烁问题。
 // 返回 false 表示不拦截，仍由 xterm.js 正常处理。
-export function trackCursorSequences(term, sid) {
+export function trackCursorSequences(term, uid) {
   try {
     const parser = term.parser;
     if (!parser) {
-      warn('cursor', 'trackCursorSequences: term.parser not available sid=%s', sid);
+      warn('cursor', 'trackCursorSequences: term.parser not available sid=%s', uid);
       return;
     }
-    debug('cursor', 'trackCursorSequences: registering handlers sid=%s', sid);
+    debug('cursor', 'trackCursorSequences: registering handlers sid=%s', uid);
     // DECSET CSI ? Pm h: 特别关注 Ps=12 开始闪烁光标、Ps=25 显示光标
     parser.registerCsiHandler({ final: 'h', prefix: '?' }, params => {
       debug('cursor', 'DECSET sid=%s params=%o blink=%s style=%s',
-            sid, params, term.options.cursorBlink, term.options.cursorStyle);
+            uid, params, term.options.cursorBlink, term.options.cursorStyle);
       return false;
     });
     // DECRST CSI ? Pm l: 特别关注 Ps=12 停止闪烁光标、Ps=25 隐藏光标
     parser.registerCsiHandler({ final: 'l', prefix: '?' }, params => {
       debug('cursor', 'DECRST sid=%s params=%o blink=%s style=%s',
-            sid, params, term.options.cursorBlink, term.options.cursorStyle);
+            uid, params, term.options.cursorBlink, term.options.cursorStyle);
       return false;
     });
   } catch (e) {
@@ -37,12 +37,12 @@ export function trackCursorSequences(term, sid) {
   // registerCsiHandler 不支持 SP (0x20) prefix，因此通过拦截 term.write 检测。
   const originalWrite = term.write.bind(term);
   term.write = function(data, cb) {
-    detectCursorSequencesFromOutput(term, sid, data);
+    detectCursorSequencesFromOutput(term, uid, data);
     return originalWrite(data, cb);
   };
 }
 
-function detectCursorSequencesFromOutput(term, sid, data) {
+function detectCursorSequencesFromOutput(term, uid, data) {
   const str = decodeWriteData(data);
   if (!str) return;
   // DECSCUSR: CSI Ps SP q
@@ -51,21 +51,21 @@ function detectCursorSequencesFromOutput(term, sid, data) {
   while ((m = decscusr.exec(str)) !== null) {
     const ps = m[1] === '' ? 0 : parseInt(m[1], 10);
     debug('cursor', 'DECSCUSR write sid=%s ps=%s blink=%s style=%s',
-          sid, ps, term.options.cursorBlink, term.options.cursorStyle);
+          uid, ps, term.options.cursorBlink, term.options.cursorStyle);
   }
 }
 
 // 导出光标内部状态，用于排查光标不闪烁问题。
-export function logCursorState(sid) {
-  const inst = state.termInstances[sid];
+export function logCursorState(uid) {
+  const inst = state.termInstances[uid];
   if (!inst) {
-    warn('cursor', 'logCursorState: no instance sid=%s', sid);
+    warn('cursor', 'logCursorState: no instance sid=%s', uid);
     return;
   }
   const term = inst.term;
   const core = term._core;
   const info = {
-    sid,
+    uid,
     options: {
       cursorBlink: term.options.cursorBlink,
       cursorStyle: term.options.cursorStyle,
@@ -165,12 +165,12 @@ export function logCursorState(sid) {
 }
 
 // 强制重启光标闪烁，用于测试 xterm.js 内部闪烁机制是否正常。
-export function forceCursorBlink(sid) {
-  const inst = state.termInstances[sid];
+export function forceCursorBlink(uid) {
+  const inst = state.termInstances[uid];
   if (!inst) return;
   const term = inst.term;
   debug('cursor', 'forceCursorBlink START sid=%s blink=%s style=%s',
-        sid, term.options.cursorBlink, term.options.cursorStyle);
+        uid, term.options.cursorBlink, term.options.cursorStyle);
   term.options.cursorStyle = 'bar';
   term.options.cursorInactiveStyle = 'block';
   term.options.cursorBlink = false;
@@ -179,20 +179,20 @@ export function forceCursorBlink(sid) {
     try { term.write('\x1b[?12h\x1b[5 q'); } catch (_) {}
     try { term.refresh(0, term.rows - 1); } catch (_) {}
     debug('cursor', 'forceCursorBlink DONE sid=%s blink=%s style=%s',
-          sid, term.options.cursorBlink, term.options.cursorStyle);
-    logCursorState(sid);
+          uid, term.options.cursorBlink, term.options.cursorStyle);
+    logCursorState(uid);
   }, 50);
 }
 
 // 在获得焦点/切换标签时尝试重启光标闪烁。
 // 仅对活跃会话且 cursorBlink 期望为 true 时执行，避免覆盖历史会话或应用主动关闭的闪烁。
-export function restartCursorBlinkIfNeeded(sid) {
-  const inst = state.termInstances[sid];
-  const s = state.sessions[sid];
+export function restartCursorBlinkIfNeeded(uid) {
+  const inst = state.termInstances[uid];
+  const s = state.sessions[uid];
   if (!inst || !s || s.history || !s.running) return;
   const term = inst.term;
   if (!term.options.cursorBlink) return;
-  debug('cursor', 'restartCursorBlinkIfNeeded sid=%s', sid);
+  debug('cursor', 'restartCursorBlinkIfNeeded sid=%s', uid);
   // 通过短暂关闭再开启 cursorBlink，触发 xterm.js 内部 CursorBlinkStateManager 重启。
   term.options.cursorBlink = false;
   // CSI ? 12 h: 开始闪烁光标；CSI 5 q: 闪烁竖线（bar）
@@ -200,6 +200,6 @@ export function restartCursorBlinkIfNeeded(sid) {
   requestAnimationFrame(() => {
     term.options.cursorBlink = true;
     try { term.refresh(0, term.rows - 1); } catch (_) {}
-    logCursorState(sid);
+    logCursorState(uid);
   });
 }

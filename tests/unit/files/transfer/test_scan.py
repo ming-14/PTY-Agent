@@ -5,8 +5,8 @@ import os
 import pytest
 
 from src.config.transfer import TRANSFER_MAX_FILES
-from src.transfer.common import ENTRY_DIR, ENTRY_FILE
-from src.transfer.scan import scan_tree
+from src.client.transfer.common import ENTRY_DIR, ENTRY_FILE
+from src.client.transfer.scan import scan_tree
 
 
 class TestScanTree:
@@ -53,7 +53,7 @@ class TestScanTree:
             scan_tree(str(tmp_path / "nope"))
 
     def test_max_entries_guard(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("src.transfer.scan.TRANSFER_MAX_FILES", 3)
+        monkeypatch.setattr("src.client.transfer.scan.TRANSFER_MAX_FILES", 3)
         for i in range(10):
             (tmp_path / ("f%d.txt" % i)).write_bytes(b"x")
         with pytest.raises(Exception, match="too many entries"):

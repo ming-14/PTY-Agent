@@ -20,20 +20,13 @@
  *   后端据此维护 AdaptiveLockService 锁状态并广播 size_mode_changed 通知其他客户端。
  */
 
-import {
-  state,
-  setSizeMode,
-  setFixedSize,
-  setCustomSize,
-  getSessionSizeConfigBySid,
-  isSizeUILocked,
-} from '../../domain/state.js';
+import { getSessionSizeConfigByUid } from '../../domain/state.js';
 import { TERMINAL_SIZE_PRESETS, ADAPTIVE_MIN_COLS, ADAPTIVE_MIN_ROWS } from '../../domain/constants.js';
 import { $, showToast } from '../../infrastructure/domUtils.js';
 import { getHandlerBySid } from './sessionHandlers.js';
 import { debug, info } from '../../domain/logger.js';
 import { t } from '../../domain/i18n.js';
-import { wsSend } from '../../infrastructure/wsClient.js';
+import { wsSend, sendToSession } from '../../infrastructure/wsClient.js';
 import {
   reapplyAllTerminalSizes,
   applySessionFrameRatio,
@@ -56,7 +49,7 @@ export function renderSizeDropdown() {
   const sid = state.activeTab;
   const s = sid ? state.sessions[sid] : null;
   // 当前活动会话的尺寸配置（按 uid 查询）
-  const cfg = getSessionSizeConfigBySid(sid);
+  const cfg = getSessionSizeConfigByUid(sid);
   // 是否被其他连接持有自适应锁（UI 灰显 + 接管按钮）
   const locked = isSizeUILocked(sid);
   if (locked) {
@@ -272,7 +265,7 @@ export function refreshSizeSelectorIfOpen() {
  */
 function selectMode(mode) {
   const sid = state.activeTab;
-  const prevCfg = getSessionSizeConfigBySid(sid);
+  const prevCfg = getSessionSizeConfigByUid(sid);
   info('size', 'selectMode → %s (was %s) sid=%s', mode, prevCfg.mode, sid);
 
   // 先发 set_size_mode，后端 acquire/release 锁后再发 resize
@@ -364,21 +357,21 @@ function selectCustomSize(cols, rows) {
  * @param {number} [cols] fixed/custom 模式的列数
  * @param {number} [rows] fixed/custom 模式的行数
  */
-function sendSetSizeMode(sid, mode, cols, rows) {
-  const payload = { type: 'set_size_mode', session_id: sid, mode };
+function sendSetSizeMode(uid, mode, cols, rows) {
+  const payload = { type: 'set_size_mode', mode };
   if (cols != null) payload.cols = cols;
   if (rows != null) payload.rows = rows;
-  wsSend(payload);
+  sendToSession(uid, payload);
 }
 
 /**
  * 请求接管尺寸控制权。
  * 后端清空自适应锁（旧持有者降级），返回 takeover_ack 后用户再选新模式。
- * @param {string} sid 会话 id
+ * @param {string} uid 会话 uid
  */
-function requestTakeover(sid) {
-  info('size', 'requestTakeover sid=%s', sid);
-  wsSend({ type: 'takeover_size_control', session_id: sid });
+function requestTakeover(uid) {
+  info('size', 'requestTakeover uid=%s', uid);
+  sendToSession(uid, { type: 'takeover_size_control' });
 }
 
 /**
@@ -395,7 +388,7 @@ function requestTakeover(sid) {
 export function getSizeStatusText(s) {
   if (!s) return '';
   const sid = s.id;
-  const cfg = getSessionSizeConfigBySid(sid);
+  const cfg = getSessionSizeConfigByUid(sid);
   // 历史会话固定显示生前最后尺寸（不带模式标签，因为已禁用模式切换）
   if (s.history) {
     return (s.cols || '?') + 'x' + (s.rows || '?');
@@ -423,7 +416,7 @@ export function updateSizeStatusDisplay() {
   const sizeEl = $('status-size');
   if (!sizeEl) return;
 
-  const cfg = getSessionSizeConfigBySid(sid);
+  const cfg = getSessionSizeConfigByUid(sid);
   sizeEl.style.display = 'flex';
   sizeEl.textContent = getSizeStatusText(s);
   // 仅自适应模式高亮（蓝色 + "(自适应)" 标签提示正在自适应）；

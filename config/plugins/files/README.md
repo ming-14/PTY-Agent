@@ -20,7 +20,7 @@
 config/plugins/files/
   __init__.py       # plugin 导出（loader 入口）
   files_plugin.py   # FilesPlugin(声明 + handle_message 分发)
-  config.py files.toml  # 插件配置（业务参数自包含）
+  plugin.json config.schema.json  # 清单 + 配置 schema
   errors.py paths.py state.py history.py diff.py permission.py  # 公共模块
   read/             # file read 用例（reader.py + 聚合导出）
   write/            # file write / edit 用例（writer.py + 聚合导出）
@@ -30,17 +30,14 @@ config/plugins/files/
 
 - 路径基准:按 `cwd_session` 的会话 cwd 解析(不操作该会话)
 - 共享状态:进程级单例持有 `FileRecordStore`(read-before-write)、`TransferMap`(SQLite 传输映射)、`FileHistoryStore`(版本链)
-- 配置:本插件 `files.toml`(业务参数:读/写/搜索限制、忽略清单、rg 位置);传输协议参数(`TRANSFER_*`)是 daemon-CLI 通信契约,由核心 `src/config/transfer.py` 提供
+- 配置:本插件 `plugin.json` config.defaults + `config.yaml`（可选的 `config.schema.json` 校验）；传输协议参数(`TRANSFER_*`)是 daemon-CLI 通信契约,由核心 `src/config/transfer.py` 提供
 - 依赖:核心 `src/config`(common/transfer)、`src/protocol`(帧编解码)、`src/transfer`(扫描/错误定义/CLI 驱动)
 
 ## 声明
 
-```python
-class FilesPlugin(Plugin):
-    triggers = []            # 进程级:不参与会话挂载
-    message_types = [...]    # 接管的消息类型
-    needs_io = True          # upload/download 多帧协议
-```
+见 `plugin.json`：kind=process，messageTypes 接管 7 种 file_* 消息类型，
+needsIO=true（upload/download 多帧协议），权限/配置默认值/钩子声明均含。
+配置经 `config.schema.json` 校验，运行参数由 `files_plugin.py on_init` 注入 `settings` 模块。
 
 ## 测试
 

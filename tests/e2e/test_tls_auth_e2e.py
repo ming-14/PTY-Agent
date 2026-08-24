@@ -354,7 +354,7 @@ def tls_env(tmp_path, config_reloader):
         Raises:
             RuntimeError: daemon 6 秒内未就绪
         """
-        from src.daemonctl import start_daemon
+        from src.client.daemonctl import start_daemon
         start_daemon()
 
         import socket as _socket
@@ -385,7 +385,7 @@ def tls_env(tmp_path, config_reloader):
         不依赖 stop_daemon() 的 TLS 路由（TOFU mismatch 时 TLS stop 会失败）。
         通过互斥锁定位 PID 并 force-kill，兼容所有模式。
         """
-        from src.daemonctl import is_running, _stop_daemon_force, _cleanup_credentials
+        from src.client.daemonctl import is_running, _stop_daemon_force, _cleanup_credentials
         if is_running():
             _stop_daemon_force()
             for _ in range(30):
@@ -612,7 +612,7 @@ class TestCrossMachineStop:
             f"stop 应成功: stdout={result_stop.stdout!r} stderr={result_stop.stderr!r}"
 
         # 验证 daemon 已停止
-        from src.daemonctl import is_running
+        from src.client.daemonctl import is_running
         for _ in range(30):
             if not is_running():
                 break
@@ -654,7 +654,7 @@ class TestNoSingleInstance:
         tls_env.start()
 
         # 无锁模式：互斥锁不存在，但 daemon 经 TLS 正常服务
-        from src.daemonctl import is_running
+        from src.client.daemonctl import is_running
         assert is_running() is False, "SINGLE_INSTANCE=false 时不应存在互斥锁"
         result = tls_env.run_cli("list")
         _assert_auth_passed(result)

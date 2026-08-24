@@ -180,7 +180,7 @@ def workflow_env(tmp_path, config_reloader):
     避免测试临时配置泄漏到工作区。
     """
     # import 提前：若配置/环境本身有问题，在覆写任何文件之前就失败
-    from src.daemonctl import is_running, start_daemon, stop_daemon
+    from src.client.daemonctl import is_running, start_daemon, stop_daemon
 
     backup_common = _cfg_path("common.toml").read_bytes()
     backup_daemon = _cfg_path("daemon", "daemon.toml").read_bytes()

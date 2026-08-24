@@ -1,0 +1,28 @@
+{
+  "id": "ai",
+  "version": "2.0.0",
+  "kind": "cli",
+  "description": "CLI 侧 AI 二次分析：响应输出交给 aichat 分析并覆盖 outputStream",
+  "commands": [
+    "exec",
+    "send",
+    "read",
+    "mouse"
+  ],
+  "hooks": {
+    "transform_response": {}
+  },
+  "permissions": {
+    "required": [
+      "filesystem.write",
+      "filesystem.execute",
+      "network.connect"
+    ]
+  },
+  "config": {
+    "defaults": {
+      "prompt": "全面分析该内容，只按内容说话，不给出下一步，不提建议",
+      "timeout": 120
+    }
+  }
+}

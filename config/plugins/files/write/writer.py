@@ -23,7 +23,7 @@ import logging
 import os
 from typing import Optional
 
-from config.plugins.files.config import MAX_CONTENT_LEN
+from config.plugins.files.settings import settings
 from config.plugins.files.diff import generate_diff
 from config.plugins.files.errors import FileToolError, FileReadRequiredError, FilePermissionDeniedError
 from config.plugins.files.history import FileHistoryStore
@@ -46,10 +46,10 @@ class WriteResult:
 
 
 def _check_content_size(content: str) -> None:
-    if len(content) > MAX_CONTENT_LEN:
+    if len(content) > settings.max_content_len:
         raise FileToolError(
             "Content is too large (%d bytes). Maximum size is %d bytes"
-            % (len(content), MAX_CONTENT_LEN)
+            % (len(content), settings.max_content_len)
         )
 
 

@@ -1,9 +1,9 @@
 """ai 插件 —— CLI 侧 AI 二次分析（自包含）
 
-kind=cli：在客户端进程内执行（daemon 不加载），依赖同目录 common.py 桥接
-（run_aichat_capture，自动剥离 ANSI/thinking，失败回退）。本目录为 aichat 自包含资产：
-common.py / config_manager.py / talk.py / _finderror.py / bin/aichat.exe /
-config/config.yaml（主程序 src/ 无任何 aichat 引用）。
+kind=cli（见同目录 plugin.json）：在客户端进程内执行（daemon 不加载），依赖
+同目录 common.py 桥接（run_aichat_capture，自动剥离 ANSI/thinking，失败回退）。
+本目录为 aichat 自包含资产：common.py / config_manager.py / talk.py /
+_finderror.py / bin/aichat.exe / config/config.yaml（主程序 src/ 无任何 aichat 引用）。
 
 启用：kind=cli，经 exec `--plugin ai` 挂载到会话；挂载后对 exec/send/read/mouse
 响应自动回调（宿主按钩子派发，无启用/禁用概念）。钩子：
@@ -17,6 +17,8 @@ config/config.yaml（主程序 src/ 无任何 aichat 引用）。
   跳过重复写入，保持"-o 文件=原始渲染、stdout=AI 输出"的语义
 
 会话记忆：resp.uid 作为 aichat --session 名，按会话 uid 续聊。
+配置：prompt/timeout 经插件配置（plugin.json 默认 + config.yaml +
+环境变量 PTY_PLUGIN_AI_PROMPT/PTY_PLUGIN_AI_TIMEOUT 覆盖）。
 失败处理：aichat 非零/超时/空输出/异常均回退原始 response 并追加 warning。
 """
 
@@ -29,9 +31,9 @@ from src.plugins.base import Plugin
 
 _logger = logging.getLogger("pty-client")
 
-# 默认分析提示词（可用环境变量 PTY_AI_PROMPT 覆盖）
+# 默认分析提示词（插件配置 prompt 缺省值）
 DEFAULT_PROMPT = "全面分析该内容，只按内容说话，不给出下一步，不提建议"
-# aichat 调用超时秒数（可用环境变量 PTY_AI_TIMEOUT 覆盖）
+# aichat 调用超时秒数（插件配置 timeout 缺省值）
 DEFAULT_TIMEOUT = 120
 
 # 同目录 common.py 桥接模块（bin/aichat.exe 配套脚本，随插件整体迁入）
@@ -55,12 +57,7 @@ def _load_aichat():
 
 
 class AiPlugin(Plugin):
-    name = "ai"
-    version = "1.0"
-    description = "CLI 侧 AI 二次分析：响应输出交给 aichat 分析并覆盖 outputStream"
-    kind = "cli"
-    commands = ["exec", "send", "read", "mouse"]
-    triggers = []
+    """CLI 侧 AI 二次分析插件（元信息见同目录 plugin.json）"""
 
     def transform_response(self, ctx, resp: dict):
         # 仅处理命令成功结果且含输出文本
@@ -73,10 +70,14 @@ class AiPlugin(Plugin):
         if not text.strip():
             return None
 
-        prompt = os.environ.get("PTY_AI_PROMPT", DEFAULT_PROMPT)
+        if ctx.config is not None:
+            prompt = ctx.config.get("prompt", DEFAULT_PROMPT)
+            timeout = ctx.config.get("timeout", DEFAULT_TIMEOUT)
+        else:
+            prompt, timeout = DEFAULT_PROMPT, DEFAULT_TIMEOUT
         try:
-            timeout = int(os.environ.get("PTY_AI_TIMEOUT", DEFAULT_TIMEOUT))
-        except ValueError:
+            timeout = int(timeout)
+        except (TypeError, ValueError):
             timeout = DEFAULT_TIMEOUT
 
         uid = resp.get("uid")

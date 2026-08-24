@@ -2,13 +2,14 @@ import traceback
 
 from ...protocol.message import Message
 from ...protocol.response import Response
-from ..execution import (
+from ...execution import (
     _run_snapshot_flow,
     _run_subprocess_no_trigger_flow,
     _run_subprocess_trigger_flow,
 )
-from .base import DaemonHandler, HandlerContext
-from .utils import (
+from .base import DaemonHandler
+from ...execution.context import HandlerContext
+from ...execution.utils import (
     apply_client_defaults,
     check_ended_session,
     validate_request,
@@ -69,7 +70,7 @@ class SendHandler(DaemonHandler):
 
     def _handle_send_flow(self, ctx, conn, session, msg):
         """send 会话处理主体（已持有 session.hold）"""
-        from ..conditions import RequestContext
+        from ...execution.conditions import RequestContext
 
         if not apply_client_defaults(session, msg, conn):
             return
@@ -104,7 +105,7 @@ class SendHandler(DaemonHandler):
 
         # 转义展开由守护进程统一完成（按会话模式决定 {enter}/默认行尾符）：
         # pty={enter}→\r, subprocess={enter}→\n；CLI 只透传原始 input + 转义开关 + 显式 eol
-        from .utils import prepare_input
+        from ...execution.utils import prepare_input
 
         # 转义解析失败（如不可识别的 {body} 控制序列）应返回明确错误而非内部 500
         try:

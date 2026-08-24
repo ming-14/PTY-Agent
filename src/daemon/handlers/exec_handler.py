@@ -4,16 +4,41 @@ from typing import Optional
 
 from ...protocol.message import Message
 from ...protocol.response import Response
-from ..execution import (
+from ...execution import (
     _run_snapshot_flow,
     _run_subprocess_no_trigger_flow,
     _run_subprocess_trigger_flow,
 )
-from .base import DaemonHandler, HandlerContext
-from .utils import apply_client_defaults
+from .base import DaemonHandler
+from ...execution.context import HandlerContext
+from ...execution.utils import apply_client_defaults
 from ...logging import get_logger
 
 _logger = get_logger("pty-daemon")
+
+
+def _wrap_with_shell(command, shell: Optional[str]):
+    """用指定 shell 包装命令（exec --shell / set-default shell）
+
+    命令为原始字符串时原样传给 shell（操作符/引号由 shell 按语义解析）；
+    参数列表时按目标 shell 引号规则重组（见 common/shells.wrap_command）。
+    shell 不支持或 PATH 不可用时抛 ValueError。
+
+    Args:
+        command: 命令（List[str] 或 str）。
+        shell:   shell 名称；None 时不包装。
+
+    Returns:
+        原命令或包装后的命令列表。
+
+    Raises:
+        ValueError: shell 不支持或 PATH 中找不到。
+    """
+    if not shell:
+        return command
+    from ...common.shells import wrap_command
+
+    return wrap_command(command, shell)
 
 
 class ExecHandler(DaemonHandler):
@@ -23,11 +48,11 @@ class ExecHandler(DaemonHandler):
             MAX_PATTERN_LEN,
             MAX_SESSION_ID_LEN,
         )
-        from ..response import (
+        from ...execution.response import (
             GIT_BASH_PATH_HINT,
             has_git_bash_style_path,
         )
-        from .utils import (
+        from ...execution.utils import (
             check_ended_session,
             validate_request,
             validate_trigger_regex,
@@ -97,6 +122,9 @@ class ExecHandler(DaemonHandler):
                 _logger.info("自动注入插件命中 (sid=%r): %s", session_id, auto)
             merged = auto + [p for p in plugins if p not in auto]
             try:
+                # shell 包装：--shell/set-default shell 指定时先包装命令再创建会话
+                # （找不到/不支持 shell 时抛 ValueError，由下方统一报错）
+                command = _wrap_with_shell(command, msg.get("shell"))
                 session = ctx.manager.create_session(
                     session_id,
                     command,
@@ -137,7 +165,7 @@ class ExecHandler(DaemonHandler):
 
     def _handle_exec_flow(self, ctx, conn, session, msg, existing):
         """exec 会话处理主体（已持有 session.hold）"""
-        from ..conditions import RequestContext
+        from ...execution.conditions import RequestContext
 
         if not apply_client_defaults(session, msg, conn):
             return

@@ -217,13 +217,19 @@ class TestKeygenCliE2E:
         assert private_key_path.replace("\\", "/").endswith(".pty-agent/keys/id_ed25519"), \
             f"私钥路径错误: {private_key_path}"
 
-    def test_cli_stderr_contains_authorized_keys_hint(self, tmp_path):
-        """CLI stderr 应包含把公钥追加到 authorized_keys 的提示"""
+    def test_cli_output_contains_authorized_keys_hint(self, tmp_path):
+        """CLI stdout 应包含把公钥追加到服务端 authorized_keys 的提示
+
+        服务端路径未知（daemon 可能跨机），必须用 ~ 相对形式而非本机绝对路径。
+        """
         key_dir = str(tmp_path / "keys")
         result = _run_keygen_cli("--key-dir", key_dir)
         assert result.returncode == 0
-        assert "authorized_keys" in result.stderr, f"stderr 应含 authorized_keys 提示: {result.stderr!r}"
-        assert "公钥已生成" in result.stderr
+        assert "authorized_keys" in result.stdout, \
+            f"stdout 应含 authorized_keys 提示: {result.stdout!r}"
+        assert "公钥已生成" in result.stdout
+        server_path = os.path.join("~", ".pty-agent", "authorized_keys")
+        assert server_path in result.stdout, f"stdout 应含服务端 ~ 路径: {result.stdout!r}"
 
 
 @pytest.mark.skipif(_SSH_KEYGEN is None, reason="系统未安装 ssh-keygen，跳过互操作测试")

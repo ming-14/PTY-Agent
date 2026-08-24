@@ -3,7 +3,7 @@
 import time
 import pytest
 
-from src.output.trigger import TriggerMatcher, safe_regex_search
+from src.session.trigger_matcher import TriggerMatcher, safe_regex_search
 
 
 class _MockOutputBuffer:
@@ -36,7 +36,7 @@ def _decode_utf8(data):
 
 def _decode_utf8_len(data):
     """与 EncodingDetector.decode_only_len 等价：截尾后返回消费字节数"""
-    from src.encoding.codec import decode_strip_tail_len
+    from src.session.codec import decode_strip_tail_len
 
     return decode_strip_tail_len(data, "utf-8")
 

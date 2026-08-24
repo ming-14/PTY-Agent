@@ -6,7 +6,7 @@
 原因：ScreenshareAdapter 会将 src/ 加入 sys.path 并以顶级包形式导入
 `web.streamers.manager`，此时 `web` 是顶级包，本文件中任何相对导入
 （如 `from .domain import`）都会以 `web` 为基准解析；但深层模块
-（如 application/handlers.py 的 `from ...config import`）会超出顶级包
+（如 application/handlers/base.py 的 `from ...config import`）会超出顶级包
 边界触发 ImportError。因此这里保持为空，所有使用方直接从子模块导入：
   - WebServer     → from src.web.presentation.server import WebServer
   - HistoryStore  → from src.web.infrastructure.repositories.history_store import HistoryStore

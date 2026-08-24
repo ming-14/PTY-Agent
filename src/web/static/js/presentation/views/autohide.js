@@ -60,8 +60,8 @@ function _getActiveToolbarId() {
  * - VNC/其他：不参与自动隐藏，返回 false
  */
 function _isContentFocused() {
-  const sid = state.activeTab;
-  const session = state.sessions[sid];
+  const uid = state.activeTab;
+  const session = state.sessions[uid];
   if (!session) return false;
   const type = session.type;
   const active = document.activeElement;
@@ -92,8 +92,8 @@ function _shouldAutoHide() {
   if (!document.fullscreenElement || !state.sidebarCollapsed) return false;
   // 新增条件：画面区域必须获得焦点
   if (!_contentFocused) return false;
-  const sid = state.activeTab;
-  const session = state.sessions[sid];
+  const uid = state.activeTab;
+  const session = state.sessions[uid];
   if (!session) return false;
   const type = session.type;
 

@@ -1,9 +1,7 @@
 """WebSocket 连接上下文实现。
 
-支持多会话同时订阅。
-- 每个会话有独立的 output/end/event 回调
-- 切换标签不再 unsubscribe 旧会话，所有订阅会话的输出持续推送
-- 前端根据 ws 消息的 sessionId 字段路由到对应 xterm 实例
+支持多会话同时订阅，所有内部状态按会话 uid 索引（sid 仅作展示名，
+不参与路由/回调/锁的键控，避免同名 sid 复用引起的串扰）。
 
 增加 _client_uid 字段，标识 web 客户端（localStorage 持久化）。
 自适应锁以 client_uid 为持有者标识，刷新后 uid 不变，锁可恢复/继承。
@@ -17,80 +15,75 @@ from ...application.ports import ConnectionContext
 class WebSocketConnectionContext(ConnectionContext):
     """承载单个 WebSocket 连接的会话订阅与解码器状态。
 
-    支持多订阅：
-    - _subscribed_session_ids: 所有订阅的会话 ID 集合
-    - _callbacks_by_sid: 按 session_id 隔离的回调字典 {sid: {"output": cb, "end": cb, "event": cb}}
-
-    _client_uid 标识 web 客户端，由 server.py 从 WS URL query 注入。
+    支持多订阅：所有状态按 uid 索引。
     """
 
     def __init__(self, client_uid: Optional[str] = None):
-        self._subscribed_session_ids: set = set()
-        self._decoders: dict[str, Any] = {}
-        self._callbacks_by_sid: dict[str, dict] = {}
-        # 本连接持有（acquire_hold）的会话：sid → Session 引用。
-        # 会话结束被移出仓库后仍须据此释放持有，故引用保存在连接侧。
-        self._held_sessions: dict[str, Any] = {}
+        # 按 uid 索引的订阅集合、解码器、回调、持有会话
+        self._subscribed_uids: set[str] = set()
+        self._decoders_by_uid: dict[str, Any] = {}
+        self._callbacks_by_uid: dict[str, dict] = {}
+        self._held_by_uid: dict[str, Any] = {}
         # web 客户端 uid（localStorage 持久化，刷新后不变）
         self._client_uid: Optional[str] = client_uid
 
     @property
     def subscribed_session_ids(self) -> set:
-        """返回所有订阅的会话 ID 集合的副本。"""
-        return set(self._subscribed_session_ids)
+        """返回所有订阅的会话 uid 集合的副本。"""
+        return set(self._subscribed_uids)
 
-    def add_subscription(self, session_id: str) -> None:
-        """添加一个会话订阅。"""
-        self._subscribed_session_ids.add(session_id)
-        if session_id not in self._callbacks_by_sid:
-            self._callbacks_by_sid[session_id] = {}
+    def add_subscription(self, session_uid: str) -> None:
+        """添加一个会话订阅（按 uid）。"""
+        self._subscribed_uids.add(session_uid)
+        if session_uid not in self._callbacks_by_uid:
+            self._callbacks_by_uid[session_uid] = {}
 
-    def remove_subscription(self, session_id: str) -> None:
-        """移除一个会话订阅。"""
-        self._subscribed_session_ids.discard(session_id)
-        self._callbacks_by_sid.pop(session_id, None)
+    def remove_subscription(self, session_uid: str) -> None:
+        """移除一个会话订阅（按 uid）。"""
+        self._subscribed_uids.discard(session_uid)
+        self._callbacks_by_uid.pop(session_uid, None)
 
-    def get_decoder(self, session_id: str) -> Optional[Any]:
-        return self._decoders.get(session_id)
+    def get_decoder(self, session_uid: str) -> Optional[Any]:
+        return self._decoders_by_uid.get(session_uid)
 
-    def set_decoder(self, session_id: str, decoder: Any) -> None:
-        self._decoders[session_id] = decoder
+    def set_decoder(self, session_uid: str, decoder: Any) -> None:
+        self._decoders_by_uid[session_uid] = decoder
 
-    def remove_decoder(self, session_id: str) -> None:
-        self._decoders.pop(session_id, None)
+    def remove_decoder(self, session_uid: str) -> None:
+        self._decoders_by_uid.pop(session_uid, None)
 
-    def get_callbacks(self, session_id: str) -> dict:
-        """按 session_id 隔离回调。"""
-        return self._callbacks_by_sid.get(session_id, {})
+    def get_callbacks(self, session_uid: str) -> dict:
+        """按 uid 隔离回调。"""
+        return self._callbacks_by_uid.get(session_uid, {})
 
-    def set_callbacks(self, session_id: str, callbacks: dict) -> None:
-        """设置指定会话的回调字典。"""
-        self._callbacks_by_sid[session_id] = callbacks
+    def set_callbacks(self, session_uid: str, callbacks: dict) -> None:
+        """设置指定会话的回调字典（按 uid）。"""
+        self._callbacks_by_uid[session_uid] = callbacks
 
-    def clear_callbacks(self, session_id: Optional[str] = None) -> None:
+    def clear_callbacks(self, session_uid: Optional[str] = None) -> None:
         """清除回调。
 
-        - 传入 session_id：只清除该会话的回调
+        - 传入 uid：只清除该会话的回调
         - 传入 None：清除所有会话的回调
         """
-        if session_id:
-            self._callbacks_by_sid.pop(session_id, None)
+        if session_uid:
+            self._callbacks_by_uid.pop(session_uid, None)
         else:
-            self._callbacks_by_sid.clear()
+            self._callbacks_by_uid.clear()
 
     def clear_all_subscriptions(self) -> None:
         """清除所有订阅和回调（连接关闭场景）。"""
-        self._subscribed_session_ids.clear()
-        self._callbacks_by_sid.clear()
-        self._held_sessions.clear()
+        self._subscribed_uids.clear()
+        self._callbacks_by_uid.clear()
+        self._held_by_uid.clear()
 
-    def add_held_session(self, session_id: str, session: Any) -> None:
-        """记录本连接对某会话的持有（见 ConnectionContext 抽象说明）。"""
-        self._held_sessions[session_id] = session
+    def add_held_session(self, session_uid: str, session: Any) -> None:
+        """记录本连接对某会话的持有（按 uid）。"""
+        self._held_by_uid[session_uid] = session
 
-    def pop_held_session(self, session_id: str) -> Optional[Any]:
+    def pop_held_session(self, session_uid: str) -> Optional[Any]:
         """取出并移除本连接对某会话的持有（未持有过返回 None）。"""
-        return self._held_sessions.pop(session_id, None)
+        return self._held_by_uid.pop(session_uid, None)
 
     # ── web 客户端 uid ──────────────────────────────────────────
 
@@ -100,5 +93,4 @@ class WebSocketConnectionContext(ConnectionContext):
         return self._client_uid
 
     def set_client_uid(self, uid: Optional[str]) -> None:
-        """设置本连接的 web 客户端 uid（由 server.py 从 WS URL query 注入）。"""
         self._client_uid = uid

@@ -1,7 +1,7 @@
 """file read 用例 —— 读取文件内容并输出（带行号）
 
-- 单文件大小上限 MAX_READ_SIZE；默认读取 DEFAULT_READ_LIMIT 行
-- 超长行截断显示（MAX_LINE_LENGTH）；图片扩展名识别
+- 单文件大小上限 settings.max_read_size；默认读取 settings.default_read_limit 行
+- 超长行截断显示（settings.max_line_length）；图片扩展名识别
 - 文件不存在时提供同目录相似名建议（包含/被包含匹配，最多 3 条）
 - 成功读取后由命令处理层调用 FileRecordStore.record_read 刷新状态机
 """
@@ -11,7 +11,7 @@ import logging
 import os
 from typing import List, Optional
 
-from config.plugins.files.config import MAX_READ_SIZE, DEFAULT_READ_LIMIT, MAX_LINE_LENGTH
+from config.plugins.files.settings import settings
 from config.plugins.files.errors import FileToolError
 
 _logger = logging.getLogger("pty-daemon")
@@ -61,7 +61,7 @@ def read_file(path: str, offset: int = 0, limit: int = 0) -> ReadResult:
     Args:
         path: 绝对路径（命令处理层已解析）
         offset: 起始行（0-based）；负值视为 0
-        limit: 读取行数；<=0 使用 DEFAULT_READ_LIMIT
+        limit: 读取行数；<=0 使用配置默认行数
 
     Raises:
         FileToolError: 图片/过大/非 UTF-8 等业务错误
@@ -74,16 +74,16 @@ def read_file(path: str, offset: int = 0, limit: int = 0) -> ReadResult:
     file_info = os.stat(path)  # FileNotFoundError/OSError 直接上抛
     if os.path.isdir(path):
         raise FileToolError("Path is a directory, not a file: %s" % path)
-    if file_info.st_size > MAX_READ_SIZE:
+    if file_info.st_size > settings.max_read_size:
         raise FileToolError(
             "File is too large (%d bytes). Maximum size is %d bytes"
-            % (file_info.st_size, MAX_READ_SIZE)
+            % (file_info.st_size, settings.max_read_size)
         )
 
     if offset < 0:
         offset = 0
     if limit <= 0:
-        limit = DEFAULT_READ_LIMIT
+        limit = settings.default_read_limit
 
     with open(path, "r", encoding="utf-8") as f:
         lines = f.readlines()
@@ -103,8 +103,8 @@ def _format_lines(lines: List[str], start_line: int) -> str:
     formatted = []
     for i, line in enumerate(lines):
         line = line.rstrip("\n").rstrip("\r")
-        if len(line) > MAX_LINE_LENGTH:
-            line = line[:MAX_LINE_LENGTH] + "..."
+        if len(line) > settings.max_line_length:
+            line = line[:settings.max_line_length] + "..."
         num = i + start_line
         if num >= 100000:
             line_num = "%d|" % num

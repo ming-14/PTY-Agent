@@ -5,14 +5,14 @@
  * 依赖领域状态、基础设施的 DOM/传输/终端适配器。
  */
 
-import { state, saveTabState, getSessionSizeConfigBySid } from '../../domain/state.js';
+import { state, saveTabState, getSessionSizeConfigByUid } from '../../domain/state.js';
 import { escHtml, escAttr } from '../../domain/formatters.js';
 import { t } from '../../domain/i18n.js';
 import { ICON_CLOSE } from '../../domain/constants.js';
 import { $, showConfirm, hideConfirm } from '../../infrastructure/domUtils.js';
 import { getHandlerBySid, removeTabAndSelectNext } from './sessionHandlers.js';
 import { updateAutoHide } from './autohide.js';
-import { wsSend } from '../../infrastructure/wsClient.js';
+import { wsSend, sendToSession } from '../../infrastructure/wsClient.js';
 import {
   ensureTerminal,
   applyTerminalSize,
@@ -34,16 +34,16 @@ import './fastscreen.js';
 import './vnc.js';
 import './settings.js';
 
-export function updateStatusInfo(sid) {
-  const s = state.sessions[sid];
+export function updateStatusInfo(uid) {
+  const s = state.sessions[uid];
   if (!s) return;
   // 非终端 tab（设置/VNC/FastScreen）不显示终端状态项（status-pty/status-size），
   // 它们的 switchTo*Frame 已负责隐藏；此处避免 WebSocket 消息回调（如会话列表更新）
   // 通过 updateStatusInfo(state.activeTab) 重新显示，覆盖隐藏设置
-  if (getHandlerBySid(sid)) return;
+  if (getHandlerBySid(uid)) return;
   const ptyEl = $('status-pty');
   const sizeEl = $('status-size');
-  if (state.activeTab !== sid) return;
+  if (state.activeTab !== uid) return;
   ptyEl.style.display = 'flex';
   ptyEl.textContent = formatPtyLabel(s);
   // 子进程模式无终端尺寸/重绘概念，隐藏尺寸状态，disable 重设尺寸
@@ -54,7 +54,7 @@ export function updateStatusInfo(sid) {
     sizeEl.textContent = getSizeStatusText(s);
     // 仅自适应模式高亮（蓝色 + "(自适应)" 标签提示正在自适应）；
     // 退出自适应后（fixed/custom/default）不高亮，避免蓝色文字干扰
-    const cfg = getSessionSizeConfigBySid(sid);
+    const cfg = getSessionSizeConfigByUid(uid);
     sizeEl.classList.toggle('size-active', !s.history && cfg.mode === 'adaptive');
   }
 }
@@ -298,13 +298,13 @@ export function openSessionInTab(sid) {
   if (state.sessions[sid].history) {
     // 历史会话：请求回放数据（每次切回都重新请求，确保内容新鲜）
     debug('session', 'openSessionInTab: request history_detail sid=%s', sid);
-    wsSend({ type: 'history_detail', session_id: sid });
+    sendToSession(sid, { type: 'history_detail' });
   } else if (state.sessions[sid].running) {
     // 活跃会话：必须重新订阅
     // （后端每个 WS 连接只维护一个订阅，切到其他会话后本会话订阅即失效）
     debug('session', 'openSessionInTab: subscribe sid=%s', sid);
     state.sessions[sid].subscribed = false;
-    wsSend({ type: 'subscribe', session_id: sid });
+    sendToSession(sid, { type: 'subscribe' });
   } else {
     // 已结束但未进入历史：无需请求
     state.pendingSwitch = null;
@@ -343,7 +343,7 @@ export function closeTab(sid) {
   const s = state.sessions[sid];
   if (!s) return;
   debug('session', 'closeTab sid=%s history=%s running=%s subscribed=%s', sid, s.history, s.running, s.subscribed);
-  wsSend({ type: 'unsubscribe', session_id: sid });
+  sendToSession(sid, { type: 'unsubscribe' });
 
   // 关闭标签时：活跃会话保留在左侧边栏，仅取消订阅并移除标签；历史/已结束会话从状态移除
   if (s.history || !s.running) {
@@ -383,9 +383,9 @@ export function closeTab(sid) {
         debug('session', 'closeTab: dispose stale history terminal next=%s', nextTab);
         disposeTerminal(nextTab);
       }
-      wsSend({ type: 'history_detail', session_id: nextTab });
+      sendToSession(nextTab, { type: 'history_detail' });
     } else if (ns && !ns.subscribed && ns.running) {
-      wsSend({ type: 'subscribe', session_id: nextTab });
+      sendToSession(nextTab, { type: 'subscribe' });
     } else {
       state.pendingSwitch = null;
       switchTab(nextTab);
@@ -400,7 +400,7 @@ export function killSession(sid) {
   if (!s) return;
   s.closing = true;
   info('session', 'killSession sid=%s (closing=true, send kill)', sid);
-  wsSend({ type: 'kill', session_id: sid });
+  sendToSession(sid, { type: 'kill' });
 }
 
 export function removeSessionTab(sid, render) {
@@ -456,9 +456,9 @@ export function removeSessionTab(sid, render) {
         debug('session', 'removeSessionTab: dispose stale history terminal next=%s', nextTab);
         disposeTerminal(nextTab);
       }
-      wsSend({ type: 'history_detail', session_id: nextTab });
+      sendToSession(nextTab, { type: 'history_detail' });
     } else if (ns && !ns.subscribed && ns.running) {
-      wsSend({ type: 'subscribe', session_id: nextTab });
+      sendToSession(nextTab, { type: 'subscribe' });
     } else {
       state.pendingSwitch = null;
       switchTab(nextTab);
@@ -477,63 +477,63 @@ export function removeSessionTab(sid, render) {
 export function renderTabs() {
   const scroll = $('tab-scroll');
   scroll.innerHTML = '';
-  state.tabOrder.forEach(sid => {
+  state.tabOrder.forEach(key => {
     // 统一 handler 分发：VNC/FastScreen 等特殊会话通过 handler 构建 tab 元素
-    // 消除原 if (sid === VNC_TAB_ID/FASTSCREEN_TAB_ID) 特判分支
-    const handler = getHandlerBySid(sid);
+    // 消除原 if (key === VNC_TAB_ID/FASTSCREEN_TAB_ID) 特判分支
+    const handler = getHandlerBySid(key);
     if (handler) {
-      const tab = handler.buildTab(sid);
+      const tab = handler.buildTab(key);
       if (tab) scroll.appendChild(tab);
       return;
     }
-    const s = state.sessions[sid];
+    const s = state.sessions[key];
     if (!s) return;
     const tab = document.createElement('div');
-    tab.className = 'tab' + (state.activeTab === sid ? ' active' : '');
+    tab.className = 'tab' + (state.activeTab === key ? ' active' : '');
     tab.innerHTML =
       '<span class="tab-icon ' + (s.running ? 'running' : 'ended') + '"></span>' +
       '<span class="tab-title" title="' + escHtml(s.command || s.id) + '">' + escHtml(s.id) +
       modeBadge(s) + '</span>' +
-      '<span class="tab-close" data-sid="' + escHtml(s.id) + '" title="' + t('common.closeTab') + '">' + ICON_CLOSE + '</span>';
+      '<span class="tab-close" data-uid="' + escHtml(key) + '" title="' + t('common.closeTab') + '">' + ICON_CLOSE + '</span>';
     tab.onclick = e => {
       if (e.target.closest('.tab-close')) return;
-      openSessionInTab(s.id);
+      openSessionInTab(key);
     };
     tab.oncontextmenu = e => {
       e.preventDefault();
-      showContextMenu(e, s.id, 'tab');
+      showContextMenu(e, key, 'tab');
     };
     const closeBtn = tab.querySelector('.tab-close');
     closeBtn.onclick = e => {
       e.stopPropagation();
-      closeTab(closeBtn.dataset.sid);
+      closeTab(closeBtn.dataset.uid);
     };
     scroll.appendChild(tab);
   });
 }
 
-export function renderSidebar(animateSid) {
+export function renderSidebar(animateKey) {
   const activeList = $('sidebar-active');
   const historyList = $('sidebar-history');
 
   const oldItems = Array.from(document.querySelectorAll('.sidebar-item'));
   const oldRects = new Map();
-  oldItems.forEach(el => oldRects.set(el.dataset.sid, el.getBoundingClientRect()));
+  oldItems.forEach(el => oldRects.set(el.dataset.uid, el.getBoundingClientRect()));
 
   activeList.innerHTML = '';
   historyList.innerHTML = '';
 
   // 排除 handler 会话（FastScreen/VNC）：它们通过标签栏入口操作，不进入侧边栏列表
-  Object.values(state.sessions)
-    .filter(s => !s.history && s.running && !getHandlerBySid(s.id))
-    .forEach(s => activeList.appendChild(buildSidebarItem(s)));
+  Object.entries(state.sessions)
+    .filter(([key, s]) => !s.history && s.running && !getHandlerBySid(key))
+    .forEach(([key, s]) => activeList.appendChild(buildSidebarItem(s, key)));
 
-  const histSessions = Object.values(state.history).sort((a, b) => (b.endTime || 0) - (a.endTime || 0));
-  histSessions.forEach(h => historyList.appendChild(buildSidebarItem({ ...h, history: true })));
+  const histEntries = Object.entries(state.history).sort((a, b) => (b[1].endTime || 0) - (a[1].endTime || 0));
+  histEntries.forEach(([key, h]) => historyList.appendChild(buildSidebarItem({ ...h, history: true }, key)));
 
-  if (animateSid) {
-    const oldRect = oldRects.get(animateSid);
-    const newEl = document.querySelector('.sidebar-item[data-sid="' + escAttr(animateSid) + '"]');
+  if (animateKey) {
+    const oldRect = oldRects.get(animateKey);
+    const newEl = document.querySelector('.sidebar-item[data-uid="' + escAttr(animateKey) + '"]');
     if (oldRect && newEl) {
       const newRect = newEl.getBoundingClientRect();
       const dx = oldRect.left - newRect.left;
@@ -553,10 +553,10 @@ export function renderSidebar(animateSid) {
   }
 }
 
-export function buildSidebarItem(s) {
+export function buildSidebarItem(s, key) {
   const item = document.createElement('div');
-  item.className = 'sidebar-item' + (state.activeTab === s.id ? ' active' : '');
-  item.dataset.sid = s.id;
+  item.className = 'sidebar-item' + (state.activeTab === key ? ' active' : '');
+  item.dataset.uid = key;
   item.dataset.running = s.running ? 'true' : 'false';
   let timeHtml = '';
   if (s.running && s.startTime) {
@@ -574,27 +574,27 @@ export function buildSidebarItem(s) {
       '<div class="sidebar-item-cmd">' + escHtml(s.command || '') + '</div>' +
       timeHtml +
     '</div>';
-  item.onclick = () => openSessionInTab(s.id);
+  item.onclick = () => openSessionInTab(key);
   item.oncontextmenu = e => {
     e.preventDefault();
     const context = s.history ? 'history-session' : 'active-session';
-    showContextMenu(e, s.id, context);
+    showContextMenu(e, key, context);
   };
   return item;
 }
 
 export function renderHistoryDropdown() {
   const dd = $('history-dropdown');
-  const histSessions = Object.values(state.history).sort((a, b) => (b.endTime || 0) - (a.endTime || 0));
-  if (histSessions.length === 0) {
+  const histEntries = Object.entries(state.history).sort((a, b) => (b[1].endTime || 0) - (a[1].endTime || 0));
+  if (histEntries.length === 0) {
     dd.innerHTML = '<div class="history-empty">' + t('session.noHistory') + '</div>';
     return;
   }
   dd.innerHTML = '';
-  histSessions.forEach(s => {
+  histEntries.forEach(([key, s]) => {
     const item = document.createElement('div');
     item.className = 'history-item';
-    const opened = !!state.sessions[s.id];
+    const opened = !!state.sessions[key];
     if (opened) item.classList.add('opened');
     item.innerHTML =
       '<span class="history-item-icon"></span>' +
@@ -602,20 +602,20 @@ export function renderHistoryDropdown() {
         '<div class="history-item-id">' + escHtml(s.id) + '</div>' +
         '<div class="history-item-cmd" title="' + escHtml(s.command || '') + '">' + escHtml(s.command || '') + '</div>' +
       '</span>' +
-      '<span class="history-item-delete" data-sid="' + escHtml(s.id) + '" title="' + t('session.deleteHistory') + '">' + ICON_CLOSE + '</span>';
+      '<span class="history-item-delete" data-uid="' + escHtml(key) + '" title="' + t('session.deleteHistory') + '">' + ICON_CLOSE + '</span>';
     item.onclick = e => {
       if (e.target.closest('.history-item-delete')) return;
-      openSessionInTab(s.id);
+      openSessionInTab(key);
       toggleHistory(false);
     };
     const delBtn = item.querySelector('.history-item-delete');
     delBtn.onclick = e => {
       e.stopPropagation();
-      const delSid = delBtn.dataset.sid;
-      wsSend({ type: 'delete_history', session_id: delSid });
-      delete state.history[delSid];
-      if (state.sessions[delSid] && state.sessions[delSid].history) {
-        removeSessionTab(delSid, false);
+      const delKey = delBtn.dataset.uid;
+      sendToSession(delKey, { type: 'delete_history' });
+      delete state.history[delKey];
+      if (state.sessions[delKey] && state.sessions[delKey].history) {
+        removeSessionTab(delKey, false);
       }
       renderHistoryDropdown();
       renderTabs();
@@ -747,14 +747,14 @@ export function hideContextMenu() {
   state.contextMenuContext = null;
 }
 
-export function showRestartDialog(sid) {
-  const h = state.history[sid];
+export function showRestartDialog(uid) {
+  const h = state.history[uid];
   if (!h) return;
-  state.restartTargetSid = sid;
-  $('restart-body').textContent = t('session.restartBody', { sid });
+  state.restartTargetSid = uid;
+  $('restart-body').textContent = t('session.restartBody', { sid: h.id });
   $('restart-reassign-sid').checked = true;
   $('restart-sid-group').style.display = 'none';
-  $('restart-sid-input').value = sid;
+  $('restart-sid-input').value = h.id;
   $('restart-sid-hint').style.display = 'none';
   $('restart-sid-input').style.borderColor = '';
   $('restart-overlay').style.display = 'flex';
@@ -776,16 +776,20 @@ export function checkRestartSidConflict() {
     input.style.borderColor = '#d13438';
     return 'empty';
   }
-  const activeSession = state.sessions[sid];
-  if (activeSession && !activeSession.history && activeSession.running) {
-    hint.textContent = t('session.sidActiveConflict');
-    hint.style.display = 'block';
-    hint.style.color = '#d13438';
-    input.style.borderColor = '#d13438';
-    return 'active-conflict';
+  // 冲突检查基于展示名（sid）：活跃/历史会话均按展示名反查
+  const activeUid = getUidBySid(sid);
+  if (activeUid) {
+    const activeSession = state.sessions[activeUid];
+    if (activeSession && !activeSession.history && activeSession.running) {
+      hint.textContent = t('session.sidActiveConflict');
+      hint.style.display = 'block';
+      hint.style.color = '#d13438';
+      input.style.borderColor = '#d13438';
+      return 'active-conflict';
+    }
   }
-  const historySession = state.history[sid];
-  if (historySession && sid !== state.restartTargetSid) {
+  const historyUid = getHistoryUidBySid(sid);
+  if (historyUid && historyUid !== state.restartTargetSid) {
     hint.textContent = t('session.sidHistoryConflict');
     hint.style.display = 'block';
     hint.style.color = 'var(--wt-tab-text-muted)';
@@ -798,9 +802,9 @@ export function checkRestartSidConflict() {
 }
 
 export function submitRestartSession() {
-  const origSid = state.restartTargetSid;
-  if (!origSid) return;
-  const h = state.history[origSid];
+  const origUid = state.restartTargetSid;
+  if (!origUid) return;
+  const h = state.history[origUid];
   if (!h) { hideRestartDialog(); return; }
 
   const reassign = $('restart-reassign-sid').checked;
@@ -813,11 +817,11 @@ export function submitRestartSession() {
     if (conflict === 'empty' || conflict === 'active-conflict') return;
   }
 
-  if (sid !== origSid) {
-    const historyConflict = state.history[sid];
-    if (historyConflict) {
-      wsSend({ type: 'delete_history', session_id: sid });
-      delete state.history[sid];
+  if (sid !== h.id) {
+    const historyUid = getHistoryUidBySid(sid);
+    if (historyUid) {
+      sendToSession(historyUid, { type: 'delete_history' });
+      delete state.history[historyUid];
     }
   }
 
@@ -826,10 +830,11 @@ export function submitRestartSession() {
     session_id: sid,
     command: h.command,
   };
-  info('session', 'restart sid=%s newSid=%s cmd=%r', origSid, sid, h.command);
+  info('session', 'restart origUid=%s newSid=%s cmd=%r', origUid, sid, h.command);
   state.pendingCreates.add(sid);
   state.sessions[sid] = {
     id: sid,
+    uid: '',
     command: h.command,
     running: true,
     subscribed: false,

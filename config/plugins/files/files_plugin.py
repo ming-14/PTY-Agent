@@ -1,6 +1,7 @@
 """files 插件 —— 进程级文件工具命令
 
-接管消息类型（响应形状与原内置 file_* handler 逐字段一致，客户端零改动）：
+清单（plugin.json）声明接管消息类型与配置默认值；运行参数经 ctx.config
+（config.yaml + 环境变量，schema 校验）由 on_init 注入 settings：
 - file_read / file_write / file_edit / file_grep / file_glob：无状态工具
 - file_upload_start / file_download_start：多帧传输（需 I/O 通道，
   处理过程自行收发帧，返回 HANDLED 表示已自行完成响应）
@@ -14,10 +15,11 @@ import logging
 import os
 from typing import Optional
 
-from config.plugins.files.config import MAX_PATH_LEN
 from src.protocol.response import Response
 from src.plugins.base import HANDLED, Plugin
 from config.plugins.files import errors
+from config.plugins.files.settings import apply as apply_settings
+from config.plugins.files.settings import settings
 from config.plugins.files.read import reader as read_impl
 from config.plugins.files.write import writer as write_impl
 from config.plugins.files.search import grep as grep_impl
@@ -50,8 +52,8 @@ def _check_path(path: str) -> Optional[dict]:
     """路径合法性校验；非法返回错误响应，合法返回 None"""
     if not path:
         return Response.error("path is required")
-    if len(path) > MAX_PATH_LEN:
-        return Response.error("path too long (max %d chars)" % MAX_PATH_LEN)
+    if len(path) > settings.max_path_len:
+        return Response.error("path too long (max %d chars)" % settings.max_path_len)
     return None
 
 
@@ -300,24 +302,17 @@ def _handle_download(ctx, msg: dict, io, tmap=None):
 
 
 class FilesPlugin(Plugin):
-    name = "files"
-    version = "1.0"
-    description = "文件工具（read/write/edit/grep/glob/upload/download）"
-    # 进程级插件：不参与会话挂载（无事件/轮询触发）
-    triggers = []
-    # 接管原内置 file_* 消息类型
-    message_types = [
-        "file_read", "file_write", "file_edit",
-        "file_grep", "file_glob",
-        "file_upload_start", "file_download_start",
-    ]
-    needs_io = True
+    """文件工具（元信息/声明/配置见同目录 plugin.json）"""
 
     def __init__(self, history=None, tmap=None, store=None):
         """依赖注入（测试传 :memory:/独立实例；默认 None = 业务默认单例）"""
         self._history = history
         self._tmap = tmap
         self._store = store
+
+    def on_init(self, ctx):
+        """从插件配置注入运行参数到 settings 模块"""
+        apply_settings(ctx.config.as_dict())
 
     def handle_message(self, ctx, msg: dict):
         msg_type = msg.get("type", "")

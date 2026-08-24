@@ -14,7 +14,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from src.common.process import pid_exists
-from src.daemonctl.lifecycle import (
+from src.client.daemonctl import (
     _ping_daemon,
     _find_daemon_port,
     _find_daemon_pid,
@@ -91,7 +91,7 @@ class TestFindDaemonPort:
     """_find_daemon_port 测试（固定端口模式）"""
 
     def test_returns_none_when_not_running(self):
-        with patch("src.daemonctl.lifecycle.SingleInstanceLock") as mock_lock_cls:
+        with patch("src.client.daemonctl.SingleInstanceLock") as mock_lock_cls:
             mock_lock = MagicMock()
             mock_lock.is_locked.return_value = False
             mock_lock_cls.return_value = mock_lock
@@ -99,7 +99,7 @@ class TestFindDaemonPort:
 
     def test_returns_fixed_port_when_running(self):
         from src.config.client import TOKEN_PORT
-        with patch("src.daemonctl.lifecycle.SingleInstanceLock") as mock_lock_cls:
+        with patch("src.client.daemonctl.SingleInstanceLock") as mock_lock_cls:
             mock_lock = MagicMock()
             mock_lock.is_locked.return_value = True
             mock_lock_cls.return_value = mock_lock
@@ -110,14 +110,14 @@ class TestFindDaemonPid:
     """_find_daemon_pid 测试（经单实例锁持有者查询）"""
 
     def test_returns_none_when_not_running(self):
-        with patch("src.daemonctl.lifecycle.SingleInstanceLock") as mock_lock_cls:
+        with patch("src.client.daemonctl.SingleInstanceLock") as mock_lock_cls:
             mock_lock = MagicMock()
             mock_lock.is_locked.return_value = False
             mock_lock_cls.return_value = mock_lock
             assert _find_daemon_pid() is None
 
     def test_returns_owner_pid_when_running(self):
-        with patch("src.daemonctl.lifecycle.SingleInstanceLock") as mock_lock_cls:
+        with patch("src.client.daemonctl.SingleInstanceLock") as mock_lock_cls:
             mock_lock = MagicMock()
             mock_lock.is_locked.return_value = True
             mock_lock_cls.return_value = mock_lock
@@ -129,14 +129,14 @@ class TestIsRunning:
     """is_running 测试（单实例锁判断）"""
 
     def test_not_running_when_no_daemon(self):
-        with patch("src.daemonctl.lifecycle.SingleInstanceLock") as mock_lock_cls:
+        with patch("src.client.daemonctl.SingleInstanceLock") as mock_lock_cls:
             mock_lock = MagicMock()
             mock_lock.is_locked.return_value = False
             mock_lock_cls.return_value = mock_lock
             assert is_running() is False
 
     def test_running_when_daemon_healthy(self):
-        with patch("src.daemonctl.lifecycle.SingleInstanceLock") as mock_lock_cls:
+        with patch("src.client.daemonctl.SingleInstanceLock") as mock_lock_cls:
             mock_lock = MagicMock()
             mock_lock.is_locked.return_value = True
             mock_lock_cls.return_value = mock_lock
@@ -149,10 +149,10 @@ class TestStartDaemon:
     def test_skips_when_already_running(self, monkeypatch):
         printed = []
         monkeypatch.setattr(
-            "src.daemonctl.lifecycle._safe_print",
+            "src.client.daemonctl._safe_print",
             lambda s: printed.append(s),
         )
-        with patch("src.daemonctl.lifecycle.SingleInstanceLock") as mock_lock_cls:
+        with patch("src.client.daemonctl.SingleInstanceLock") as mock_lock_cls:
             mock_lock = MagicMock()
             mock_lock.is_locked.return_value = True
             mock_lock_cls.return_value = mock_lock
@@ -162,7 +162,7 @@ class TestStartDaemon:
     def test_starts_new_daemon_when_not_running(self, monkeypatch):
         printed = []
         monkeypatch.setattr(
-            "src.daemonctl.lifecycle._safe_print",
+            "src.client.daemonctl._safe_print",
             lambda s: printed.append(s),
         )
 
@@ -171,13 +171,13 @@ class TestStartDaemon:
         mock_fork = None
         mock_execve = None
         if is_unix:
-            mock_fork = patch("src.daemonctl.lifecycle.os.fork",
+            mock_fork = patch("src.client.daemonctl.os.fork",
                               return_value=0).start()
-            mock_execve = patch("src.daemonctl.lifecycle.os.execve").start()
-            patch("src.daemonctl.lifecycle.os._exit").start()
+            mock_execve = patch("src.client.daemonctl.os.execve").start()
+            patch("src.client.daemonctl.os._exit").start()
         try:
-            with patch("src.daemonctl.lifecycle.SingleInstanceLock") as mock_lock_cls, \
-                 patch("src.daemonctl.lifecycle.subprocess.Popen") as mock_popen:
+            with patch("src.client.daemonctl.SingleInstanceLock") as mock_lock_cls, \
+                 patch("src.client.daemonctl.subprocess.Popen") as mock_popen:
                 mock_lock = MagicMock()
                 mock_lock.is_locked.return_value = False
                 mock_lock_cls.return_value = mock_lock
@@ -185,7 +185,7 @@ class TestStartDaemon:
                 mock_proc.pid = 1234
                 mock_popen.return_value = mock_proc
 
-                with patch("src.daemonctl.lifecycle.is_running", return_value=True):
+                with patch("src.client.daemonctl.is_running", return_value=True):
                     start_daemon()
 
                 # Windows 走 Popen；Unix 走 fork+execve，两者其一被调用
@@ -200,12 +200,12 @@ class TestStopDaemon:
     def test_not_running(self, monkeypatch):
         printed = []
         monkeypatch.setattr(
-            "src.daemonctl.lifecycle._safe_print",
+            "src.client.daemonctl._safe_print",
             lambda s: printed.append(s),
         )
-        with patch("src.daemonctl.lifecycle._find_daemon_port", return_value=None), \
-             patch("src.daemonctl.lifecycle.SingleInstanceLock") as mock_lock_cls, \
-             patch("src.daemonctl.lifecycle._cleanup_credentials"):
+        with patch("src.client.daemonctl._find_daemon_port", return_value=None), \
+             patch("src.client.daemonctl.SingleInstanceLock") as mock_lock_cls, \
+             patch("src.client.daemonctl._cleanup_credentials"):
             mock_lock = MagicMock()
             mock_lock.is_locked.return_value = False
             mock_lock_cls.return_value = mock_lock
@@ -215,7 +215,7 @@ class TestStopDaemon:
     def test_stop_via_tcp(self, monkeypatch):
         printed = []
         monkeypatch.setattr(
-            "src.daemonctl.lifecycle._safe_print",
+            "src.client.daemonctl._safe_print",
             lambda s: printed.append(s),
         )
 
@@ -234,9 +234,9 @@ class TestStopDaemon:
         t = threading.Thread(target=handle, daemon=True)
         t.start()
 
-        with patch("src.daemonctl.lifecycle._find_daemon_port", return_value=port), \
-             patch("src.daemonctl.lifecycle._find_daemon_pid", return_value=os.getpid()), \
-             patch("src.daemonctl.lifecycle._cleanup_credentials"):
+        with patch("src.client.daemonctl._find_daemon_port", return_value=port), \
+             patch("src.client.daemonctl._find_daemon_pid", return_value=os.getpid()), \
+             patch("src.client.daemonctl._cleanup_credentials"):
             stop_daemon()
 
         assert any("stopped" in p.lower() or "已停止" in p for p in printed)
@@ -247,7 +247,7 @@ class TestStopDaemon:
         """daemon 响应为信封形态（commandType 在 payload）时也能判定成功"""
         printed = []
         monkeypatch.setattr(
-            "src.daemonctl.lifecycle._safe_print",
+            "src.client.daemonctl._safe_print",
             lambda s: printed.append(s),
         )
 
@@ -270,9 +270,9 @@ class TestStopDaemon:
         t = threading.Thread(target=handle, daemon=True)
         t.start()
 
-        with patch("src.daemonctl.lifecycle._find_daemon_port", return_value=port), \
-             patch("src.daemonctl.lifecycle._find_daemon_pid", return_value=os.getpid()), \
-             patch("src.daemonctl.lifecycle._cleanup_credentials"):
+        with patch("src.client.daemonctl._find_daemon_port", return_value=port), \
+             patch("src.client.daemonctl._find_daemon_pid", return_value=os.getpid()), \
+             patch("src.client.daemonctl._cleanup_credentials"):
             stop_daemon()
 
         assert any("stopped" in p.lower() or "已停止" in p for p in printed)
@@ -283,7 +283,7 @@ class TestStopDaemon:
         """stop 失败（daemon 仍存活）时不得清理凭据 SHM，保证后续重试可认证"""
         printed = []
         monkeypatch.setattr(
-            "src.daemonctl.lifecycle._safe_print",
+            "src.client.daemonctl._safe_print",
             lambda s: printed.append(s),
         )
 
@@ -304,8 +304,8 @@ class TestStopDaemon:
         t.start()
 
         cleanup = MagicMock()
-        with patch("src.daemonctl.lifecycle._find_daemon_port", return_value=port), \
-             patch("src.daemonctl.lifecycle._cleanup_credentials", cleanup):
+        with patch("src.client.daemonctl._find_daemon_port", return_value=port), \
+             patch("src.client.daemonctl._cleanup_credentials", cleanup):
             stop_daemon()
 
         cleanup.assert_not_called()
@@ -316,12 +316,12 @@ class TestStopDaemon:
     def test_stop_force_kill_when_tcp_fails(self, monkeypatch):
         printed = []
         monkeypatch.setattr(
-            "src.daemonctl.lifecycle._safe_print",
+            "src.client.daemonctl._safe_print",
             lambda s: printed.append(s),
         )
 
-        with patch("src.daemonctl.lifecycle._find_daemon_port", return_value=19999), \
-             patch("src.daemonctl.lifecycle._find_daemon_pid", return_value=99999999), \
-             patch("src.daemonctl.lifecycle._cleanup_credentials"):
+        with patch("src.client.daemonctl._find_daemon_port", return_value=19999), \
+             patch("src.client.daemonctl._find_daemon_pid", return_value=99999999), \
+             patch("src.client.daemonctl._cleanup_credentials"):
             stop_daemon()
         # PID 不存在，无法 kill，但不应崩溃

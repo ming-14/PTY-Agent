@@ -9,8 +9,7 @@ import threading
 import time
 from typing import List, Optional
 
-from ..output.events import PendingEvent
-from .base import ProcessTreeTracker
+from .base import PendingEvent, ProcessTreeTracker
 from ..logging import get_logger
 
 _logger = get_logger("pty-session")

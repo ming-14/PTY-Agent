@@ -13,6 +13,18 @@ from src.config.common import DEFAULT_COLS, DEFAULT_ROWS
 _SHELL_CMD = ["cmd", "/c", "echo", "hi"] if sys.platform == "win32" else ["echo", "hi"]
 
 
+@pytest.fixture(autouse=True)
+def _isolate_persistent_defaults(monkeypatch):
+    """隔离本机 ~/.pty-agent/client_defaults.json（set-default 持久化）
+
+    未隔离时用户机器上的持久化默认值（如 terminal_size）会覆盖内置默认，
+    导致断言不稳定。
+    """
+    monkeypatch.setattr(
+        "src.client.config_manager.load_persistent_defaults", lambda: {}
+    )
+
+
 class TestParseTerminalSize:
     def test_standard(self):
         assert parse_terminal_size("80x24") == (80, 24)

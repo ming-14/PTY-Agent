@@ -1,7 +1,18 @@
 /**
  * 终端基础设施：应用鼠标模式追踪
  *
- * 监听 DECSET/DECRST 1000/1002/1003 等序列，跟踪 TUI 应用自身声明的鼠标模式。
+ * 双信号源：
+ * - DECSET 检测（detectAppMouseModeFromOutput）：从输出流嗅探 1000/1002/1003
+ *   等序列，带跨块尾部缓冲（64B，对齐后端模型窗口），防分片漏检。
+ * - 后端推送（setAppMouseMode）：订阅响应携带当前模式 + 后端 mouse_mode
+ *   事件实时推送（后端终端模型为权威源）。
+ *
+ * 合并规则：
+ * - appMouseMode = decset || daemon（任一为真即启用）
+ * - DECSET OFF 同时清除 daemon（前后端喂同一字节流，前端看到 OFF 则后端必为 OFF，
+ *   推送只是确认——修复"退出 TUI 后 daemon 标志残留导致滚轮锁死"）
+ * - 后端推送 enabled=false 同时清除 decset（后端权威）
+ * - 后端推送 enabled=true 置 daemon（前端 DECSET 漏检时的兜底）
  */
 
 import { state } from '../../domain/state.js';
@@ -11,6 +22,9 @@ import { decodeWriteData } from './shared.js';
 let _mouseModeChangeCallback = null;
 
 const MOUSE_OVERRIDE_KEY = 'pty_mouse_override';
+// 跨块缓冲长度：DECSET 序列跨 PTY read / WS 消息分片时拼接扫描
+// （对齐后端 wezterm 模型的 64B mode_tail 窗口）
+const MOUSE_SCAN_TAIL = 64;
 
 function _loadMouseOverride(uid) {
   try {
@@ -44,7 +58,7 @@ export function isMouseModeActive(inst) {
   return !!(inst && inst.appMouseMode);
 }
 
-// 合并 DECSET 检测与 daemon 控制台模式检测，得到最终应用鼠标模式
+// 合并 DECSET 检测与 daemon（后端权威推送）模式，得到最终应用鼠标模式
 export function syncAppMouseMode(inst) {
   const next = !!(inst && (inst.appMouseModeDecset || inst.appMouseModeDaemon));
   if (inst.appMouseMode !== next) {
@@ -59,11 +73,16 @@ export function syncAppMouseMode(inst) {
 export function detectAppMouseModeFromOutput(term, inst, data) {
   const str = decodeWriteData(data);
   if (!str) return;
+  // 跨块缓冲：DECSET 序列可能被 PTY read / WS 消息分片，拼接上次尾部后扫描
+  const prevTail = inst._mouseScanTail || '';
+  const combined = prevTail + str;
+  inst._mouseScanTail = combined.slice(-MOUSE_SCAN_TAIL);
+
   // CSI ? Ps h/l  (DECSET/DECRST)
   const re = /\x1b\[\?(\d+(?:;\d+)*)([hl])/g;
   let changed = false;
   let m;
-  while ((m = re.exec(str)) !== null) {
+  while ((m = re.exec(combined)) !== null) {
     const params = m[1].split(';').map(n => parseInt(n, 10));
     const enable = m[2] === 'h';
     params.forEach(ps => {
@@ -78,13 +97,14 @@ export function detectAppMouseModeFromOutput(term, inst, data) {
         } else if (inst.appMouseModePs === ps || inst.appMouseModePs == null) {
           inst.appMouseModeDecset = false;
           inst.appMouseModePs = null;
+          // 关键修复：DECSET OFF 同时清除 daemon 标志。
+          // 前后端喂同一字节流，前端看到 OFF 序列则后端模型必然也已 OFF
+          // （后端 mouse_mode 推送只是确认）；不清除 daemon 会导致
+          // "退出 TUI 后 appMouseMode 恒 true → 滚轮/点击/右键全失效"。
+          inst.appMouseModeDaemon = false;
           changed = true;
-          debug('mouse', 'app mouse tracking OFF ps=%s', ps);
+          debug('mouse', 'app mouse tracking OFF ps=%s (daemon cleared)', ps);
         }
-      } else if (ps === 1005) {
-        if (enable) inst.appMouseEncoding = 'utf8';
-      } else if (ps === 1006) {
-        if (enable) inst.appMouseEncoding = 'sgr';
       } else if (ps === 1007) {
         inst.appAlternateScroll = enable;
         debug('mouse', 'alternate scroll %s', enable ? 'ON' : 'OFF');
@@ -101,7 +121,6 @@ export function detectAppMouseModeFromOutput(term, inst, data) {
     });
   }
   if (changed) {
-    term._appMouseMode = inst.appMouseMode;
     syncAppMouseMode(inst);
   }
 }
@@ -114,20 +133,36 @@ export function trackAppMouseMode(term, inst) {
   };
 }
 
-export function setAppMouseMode(sid, enabled) {
-  const inst = state.termInstances[sid];
-  if (!inst) return;
+/**
+ * 后端权威鼠标模式同步（订阅响应 + mouse_mode 事件推送）。
+ * @param {string} uid 会话 uid
+ * @param {boolean} enabled 后端终端模型的鼠标追踪状态
+ */
+export function setAppMouseMode(uid, enabled) {
+  const inst = state.termInstances[uid];
+  if (!inst) {
+    // 订阅响应可能先于 ensureTerminal 到达（inst 尚未创建）：
+    // 暂存到会话对象，ensureTerminal 创建后回填，避免模式丢失。
+    const s = state.sessions[uid];
+    if (s) s._pendingAppMouseMode = !!enabled;
+    return;
+  }
   enabled = !!enabled;
   if (inst.appMouseModeDaemon === enabled) return;
   inst.appMouseModeDaemon = enabled;
-  // daemon 检测不知道具体 DECSET ps，保守按 1002（按钮+拖动）处理；
-  // 若应用后续通过 DECSET 声明其它模式，会覆盖此值。
-  if (enabled && !inst.appMouseModeDecset) {
-    inst.appMouseModePs = 1002;
-  } else if (!enabled && !inst.appMouseModeDecset) {
+  if (enabled) {
+    // 后端权威开启：DECSET 检测漏检（分片/快照重建）时兜底启用。
+    // daemon 不知道具体 DECSET ps，保守按 1002（按钮+拖动）处理；
+    // 若前端 DECSET 检测后续声明其它模式，会覆盖此值。
+    if (!inst.appMouseModeDecset) {
+      inst.appMouseModePs = 1002;
+    }
+  } else {
+    // 后端权威关闭：同步清除 DECSET 标志（同一字节流，后端必已 OFF）
+    inst.appMouseModeDecset = false;
     inst.appMouseModePs = null;
   }
-  debug('mouse', 'daemon mouse mode sid=%s enabled=%s ps=%s', sid, enabled, inst.appMouseModePs);
+  debug('mouse', 'daemon mouse mode uid=%s enabled=%s ps=%s', uid, enabled, inst.appMouseModePs);
   syncAppMouseMode(inst);
 }
 
@@ -143,13 +178,13 @@ export function canSendVtMouseInput(inst, e) {
   return !!(inst && inst.appMouseMode && inst.mouseInputOverride && e && !e.shiftKey);
 }
 
-export function toggleMouseInputOverride(sid) {
-  const inst = state.termInstances[sid];
+export function toggleMouseInputOverride(uid) {
+  const inst = state.termInstances[uid];
   if (!inst || !inst.appMouseMode) return;
   inst.mouseInputOverride = !inst.mouseInputOverride;
-  const s = state.sessions[sid];
-  if (s && s.uid) _saveMouseOverride(s.uid, inst.mouseInputOverride);
-  debug('mouse', 'toggleMouseInputOverride sid=%s override=%s', sid, inst.mouseInputOverride);
+  const s = state.sessions[uid];
+  if (s && s.uid) _saveMouseOverride(uid, inst.mouseInputOverride);
+  debug('mouse', 'toggleMouseInputOverride uid=%s override=%s', uid, inst.mouseInputOverride);
   if (_mouseModeChangeCallback) _mouseModeChangeCallback();
   return inst.mouseInputOverride;
 }

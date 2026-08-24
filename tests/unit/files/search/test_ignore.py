@@ -39,8 +39,8 @@ class TestIsIgnored:
         assert is_ignored("/a/b/node_modules/c/d/e.txt") is True
 
     def test_configured_list_applies(self):
-        # 插件 files.toml 的忽略清单应被加载
-        from config.plugins.files.config import IGNORED_DIRS
+        # 插件 plugin.json 配置的忽略清单应被加载
+        from config.plugins.files.settings import settings
 
-        assert "node_modules" in IGNORED_DIRS
-        assert ".git" in IGNORED_DIRS
+        assert "node_modules" in settings.ignored_dirs
+        assert ".git" in settings.ignored_dirs

@@ -106,11 +106,10 @@ def _process_name(pid: int):
 
 
 class StateCheckPlugin(Plugin):
-    name = "state_check"
-    version = "1.0"
-    description = "通用状态检查（纯启发式）：命令返回时检测终端状态并附加到返回信息"
-    # 无事件/定时触发：返回钩子与命令钩子实现即生效
-    triggers = []
+    """通用状态检查（纯启发式）：命令返回时检测终端状态并附加到返回信息
+
+    元信息（id/kind/hooks/权限）见同目录 plugin.json；无事件/定时触发。
+    """
 
     # ── 返回钩子：命令返回时触发一次 ───────────────────────
 

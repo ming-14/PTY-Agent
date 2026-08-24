@@ -20,7 +20,7 @@
 import { state } from '../domain/state.js';
 import { debug, info, error } from '../domain/logger.js';
 import { t } from '../domain/i18n.js';
-import { wsSend } from './wsClient.js';
+import { wsSend, sendToSession } from './wsClient.js';
 import { showToast } from './domUtils.js';
 import * as settingsStore from '../application/settingsStore.js';
 
@@ -238,22 +238,22 @@ function toRimeKey(e) {
 
 function sendToTerminal(text) {
   if (!text) return;
-  const sid = state.activeTab;
-  if (!sid) return;
-  const s = state.sessions[sid];
+  const uid = state.activeTab;
+  if (!uid) return;
+  const s = state.sessions[uid];
   if (!s || !s.running || s.closing) return;
-  const inst = state.termInstances[sid];
+  const inst = state.termInstances[uid];
   if (inst && inst._readonly) return;
   // 沙箱为真实 ConPTY（hpcon），输入直接送入终端（conhost 回显/编辑）
-  wsSend({ type: 'input', session_id: sid, data: text });
-  debug('rime', 'send → terminal sid=%s data=%s', sid, JSON.stringify(text));
+  sendToSession(uid, { type: 'input', data: text });
+  debug('rime', 'send → terminal uid=%s data=%s', uid, JSON.stringify(text));
 }
 
 function updatePosition() {
   const panel = mgr && mgr.getPanel();
   if (!panel) return;
-  const sid = state.activeTab;
-  const inst = sid && state.termInstances[sid];
+  const uid = state.activeTab;
+  const inst = uid && state.termInstances[uid];
   const ta = inst && inst.term && inst.term.textarea;
   const fw = panel.floatEl.offsetWidth || 200;
   const fh = panel.floatEl.offsetHeight || 40;
@@ -494,8 +494,8 @@ async function ensurePanel() {
       //      （取消组词/候选导航），不发送到终端，与物理键盘 shouldIntercept 行为一致。
       //      否则会导致编辑态下按方向键既切换候选词又移动光标。
       tklKeyboard.onKeyPress((rimeKey) => {
-        const sid = state.activeTab;
-        const inst = sid && state.termInstances[sid];
+        const uid = state.activeTab;
+        const inst = uid && state.termInstances[uid];
         const term = inst && inst.term;
         // RIME 编辑态下 Escape/方向键交给 RIME，不发送到终端
         const panel = mgr && mgr.getPanel();
@@ -567,8 +567,8 @@ function updateButton() {
 }
 
 function applyInputMode() {
-  const sid = state.activeTab;
-  const inst = sid && state.termInstances[sid];
+  const uid = state.activeTab;
+  const inst = uid && state.termInstances[uid];
   if (!inst || !inst.term || !inst.term.textarea) return;
   const ta = inst.term.textarea;
   if (currentMode === 'web' || currentMode === 'disabled' || currentMode === 'nokeyboard') {
@@ -686,9 +686,9 @@ export function isKeyboardDisabled() {
   return currentMode === 'nokeyboard';
 }
 
-export function shouldTrackFocus(sid) {
+export function shouldTrackFocus(uid) {
   const keyboardEnabled = currentMode !== 'nokeyboard';
-  const inst = sid && state.termInstances[sid];
+  const inst = uid && state.termInstances[uid];
   const mouseEnabled = !inst || !inst.appMouseMode || inst.mouseInputOverride;
   return keyboardEnabled || mouseEnabled;
 }

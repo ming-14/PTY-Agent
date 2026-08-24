@@ -13,7 +13,7 @@ from src.ipc.shm import (
     generate_auth_token,
     write_auth_token,
 )
-from src.daemonctl import (
+from src.client.daemonctl import (
     _find_daemon_port,
     _find_daemon_pid,
     is_running,
@@ -29,7 +29,7 @@ class TestSingleInstanceIntegration:
     def _no_running_daemon(self):
         """本类测试前提是"无运行中的守护进程"（互斥体未持有）；
         环境中有 daemon 运行时先停止，结束后再恢复启动。"""
-        from src.daemonctl import is_running, start_daemon, stop_daemon
+        from src.client.daemonctl import is_running, start_daemon, stop_daemon
         was_running = is_running()
         if was_running:
             stop_daemon(force=True)

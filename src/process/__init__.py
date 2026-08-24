@@ -4,7 +4,7 @@
 - base：实体层（ProcessNotification 统一通知 + ProcessTreeTracker 抽象端口）
 - info / monitor / gui：上层编排（进程信息、进程监控、GUI 检测）
 - windows/、unix/：平台实现（Job Object / process group 进程树追踪）
-- win32_error：Windows 错误码格式化
+- windows.win32_error：Windows 错误码格式化
 
 进程树追踪器工厂（create_process_tree_tracker）是本包对外统一入口：
 Session 等消费方只依赖此工厂与 ProcessTreeTracker 抽象，不接触平台实现。

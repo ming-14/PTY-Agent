@@ -115,7 +115,10 @@ class TestPermission:
         policy = _DenyingPolicy()
         target = tmp_path / "a.txt"
         target.write_text("old", encoding="utf-8")
-        record_store.record_read(str(target))
+        # 与产品语义一致：last_read 记录文件 mtime（写入后固定到过去，
+        # 避免文件系统时钟/扫描 touch 导致 mod_time > last_read 的偶发误判）
+        os.utime(str(target), (time.time() - 5,) * 2)
+        record_store.record_read(str(target), os.path.getmtime(str(target)))
         with pytest.raises(FilePermissionDeniedError):
             write_file(str(target), "new", store=record_store, history=history_store, policy=policy)
         assert target.read_text(encoding="utf-8") == "old"
@@ -130,9 +133,9 @@ class TestPermission:
 
 class TestContentLimit:
     def test_content_too_large(self, tmp_path, record_store, history_store, allowing_policy):
-        from config.plugins.files.config import MAX_CONTENT_LEN
+        from config.plugins.files.settings import settings
         target = tmp_path / "big.txt"
         with pytest.raises(FileToolError):
-            write_file(str(target), "x" * (MAX_CONTENT_LEN + 1),
+            write_file(str(target), "x" * (settings.max_content_len + 1),
                        store=record_store, history=history_store, policy=allowing_policy)
         assert not target.exists()

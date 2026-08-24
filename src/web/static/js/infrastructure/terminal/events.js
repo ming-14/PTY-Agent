@@ -10,7 +10,7 @@ import { state } from '../../domain/state.js';
 import { t } from '../../domain/i18n.js';
 import { debug } from '../../domain/logger.js';
 import { $, showToast } from '../domUtils.js';
-import { wsSend } from '../wsClient.js';
+import { sendToSession } from '../wsClient.js';
 import { zoomActiveSession } from './scale.js';
 import { getTerminalCellSize } from './shared.js';
 import { canSendVtMouseInput, shouldSendAlternateScroll } from './mouseMode.js';
@@ -116,26 +116,26 @@ function mouseMods(e) {
 }
 
 /** 发送原始鼠标事件 → daemon wezterm 模式感知编码 → pty */
-function sendRawMouse(sid, col, row, kind, button, e) {
-  const s = state.sessions[sid];
+function sendRawMouse(uid, col, row, kind, button, e) {
+  const s = state.sessions[uid];
   if (!s || !s.running || s.closing) {
-    debug('mouse', 'raw dropped: sid=%s running=%s closing=%s', sid, s && s.running, s && s.closing);
+    debug('mouse', 'raw dropped: sid=%s running=%s closing=%s', uid, s && s.running, s && s.closing);
     return;
   }
   const mods = mouseMods(e);
-  debug('mouse', 'raw send: sid=%s x=%s y=%s kind=%s button=%s mods=%s', sid, col, row, kind, button, mods);
-  wsSend({ type: 'mouse', session_id: sid, x: col, y: row, kind, button, mods });
+  debug('mouse', 'raw send: sid=%s x=%s y=%s kind=%s button=%s mods=%s', uid, col, row, kind, button, mods);
+  sendToSession(uid, { type: 'mouse', x: col, y: row, kind, button, mods });
 }
 
 /** 发送固定 VT 文本（alternate scroll 方向键 / 焦点报告）→ 走 input 透传 */
-function sendVtText(sid, seq) {
-  const s = state.sessions[sid];
+function sendVtText(uid, seq) {
+  const s = state.sessions[uid];
   if (!s || !s.running || s.closing) return;
-  debug('mouse', 'vt text send: sid=%s seq=%s', sid, JSON.stringify(seq));
-  wsSend({ type: 'input', session_id: sid, data: seq });
+  debug('mouse', 'vt text send: sid=%s seq=%s', uid, JSON.stringify(seq));
+  sendToSession(uid, { type: 'input', data: seq });
 }
 
-function sendVtWheelEvent(sid, inst, term, e) {
+function sendVtWheelEvent(uid, inst, term, e) {
   const isHorizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
   const delta = isHorizontal ? e.deltaX : e.deltaY;
   inst._vtWheelAccum += delta;
@@ -151,7 +151,7 @@ function sendVtWheelEvent(sid, inst, term, e) {
     if (!isHorizontal) {
       const seq = direction < 0 ? '\x1b[A' : '\x1b[B';
       debug('mouse', 'alternate scroll seq=%s deltaY=%d', JSON.stringify(seq), e.deltaY);
-      sendVtText(sid, seq);
+      sendVtText(uid, seq);
     }
   } else {
     const cell = getTerminalCellFromEvent(term, e);
@@ -159,7 +159,7 @@ function sendVtWheelEvent(sid, inst, term, e) {
     // 原始滚轮事件：由 wezterm 编码 wheel_up/wheel_down
     const button = direction < 0 ? 'wheel_up' : 'wheel_down';
     debug('mouse', 'wheel raw button=%s col=%d row=%d', button, cell.col, cell.row);
-    sendRawMouse(sid, cell.col, cell.row, 'press', button, e);
+    sendRawMouse(uid, cell.col, cell.row, 'press', button, e);
   }
   return true;
 }
@@ -179,7 +179,7 @@ function scrollViewportByWheel(term, inst, e) {
   }
 }
 
-export function bindTerminalEvents(term, inst, sid) {
+export function bindTerminalEvents(term, inst, uid) {
   const div = inst.div;
   let mouseMoveThrottle = 0;
   const _pressedButtonKey = '_pressedMouseButton';
@@ -192,27 +192,27 @@ export function bindTerminalEvents(term, inst, sid) {
   }
 
   function sendFocusVT(focused) {
-    const s = state.sessions[sid];
-    const inst = state.termInstances[sid];
+    const s = state.sessions[uid];
+    const inst = state.termInstances[uid];
     if (!s || s.running === false || s.closing) return;
     // 仅在子进程启用了 Focus Reporting（DECSET 1004，由输出流解析 appFocusReport）
     // 时才发送 \x1b[I/\x1b[O。无条件发送会把焦点序列写入 stdin，
     // cmd 等非 VT 程序会把它显示成垃圾字符/混入命令。
     if (!inst || !inst.appFocusReport) {
-      debug('focus', 'sendFocusVT skipped: focus report not enabled sid=%s', sid);
+      debug('focus', 'sendFocusVT skipped: focus report not enabled sid=%s', uid);
       return;
     }
-    if (!shouldTrackFocus(sid)) {
-      debug('focus', 'sendFocusVT skipped: keyboard+mouse disabled sid=%s', sid);
+    if (!shouldTrackFocus(uid)) {
+      debug('focus', 'sendFocusVT skipped: keyboard+mouse disabled sid=%s', uid);
       return;
     }
     const seq = focused ? '\x1b[I' : '\x1b[O';
-    wsSend({ type: 'input', session_id: sid, data: seq });
-    debug('focus', 'sendFocusVT: focused=%s seq=%r sid=%s', focused, JSON.stringify(seq), sid);
+    sendToSession(uid, { type: 'input', data: seq });
+    debug('focus', 'sendFocusVT: focused=%s seq=%r sid=%s', focused, JSON.stringify(seq), uid);
   }
 
   div.addEventListener('focusin', () => {
-    const s = state.sessions[sid];
+    const s = state.sessions[uid];
     if (s && s.history) return;
     if (!inst._focused) {
       inst._focused = true;
@@ -221,8 +221,8 @@ export function bindTerminalEvents(term, inst, sid) {
     }
     // 终端重新获得焦点时强制刷新，避免切标签/切窗口后画布定格
     try { inst.term.refresh(0, inst.term.rows - 1); } catch (_) {}
-    restartCursorBlinkIfNeeded(sid);
-    logCursorState(sid);
+    restartCursorBlinkIfNeeded(uid);
+    logCursorState(uid);
   });
 
   div.addEventListener('focusout', () => {
@@ -230,11 +230,11 @@ export function bindTerminalEvents(term, inst, sid) {
     inst._focused = false;
     updateFocusBorder(false);
     sendFocusVT(false);
-    logCursorState(sid);
+    logCursorState(uid);
   });
 
   div.addEventListener('mousedown', e => {
-    const s = state.sessions[sid];
+    const s = state.sessions[uid];
     if (s && s.history) {
       e.preventDefault();
       return;
@@ -252,7 +252,7 @@ export function bindTerminalEvents(term, inst, sid) {
         if (e.button === 1) button = 1;
         else if (e.button === 2) button = 2;
         inst[_pressedButtonKey] = button;
-        sendRawMouse(sid, cell.col, cell.row, 'press', _BTN_NAME[button] || 'left', e);
+        sendRawMouse(uid, cell.col, cell.row, 'press', _BTN_NAME[button] || 'left', e);
       }
     }
   }, true);
@@ -267,7 +267,7 @@ export function bindTerminalEvents(term, inst, sid) {
     const button = inst[_pressedButtonKey] != null ? inst[_pressedButtonKey] : 0;
     inst[_pressedButtonKey] = null;
     if (!cell) return;
-    sendRawMouse(sid, cell.col, cell.row, 'release', _BTN_NAME[button] || 'left', e);
+    sendRawMouse(uid, cell.col, cell.row, 'release', _BTN_NAME[button] || 'left', e);
   }, true);
 
   div.addEventListener('mousemove', e => {
@@ -289,11 +289,11 @@ export function bindTerminalEvents(term, inst, sid) {
     const moveButton = buttonPressed
       ? _BTN_NAME[inst[_pressedButtonKey]] || 'left'
       : 'none';
-    sendRawMouse(sid, cell.col, cell.row, 'move', moveButton, e);
+    sendRawMouse(uid, cell.col, cell.row, 'move', moveButton, e);
   }, true);
 
   div.addEventListener('wheel', e => {
-    const s = state.sessions[sid];
+    const s = state.sessions[uid];
     const isHistory = !!(s && s.history);
 
     // 历史会话允许 Ctrl+滚轮缩放，但跳过 VT 鼠标透传（无活动进程）。
@@ -309,12 +309,12 @@ export function bindTerminalEvents(term, inst, sid) {
       const isZoomIn = e.deltaY < 0;
       // 撑满检查：仅在上滚（增大）时阻止
       if (isZoomIn && isFrameAtMaxSize()) {
-        debug('scroll', 'Ctrl+wheel zoom skipped: frame at max size sid=%s', sid);
+        debug('scroll', 'Ctrl+wheel zoom skipped: frame at max size sid=%s', uid);
         return;
       }
       const changed = zoomActiveSession(isZoomIn ? FRAME_RATIO_STEP : -FRAME_RATIO_STEP);
       if (changed) {
-        debug('scroll', 'Ctrl+wheel zoom sid=%s isZoomIn=%s (history=%s)', sid, isZoomIn, isHistory);
+        debug('scroll', 'Ctrl+wheel zoom sid=%s isZoomIn=%s (history=%s)', uid, isZoomIn, isHistory);
       }
       return;
     }
@@ -333,7 +333,7 @@ export function bindTerminalEvents(term, inst, sid) {
           inst.appMouseMode, inst.appMouseModeDecset, inst.appMouseModeDaemon,
           inst.appAlternateScroll, inst.appAlternateBuffer, e.shiftKey);
     if (canSendMouse || canSendAltScroll) {
-      const handled = sendVtWheelEvent(sid, inst, term, e);
+      const handled = sendVtWheelEvent(uid, inst, term, e);
       if (handled) {
         e.preventDefault();
         e.stopPropagation();
@@ -353,7 +353,7 @@ export function bindTerminalEvents(term, inst, sid) {
       e.preventDefault();
       return;
     }
-    const s = state.sessions[sid];
+    const s = state.sessions[uid];
     if (s && s.history) {
       e.preventDefault();
       return;
@@ -376,7 +376,7 @@ export function bindTerminalEvents(term, inst, sid) {
       term.clearSelection();
     } else {
       debug('paste', 'right-click paste');
-      doPaste(sid);
+      doPaste(uid);
     }
   });
 
@@ -492,7 +492,7 @@ export function bindTerminalEvents(term, inst, sid) {
           selectionMode = 'vt';
           selectionStartCell = cell;
           selectionHasDragged = false;
-          sendRawMouse(sid, cell.col, cell.row, 'press', 'left', fakeEvent);
+          sendRawMouse(uid, cell.col, cell.row, 'press', 'left', fakeEvent);
           if (navigator.vibrate) navigator.vibrate(50);
           debug('touch', 'long-press → vt selection mode cell=(%s,%s)', cell.col, cell.row);
         } else {
@@ -510,7 +510,7 @@ export function bindTerminalEvents(term, inst, sid) {
       clearLongPressTimer();
       // 双指捏合开始时，若处于 VT 选择模式则发送 release 通知程序
       if (selectionMode === 'vt' && selectionStartCell) {
-        sendRawMouse(sid, selectionStartCell.col, selectionStartCell.row, 'release', 'left', { shiftKey: false });
+        sendRawMouse(uid, selectionStartCell.col, selectionStartCell.row, 'release', 'left', { shiftKey: false });
       }
       exitSelectionMode();
       pinchInitialDist = touchDist(e.touches[0], e.touches[1]);
@@ -539,7 +539,7 @@ export function bindTerminalEvents(term, inst, sid) {
         const cell = getTerminalCellFromEvent(term, t);
         if (cell) {
           selectionHasDragged = true;
-          sendRawMouse(sid, cell.col, cell.row, 'move', 'left', { shiftKey: false });
+          sendRawMouse(uid, cell.col, cell.row, 'move', 'left', { shiftKey: false });
         }
       } else if (inst._touchAnchor) {
         // 滚动模式：移动超过 10px 即取消长按计时器
@@ -562,7 +562,7 @@ export function bindTerminalEvents(term, inst, sid) {
               // touchmove 频率高（~60fps），每次只发 1 个事件即可，
               // 不需要按 numRows 倍数发送（否则 VT 滚轮事件像机关枪一样密集）
               const seq = numRows > 0 ? '\x1b[B' : '\x1b[A';
-              sendVtText(sid, seq);
+              sendVtText(uid, seq);
               debug('touch', 'alt-scroll touch: numRows=%s dy=%s', numRows, dy.toFixed(1));
             } else if (canSendVtMouseInput(inst, fakeEvent)) {
               // SGR 鼠标滚轮：拖动转换为 VT 滚轮事件
@@ -571,7 +571,7 @@ export function bindTerminalEvents(term, inst, sid) {
               const cell = getTerminalCellFromEvent(term, t);
               if (cell) {
                 const button = numRows > 0 ? 'wheel_down' : 'wheel_up';
-                sendRawMouse(sid, cell.col, cell.row, 'press', button, fakeEvent);
+                sendRawMouse(uid, cell.col, cell.row, 'press', button, fakeEvent);
                 debug('touch', 'vt touch scroll: numRows=%s dy=%s cell=(%s,%s)', numRows, dy.toFixed(1), cell.col, cell.row);
               }
             } else {
@@ -595,13 +595,13 @@ export function bindTerminalEvents(term, inst, sid) {
       if (!isZoomIn && !isZoomOut) return;
       // 撑满检查：仅在放大时阻止
       if (isZoomIn && isFrameAtMaxSize()) {
-        debug('touch', 'pinch zoom skipped: frame at max size sid=%s', sid);
+        debug('touch', 'pinch zoom skipped: frame at max size sid=%s', uid);
         return;
       }
       const changed = zoomActiveSession(isZoomIn ? FRAME_RATIO_STEP : -FRAME_RATIO_STEP);
       if (changed) {
         debug('touch', 'pinch zoom sid=%s pinchRatio=%.2f isZoomIn=%s',
-              sid, pinchRatio, isZoomIn);
+              uid, pinchRatio, isZoomIn);
         // 重置 pinch 起点为当前 dist，避免连续触发（每档一次）
         pinchInitialDist = dist;
       }
@@ -644,7 +644,7 @@ export function bindTerminalEvents(term, inst, sid) {
         ? getTerminalCellFromEvent(term, lastTouch)
         : selectionStartCell;
       if (cell) {
-        sendRawMouse(sid, cell.col, cell.row, 'release', 'left', { shiftKey: false });
+        sendRawMouse(uid, cell.col, cell.row, 'release', 'left', { shiftKey: false });
       }
       debug('touch', 'vt selection done (dragged=%s)', selectionHasDragged);
     }

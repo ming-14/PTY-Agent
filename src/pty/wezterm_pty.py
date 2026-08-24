@@ -95,7 +95,21 @@ class WeztermPseudoTerminal(PseudoTerminal):
                 env_dict.setdefault("PYTHONLEGACYWINDOWSSTDIO", "1")
 
         try:
-            pid, handle = self._pty.spawn(command, cwd=cwd, env=env_dict)
+            # cmd /c <单字符串命令> 形态（--shell cmd 包装产物）：命令字符串
+            # 原样作为 raw_cmdline 传给 CreateProcess——cmd.exe 自行解析引号，
+            # argv 序列化的 \" 转义（C 运行时规则）会变成 cmd 的字面反斜杠
+            raw_cmdline = None
+            if (
+                IS_WINDOWS
+                and len(command) == 3
+                and command[1] == "/c"
+                and isinstance(command[2], str)
+            ):
+                # 完整命令行原样传给 CreateProcess，绕过 argv 引号序列化
+                raw_cmdline = " ".join(command)
+            pid, handle = self._pty.spawn(
+                command, cwd=cwd, env=env_dict, raw_cmdline=raw_cmdline
+            )
         except Exception as e:
             self._pty.close()
             raise RuntimeError(f"wezterm spawn 失败: {e}") from e

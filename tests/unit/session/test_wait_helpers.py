@@ -7,8 +7,8 @@ P0-B 判定单源化：crash/ended 与 GUI 检测收敛到 Session 单一判定�
 
 import time
 
-from src.session.session.events import EventsMixin
-from src.session.session.trigger import TriggerMixin
+from src.session.events import EventsMixin
+from src.session.trigger import TriggerMixin
 
 
 class _Event:

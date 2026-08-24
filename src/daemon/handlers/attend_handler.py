@@ -20,7 +20,8 @@ from ...protocol.envelope import (
     wrap_response as _env_wrap_response,
 )
 from ...protocol.message import Message
-from .base import DaemonHandler, HandlerContext
+from .base import DaemonHandler
+from ...execution.context import HandlerContext
 
 _logger = get_logger("pty-daemon")
 

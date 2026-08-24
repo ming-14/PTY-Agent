@@ -85,6 +85,8 @@ bin/cursorlocator/cursorlocator_config.json
 config/plugins/ai/bin/
 config/plugins/ai/config/config.yaml
 config/plugins/ai/*.txt
+# 插件运行时生成的用户配置（按默认值自愈重建，不入库）
+config/plugins/*/config.yaml
 bin/rg/
 bin/win_sandbox/
 bin/openconsole/

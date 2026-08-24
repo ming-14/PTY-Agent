@@ -11,9 +11,9 @@ import threading
 import pytest
 
 from src.daemon.handlers.dispatcher import DaemonDispatcher
-from src.daemon.handlers.utils import validate_field, get_detail
-from src.daemon.response import build_result, map_reason
-from src.daemon.filtering import strip_if_needed
+from src.execution.utils import validate_field, get_detail
+from src.execution.response import build_result, map_reason
+from src.execution.filtering import strip_if_needed
 from src.client.presenter import _session_message, _session_reason_hint
 from src.client.result import SessionResult
 from src.protocol.envelope import unwrap as _env_unwrap
@@ -531,7 +531,7 @@ class TestSnapshotFlowWithTrigger:
         session = _MockSession(sid)
         session._snapshot_text = ""
 
-        from src.output.trigger import TriggerMatcher
+        from src.session.trigger_matcher import TriggerMatcher
         tm = TriggerMatcher(decode_func=lambda x: x.decode("utf-8", errors="replace"))
 
         def fake_get_snapshot(keep_ansi=False):

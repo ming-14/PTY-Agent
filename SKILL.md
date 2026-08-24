@@ -60,7 +60,7 @@ python -c "import sys,importlib.util as u; print('[FAIL] Python >= 3.8 required,
 |------|------|----------|------|
 | `start/stop [options]` | 手动启动/停止守护进程；启动守护进程`exec`可直接启动，一般无需手动。未经用户运行，不要随便结束守护进程 | `stop --force` | |
 | `status` | 查看守护进程状态 | | |
-| `exec <new-session-id> <options>` | 执行命令以启动会话 | `-c "<command>"`(-c req), `-t "<regex>"`, `--cwd <path>`, `--env KEY=VALUE`, `--subprocess`, `--plugin <name>` | `exec id_py -c "python -i" -t ">>>"` |
+| `exec <new-session-id> <options>` | 执行命令以启动会话 | `-c "<command>"`(-c req), `-t "<regex>"`, `--cwd <path>`, `--env KEY=VALUE`, `--subprocess`, `--shell <shell>` | `exec id_py -c "python -i" -t ">>>"` |
 | `send <session-id> <options>` | 发送输入到运行中的会话（原样，不转义） | `-i "<content>"`(-i req), `-e <lf|crlf|cr|none>`, `-t "<regex>"` | `send id_py -i "print(1)" -t ">>>"` |
 | `advsend <session-id> <options>` | 发送输入到运行中的会话（JSON + 控制字符转义解码） | 同 `send` | `advsend server -i "{ctrl+c}" -e none` |
 | `read <session-id> [options]` | 读取会话输出 | `-l <N>`, `-g "<regex>"`, `-o <path>` | `read myid -l 10` |
@@ -74,7 +74,7 @@ python -c "import sys,importlib.util as u; print('[FAIL] Python >= 3.8 required,
 | `attend <sid>` | 附加到某个会话（注意：这是给用户使用的不是给你用的）| | |
 | `keygen [-f] [--key-dir <dir>] [-C <comment>]` | 生成 Ed25519 公私钥对（TLS 跨机认证用） | `-f`, `--key-dir <dir>`, `-C "<comment>"` | `keygen -C "user@host"` |
 | `plugin <list\|ls\|attach\|detach\|cmd>` | 插件管理 | `plugin list` / `plugin ls <id>` / `plugin attach <id> <name>` / `plugin detach <id> <name>` / `plugin cmd <id> <name> <command> [args...]` | `plugin list` |
-| `set-default <KEY> <VALUE>` | 覆盖全局默认配置（即只影响之后新建的会话的默认值） | | `set-default timeout 30` |
+| `set-default <KEY> <VALUE>` | 覆盖全局默认配置 | | `set-default timeout 30` |
 
 ## *返回条件参数
 
@@ -85,7 +85,7 @@ python -c "import sys,importlib.util as u; print('[FAIL] Python >= 3.8 required,
 | 都不带 | | **1s后返回** | **1s后返回** | |
 | 只带 trigger | `-t/--trigger "<regex>"` | 增量输出流匹配到正则，兜底默认超时 | 屏幕变化行匹配到正则，兜底默认超时 | |
 | trigger + newline | `-t "<regex>" --newline` | 换行后开始检查增量输出流匹配正则，兜底默认超时 | 换行后开始检查屏幕变化行匹配正则（输入回显行会先被剔除），兜底默认超时 | 终端有回显，如果你输入的字符会被正则匹配，建议使用`--newline`开启换行后检查 |
-| 只带 idle-timeout | `--idle-timeout <seconds>` | 屏幕静默超时（在一段时间内无变化），兜底默认超时 | 屏幕静默超时（在一段时间内无变化），兜底默认超时 | |
+| 只带 idle-timeout | `--idle-timeout <seconds>` | 屏幕静默超时（在一段时间内无变化），兜底默认超时 | 屏幕静默超时（在一段时间内无变化），兜底默认超时 | idle-timeout 从**最后输出到达**时开始计时；若程序 stdout 有块缓冲（如 `python -c` 未加 `-u`），输出可能延迟到达，idle 在缓冲 flush 前触发 → 返回空输出（数据未丢，可后续 read）。如需仅在首次输出后才检测静默，加 `--idle-after-first-output` |
 | 只带 timeout | `--timeout <seconds>` | 指定时间后返回 | 指定时间后返回 | |
 | 带 timeout + 其他条件 | 比如`-t "<regex>" --idle-timeout <seconds> --timeout <seconds>` |  命中其他条件，兜底超时 | 命中其他条件，兜底超时 | 注意！1.请不要将timeout设置为很大的值，否则若其他条件无法匹配就会卡死 2.建议如果要带其他条件，那就把timeout也带上并且设定合理的值，因为默认超时是120s |
 | GUI 检测 | 检测到 GUI 窗口 | 检测到 GUI 窗口 | GUI窗口通常阻塞程序运行，需要处理 |
@@ -182,15 +182,21 @@ AMD64)] on win32
 选项基本与 send 一致，见上文命令速查典型选项
 特殊选项：
 - `-c "<command>"`(req) 执行的命令，必填
-- `--force-pty-mode` 忽略命令中的 shell 操作符（`|`、`&&`、`>` 等）检测，强制执行
+- `--force-pty-mode` 非 shell 模式下为防止误用 shell 语法，会进行 shell 操作符检查。该命令忽略命令中的 shell 操作符（`|`、`&&`、`>` 等）检测，强制执行
 - `--cwd <path>` 子进程工作目录（默认取调用方 CLI 的当前目录）；如果与期望工作目录不一致，建议指定
 - `--env KEY=VALUE` 子进程额外环境变量，可指定多个，合并到继承的环境中；适用于设置 `TERM`、`COLORTERM` 等终端能力变量
 - `--subprocess` 子进程模式：Popen 捕获 stdout/stderr（非 PTY），增量输出 + stderr 分离，支持写 stdin，无 resize/快照
 - `--size <WxH>` 终端尺寸（如 `120x40`，默认 `80x24`；仅 pty 模式，**仅会话创建时生效**；运行中调整请用 `--default terminal-size NxN`）
+- `--shell <shell>` shell 模式，用指定 shell 包装执行命令（如 `bash`/`cmd`/`pwsh`），显示指定`--shell`优先级大于默认值
 - `-o/--output <path>` 输出到文件（.txt/.log=纯文本; .svg=矢量图; .png/.jpg/.bmp=位图，需 Pillow）
 
 **运行TUI程序建议使用终端模式**
 如果是简单的字符流程序，使用 `--subprocess` 子进程模式，只读取增量输出
+
+**--shell 示例**：
+```
+python app.py exec sid -c "echo a && echo b" --shell pwsh
+```
 
 ### send / advsend 用法
 
@@ -339,7 +345,7 @@ keygen 为本地命令，无需 daemon；Windows 下私钥自动收紧 ACL（仅
 ### plugin 用法
 
 插件管理：`list`/`ls`/`attach`/`detach`/`cmd`。插件注册在
-`config/plugins/plugins.json`（`enabled` 总开关 + `plugins` 位置列表），
+`config/plugins/registry.json`（目录发现 + registry.json）（`enabled` 总开关 + 插件发现（扫描配置目录 + 环境变量）），
 修改后需重启 daemon；也可用 `PTY_PLUGIN_DIRS` 环境变量追加插件位置。
 
 ```bash
@@ -350,6 +356,13 @@ python app.py plugin detach <session-id> <name>    # 从会话卸载插件
 python app.py plugin cmd <session-id> <name> <command> [args...]   # 调用插件命令钩子
 ```
 
+### set-default 用法
+
+覆盖全局默认配置（即只影响**之后**新建的会话的默认值，不影响已经创建的）
+
+- `app.py set-default <KEY> <VALUE>` 通用子命令：覆盖默认配置
+  - `<KEY>`可用键：`timeout`/`newline`/`keep-ansi`/`encoding`/`debug`/`send-eol`/`response-format`/`svg-compression-level`/`terminal-size`/`shell`，`<VALUE>`是配置值或者`on`/`off`
+
 ### 全局/通用选项
 
 - `--keep-ansi` （仅终端模式）通用子命令：保留完整VT序列（默认过滤掉终端颜色/样式码，只保留清屏/光标等控制序列，开启后保留全部）
@@ -357,11 +370,12 @@ python app.py plugin cmd <session-id> <name> <command> [args...]   # 调用插�
 - `--debug-output` 通用子命令：启用后响应中输出 debugInformation（进程树/GUI 窗口/事件）
 - `--show-config [KEY]` 查看当前调用配置
 - 以上命令只在本次调用中生效，如果需要之后不显式设定也可以缩小，需要指定默认值：
-- `--default <KEY> <VALUE>` 通用子命令：覆盖默认配置
-  - 可用键：`timeout`/`newline`/`keep-ansi`/`encoding`/`debug`/`send-eol`/`response-format`/`svg-compression-level`/`terminal-size`，`<VALUE>`是配置值或者`on`/`off`
+- `--default <KEY> <VALUE>` 通用子命令：调整该会话的配置值
+  - `<KEY>`可用键：`timeout`/`newline`/`keep-ansi`/`encoding`/`debug`/`send-eol`/`response-format`/`svg-compression-level`/`terminal-size`，`<VALUE>`是配置值或者`on`/`off`
   - 支持多个 `--default`
   - 默认配置按 session 持久化
-  - `--default terminal-size NxN` 对**运行中的会话即刻生效**
+  - `--default terminal-size NxN` 不是配置，是实时调整终端尺寸，对**运行中的会话即刻生效**
+  - `--default`不支持`shell`
 
 ## 插件
 

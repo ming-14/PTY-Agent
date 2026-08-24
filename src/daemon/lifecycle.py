@@ -2,7 +2,7 @@
 
 只负责 daemon 进程的入口与进程上下文（日志配置 / 控制台处理 / 单实例获取）。
 守护进程的启动/停止/探测（start_daemon / stop_daemon / is_running / 端口发现）
-属客户端控制能力，位于 src/daemonctl。
+属客户端控制能力，位于 src/client/daemonctl。
 """
 
 import os

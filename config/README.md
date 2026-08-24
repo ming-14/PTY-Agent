@@ -37,7 +37,7 @@ config/
 │   ├── client.toml      # 客户端：连接方式（[connection]）/ 连接超时 / 客户端认证参数 / 日志
 │   └── (各模式监听位置见 [connection] 段)
 ├── plugins/             # daemon 侧文件工具插件实现（业务参数自包含）
-│   └── plugins.json     # daemon 侧插件注册（相对项目根路径；可选，缺失即插件系统禁用）
+│   └── registry.json     # daemon 侧插件注册（相对项目根路径；可选，缺失即插件系统禁用）
 └── README.md
 ```
 
@@ -56,7 +56,7 @@ config/
 | `client/client.toml` | `client.py`（合并） | 客户端 | 连接方式（`[connection]`：CONNECT_MODE + 各模式监听位置，含 `BASIC_PASSWORD`）/ 连接超时 / 客户端认证参数（私钥/TOFU）/ 客户端日志 |
 | `transfer.toml` | `transfer.py` | 传输协议（daemon/CLI 两端） | 数据帧大小 / 控制帧上限 / 条目上限 / 超时 / tmp 后缀 |
 
-文件工具插件（`config/plugins/files/`）的业务参数（读/写/搜索上限、忽略目录、RG_EXE）由插件自包含配置 `config/plugins/files/files.toml` 提供，不进核心配置目录。
+文件工具插件（`config/plugins/files/`）的业务参数由插件自包含配置（`plugin.json` config.defaults + `config.yaml`，可选的 `config.schema.json` 校验）提供，不进核心配置目录。
 
 **不经过 Python 加载（外部工具配置）：**
 

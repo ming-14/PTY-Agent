@@ -31,7 +31,8 @@ def ctx():
 class TestFileGrepHandler:
     @pytest.fixture(autouse=True)
     def force_fallback(self, monkeypatch):
-        monkeypatch.setattr("config.plugins.files.search.grep.RG_EXE", None)
+        import config.plugins.files.settings as _s
+        monkeypatch.setattr(_s.settings, "rg_exe", None)
 
     def test_happy_path(self, plugin, ctx, tmp_path):
         target = tmp_path / "a.txt"
@@ -84,7 +85,8 @@ class TestFileGrepHandler:
 class TestFileGlobHandler:
     @pytest.fixture(autouse=True)
     def force_fallback(self, monkeypatch):
-        monkeypatch.setattr("config.plugins.files.search.glob_.RG_EXE", None)
+        import config.plugins.files.settings as _s
+        monkeypatch.setattr(_s.settings, "rg_exe", None)
 
     def test_happy_path(self, plugin, ctx, tmp_path):
         (tmp_path / "a.py").write_text("", encoding="utf-8")

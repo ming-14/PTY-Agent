@@ -14,7 +14,11 @@ bool ImageEncoder::initialized_ = false;
 
 ErrorCode ImageEncoder::init() {
     if (initialized_) return ErrorCode::OK;
-    return ensure_factory();
+    // 不在此创建 WIC factory：factory 延迟到第一次 ensure_factory() 时由
+    // 调用线程创建，避免跨线程 COM 对象失效（APC/线程退出后指针悬空）。
+    // CoInitializeEx 在 ensure_factory 中处理，init 仅标记。
+    initialized_ = true;
+    return ErrorCode::OK;
 }
 
 void ImageEncoder::shutdown() {
@@ -26,12 +30,15 @@ void ImageEncoder::shutdown() {
 }
 
 ErrorCode ImageEncoder::ensure_factory() {
-    if (factory_) return ErrorCode::OK;
-
+    // 确保当前线程 COM 已初始化（MTA）：WIC IWICImagingFactory 是 MTA 对象，
+    // 调用线程必须处于 COM 公寓中，否则崩溃（access violation）。
+    // 幂等：已初始化时返回 S_FALSE / RPC_E_CHANGED_MODE，忽略。
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) {
         return ErrorCode::CaptureFailed;
     }
+
+    if (factory_) return ErrorCode::OK;
 
     hr = CoCreateInstance(
         CLSID_WICImagingFactory2,

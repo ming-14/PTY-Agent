@@ -51,7 +51,8 @@ graph TB
         INP["client/input.py<br/>输入文本处理"]
         CLIP["client/cli_plugins.py<br/>CLI 插件宿主（kind=cli）"]
         REND["client/renderer/<br/>快照渲染（GDI/SVG/Pillow/文本）"]
-        DCTL["daemonctl/<br/>守护进程启停/探测/TLS 连接"]
+        DCTL["client/daemonctl<br/>守护进程启停/探测/TLS 连接"]
+        TLC["client/tls_client.py<br/>TLS 客户端连接器（TOFU）"]
         SHL["common/shells.py<br/>Shell 探测"]
         PIDX["common/process.py<br/>pid_exists"]
     end
@@ -71,18 +72,18 @@ graph TB
 
     subgraph SESS["会话管理层"]
         SMGR["session/manager.py<br/>SessionManager"]
-        SES["session/session/session.py<br/>Session 协调器"]
-        SIO["session/session/io.py<br/>InputMixin"]
-        SOUT["session/session/output.py<br/>OutputMixin"]
-        STRG["session/session/trigger.py<br/>TriggerMixin"]
-        SEVT["session/session/events.py<br/>EventsMixin"]
-        STHR["session/session/threads.py<br/>Threads 读者/监控线程"]
+        SES["session/session.py<br/>Session 协调器"]
+        SIO["session/io.py<br/>InputMixin"]
+        SOUT["session/output.py<br/>OutputMixin"]
+        STRG["session/trigger.py<br/>TriggerMixin"]
+        SEVT["session/events.py<br/>EventsMixin"]
+        STHR["session/threads.py<br/>Threads 读者/监控线程"]
         PUB["session/publisher.py<br/>SessionPublisher"]
-        OBUF["output/buffer.py<br/>OutputBuffer"]
-        TRIG["output/trigger.py<br/>TriggerMatcher"]
-        EHIST["output/events.py<br/>EventHistoryManager"]
-        EDET["encoding/detector.py<br/>EncodingDetector"]
-        ENC["encoding/codec.py<br/>编码探测与解码"]
+        OBUF["session/buffer.py<br/>OutputBuffer"]
+        TRIG["session/trigger_matcher.py<br/>TriggerMatcher"]
+        EHIST["session/events_history.py<br/>EventHistoryManager"]
+        EDET["session/detector.py<br/>EncodingDetector"]
+        ENC["session/codec.py<br/>编码探测与解码"]
         SHM["ipc/shm.py<br/>共享内存工具"]
         SLOCK["ipc/single_instance.py<br/>单实例锁"]
         IINT["input/interceptor.py<br/>InputInterceptor"]
@@ -127,8 +128,10 @@ graph TB
         WFEX["workflow/expr.py<br/>安全表达式求值（AST 白名单）"]
     end
 
-    subgraph EXEC["daemon 执行原语"]
-        EXECF["daemon/execution.py<br/>快照/子进程执行流程（含 cancel）"]
+    subgraph EXEC["执行原语层"]
+        EXECF["execution/execution.py<br/>快照/子进程执行流程（含 cancel）"]
+        EXECC["execution/conditions.py<br/>返回条件声明"]
+        EXECR["execution/response.py<br/>响应装配"]
     end
 
     MAIN --> CLIENT
@@ -139,6 +142,7 @@ graph TB
     DAEMON --> SESS
     DAEMON --> AUTH
     DAEMON --> WEB
+    DAEMON -->|handlers| EXEC
     DAEMON --> WF
     WF --> EXEC
     WF --> SESS
@@ -177,18 +181,18 @@ graph TB
 - `strip_ansi` 与任何业务逻辑无关，独立可测；仅过滤 SGR 颜色/样式码 + OSC 窗口标题，保留清屏/光标定位等语义控制序列
 - 控制序列（`\x1b[2J` 清屏、`\x1b[H` 归位、`\x1b[K` 清行等）不受 `keep_ansi` 影响，始终保留在输出中
 
-#### 3.3.2 `client/` + `daemonctl/` — 前端客户端层与 daemon 控制
+#### 3.3.2 `client/` + `client/daemonctl` — 前端客户端层与 daemon 控制
 
 **定位**：封装与守护进程的通信（明文 / TLS / 本机 token），向 CLI 入口提供简洁接口。支持按 CONNECT_MODE 三路分流：本机 token（SHM 发现 + Token/HMAC）、明文（共享密码认证，空密码=无认证）、跨机 TLS（Ed25519 认证）。
-守护进程的启动/停止/探测属 client 侧控制能力，独立为 `daemonctl/` 包（与 daemon 核心解耦，仅依赖共享层）。
+守护进程的启动/停止/探测属 client 侧控制能力，独立为 `client/daemonctl` 包（与 daemon 核心解耦，仅依赖共享层）。
 
 | 模块 | 类/函数 | 职责 |
 |------|---------|------|
-| `daemonctl/lifecycle.py` | `start_daemon()` / `stop_daemon(force)` / `is_running()` | 守护进程控制：子进程启动（Win: DETACHED_PROCESS，Unix: 双 fork + exec，监听位置全走配置文件）、停止（按 CONNECT_MODE 路由：tls→TLS / basic→明文 / token→SHM+明文）、ping-pong 存活探测 |
-| `daemonctl/lifecycle.py` | `_find_daemon_port()` / `_find_daemon_pid()` | 查找运行中的守护进程端口/PID（token 模式经单实例锁 + ping 验证返回配置端口；basic/tls 模式返回配置目标） |
-| `daemonctl/lifecycle.py` | `_try_stop_via_tls()` | TLS 停止远程守护进程（CONNECT_MODE=tls：KnownHosts + TOFU + Ed25519 签名） |
-| `daemonctl/tls.py` | `TLSClient` 类 | TLS 客户端连接器：建立 TLS 连接 + TOFU 证书验证（CERT_NONE + 自定义指纹比对，类似 SSH known_hosts） |
-| `daemonctl/tls.py` | `TLSClient.connect()` → `ssl.SSLSocket` | TCP 连接 + TLS 握手 + 获取服务端 DER 证书 → 计算 SHA-256 指纹 → TOFU 验证（首次自动信任，后续比对，不匹配按 `TOFU_STRICT` 拒绝或警告） |
+| `client/daemonctl` | `start_daemon()` / `stop_daemon(force)` / `is_running()` | 守护进程控制：子进程启动（Win: DETACHED_PROCESS，Unix: 双 fork + exec，监听位置全走配置文件）、停止（按 CONNECT_MODE 路由：tls→TLS / basic→明文 / token→SHM+明文）、ping-pong 存活探测 |
+| `client/daemonctl` | `_find_daemon_port()` / `_find_daemon_pid()` | 查找运行中的守护进程端口/PID（token 模式经单实例锁 + ping 验证返回配置端口；basic/tls 模式返回配置目标） |
+| `client/daemonctl` | `_try_stop_via_tls()` | TLS 停止远程守护进程（CONNECT_MODE=tls：KnownHosts + TOFU + Ed25519 签名） |
+| `client/tls_client.py` | `TLSClient` 类 | TLS 客户端连接器：建立 TLS 连接 + TOFU 证书验证（CERT_NONE + 自定义指纹比对，类似 SSH known_hosts） |
+| `client/tls_client.py` | `TLSClient.connect()` → `ssl.SSLSocket` | TCP 连接 + TLS 握手 + 获取服务端 DER 证书 → 计算 SHA-256 指纹 → TOFU 验证（首次自动信任，后续比对，不匹配按 `TOFU_STRICT` 拒绝或警告） |
 | `client/lifecycle.py` | `setup_client_logging()` | 客户端日志配置（由 `cli/main.py` 调用） |
 | `client/transport.py` | `Client` 类 | 向 CLI 暴露 `cmd_start()` / `cmd_stop()` / `cmd_status()` / `cmd_list()` / `cmd_exec()` / `cmd_send()` / `cmd_read()` / `cmd_kill()` / `cmd_events()` / `cmd_closewin()` / `cmd_mouse()` / `cmd_wait()` / `cmd_plugin()` / `cmd_file_read()` / `cmd_file_write()` / `cmd_file_edit()` / `cmd_file_grep()` / `cmd_file_glob()` / `cmd_file_upload()` / `cmd_file_download()` |
 | `transport.py` | `Client.connect_addr()` | 按 CONNECT_MODE 返回连接目标地址 (host, port) |
@@ -238,7 +242,7 @@ graph TB
 **定位**：多监听器 TCP/TLS 服务器，接收客户端请求，委派会话管理/PTY 层处理，返回响应。三监听器模型支持明文（共享密码认证，空密码=无认证）、token（Token + HMAC 认证，本机）、TLS（Ed25519 认证，跨机）三个 Listener，每个监听器可独立启停。
 
 > 守护进程的启动/停止/探测（start_daemon / stop_daemon / is_running）属客户端控制能力，
-> 位于 `daemonctl/` 包；本层仅含入口与进程上下文。
+> 位于 `client/daemonctl` 包；本层仅含入口与进程上下文。
 
 | 模块 | 类/函数 | 职责 |
 |------|---------|------|
@@ -249,14 +253,13 @@ graph TB
 | `server.py` | `DaemonServer._build_BASIC_auth_context()` | 构建 basic 认证上下文：BASIC_PASSWORD 非空时密码 + HMAC 双向（密码即密钥），空时无认证 |
 | `server.py` | `DaemonServer._build_token_auth_context()` | 构建 Token 认证上下文（token Listener 使用）：HMAC 对称签名（生成密钥），daemon 双向签/验 |
 | `server.py` | `DaemonServer._build_pubkey_auth_context()` | 构建公私钥认证上下文（TLS Listener 使用）：Ed25519 非对称单向，daemon 仅验请求（fail-closed） |
-| `server.py` | `DaemonServer._create_plugin_registry()` | 进程级插件注册表创建（按 `plugins.json` + 环境变量加载，失败隔离，关闭时返回 None） |
+| `server.py` | `DaemonServer._create_plugin_registry()` | 进程级插件注册表创建（目录发现 + registry.json 状态/策略，失败隔离，关闭时返回 None） |
 | `server.py` | `DaemonServer._schedule_rotate()` / `_rotate_token()` | 令牌定时轮换（30 分钟周期 + 2 分钟宽限，仅 token 认证模式） |
 | `listener.py` | `Listener` 类 | 单端口 accept 循环封装：bind() / start() / stop()，封装明文/TLS 传输类型 + AuthContext |
 | `listener.py` | `Listener._accept_loop()` | accept 循环：每连接创建处理线程，TLS 模式在 accept 后自动 wrap_socket |
-| `handler.py` | `RequestHandler` 类 | 委托 `handlers/` 子包，接收 AuthContext，`handle()` 派发到各命令处理器 |
-| `handlers/base.py` | `DaemonHandler` 基类 / `HandlerContext` | 命令处理器抽象基类 + 上下文容器（manager / auth_context / server） |
+| `handlers/base.py` | `DaemonHandler` 基类 | 命令处理器抽象基类（上下文 `HandlerContext` 见 `execution/context.py`） |
 | `handlers/dispatcher.py` | `DaemonDispatcher` | 消息派发：按 `msg["type"]` 路由到对应 handler 的 `handle()` 方法 |
-| `handlers/exec_handler.py` | `ExecHandler` | exec 命令处理（校验 + 创建/附加会话，流程委托 `daemon/execution.py`） |
+| `handlers/exec_handler.py` | `ExecHandler` | exec 命令处理（校验 + 创建/附加会话，流程委托 `execution/execution.py`） |
 | `handlers/send_handler.py` | `SendHandler` | send 命令处理 |
 | `handlers/read_handler.py` | `ReadHandler` | read 命令处理 |
 | `handlers/list_handler.py` | `ListHandler` | list 命令处理 |
@@ -269,11 +272,15 @@ graph TB
 | `handlers/wait_handler.py` | `WaitHandler` | wait 命令处理（恒等待指定秒数） |
 | `handlers/plugin_handler.py` | `PluginHandler` | plugin 命令处理（list/ls/attach/detach/cmd：插件列表、会话挂载插件、动态挂载/卸载、插件自定义命令） |
 | `handlers/workflow_handler.py` | `WorkflowHandler` | workflow 命令处理（run/list/show/cancel；定义解析校验 + WorkflowManager 委托） |
-| `handlers/utils.py` | 处理器工具函数 | `compress_screen_buffer` / `map_reason` / `filter_snapshot_lines` / `build_hint` / `validate_field` / `attach_screen_buffer` / `build_result` / `apply_lines_grep` / `apply_client_defaults` / `format_iso_ms` / `check_ended_session` 等（含 Git-Bash 路径提示） |
-| `execution.py` | 执行原语 | `_run_snapshot_flow` / `_run_subprocess_trigger_flow` / `_run_subprocess_no_trigger_flow` / `_attach_subprocess_stderr` — exec/send/read 核心执行流程（支持 `send_response=False` 返回与 `cancel_event` 中断），由 exec/send/read handler 与 workflow 引擎共用，避免行为分叉 |
+| `execution/execution.py` | 执行原语 | `_run_snapshot_flow` / `_run_subprocess_trigger_flow` / `_run_subprocess_no_trigger_flow` / `_attach_subprocess_stderr` / `assemble_response` — exec/send/read 核心执行流程（支持 `send_response=False` 返回与 `cancel_event` 中断），由 exec/send/read handler 与 workflow 引擎共用，避免行为分叉 |
+| `execution/conditions.py` | 返回条件声明 | `ReturnConditions` / `RequestContext`：从请求消息一次解释全部返回条件（exec/send/read 与 workflow 共用） |
+| `execution/filtering.py` | 输出过滤 | `filter_snapshot_lines` / `apply_lines_grep` / `strip_if_needed`：行/列/grep 过滤与 ANSI 剥离 |
+| `execution/output_policy.py` | 取源策略 | `resolve_output` / `validate_offset_policy`：按返回条件选源（snapshot/full/diff）与 offset 互斥校验 |
+| `execution/response.py` | 响应装配 | `build_result` / `compress_screen_buffer` / `attach_screen_buffer` / `map_reason` / `describe_output_format` / Git-Bash 路径提示 |
+| `execution/utils.py` | 请求工具 | `validate_request` / `apply_client_defaults` / `prepare_input` / `check_ended_session` 等（含 Git-Bash 路径提示） |
 
 **设计要点**：
-- `daemon/lifecycle.py` 仅承担守护进程入口与进程上下文（日志/控制台/单实例获取）；启动/停止/探测属客户端控制能力，位于 `daemonctl/` 包；`daemon/__main__.py` 转调 `lifecycle.main()`
+- `daemon/lifecycle.py` 仅承担守护进程入口与进程上下文（日志/控制台/单实例获取）；启动/停止/探测属客户端控制能力，位于 `client/daemonctl` 包；`daemon/__main__.py` 转调 `lifecycle.main()`
 - 日志系统位于 `src/logging/` 子包（`get_logger` / `bind` / `setup_daemon_logging` / `setup_client_logging` / `shutdown`），daemon 侧与 client 侧复用：异步队列（`QueueHandler` + 后台单线程 `pty-log-writer`）+ 按模块分组写带毫秒时间戳的独立日志文件 + 前一日日志 gzip 归档 + ContextVar 上下文绑定（session_id/connection_id/request_id 自动注入）
 - 单实例互斥锁（`SingleInstanceLock`）位于 `ipc/single_instance.py`（守护进程与客户端共用）
 - `DaemonServer` 按 daemon.toml `[listener]` 段编排多个 `Listener`（三监听器）：basic（明文，共享密码认证，空密码=无认证）、token（Token + HMAC 认证，本机 SHM 发现）、tls（TLS + Ed25519 认证，跨机）。三个监听器的启用/地址/端口由 `BASIC_*`/`TOKEN_*`/`TLS_*` 独立配置，可同开或只开一个
@@ -295,8 +302,8 @@ graph TB
 | `wezterm_pty.py` | `WeztermPseudoTerminal` | 跨平台统一 wezterm-py 后端：Windows 侧载 conpty.dll + OpenConsole.exe 规避系统 conhost 的 VT 输入缺陷，Unix 用 portable-pty 的 openpty；spawn 后同一代码路径内 `register_root(pid, handle)` 登记根进程到 tracker |
 | `subprocess_pty.py` | `SubprocessPseudoTerminal` | 子进程模式后端（`exec --subprocess`）：用 `subprocess.Popen` 直接捕获 stdout/stderr（无 PTY）。双后台线程分别阻塞读两管道 → 队列，`read()`/`read_stderr()` 非阻塞取流；`write()` 写 stdin；`resize()` 报错；`send_signal()` 发信号。进程树仍经 tracker `register_root` |
 
-> 注：进程树追踪端口（`process/base.py:ProcessTreeTracker` + 统一通知实体 `ProcessNotification`）、Windows Job 追踪（`process/windows/job_tracker.py`）、GUI 窗口检测（`process/windows/gui_monitor.py`）、Windows API 绑定（`process/windows/api.py`）、Unix 进程组追踪（`process/unix/pgid_tracker.py`）、Windows 错误码格式化（`process/win32_error.py`）均位于 `process/` 包，经 `process.create_process_tree_tracker()` 工厂获取；
-> Shell 探测（`detect_available_shells` / `format_shell_info`）位于跨侧共享层 `common/shells.py`（daemon 启动日志、web shell provider、daemonctl 输出共用）。
+> 注：进程树追踪端口（`process/base.py:ProcessTreeTracker` + 统一通知实体 `ProcessNotification`）、Windows Job 追踪（`process/windows/job_tracker.py`）、GUI 窗口检测（`process/windows/gui_monitor.py`）、Windows API 绑定（`process/windows/api.py`）、Unix 进程组追踪（`process/unix/pgid_tracker.py`）、Windows 错误码格式化（`process/windows/win32_error.py`）均位于 `process/` 包，经 `process.create_process_tree_tracker()` 工厂获取；
+> Shell 探测（`detect_available_shells` / `format_shell_info`）与命令包装（`wrap_command`，exec `--shell` / `set-default shell` 用）位于跨侧共享层 `common/shells.py`（daemon 启动日志、web shell provider、daemonctl 输出、exec_handler 命令包装共用）。
 
 **设计要点**：
 - `base.py` 定义了最小接口契约，所有具体 PTY 后端必须实现全部方法
@@ -331,13 +338,13 @@ graph TB
 | `publisher.py` | `SessionPublisher` | 订阅者与结束回调管理，向 Web 层发布会话输出/结束/事件（`notify_subscribers(data, stream)` / `notify_end(session)`） |
 
 **设计要点**：
-- `Session` 按职责拆分为多个混入类（`session/session/` 子包内的 `io`/`output`/`trigger`/`events`），`Session` 基类仅保留子组件装配（`__init__`）、生命周期（`start`/`stop`）与状态代理/子组件公开访问；Windows 控制台信号逻辑独立到 `session/_win_console.py`
+- `Session` 按职责拆分为多个混入类（`session/` 包内的 `io`/`output`/`trigger`/`events`），`Session` 基类仅保留子组件装配（`__init__`）、生命周期（`start`/`stop`）与状态代理/子组件公开访问；Windows 控制台信号逻辑独立到 `session/_win_console.py`
 - `Session` 不直接创建 PTY 实例，而是通过 `create_pty()` 工厂获得；进程树 tracker 经 `process.create_process_tree_tracker()` 工厂创建（Session 生命周期 owner）
 - Session 通过 `@property` 公开子组件：`session.output_buffer` / `session.trigger_matcher` / `session.event_history` / `session.process_monitor` / `session.tracker` / `session.publisher` / `session.plugin_host`
 - `Session._reader_loop()` 和 `_monitor_loop()` 位于 `session/threads.py` 的 `Threads` 类中，Session 通过组合持有 `Threads` 实例，避免自身过于臃肿
 - `Components` 数据类将后台线程所需的所有子组件引用打包传递，避免循环依赖
 - 读者线程数据流：`pty.read + drain → 插件 on_output 变换链 → OutputBuffer 追加 + TriggerMatcher 检测 → TerminalScreen.feed → 终端查询应答回写（drain_terminal_response）→ SessionPublisher 推送`；监控线程高频（0.2s）排空 tracker 进程事件（崩溃/退出尽快反馈到 wait_for_trigger），低频（2s）执行 `check_events` 兜底 diff + `GuiDetector.check` + 插件 `poll_tick` + 自然退出检测（均自带节流）
-- `encoding/codec.py` 将编码探测逻辑从 `Session` 类中抽离为纯函数，便于测试
+- `session/codec.py` 将编码探测逻辑从 `Session` 类中抽离为纯函数，便于测试
 - `EncodingDetector` 维护编码状态（`encoding` / `_encoding_locked`），`detect_decode()` 在 `get_output` 中调用可修改状态，`decode_only()` 在持锁路径 `TriggerMatcher.check` 中使用无副作用
 - `GuiDetector` 封装 GUI 窗口检测逻辑（2s 节流轮询），从 Session 中独立出来
 - `InputInterceptor` 封装 write_input 的编码转换与鼠标动作执行（perform_mouse_action）；键盘/鼠标事件编码由 `WeztermInputEncoder`（wezterm-py Terminal 模式感知）完成，从 Session 中独立出来
@@ -346,7 +353,7 @@ graph TB
 - 触发检测基于 `threading.Event`，线程安全
 - 输出缓冲区大小上限由 `config/` 包集中控制（`MAX_OUTPUT_BUFFER`，定义于 `daemon/daemon.toml`）
 - `OutputBuffer` 内部使用 `RLock`（可重入锁），允许 `_reader_loop` 在持锁上下文中调用 `append()`
-- `encoding/codec.py` 新增智能裁剪（`_utf8_trim_tail` / `_gbk_trim_tail` / `_smart_trim`），避免线性截断性能损耗
+- `session/codec.py` 新增智能裁剪（`_utf8_trim_tail` / `_gbk_trim_tail` / `_smart_trim`），避免线性截断性能损耗
 
 #### 3.3.6 `auth/` — 认证层
 
@@ -398,7 +405,7 @@ graph TB
 | `transfer.toml` | 传输协议（daemon + Client） | 数据帧大小（`TRANSFER_CHUNK_SIZE`）、控制帧上限（`TRANSFER_MAX_CONTROL`）、条目上限（`TRANSFER_MAX_FILES`）、单文件上限（`TRANSFER_MAX_SIZE`）、tmp 后缀、进度间隔、总时限（`TRANSFER_TIMEOUT`） |
 | `daemon/vnc.toml` | VNC 运行时 | VNC 端口/密码/日志配置（由 winvnc.exe 读取，非 Python 加载） |
 | `daemon/vnc.example.toml` | VNC 配置示例 | 同上，供用户参考 |
-| `plugins/plugins.json` | Daemon（插件系统，**可选**） | 插件系统总开关（`enabled`）+ 相对项目根的插件位置列表（如 `config/plugins/state_check`、`config/plugins/files`），由 `src/config/plugins.py` 加载。文件缺失时插件系统禁用（`ENABLED=False`） |
+| `plugins/registry.json` | Daemon（插件系统，**可选**） | 插件系统总开关（`enabled`）+ 各插件启用状态（`plugins.<id>.enabled`），由 `src/config/plugins.py` 加载（enable/disable 自动持久化）。文件缺失时插件系统禁用（`ENABLED=False`） |
 
 #### 3.4.2 加载机制
 
@@ -411,7 +418,7 @@ graph TB
 | `client.py` | 加载 `common.toml` + `shared.toml`（config/ 根）+ `client/client.toml`，追加 `LOG_DIR`，复用 `common` 的 `IS_WINDOWS`/`DATA_DIR`/`PROJECT_ROOT` |
 | `transfer.py` | 加载 `transfer.toml`（config/ 根）的 `[transfer]` section，导出 `TRANSFER_*` 协议常量 |
 | `sandbox.py` | 加载 `daemon/sandbox.toml`（可选，文件不存在时 `CONFIG_LOADED=False`、`ENABLED=False`），导出 `ENABLED`/`LOG_LEVEL`/`QUOTA`/`ISOLATION`/`CONFIG_LOADED`（Windows 专属，win-sandbox 委派） |
-| `plugins.py` | 加载 `config/plugins/plugins.json`（daemon 侧插件注册，JSON 显式指定相对项目根的插件位置 + 环境变量 `PTY_PLUGIN_DIRS` 追加），导出 `ENABLED` / `PLUGIN_PATHS`。文件缺失时 `ENABLED=False`（插件系统禁用） |
+| `plugins.py` | 插件目录发现（扫描 `config/plugins/` 下含 `plugin.json` 的目录 + 环境变量 `PTY_PLUGIN_DIRS` 追加）+ `registry.json` 状态/`policy.json` 策略，导出 `ENABLED` / `PLUGIN_DIRS` / `PLUGIN_STATES` / `POLICY` / `PluginStateStore`。`registry.json` 缺失时 `ENABLED=False`（插件系统禁用） |
 | `optional.py` | 可选模块惰性导入网关：集中探测并缓存 `web`/`vnc`/`screenshare`/`cursorlocator`/`sandbox`/`plugins` 是否可用，提供 `*_available()` 与 `get_*_cls()` 工厂函数；缺失模块返回 None/False，不抛 ImportError，供 web 层与 daemon 惰性获取 adapter |
 
 **加载流程**：
@@ -483,7 +490,7 @@ class GuiWindowMonitor:
 GUI 检测**默认启用**，`Threads` 监控线程每 2s 轮询，`exec/send` 等待 trigger 时也自动轮询。
 `GuiWindowMonitor` 由 `JobProcessTreeTracker` 聚合持有（关联 tracker 的 `poll_gui_windows()` / `get_gui_windows()` / `close_gui_window()`），`GuiDetector`（`process/gui.py`）经 `ProcessTreeTracker` 抽象轮询，与具体追踪实现（Job / pgid / 沙箱委派）解耦。
 
-### 4.3 事件系统（`output/events.py`）
+### 4.3 事件系统（`session/events_history.py`）
 
 Session 内部维护 **待处理事件队列** 和 **事件历史记录**，实时记录：
 
@@ -554,7 +561,7 @@ def _monitor_loop(self):
 客户端按 client.toml `[connection]` 的 `CONNECT_MODE` 选择对应目标地址，端口不通过共享内存发现：
 
 - `daemon/server.py` + `daemon/lifecycle.py`：按 `[listener]` 段启用/绑定监听器，不经共享内存发布端口
-- `daemonctl/lifecycle.py`：`is_running()` 经单实例锁判断；`_find_daemon_pid()` 经 `SingleInstanceLock.find_owner_pid()` 定位；`_find_daemon_port()` 返回当前 `CONNECT_MODE` 对应的配置端口（token 模式经单实例锁确认存活）
+- `client/daemonctl`：`is_running()` 经单实例锁判断；`_find_daemon_pid()` 经 `SingleInstanceLock.find_owner_pid()` 定位；`_find_daemon_port()` 返回当前 `CONNECT_MODE` 对应的配置端口（token 模式经单实例锁确认存活）
 - `client/transport.py`：直接使用 client.toml `[connection]` 对应目标连接
 - 共享内存仅承载认证凭据：认证令牌（`AUTH_TOKEN_NAME`）与 HMAC 密钥（`HMAC_KEY_NAME`）
 
@@ -562,7 +569,7 @@ def _monitor_loop(self):
 
 三监听器模型下，认证按监听器区分：token 监听器走 Token + HMAC 认证（本机 SHM 发现），TLS 监听器走 Ed25519 公钥认证（跨机，TOFU 信任），basic 监听器走共享密码认证（`BASIC_PASSWORD` 非空时密码 + HMAC 双向，空=无认证）。机制细节见 3.3.6 `auth/` 认证层，监听器组件与连接流程见 4.14。
 
-### 4.8 `process/win32_error.py` — Windows 错误码格式化
+### 4.8 `process/windows/win32_error.py` — Windows 错误码格式化
 
 提供 Windows 特有错误退出码（NTSTATUS、Win32 错误码）的格式化输出：
 
@@ -630,7 +637,7 @@ pty 模式会话恒返回终端屏幕快照，行为如下：
 | `read` | 直接返回当前屏幕快照 |
 
 **设计要点**：
-- `daemon/execution.py:_run_snapshot_flow()` 实现快照流程（exec/send/read handler 与 workflow 引擎共用）：
+- `execution/execution.py:_run_snapshot_flow()` 实现快照流程（exec/send/read handler 与 workflow 引擎共用）：
   - 无 trigger/idle-timeout 时：等待 `--timeout` 秒后返回快照
   - 有 trigger 时：轮询快照文本检查正则匹配，匹配成功立即返回
   - 有 idle-timeout 时：检测屏幕快照是否变化，无变化超过指定秒数后返回
@@ -686,7 +693,7 @@ pty 模式会话恒返回终端屏幕快照，行为如下：
 - DIB 像素格式为 BGRX，通过 `PIL_Image.frombytes("RGB", ..., "raw", "BGRX")` 转换后保存
 - `_expand_lines()` 自动检测稀疏格式（单元格含 `c` 字段）和全量格式（单元格无 `c` 字段），统一展开后供渲染器使用
 - SVG 渲染器使用 run-length 合并：相邻同色字符合并为单个 `<text>` 元素，减少 DOM 节点数
-- `exec`/`read` 通过 `--output/-o` 参数触发渲染，`transport.py` 中 `_handle_output()` 调用
+- `exec`/`read` 通过 `--output/-o` 参数触发渲染，`client/commands.py` 中 `_handle_output()` 调用
 
 ### 4.12 HMAC 签名验证
 
@@ -749,11 +756,11 @@ client/renderer/:_expand_lines() → 全量二维数组 → GDI/SVG/Pillow/文�
 |------|------|
 | `daemon/listener.py:Listener` | 封装单端口 accept 循环：`bind()` 绑定端口 → `start()` 启动 accept 线程 → `stop()` 关闭。传输类型（`"basic"` / `"tls"`）和 `AuthContext` 在构造时绑定，TLS 模式在 accept 后自动 `wrap_socket` |
 | `daemon/server.py:DaemonServer` | 编排多个 Listener：`run()` 根据 `[listener]` 段的 `*_ENABLED` 决定启动哪些 Listener，构建每个 Listener 的 `AuthContext`，管理生命周期 |
-| `daemonctl/tls.py:TLSClient` | TLS 客户端连接器：CERT_NONE 模式（不验证 CA）+ TOFU 指纹验证。首次连接自动信任证书指纹，后续连接比对，不匹配按 `TOFU_STRICT` 拒绝或警告 |
+| `client/tls_client.py:TLSClient` | TLS 客户端连接器：CERT_NONE 模式（不验证 CA）+ TOFU 指纹验证。首次连接自动信任证书指纹，后续连接比对，不匹配按 `TOFU_STRICT` 拒绝或警告 |
 | `auth/tls/cert_manager.py:CertificateManager` | 守护进程首次启动自动生成自签 TLS 证书（有效期 `TLS_CERT_VALIDITY_DAYS` 天），后续启动加载已有证书 |
 | `auth/tls/known_hosts.py:KnownHosts` | 客户端 TOFU 信任存储：`~/.pty-agent/known_hosts` 文件，格式 `host:port fingerprint` |
 
-**连接路由逻辑**（`client/transport.py:Client._connect()`）：
+**连接路由逻辑**（`client/connection.py:ClientConnectionMixin._connect()`）：
 
 ```
 CONNECT_MODE == "tls"   → TLS 连接（_connect_tls: TLSClient + TOFU + Ed25519）
@@ -778,7 +785,7 @@ CONNECT_MODE == "token" → 明文连接 + SHM 发现（_connect_token: 本机 T
 4. TOFU 验证：首次自动信任并存储指纹，后续比对（不匹配 → `TOFU_STRICT=true` 拒绝 / `false` 警告）
 5. 连接建立后注入 `auth.pubkey_fp` 凭证 + Ed25519 签名
 
-**停止流程**（`daemonctl/lifecycle.py:stop_daemon()`）：
+**停止流程**（`client/daemonctl:stop_daemon()`）：
 - tls 模式：先通过 TLS 连接远程 daemon 发送 stop，TLS stop 失败（如 TOFU 指纹不匹配）且 `force=True` 时回退到本地强制终止（通过互斥锁定位 PID）
 - basic 模式：通过明文 TCP 连接 `BASIC_HOST`:`BASIC_PORT` 发送 stop（BASIC_PASSWORD 非空时带密码 + HMAC 签名；stop 失败且 `force=True` 时回退本地强制终止）
 - token 模式：通过 SHM 查找守护进程 → 明文 TCP stop → 强制 kill
@@ -855,7 +862,7 @@ Web 服务器支持可选的密码认证，由 `WEB_PASSWORD_HASH` 配置控制�
 - 不使用 HTTP 中间件/重定向，由各受保护端点自行校验
 - 前端检测到未授权错误后自行跳转 `/login`
 
-`web/presentation/controllers/` 现有控制器：`auth_controller.py`（密码认证）、`websocket_controller.py`（终端 WebSocket 会话，经 `application/handlers.py` 的 `MessageHandler` 用例 + `application/dispatcher.py` 的 `MessageDispatcher` 派发）、`settings_controller.py`（网页端设置读写，`settings_schema.py` 校验）、`screenshare_controller.py`（Screenshare 目标列表/状态 REST 端点）。WebSocket 消息处理经洋葱架构：`presentation` 收帧 → `application/dispatcher` 路由到 `MessageHandler` 子类（ListSessions/Create/Subscribe/Input/KeyInput/MouseInput/Resize/Signal/VncStart/VncStop/FsStatus/FsListTargets/CursorLocator/TakeoverSizeControl/SetSizeMode/HistoryDetail/SessionDetail 等）→ 经 `application/ports.py` 端口（SessionRepository/HistoryRepository/OutboundMessageChannel/ConnectionContext/SystemStatsProvider/ShellProvider/EventPublisher/CursorLocatorServicePort/ThreadExecutor）调 `infrastructure` 适配器（`repositories/`（SessionRepositoryAdapter/HistoryRepositoryAdapter/HistoryStore）、`system/`（ShellProviderImpl/SystemStatsProviderImpl）、`web/`（FastAPIWebSocketTransport/WebSocketConnectionContext/EventPublisherImpl）、`thread_executor.py`（ThreadExecutorImpl）、`cursor_locator_adapter.py`、`auth/session_store.py`）。VNC/Screenshare 适配器（`VncAdapter`/`ScreenshareAdapter`）属于可选模块，经 `src/optional` 网关获取（`get_vnc_adapter_cls`/`get_screenshare_adapter_cls`），不在 `infrastructure/__init__.py` 模块级导入，目录缺失时相关功能降级不崩。
+`web/presentation/controllers/` 现有控制器：`auth_controller.py`（密码认证）、`websocket_controller.py`（终端 WebSocket 会话，经 `application/handlers/` 包的 `MessageHandler` 用例 + `application/dispatcher.py` 的 `MessageDispatcher` 派发）、`settings_controller.py`（网页端设置读写，`settings_schema.py` 校验）、`screenshare_controller.py`（Screenshare 目标列表/状态 REST 端点）。WebSocket 消息处理经洋葱架构：`presentation` 收帧 → `application/dispatcher` 路由到 `MessageHandler` 子类（ListSessions/Create/Subscribe/Input/KeyInput/MouseInput/Resize/Signal/VncStart/VncStop/FsStatus/FsListTargets/CursorLocator/TakeoverSizeControl/SetSizeMode/HistoryDetail/SessionDetail 等）→ 经 `application/ports.py` 端口（SessionRepository/HistoryRepository/OutboundMessageChannel/ConnectionContext/SystemStatsProvider/ShellProvider/EventPublisher/CursorLocatorServicePort/ThreadExecutor）调 `infrastructure` 适配器（`repositories/`（SessionRepositoryAdapter/HistoryRepositoryAdapter/HistoryStore）、`system/`（ShellProviderImpl/SystemStatsProviderImpl）、`web/`（FastAPIWebSocketTransport/WebSocketConnectionContext/EventPublisherImpl）、`thread_executor.py`（ThreadExecutorImpl）、`cursor_locator_adapter.py`、`auth/session_store.py`）。VNC/Screenshare 适配器（`VncAdapter`/`ScreenshareAdapter`）属于可选模块，经 `src/optional` 网关获取（`get_vnc_adapter_cls`/`get_screenshare_adapter_cls`），不在 `infrastructure/__init__.py` 模块级导入，目录缺失时相关功能降级不崩。
 
 `web/` 包入口与辅助：`web/server.py`（`WebServer` 兼容导出，实现见 `web/presentation/server.py`，FastAPI + uvicorn 后台线程启动）、`web/history.py`（`HistoryStore` 导出，实现见 `web/infrastructure/repositories/history_store.py`，会话历史归档/查询）、`web/httpserver.ps1` / `web/httpserver.sh`（独立 Web 服务器启动脚本）。
 
@@ -865,32 +872,37 @@ Web 服务器支持可选的密码认证，由 `WEB_PASSWORD_HASH` 配置控制�
 
 完整文件清单见 [filestree/web-static.md](filestree/web-static.md)。
 
-### 4.18 插件系统（`src/plugins/`）
+### 4.18 插件系统（`src/plugins/` + `config/plugins/`）
 
-插件分两种形态，按声明区分（声明即契约，加载期校验）：
+插件系统 v2（清单驱动）：元数据由 `plugin.json` 清单声明（id/kind/triggers/
+messageTypes/权限/配置默认值等），代码只实现钩子。三种形态按 `kind` 区分：
 
-**会话级插件**（`triggers` 声明）：挂载到会话，围绕会话生命周期提供钩子
-（`on_attach/on_detach/on_input/on_output/on_snapshot/on_event/on_poll`、
-`handle_command`、`inspect_state`），由 `PluginHost` 调度，详见 §3.3 会话层插件接入。
-触发方式（`triggers`：`"event"` / `"poll"`）与 `auto_load`（按 exec 请求 command/cwd/env 自动挂载）均为声明式，加载期校验。
-
-**进程级插件**（`message_types` 非空）：守护进程启动时单例实例化常驻，
-接管对应 daemon 消息类型，不参与会话挂载：
+| 形态 | 执行位置 | 说明 |
+|------|----------|------|
+| `process` | daemon 进程 | 启动单例实例化，`messageTypes` 接管消息路由（`handle_message`） |
+| `session` | daemon 进程 | 规范实例收总线事件；每次会话挂载构造独立实例（`on_attach`→`on_detach`） |
+| `cli` | 客户端进程 | 每次命令进程启动时加载，处理请求/响应三阶段钩子（`before_request`/`transform_response`/`render_response`） |
 
 | 组件 | 职责 |
 |------|------|
-| `plugins/base.py` | `Plugin` 基类：`name/version/description/triggers/poll_interval/auto_load/message_types/needs_io` 声明；`handle_message(ctx, msg) -> dict` 钩子（返回 dict 原样作为响应发送；`HANDLED` 哨兵表示插件已自行完成多帧响应；None = 未处理）；`PluginContext`（session 级：`request_return` / `self_unload`）与 `ProcessPluginContext`（进程级：manager/plugin/io） |
-| `plugins/host.py` | `PluginHost`：会话级挂载链（attach/detach/detach_all）、链式变换（on_input/on_output/on_snapshot）、分发（on_event/poll_tick 节流）、返回控制（request_return 中断等待，原因透传）、自我卸载、inspect_state 聚合 |
-| `plugins/io.py` | `PluginIO` 连接收发端口：`send_message` + 帧收发（委托 `protocol/transfer`），仅 `needs_io=True` 插件注入 |
-| `plugins/registry.py` | `PluginRegistry`：进程级插件单例实例化（失败隔离）；`instantiate()` 拒绝进程级插件（不可会话挂载）；`list_all()` 含 messageTypes/needsIO；`match_auto_load()` 按 exec 请求字段匹配自动加载 |
-| `plugins/loader.py` | 声明校验：triggers 合法性（event/poll）、poll_interval 必填、message_types 非空须实现 handle_message、needs_io 须为 bool、auto_load 结构校验；失败仅跳过该插件 |
-| `config/plugins/plugins.json` | 插件注册：总开关（`enabled`）+ 显式指定相对项目根插件位置（`state_check` / `files` 等），经 `src/config/plugins.py` 加载（不再扫描目录） |
-| `daemon/handlers/dispatcher.py` | `PluginMessageHandler` 适配器：按消息类型路由到进程级插件实例（与内置 handler 冲突时内置优先），异常隔离不中断 daemon |
+| `plugins/base.py` | `Plugin` 基类（只定义钩子签名，无声明属性）、`PluginContext`（含 `request_return`/`self_unload`）、`ProcessPluginContext`（manager/plugin/io + 环境能力） |
+| `plugins/manifest.py` | `plugin.json` 解析与结构校验（id/version/kind/triggers/messageTypes/权限/配置默认值/事件订阅等） |
+| `plugins/loader.py` | 清单驱动加载：校验清单-实现一致性（声明 triggers 必须实现对应钩子） |
+| `plugins/registry.py` | `PluginRegistry`：生命周期编排（enable/disable/reload/load_dir/remove）、状态机（LOADED/ENABLED/DISABLED/BROKEN）、进程级单例、auto_load 条件匹配 |
+| `plugins/host.py` | `PluginHost`：会话级挂载链（`HookEngine` 驱动），含链式变换（modify）、事件分发（observe）、状态聚合（provide） |
+| `plugins/hooks.py` | `HookEngine`：优先级排序 + 五类调度语义（modify/observe/intercept/provide/aggregate），异常隔离 |
+| `plugins/events.py` | `EventBus`：daemon 级 pub/sub，主题通配（`*` 单段 / `>` 多段），异常隔离 |
+| `plugins/config.py` | `PluginConfig`：分层配置（清单默认 → config.yaml → 环境变量），JSON Schema 子集校验 |
+| `plugins/storage.py` | `PluginStorage`：kv/文件/sqlite 三种视图，惰性创建，按插件命名空间隔离 |
+| `plugins/permissions.py` | `PermissionChecker`：基于能力的声明式检查 + 审计（拒绝事件记日志） |
+| `plugins/environment.py` | `PluginEnvironment`：daemon 全局共享的插件能力集合（配置/存储/权限/总线） |
+| `plugins/io.py` | `PluginIO`：连接收发端口，`needs_io=True` 插件注入 |
+| `config/plugins/registry.json` | 插件系统总开关 + 各插件启用状态（enable/disable 自动持久化） |
+| `daemon/handlers/dispatcher.py` | `PluginMessageHandler` 适配器 + 动态消息路由同步（`_sync_plugin_handlers`） |
 
-典型接入（文件工具）：插件声明 `message_types` 接管 `file_*` 消息 →
-dispatcher 注册表中该消息类型指向 `PluginMessageHandler` → 处理返回的 dict
-直接 `Message.send`（响应签名由框架完成），upload/download 经 `PluginIO`
-多帧收发后返回 `HANDLED`。
+典型接入（文件工具）：插件清单声明 `messageTypes` 接管 `file_*` 消息 →
+dispatcher 动态同步把消息类型指向 `PluginMessageHandler` → 处理返回的 dict
+直接 `Message.send`，upload/download 经 `PluginIO` 多帧收发后返回 `HANDLED`。
 
 ### 4.19 文件工具插件（`config/plugins/files/`）
 
@@ -899,8 +911,9 @@ dispatcher 注册表中该消息类型指向 `PluginMessageHandler` → 处理�
 | 位置 | 职责 |
 |------|------|
 | `config/plugins/files/`（插件） | daemon 侧全部业务：read/write/edit/grep/glob 用例、状态机（state）、历史（history）、传输判定（judge/map）、daemon_upload/daemon_download |
-| `config/plugins/files/files_plugin.py` | `FilesPlugin`：`message_types` 接管 `file_read/file_write/file_edit/file_grep/file_glob/file_upload_start/file_download_start`，`needs_io=True`，进程级单例 |
-| `src/transfer/`（核心） | 双端共享与 CLI 侧驱动：帧协议错误/条目（common）、树扫描（scan）、client_upload/client_download |
+| `config/plugins/files/plugin.json` | 清单：messageTypes/needsIO/权限/配置默认值 + config.schema.json |
+| `config/plugins/files/settings.py` | 运行设置持有器（默认值来自 plugin.json，插件 on_init 从 ctx.config 注入） |
+| `src/client/transfer/`（核心） | 双端共享与 CLI 侧驱动：帧协议错误/条目（common）、树扫描（scan）、client_upload/client_download |
 | `src/protocol/transfer.py`（核心） | 二进制帧编解码（零业务） |
 
 消息协议与响应形状（`commandType`）与原内置 handler 逐字段一致，客户端零改动。
@@ -910,7 +923,7 @@ dispatcher 注册表中该消息类型指向 `PluginMessageHandler` → 处理�
 另有 `config/plugins/state_check`（`StateCheckPlugin`，会话级）：纯启发式终端状态检测，
 命令返回时 `inspect_state` 按优先级检查屏幕快照/光标位置/备用屏幕/前台进程，
 检测结果作为 `terminalState` 附加到响应（Editor/Repl/WaitingForInput/Pager/Confirm/Password/Running/Error），
-并支持 `plugin cmd` 查询。两个插件均由 `config/plugins/plugins.json` 注册加载。
+并支持 `plugin cmd` 查询。内置插件均在 `registry.json` 中注册加载。
 
 ### 4.20 `sandbox/` — 沙箱会话子系统（win-sandbox 委派）
 
@@ -974,7 +987,7 @@ YAML 定义 + DAG 并行调度的后台任务编排（daemon 侧执行，CLI 只
 | `manager.py` | `WorkflowManager` | 运行注册表（daemon 持有）：启动（独立线程执行）、列表/查询/取消、容量上限自动淘汰最旧终态 |
 
 **设计要点**：
-- 步骤执行复用 `daemon/execution.py` 执行原语（与 exec/send/read handler 同源），行为与 CLI 一致；`send_response=False` 进程内取结果，无需网络往返
+- 步骤执行复用 `execution/execution.py` 执行原语（与 exec/send/read handler 同源），行为与 CLI 一致；`send_response=False` 进程内取结果，无需网络往返
 - 并行模型：显式依赖图（`depends_on`），无依赖步骤并行（`depends_on: []` 表示无依赖）；`max_parallel`（定义或 `--parallel`）控制线程池上限
 - 变量/条件：全局 `vars`（可被 `--vars` 覆盖）+ 步骤结果核心字段（output/reason/exit_code/error，以步骤 id 为表达式引用名）；表达式经 AST 白名单求值，不可信定义无副作用风险
 - 错误策略：`on_error=fail`（默认，终止并跳过其余）/ `continue`（标记失败继续调度）/ `ignore`（视为成功）；`retry` 失败重试
@@ -1018,17 +1031,17 @@ graph LR
 
 **规则**：
 - `config/` 是配置包（TOML 文件 + 加载器），被所有包导入，但不导入任何业务包
-- `common/` 是跨侧共享工具层（pid_exists / Shell 探测），被 `client/`、`daemonctl/`、`daemon/`、`web/` 依赖
+- `common/` 是跨侧共享工具层（pid_exists / Shell 探测），被 `client/`、`client/daemonctl`、`daemon/`、`web/` 依赖
 - `protocol/` 不依赖任何其他包（除 Python 标准库与 config 常量）
-- `auth/` 是认证基础设施层，被 `client/`、`daemonctl/` 和 `daemon/` 双方依赖，不依赖业务包（消息签名抽象在 `protocol/signing.py`，auth 实现它）
-- `ipc/` 是进程间通信层（共享内存 + 单实例锁），被 `daemon/` 和 `daemonctl/` 依赖
+- `auth/` 是认证基础设施层，被 `client/`、`client/daemonctl` 和 `daemon/` 双方依赖，不依赖业务包（消息签名抽象在 `protocol/signing.py`，auth 实现它）
+- `ipc/` 是进程间通信层（共享内存 + 单实例锁），被 `daemon/` 和 `client/daemonctl` 依赖
 - `pty/` 不依赖 `session/` 或 `daemon/`，只依赖 `process/`（ProcessTreeTracker 端口）与 config
-- `process/` 依赖 `output/`（PendingEvent）、`config/`；平台实现位于 `process/windows/`（Job/IOCP/GUI/api）与 `process/unix/`（pgid_tracker）
-- `session/` 依赖 `pty/`（获取 PTY 实例）、`process/`（进程树追踪工厂）、`terminal/`、`input/`、`output/`、`encoding/`、`plugins/`（PluginHost）、`protocol/`（ANSI 过滤）与 config
+- `process/` 定义事件实体（ProcessNotification / PendingEvent）于 `process/base.py`，平台实现位于 `process/windows/`（Job/IOCP/GUI/api）与 `process/unix/`（pgid_tracker）
+- `session/` 依赖 `pty/`（获取 PTY 实例）、`process/`（进程树追踪工厂）、`terminal/`、`input/`、`session/buffer.py`（OutputBuffer）、`session/trigger_matcher.py`（TriggerMatcher）、`session/events_history.py`（EventHistoryManager）、`session/codec.py`+`session/detector.py`（编码）、`plugins/`（PluginHost）、`protocol/`（ANSI 过滤）与 config
 - `daemon/` 依赖 `session/`、`protocol/`、`auth/`、`ipc/`、`process/`、`web/`、`common/`、`plugins/`（注册表）、`optional/`（惰性获取 WebServer）与 config
-- `daemonctl/`（client 侧 daemon 控制）依赖 `protocol/`、`auth/`、`ipc/`、`common/` 与 config；不依赖 `daemon/` 侧任何模块
-- `client/` 依赖 `protocol/`、`auth/`、`ipc/`、`common/`、`transfer/`（上传下载驱动）和 `daemonctl/`（启动/检测守护进程）；不依赖 `daemon/`（守护进程控制与 daemon 入口双向解耦）
-- `transfer/`（文件传输核心）依赖 `protocol/transfer.py`（帧 IO）与 config，被 `client/`（CLI 驱动）与 files 插件（daemon 侧）双向依赖
+- `client/daemonctl`（client 侧 daemon 控制）依赖 `protocol/`、`auth/`、`ipc/`、`common/` 与 config；不依赖 `daemon/` 侧任何模块
+- `client/` 依赖 `protocol/`、`auth/`、`ipc/`、`common/`、`client/transfer/`（上传下载驱动）和 `client/daemonctl`（启动/检测守护进程）；不依赖 `daemon/`（守护进程控制与 daemon 入口双向解耦）
+- `client/transfer/`（文件传输核心）依赖 `protocol/transfer.py`（帧 IO）与 config，被 `client/`（CLI 驱动）与 files 插件（daemon 侧）双向依赖
 - `sandbox/` 依赖 `process/base.py`（ProcessTreeTracker 端口）与 config；仅 Windows 加载
 - `plugins/` 依赖 `protocol/`（Message/transfer）、`config/`；进程级插件经 dispatcher 路由
 - `optional/`（`src/optional.py`）是可选模块惰性导入网关，依赖 `config/`（读取 ENABLE_WEB/ENABLE_VNC/ENABLE_FASTSCREEN/sandbox/plugins 开关）与 importlib；被 `daemon/`（惰性获取 WebServer）与 `web/`（惰性获取 Vnc/Screenshare/CursorLocator adapter）依赖
@@ -1048,7 +1061,7 @@ cli/main.py:main()  （src/__main__.py 转调）
   → 公共管线：ConfigManager 加载默认配置，应用 timeout/encoding/newline/keep_ansi
   → ExecCommand.run → Client.cmd_exec(...)
 
-client/transport.py:Client.cmd_exec()
+client/commands.py:ClientCommandsMixin.cmd_exec()
   → 构建 request dict
   → Client._send_recv(msg)
       → Client._connect()
@@ -1146,20 +1159,20 @@ daemon/handlers/read_handler.py:ReadHandler.handle()
 |------|------|
 | `protocol/` 独立为层 | `Message` 类和 `strip_ansi` 被 client 和 daemon 两端使用，独立为底层设施，避免循环依赖 |
 | `process/windows/` 子包隔离 | Windows 特有代码（Job Object / IOCP / GUI 枚举 / ctypes API 绑定）放入独立子包，Unix 平台零加载 |
-| `client/` 拆为多模块 | `transport.py`（连接管理 + 信封接缝 + 明文/TLS 路由）、`daemonctl/`（守护进程启停/探测 + TLS + TOFU）、`result.py`（类型化结果模型）+ `presenter.py`（人类可读渲染，原 formatter 已移除）、`renderer/`（快照渲染包：common/svg/image/box_drawing）、`input.py`（文本处理）、`cli_plugins.py`（CLI 插件宿主） |
-| `daemonctl/` 独立 | 守护进程生命周期控制与 TLS 连接独立为 client 侧组件，仅依赖共享层（config/protocol/auth/ipc/common），与 daemon 核心彻底解耦 |
+| `client/` 拆为多模块 | `transport.py`（连接管理 + 信封接缝 + 明文/TLS 路由）、`client/daemonctl`（守护进程启停/探测 + TLS + TOFU）、`result.py`（类型化结果模型）+ `presenter.py`（人类可读渲染，原 formatter 已移除）、`renderer/`（快照渲染包：common/svg/image/box_drawing）、`input.py`（文本处理）、`cli_plugins.py`（CLI 插件宿主） |
+| `client/daemonctl` 独立 | 守护进程生命周期控制与 TLS 连接独立为 client 侧组件，仅依赖共享层（config/protocol/auth/ipc/common），与 daemon 核心彻底解耦 |
 | `common/` 跨侧共享 | pid_exists 与 Shell 探测为纯 OS 级工具，client 与 daemon 两端共用（位于跨侧共享层） |
 | `shared.toml` 共享配置域 | 协议/IPC 命名/daemon 控制/日志格式等跨侧常量集中管理，client 与 daemon 各自聚合，互不依赖对方配置文件 |
 | `config/` 包集中管理 | TOML 数据文件位于项目根 `config/`（加载器在 `src/config/`），分离 daemon/client/web/sandbox/files 配置，支持跨机部署；vnc.toml 为 winvnc.exe 外部配置（Python 不加载）；所有魔数常量（端口、缓冲区、超时）统一管理，不在模块中散落 |
 | `auth/` 认证层独立 | 三种认证方式（token/HMAC、pubkey/Ed25519、password/共享密码）作为独立子包，共享抽象接口；被 client 和 daemon 双方依赖 |
-| `encoding/codec.py` 独立 | 编码探测逻辑从 Session 类中抽离为纯函数，便于独立测试 |
+| `session/codec.py` 独立 | 编码探测逻辑从 Session 类中抽离为纯函数，便于独立测试 |
 | 三监听器模型 | basic（明文共享密码，空密码=无认证）/ token（Token + HMAC 本机）/ tls（TLS + Ed25519 跨机）三个监听器由 `[listener]` 独立启停，可同开或只开一个，支持灵活部署 |
 | Web 层洋葱架构 | domain（实体）← application（用例+端口）← infrastructure（适配器）← presentation（FastAPI+控制器），依赖只从外向内 |
 | 前端 JS 分层 | `web/static/js/` 采用与后端对应的 domain/application/infrastructure/presentation 分层 |
 | Presenter 人类可读渲染 | `transport.cmd_*` → `result` 类型化模型 → `presenter`：内容→stdout、元信息→stderr、错误+退出码；放弃 JSON dump（原 formatter 移除） |
 | AI 二次分析移入 CLI 插件 | `config/plugins/ai`（kind=cli）自包含 aichat 资产（common.py/talk.py/bin/aichat.exe/config.yaml），`exec --plugin ai` 挂载到会话后自动回调，失败回退不阻断主流程 |
 | Web 密码认证可选 | `WEB_PASSWORD_HASH` 空=免密，非空=需密码；双通道（Cookie + X-Auth-Token），SHA-256 哈希存储 |
-| 可选模块惰性导入网关 | `src/optional.py` 集中管理 web/vnc/screenshare/cursorlocator/sandbox/plugins 等可选模块的可用性探测 + 惰性导入 + 缓存；`web.toml`/`plugins.json`/`sandbox.toml` 允许缺失即功能禁用，缺失模块返回 None/False 不抛 ImportError，主流程正常，避免各模块散落 try/except |
+| 可选模块惰性导入网关 | `src/optional.py` 集中管理 web/vnc/screenshare/cursorlocator/sandbox/plugins 等可选模块的可用性探测 + 惰性导入 + 缓存；`web.toml`/`registry.json`/`sandbox.toml` 允许缺失即功能禁用，缺失模块返回 None/False 不抛 ImportError，主流程正常，避免各模块散落 try/except |
 
 ---
 
@@ -1453,6 +1466,6 @@ daemon `daemon/handlers/dispatcher.py` 拆请求信封并还原扁平 body 交 h
 | `PROJECT_ROOT` | 动态 | `common.py` | 项目根目录（src 的父目录，运行时计算） |
 | `LOG_DIR` | `~/.pty-agent/logs/` | `daemon.py` | 运行时日志目录（运行时计算） |
 | `IS_WINDOWS` | 动态 | `common.py` | 平台标识（`sys.platform == "win32"`，运行时计算） |
-| `_MAX_STRIP_TRIES` | `20` | `encoding/codec.py` | 尾部截断最大尝试次数 |
+| `_MAX_STRIP_TRIES` | `20` | `session/codec.py` | 尾部截断最大尝试次数 |
 
 配置项明细（TOML 文件内容与默认值）见 [CLI.md](CLI.md) §6 配置系统。

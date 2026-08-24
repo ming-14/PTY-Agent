@@ -6,7 +6,7 @@ import { state } from '../../domain/state.js';
 import { debug } from '../../domain/logger.js';
 import { showToast } from '../domUtils.js';
 import { t } from '../../domain/i18n.js';
-import { wsSend } from '../wsClient.js';
+import { sendToSession } from '../wsClient.js';
 import { isTermAtBottom, scrollTermToBottom } from './scroll.js';
 import { interceptKeyDown as rimeInterceptKeyDown, isKeyboardDisabled } from '../rimeManager.js';
 
@@ -86,17 +86,17 @@ function mapKeyToWezterm(e) {
 }
 
 /** 发送原始键盘事件 → daemon wezterm 编码 → pty */
-function sendRawKey(sid, e) {
+function sendRawKey(uid, e) {
   const mapped = mapKeyToWezterm(e);
   if (!mapped) {
     debug('key', 'raw key skipped (unmappable): %s', e.key);
     return;
   }
   debug('key', 'raw key: key=%s mods=%s', mapped.key, mapped.mods);
-  wsSend({ type: 'key', session_id: sid, key: mapped.key, mods: mapped.mods });
+  sendToSession(uid, { type: 'key', key: mapped.key, mods: mapped.mods });
 }
 
-export function attachCustomKeyEventHandler(term, sid) {
+export function attachCustomKeyEventHandler(term, uid) {
   term.attachCustomKeyEventHandler(e => {
     if (e.type !== 'keydown') return true;
 
@@ -133,7 +133,7 @@ export function attachCustomKeyEventHandler(term, sid) {
     }
 
     // 历史（只读）会话：不发送
-    const s = state.sessions[sid];
+    const s = state.sessions[uid];
     if (s && s.history) {
       e.preventDefault();
       return false;
@@ -157,7 +157,7 @@ export function attachCustomKeyEventHandler(term, sid) {
     if (isCtrl && (e.key === 'v' || e.key === 'V')) {
       debug('key', 'Ctrl+V paste');
       e.preventDefault();
-      doPaste(sid);
+      doPaste(uid);
       return false;
     }
 
@@ -175,14 +175,14 @@ export function attachCustomKeyEventHandler(term, sid) {
 
     // 其余按键：阻止 xterm.js 自身编码，改发原始事件 → daemon wezterm 编码
     e.preventDefault();
-    sendRawKey(sid, e);
+    sendRawKey(uid, e);
     return false;
   });
 }
 
-export async function doPaste(sid) {
-  const s = state.sessions[sid];
-  const inst = state.termInstances[sid];
+export async function doPaste(uid) {
+  const s = state.sessions[uid];
+  const inst = state.termInstances[uid];
   if (!s || s.history || !s.running) return;
   if (inst && inst.term) {
     inst.term.focus();
@@ -196,7 +196,7 @@ export async function doPaste(sid) {
     // 直接发送 bracketed paste 序列：沙箱为真实 ConPTY（hpcon），
     // conhost 负责回显与行编辑，与原生 ConPTY 会话完全一致。
     cleaned = '\x1b[200~' + cleaned + '\x1b[201~';
-    wsSend({ type: 'input', session_id: sid, data: cleaned });
+    sendToSession(uid, { type: 'input', data: cleaned });
   } catch (e) {
     debug('paste', 'doPaste failed: name=%s message=%s', e && e.name, e && e.message);
     showToast(t('term.pasteFailed'), 'error');

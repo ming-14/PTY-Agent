@@ -137,7 +137,7 @@ def sandbox_available() -> bool:
 # ───────────────────────────── plugins ────────────────────────────
 
 def plugins_available() -> bool:
-    """插件系统是否可用（plugins.json 存在且启用）。"""
+    """插件系统是否可用（registry.json 存在且启用）。"""
     try:
         from src.config import plugins as _plg
         return bool(_plg.ENABLED)

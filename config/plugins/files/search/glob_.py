@@ -4,7 +4,7 @@
    rg 的 --glob 遵循 gitignore 语义（不含 / 的 pattern 匹配任意深度）。
 引擎2（降级）: os.walk + 逐段递归 glob 匹配（`**` 支持任意层含 0 层、
     `*` 不跨 /，pattern 无 / 时前置 `**/` 对齐 rg 全深度语义），SkipHidden 过滤。
-两引擎统一按 modTime 排序（最新优先），上限 MAX_GLOB_FILES。
+两引擎统一按 modTime 排序（最新优先），上限 settings.max_glob_files。
 """
 
 import fnmatch
@@ -13,7 +13,7 @@ import os
 import subprocess
 from typing import List, Optional
 
-from config.plugins.files.config import MAX_GLOB_FILES, RG_EXE
+from config.plugins.files.settings import settings
 from config.plugins.files.search.ignore import is_ignored
 
 _logger = logging.getLogger("pty-daemon")
@@ -74,9 +74,10 @@ def _match_glob(pat_segs: List[str], rel_path: str) -> bool:
 
 def _run_rg_engine(pattern: str, path: str) -> Optional[List[str]]:
     """rg --files 引擎；rg 缺失或非 0/1 退出返回 None 触发降级"""
-    if RG_EXE is None:
+    rg_exe = settings.rg_exe
+    if rg_exe is None:
         return None
-    cmd = [RG_EXE, "--files", "-L", "--null", "--glob", pattern]
+    cmd = [rg_exe, "--files", "-L", "--null", "--glob", pattern]
     try:
         proc = subprocess.run(cmd, cwd=path, capture_output=True,
                               encoding="utf-8", errors="replace")
@@ -123,17 +124,17 @@ def glob_files(pattern: str, path: str) -> GlobResult:
         path: 搜索根（绝对路径，命令处理层已解析）
 
     Returns:
-        GlobResult：文件按 modTime 最新优先，上限 MAX_GLOB_FILES
+        GlobResult：文件按 modTime 最新优先，上限 settings.max_glob_files
     """
     engine = _run_rg_engine(pattern, path)
     if engine is None:
         files = _run_fallback_engine(pattern, path)
-        truncated = len(files) > MAX_GLOB_FILES
+        truncated = len(files) > settings.max_glob_files
         files.sort(key=_mtime_or_min, reverse=True)
-        result = GlobResult(files[:MAX_GLOB_FILES], truncated, "fallback")
+        result = GlobResult(files[:settings.max_glob_files], truncated, "fallback")
         if truncated:
-            _logger.info("glob 降级引擎截断: path=%s max=%d", path, MAX_GLOB_FILES)
+            _logger.info("glob 降级引擎截断: path=%s max=%d", path, settings.max_glob_files)
         return result
-    truncated = len(engine) > MAX_GLOB_FILES
+    truncated = len(engine) > settings.max_glob_files
     engine.sort(key=_mtime_or_min, reverse=True)
-    return GlobResult(engine[:MAX_GLOB_FILES], truncated, "rg")
+    return GlobResult(engine[:settings.max_glob_files], truncated, "rg")

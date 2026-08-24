@@ -291,9 +291,11 @@ class TerminalScreen:
         """清除后端 scrollback 历史区
 
         resize 后 ConPTY repaint 可能触发 index() 将可见区顶部行推入
-        scrollback，导致 scrollback 与 snapshot 内容重叠。
-        resize 场景下 snapshot 已包含完整可见区，scrollback 是冗余的，
-        清除后由后续正常输出滚动重新产生。
+        scrollback，导致模型 scrollback 与模型可见区内容重叠（成为 repaint
+        竞态冗余）。clear 用于 resize 后清除这些冗余，保证后续订阅/--full
+        的 capture_scrollback 与 snapshot 不重叠。
+        resize 响应中返回的 scrollback 是 resize 开始时捕获的干净副本，
+        不受此清除影响。
         """
         if not self.available:
             return

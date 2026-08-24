@@ -1,6 +1,6 @@
 """相同文件判定与传输计划单元测试 —— classify 全分支 + build_plan"""
 
-from src.transfer.common import entry
+from src.client.transfer.common import entry
 from config.plugins.files.transfer.judge import (
     DENIED,
     SKIP,

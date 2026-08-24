@@ -7,7 +7,7 @@
 - 失败重试：retry 次数耗尽后按 on_error 处理
 - cancel_event 置位时执行中的步骤（execution 层 0.1s 粒度）尽快返回
 
-步骤执行复用 daemon/execution.py 的执行原语（与 exec/send/read handler 同源），
+步骤执行复用 execution/ 包的执行原语（与 exec/send/read handler 同源），
 保证 workflow 内行为与 CLI 一致。
 """
 
@@ -17,10 +17,10 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Dict, Optional
 
 from ..config.common import parse_terminal_size
-from ..daemon.handlers.base import HandlerContext
-from ..daemon.filtering import filter_snapshot_lines
-from ..daemon.output_policy import resolve_output
-from ..daemon.conditions import ReturnConditions
+from ..execution.context import HandlerContext
+from ..execution.filtering import filter_snapshot_lines
+from ..execution.output_policy import resolve_output
+from ..execution.conditions import ReturnConditions
 from ..protocol.reasons import Reason
 from .definition import ParsedStep, WorkflowDefinition
 from .expr import ExpressionError, eval_expr, render_value
@@ -329,7 +329,7 @@ class WorkflowEngine:
                 return
 
     def _exec_type(self, ctx, run, step, raw: dict) -> tuple:
-        from ..daemon.execution import (
+        from ..execution import (
             _run_snapshot_flow,
             _run_subprocess_no_trigger_flow,
             _run_subprocess_trigger_flow,
@@ -403,7 +403,7 @@ class WorkflowEngine:
             return self._resolve_result(step, result)
 
     def _send_type(self, ctx, run, step, raw: dict) -> tuple:
-        from ..daemon.execution import (
+        from ..execution import (
             _run_snapshot_flow,
             _run_subprocess_no_trigger_flow,
             _run_subprocess_trigger_flow,
@@ -415,7 +415,7 @@ class WorkflowEngine:
         # 输入处理与 CLI send 对齐：转义展开由守护进程统一完成（按会话模式决定
         # {enter}/默认行尾符），支持可选字段 eol: lf|crlf|cr|none 与 json: true
         #（展开 {enter} 等转义）。eol 未指定时由模式默认（pty=\r, subprocess=\n）。
-        from ..daemon.handlers.utils import prepare_input
+        from ..execution.utils import prepare_input
         from ..input.text import SEND_EOL_MAP
 
         eol = raw.get("eol")
@@ -472,7 +472,7 @@ class WorkflowEngine:
             return self._resolve_result(step, result)
 
     def _read_type(self, ctx, run, step, raw: dict) -> tuple:
-        from ..daemon.execution import _run_snapshot_flow
+        from ..execution import _run_snapshot_flow
 
         session_id = raw["session"]
         session = ctx.manager.get_session(session_id)
@@ -505,7 +505,7 @@ class WorkflowEngine:
                     )
                     result["outputStream"] = output
             else:
-                from ..daemon.execution import assemble_response
+                from ..execution import assemble_response
 
                 output = resolve_output(session, ReturnConditions.from_msg(msg))
                 output = filter_snapshot_lines(

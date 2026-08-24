@@ -41,7 +41,7 @@ src/
 │   ├── common.py            # 共有配置加载（common.toml + IS_WINDOWS / DATA_DIR / PROJECT_ROOT）
 │   ├── shared.py            # 跨侧共享配置加载（common + shared.toml + PORT_FILE / LOG_DIR）
 │   ├── daemon.py            # 守护进程配置加载（common + shared + daemon/ + logging/ + web/；web.toml 可选，缺失即 web 禁用）
-│   ├── plugins.py           # 插件系统配置加载（config/plugins/plugins.json，可选，缺失即插件系统禁用）
+│   ├── plugins.py           # 插件系统配置加载（目录发现 plugin.json + registry.json，可选，缺失即插件系统禁用）
 │   ├── client.py            # 客户端配置加载（common + shared + client/ + PORT_FILE / LOG_DIR）
 │   ├── transfer.py          # 传输协议配置加载（transfer.toml）
 │   └── sandbox.py           # 沙箱配置加载（daemon/sandbox.toml，可选，缺失即沙箱关闭）
@@ -49,7 +49,7 @@ src/
 │   # TOML 数据文件（config/ 根：common/shared/transfer；
 │   # config/daemon/：daemon/logging/web/sandbox/vnc/vnc.example；
 │   # config/client/：client；
-│   # config/plugins/plugins.json 为 daemon 侧插件注册；
+│   # config/plugins/ 插件目录，plugin.json 为清单，registry.json 为状态；
 │   # vnc*.toml 为 winvnc.exe 外部配置，Python 不加载），
 │   # 清单见 <项目根>/config/README.md
 │
@@ -93,18 +93,29 @@ src/
 │   ├── process.py           # pid_exists（进程存在性探测，跨侧共享）
 │   └── shells.py            # Shell 探测（detect_available_shells / format_shell_info，跨侧共享）
 
-├── daemonctl/               # ═══════ daemon 控制包（client 侧守护进程生命周期控制与 TLS 连接） ═══════
-│   ├── __init__.py          # 导出 start/stop/is_running/端口发现/TLSClient
-│   ├── lifecycle.py         # 守护进程启动/停止/探测/强制清理（Popen python -m src.daemon）
-│   └── tls.py               # TLSClient（TLS 连接 + TOFU 证书验证，CONNECT_MODE=tls 跨机模式）
-
 ├── client/                  # ═══════ 前端客户端层 ═══════
 │   ├── __init__.py
-│   ├── lifecycle.py         # 客户端日志配置（setup_client_logging；daemon 控制见 daemonctl 包）
-│   ├── transport.py         # TCP/TLS 连接管理 + Client 类（自动启动守护进程，按 CONNECT_MODE 三路路由；信封封装接缝）
+│   ├── lifecycle.py         # 客户端日志配置（setup_client_logging；daemon 控制见 client/daemonctl）
+│   ├── transport.py         # Client 类装配（职责拆分到各混入类：connection/defaults/commands/...）
+│   ├── connection.py        # ClientConnectionMixin（按 CONNECT_MODE 三路连接 + _send_recv + 认证装配）
+│   ├── defaults.py          # ClientDefaultsMixin（调用级默认配置应用 + 会话默认值回填）
+│   ├── plugin_route.py      # ClientPluginMixin（CLI 插件挂载分流与会话挂载自动挂钩）
+│   ├── commands.py          # ClientCommandsMixin（会话命令 cmd_* + 共享输出/解析工具）
+│   ├── file_commands.py     # ClientFileCommandsMixin（file 子命令）
+│   ├── workflow_commands.py # ClientWorkflowCommandsMixin（workflow 子命令）
+│   ├── daemonctl.py         # 守护进程生命周期控制（start/stop/is_running/端口发现/强制清理）
+│   ├── tls_client.py        # TLSClient（TLS 连接 + TOFU 证书验证，CONNECT_MODE=tls 跨机模式）
+│   ├── transfer/            # ═══ 文件传输核心层（客户端驱动 + 双端共享） ═══
+│   │   ├── __init__.py
+│   │   ├── common.py        # 帧协议常量/错误类型（TransferError/TransferTimeoutError/TransferAbortedError）
+│   │   ├── scan.py          # 本地/远端树扫描（清单生成）
+│   │   ├── client_upload.py # CLI 侧上传驱动（握手→清单→逐文件→进度）
+│   │   └── client_download.py # CLI 侧下载驱动
+│   │   # 注：daemon 侧传输业务（judge/map/daemon_upload/daemon_download）位于
+│   │   #     config/plugins/files/ 插件；帧编解码在 protocol/transfer.py
 │   ├── attend.py            # attend 交互引擎（ReadConsoleInputW 输入 + 原始字节透传渲染 + 帧循环）
 │   ├── result.py            # 类型化结果模型（Result / from_response 工厂，含稳定错误码）
-│   ├── presenter.py         # 人类可读渲染层（内容→stdout / 元信息→stderr / 错误+退出码）
+│   ├── presenter.py         # 人类可读渲染层（内容→stdout / 元信息→stderr / 错误+退出码；含 print_response）
 │   ├── cli_plugins.py       # CLI 插件宿主（CliPluginHost，kind=cli 钩子链）
 │   ├── renderer/            # ═══ 终端快照渲染器（SVG / Pillow / GDI / box-drawing） ═══
 │   │   ├── __init__.py      # 包导出（render_to_file / render_svg_string / is_image_ext）
@@ -121,12 +132,9 @@ src/
 │   ├── lifecycle.py         # 守护进程入口（main + 日志/控制台处理 + 单实例获取）
 │   ├── server.py            # DaemonServer（多 Listener 编排 + 认证上下文构建 + WorkflowManager 装配）
 │   ├── listener.py          # Listener（单端口 accept 循环，封装 tcp/tls 传输 + AuthContext）
-│   ├── handler.py           # RequestHandler（委托 handlers/ 子包）
-│   ├── execution.py         # 执行原语（快照/子进程执行流程，exec/send/read handler 与 workflow 共用）
-│   ├── conditions.py        # 返回条件统一声明（ReturnConditions.from_msg + Reason 词表）
 │   └── handlers/            # ═══ 命令处理器子包（每命令一文件 + 派发器） ═══
 │       ├── __init__.py
-│       ├── base.py          # DaemonHandler 基类 + HandlerContext
+│       ├── base.py          # DaemonHandler 基类（上下文 HandlerContext 见 execution/context.py）
 │       ├── dispatcher.py    # DaemonDispatcher（内置 handler 派发 + 进程级插件消息路由）
 │       ├── exec_handler.py  # exec 命令处理
 │       ├── send_handler.py  # send 命令处理
@@ -141,8 +149,17 @@ src/
 │       ├── plugin_handler.py # plugin 命令处理（list/ls/attach/detach/cmd 插件管理）
 │       ├── workflow_handler.py # workflow 命令处理（run/list/show/cancel）
 │       ├── status_handler.py # status 命令处理
-│       ├── wait_handler.py  # wait 命令处理
-│       └── utils.py         # 处理器工具函数（含 Git-Bash 路径提示）
+│       └── wait_handler.py  # wait 命令处理
+
+├── execution/               # ═══════ 会话执行原语层（daemon handler 与 workflow 共用） ═══════
+│   ├── __init__.py          # 流程函数导出（_run_snapshot_flow 等）
+│   ├── context.py           # HandlerContext（daemon 与 workflow 共享的执行上下文）
+│   ├── conditions.py        # 返回条件统一声明（ReturnConditions.from_msg + RequestContext）
+│   ├── filtering.py         # 输出过滤（filter_snapshot_lines / apply_lines_grep / strip_if_needed）
+│   ├── output_policy.py     # 取源与 offset 策略（resolve_output / validate_offset_policy）
+│   ├── response.py          # 响应装配（build_result / attach_screen_buffer / map_reason 等）
+│   ├── utils.py             # 请求工具（validate_request / apply_client_defaults / prepare_input）
+│   └── execution.py         # 执行原语（快照/子进程执行流程，exec/send/read handler 与 workflow 共用）
 
 ├── workflow/                # ═══════ workflow 脚本编排子系统（YAML + DAG 并行调度） ═══════
 │   ├── __init__.py
@@ -152,21 +169,19 @@ src/
 │   ├── runner.py            # WorkflowRun（单次运行状态机 + 事件日志）
 │   └── manager.py           # WorkflowManager（运行注册表：启动/查询/取消/容量淘汰）
 
-├── transfer/                # ═══════ 文件传输核心层（客户端驱动 + 双端共享） ═══════
-│   ├── __init__.py
-│   ├── common.py            # 帧协议常量/错误类型（TransferError/TransferTimeoutError/TransferAbortedError）
-│   ├── scan.py              # 本地/远端树扫描（清单生成）
-│   ├── client_upload.py     # CLI 侧上传驱动（握手→清单→逐文件→进度）
-│   └── client_download.py   # CLI 侧下载驱动
-│   # 注：daemon 侧传输业务（judge/map/daemon_upload/daemon_download）位于
-│   #     config/plugins/files/ 插件；帧编解码在 protocol/transfer.py
-
-├── plugins/                 # ═══════ 插件系统 ═══════
+├── plugins/                 # ═══════ 插件系统 v2（清单驱动） ═══════
 │   ├── __init__.py
 │   ├── base.py              # Plugin 基类 + PluginContext/ProcessPluginContext + HANDLED 哨兵
-│   ├── loader.py            # 插件目录扫描与声明校验（triggers/message_types/needs_io）
-│   ├── registry.py          # PluginRegistry（进程级插件单例实例化 + auto_load 匹配）
+│   ├── manifest.py          # plugin.json 清单解析与校验
+│   ├── loader.py            # 清单驱动加载与声明校验（触发/钩子/消息类型）
+│   ├── registry.py          # PluginRegistry（生命周期 enable/disable/reload + auto_load 匹配）
 │   ├── host.py              # PluginHost（会话级挂载链、钩子调度、返回控制）
+│   ├── hooks.py             # HookEngine（优先级 + modify/observe/intercept/provide/aggregate）
+│   ├── events.py            # EventBus（daemon 级 pub/sub，主题通配）
+│   ├── config.py            # PluginConfig（清单默认 + config.yaml + 环境变量 + schema 校验）
+│   ├── storage.py           # PluginStorage（kv/文件/sqlite 三种视图）
+│   ├── permissions.py       # PermissionChecker（能力检查 + 审计）
+│   ├── environment.py       # PluginEnvironment（daemon 全局共享能力集合）
 │   └── io.py                # PluginIO（进程级插件连接收发端口：消息 + 传输帧）
 
 ├── pty/                     # ═══════ 伪终端后端层 ═══════
@@ -208,34 +223,26 @@ src/
 │   ├── __init__.py
 │   ├── manager.py           # SessionManager（会话 CRUD + stop_all）
 │   ├── publisher.py         # SessionPublisher（会话状态发布器）
-│   └── session/             # Session 类实现子包
-│       ├── __init__.py      # 导出 Session / InputMixin / OutputMixin / TriggerMixin / EventsMixin / Threads / Components
-│       ├── session.py       # Session 协调器基类（子组件装配 + start/stop + 状态代理，组合 *Mixin）
-│       ├── io.py            # InputMixin（输入写入/信号/鼠标动作）
-│       ├── output.py        # OutputMixin（输出读取/屏幕快照/resize/终端状态）
-│       ├── trigger.py       # TriggerMixin（触发条件与等待）
-│       ├── events.py        # EventsMixin（事件接收/历史/退出回调）
-│       ├── threads.py       # Threads + Components（后台读者/监控线程管理）
-│       └── _win_console.py  # Windows Ctrl+C 控制台辅助（AttachConsole + 控制台处理器）
-
-├── encoding/                # ═══════ 编码探测层 ═══════
-│   ├── __init__.py
+│   ├── wait.py              # 等待工具（wait_reason 统一等待引擎）
+│   ├── session.py           # Session 协调器基类（子组件装配 + start/stop + 状态代理，组合 *Mixin）
+│   ├── io.py                # InputMixin（输入写入/信号/鼠标动作）
+│   ├── output.py            # OutputMixin（输出读取/屏幕快照/resize/终端状态）
+│   ├── trigger.py           # TriggerMixin（触发条件与等待）
+│   ├── events.py            # EventsMixin（事件接收/历史/退出回调）
+│   ├── threads.py           # Threads + Components（后台读者/监控线程管理）
+│   ├── _win_console.py      # Windows Ctrl+C 控制台辅助（AttachConsole + 控制台处理器）
+│   ├── buffer.py            # OutputBuffer（线程安全输出缓冲区）
+│   ├── trigger_matcher.py   # TriggerMatcher + safe_regex_search（触发条件匹配 + ReDoS 防护）
+│   ├── events_history.py    # EventHistoryManager（事件队列 + 历史 + 存在性检测；PendingEvent 见 process/base）
 │   ├── codec.py             # 编码探测与解码纯函数（detect_decode / decode_strip_tail / auto_detect / 智能裁剪）
 │   └── detector.py          # EncodingDetector（编码探测状态管理）
 
-├── output/                  # ═══════ 输出处理层 ═══════
-│   ├── __init__.py
-│   ├── buffer.py            # OutputBuffer（线程安全输出缓冲区）
-│   ├── trigger.py           # TriggerMatcher + safe_regex_search（触发条件匹配 + ReDoS 防护）
-│   └── events.py            # EventHistoryManager + PendingEvent（事件队列 + 历史 + 存在性检测）
-
 ├── process/                 # ═══════ 进程处理层 ═══════
 │   ├── __init__.py
-│   ├── base.py              # ProcessTreeTracker 抽象基类 + ProcessNotification
+│   ├── base.py              # ProcessTreeTracker 抽象基类 + ProcessNotification/PendingEvent 事件实体
 │   ├── monitor.py           # ProcessMonitor（进程树 diff + IOCP 排空 + 崩溃检测）
 │   ├── info.py              # 进程查询与错误格式化（pid_exists 见 common/process.py）
 │   ├── gui.py               # GuiDetector（GUI 窗口轮询检测，2s 节流）
-│   ├── win32_error.py       # Windows NTSTATUS/Win32 错误码格式化
 │   ├── unix/                # ═══ Unix 子包 ═══
 │   │   ├── __init__.py
 │   │   └── pgid_tracker.py  # PgidProcessTreeTracker（进程组追踪 + waitpid 轮询崩溃检测）
@@ -243,7 +250,8 @@ src/
 │       ├── __init__.py
 │       ├── api.py           # Windows API 绑定（Job 相关 ctypes 声明）
 │       ├── job_tracker.py   # JobProcessTreeTracker（Job Object 追踪 + IOCP 通知 + KILL_ON_JOB_CLOSE）
-│       └── gui_monitor.py   # GuiWindowMonitor + GuiWindowInfo（EnumWindows GUI 窗口轮询）
+│       ├── gui_monitor.py   # GuiWindowMonitor + GuiWindowInfo（EnumWindows GUI 窗口轮询）
+│       └── win32_error.py   # Windows NTSTATUS/Win32 错误码格式化
 
 ├── input/                   # ═══════ 输入处理层 ═══════
 │   ├── __init__.py
@@ -261,7 +269,7 @@ src/
 │   │   ├── __init__.py
 │   │   ├── adaptive_lock.py # 自适应排他锁服务
 │   │   ├── dispatcher.py    # WebSocket 消息分发器
-│   │   ├── handlers.py      # WebSocket 消息用例处理器
+│   │   ├── handlers/         # WebSocket 消息用例处理器子包（按域分组：base/system/session/detail/history/vnc/screenshare/cursor/size_mode + registry）
 │   │   ├── ports.py         # 应用端口（接口）
 │   │   └── services.py      # 编码服务、订阅服务
 │   ├── domain/              # ═══ 领域层 ═══

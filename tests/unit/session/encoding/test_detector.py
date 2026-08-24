@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.encoding.detector import EncodingDetector
+from src.session.detector import EncodingDetector
 
 
 class TestEncodingDetectorInit:

@@ -1,4 +1,4 @@
-"""plugin 命令：插件管理（list/ls/attach/detach/cmd）"""
+"""plugin 命令：插件管理（list/ls/attach/detach/cmd + 生命周期/安装/配置）"""
 
 import argparse
 
@@ -10,7 +10,7 @@ class PluginCommand(Command):
     """plugin 命令"""
 
     name = "plugin"
-    help = "插件管理（list/ls/attach/detach/cmd）"
+    help = "插件管理（list/ls/attach/detach/cmd/install/uninstall/enable/disable/reload/info/status/config）"
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         plugin_sub = parser.add_subparsers(dest="plugin_subcmd", help="插件子命令")
@@ -39,16 +39,53 @@ class PluginCommand(Command):
         p_cmd.add_argument("command", help="命令名")
         p_cmd.add_argument("args", nargs="*", default=None, help="命令参数（可选）")
 
+        p_install = plugin_sub.add_parser("install", help="从目录安装插件（含 plugin.json）")
+        add_common_args(p_install)
+        p_install.add_argument("path", help="插件目录路径")
+
+        p_uninstall = plugin_sub.add_parser("uninstall", help="卸载插件（需先 disable）")
+        add_common_args(p_uninstall)
+        p_uninstall.add_argument("name", help="插件名")
+
+        p_enable = plugin_sub.add_parser("enable", help="启用插件")
+        add_common_args(p_enable)
+        p_enable.add_argument("name", help="插件名")
+
+        p_disable = plugin_sub.add_parser("disable", help="停用插件")
+        add_common_args(p_disable)
+        p_disable.add_argument("name", help="插件名")
+
+        p_reload = plugin_sub.add_parser("reload", help="热重载插件（重新加载代码与清单）")
+        add_common_args(p_reload)
+        p_reload.add_argument("name", help="插件名")
+
+        p_info = plugin_sub.add_parser("info", help="插件详情（清单/状态/权限/事件）")
+        add_common_args(p_info)
+        p_info.add_argument("name", help="插件名")
+
+        p_status = plugin_sub.add_parser("status", help="插件运行状态")
+        add_common_args(p_status)
+        p_status.add_argument("name", help="插件名")
+
+        p_config = plugin_sub.add_parser("config", help="查看/修改插件配置")
+        add_common_args(p_config)
+        p_config.add_argument("name", help="插件名")
+        p_config.add_argument(
+            "kv", nargs="*", default=None,
+            help="set 形式: key value（value 支持 JSON 类型）；缺省为查看",
+        )
+
     def run(self, args, ctx: CommandContext) -> None:
-        if args.plugin_subcmd == "list":
+        sub = args.plugin_subcmd
+        if sub == "list":
             ctx.client.cmd_plugin("list")
-        elif args.plugin_subcmd == "ls":
+        elif sub == "ls":
             ctx.client.cmd_plugin("ls", session_id=args.id)
-        elif args.plugin_subcmd == "attach":
+        elif sub == "attach":
             ctx.client.cmd_plugin("attach", session_id=args.id, name=args.name)
-        elif args.plugin_subcmd == "detach":
+        elif sub == "detach":
             ctx.client.cmd_plugin("detach", session_id=args.id, name=args.name)
-        elif args.plugin_subcmd == "cmd":
+        elif sub == "cmd":
             ctx.client.cmd_plugin(
                 "cmd",
                 session_id=args.id,
@@ -56,3 +93,25 @@ class PluginCommand(Command):
                 command=args.command,
                 args=args.args,
             )
+        elif sub == "install":
+            ctx.client.cmd_plugin("install", path=args.path)
+        elif sub == "uninstall":
+            ctx.client.cmd_plugin("uninstall", name=args.name)
+        elif sub == "enable":
+            ctx.client.cmd_plugin("enable", name=args.name)
+        elif sub == "disable":
+            ctx.client.cmd_plugin("disable", name=args.name)
+        elif sub == "reload":
+            ctx.client.cmd_plugin("reload", name=args.name)
+        elif sub == "info":
+            ctx.client.cmd_plugin("info", name=args.name)
+        elif sub == "status":
+            ctx.client.cmd_plugin("status", name=args.name)
+        elif sub == "config":
+            if args.kv:
+                ctx.client.cmd_plugin(
+                    "config", name=args.name, key=args.kv[0],
+                    value=" ".join(args.kv[1:]),
+                )
+            else:
+                ctx.client.cmd_plugin("config", name=args.name)

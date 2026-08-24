@@ -9,7 +9,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 sys.path.insert(0, _PROJECT_ROOT)
 
 from src.plugins.base import Plugin  # noqa: E402
-from src.plugins.loader import load_module, extract_plugin_class, validate_plugin  # noqa: E402
+from src.plugins.loader import load_plugin_dir  # noqa: E402
 from src.plugins.host import PluginHost  # noqa: E402
 
 _PLUGIN_PATH = os.path.join(_PROJECT_ROOT, "config", "plugins", "state_check")
@@ -18,10 +18,10 @@ _PLUGIN_PATH = os.path.join(_PROJECT_ROOT, "config", "plugins", "state_check")
 @pytest.fixture(scope="module")
 def plugin_cls():
     assert os.path.exists(_PLUGIN_PATH), "state_check 目录不在 config/plugins/ 中"
-    cls = extract_plugin_class(load_module(_PLUGIN_PATH), _PLUGIN_PATH)
-    assert cls is not None
-    assert validate_plugin(cls)
-    return cls
+    loaded = load_plugin_dir(_PLUGIN_PATH)
+    assert loaded is not None
+    assert loaded.manifest.kind == "session"
+    return loaded.cls
 
 
 @pytest.fixture
@@ -181,13 +181,13 @@ class TestReturnHook:
 
     def test_inspect_state_dict(self, detector):
         session = FakeSession(text="banner\n>>> ", cursor=(4, 2, True))
-        host = PluginHost(session, [detector])
+        host = PluginHost(session, plugins=[detector])
         result = host.inspect_state()
         assert result == {"state": "Repl", "reason": "repl prompt", "altScreen": False}
 
     def test_inspect_state_alt_screen(self, detector):
         session = FakeSession(text="vim screen", cursor=(5, 3, True), alt=True)
-        host = PluginHost(session, [detector])
+        host = PluginHost(session, plugins=[detector])
         result = host.inspect_state()
         assert result["state"] == "Editor"
         assert result["altScreen"] is True
@@ -195,12 +195,12 @@ class TestReturnHook:
     def test_inspect_state_uses_live_session(self, detector):
         # 返回钩子读会话实时状态，不依赖任何缓存
         session = FakeSession(text="", cursor=(None, None, None))
-        host = PluginHost(session, [detector])
+        host = PluginHost(session, plugins=[detector])
         result = host.inspect_state()
         assert result["state"] is None
 
     def test_empty_chain_returns_none(self):
-        host = PluginHost(FakeSession(), [])
+        host = PluginHost(FakeSession(), plugins=[])
         assert host.inspect_state() is None
 
 
@@ -209,20 +209,20 @@ class TestCommandHook:
 
     def test_status_command(self, detector):
         session = FakeSession(text="banner\n>>> ", cursor=(4, 2, True))
-        host = PluginHost(session, [detector])
+        host = PluginHost(session, plugins=[detector])
         result = host.handle_command("state_check", {"command": "status"})
         assert result["state"] == "Repl"
         assert result["altScreen"] is False
 
     def test_unknown_command(self, detector):
-        host = PluginHost(FakeSession(), [detector])
+        host = PluginHost(FakeSession(), plugins=[detector])
         assert host.handle_command("state_check", {"command": "nope"}) is None
 
 
 class TestPluginContract:
     def test_no_trigger_declaration(self, plugin_cls):
         # 纯钩子插件：无事件/轮询触发声明
-        assert plugin_cls.triggers == []
+        assert plugin_cls.manifest.triggers == []
 
     def test_two_hooks_only(self, plugin_cls):
         # 插件仅实现返回钩子与命令钩子

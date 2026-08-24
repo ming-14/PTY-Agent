@@ -194,18 +194,25 @@ impl PyPty {
     }
 
     /// 启动子进程到伪终端，返回 (pid, 进程句柄)
-    #[pyo3(signature = (argv, cwd=None, env=None))]
+    /// raw_cmdline（Windows 可选）：提供时整个命令行原样传递（绕过 argv
+    /// 引号序列化），供 cmd.exe /c 等自解析命令行的程序保留引号语义。
+    #[pyo3(signature = (argv, cwd=None, env=None, raw_cmdline=None))]
     fn spawn(
         &self,
         argv: Vec<String>,
         cwd: Option<String>,
         env: Option<HashMap<String, String>>,
+        raw_cmdline: Option<String>,
     ) -> PyResult<(u32, usize)> {
         if self.inner.closed.load(Ordering::SeqCst) {
             return Err(PyRuntimeError::new_err("Pty 已关闭"));
         }
         let args: Vec<OsString> = argv.into_iter().map(OsString::from).collect();
         let mut builder = CommandBuilder::from_argv(args);
+        #[cfg(windows)]
+        if let Some(raw) = raw_cmdline {
+            builder.set_raw_cmdline(raw);
+        }
         if let Some(cwd) = cwd {
             builder.cwd(cwd);
         }

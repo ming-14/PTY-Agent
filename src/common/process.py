@@ -1,6 +1,6 @@
 """跨侧共享进程工具 —— 进程存在性探测
 
-pid_exists 被 daemon 控制（src/daemonctl）与 daemon 自身（server.py 启动检查）共用。
+pid_exists 被 client 侧 daemon 控制（src/client/daemonctl）与 daemon 自身（server.py 启动检查）共用。
 统一走 psutil.pid_exists（跨平台，权限不足时视为存在，与历史语义一致）。
 """
 

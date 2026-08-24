@@ -5,7 +5,7 @@
 """
 
 from .dispatcher import MessageDispatcher
-from .handlers import build_handler_registry
+from .handlers.registry import build_handler_registry
 from .ports import (
     ConnectionContext,
     EventPublisher,

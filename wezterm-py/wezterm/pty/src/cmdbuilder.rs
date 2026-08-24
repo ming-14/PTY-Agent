@@ -207,6 +207,8 @@ pub struct CommandBuilder {
     #[cfg(unix)]
     pub(crate) umask: Option<libc::mode_t>,
     controlling_tty: bool,
+    #[cfg(windows)]
+    raw_cmdline: Option<OsString>,
 }
 
 impl CommandBuilder {
@@ -220,6 +222,8 @@ impl CommandBuilder {
             #[cfg(unix)]
             umask: None,
             controlling_tty: true,
+            #[cfg(windows)]
+            raw_cmdline: None,
         }
     }
 
@@ -232,6 +236,8 @@ impl CommandBuilder {
             #[cfg(unix)]
             umask: None,
             controlling_tty: true,
+            #[cfg(windows)]
+            raw_cmdline: None,
         }
     }
 
@@ -259,7 +265,21 @@ impl CommandBuilder {
             #[cfg(unix)]
             umask: None,
             controlling_tty: true,
+            #[cfg(windows)]
+            raw_cmdline: None,
         }
+    }
+
+    /// Set the raw command line (Windows only).
+    ///
+    /// When set, `cmdline()` returns the raw string verbatim instead of
+    /// re-serializing `args` with argv quoting rules.  The caller is
+    /// responsible for the command-line quoting semantics of the target
+    /// program; this is used for programs that parse their own command
+    /// line (e.g. cmd.exe) where `\"` escaping (C runtime rules) is wrong.
+    #[cfg(windows)]
+    pub fn set_raw_cmdline(&mut self, raw: impl Into<OsString>) {
+        self.raw_cmdline = Some(raw.into());
     }
 
     /// Returns true if this builder was created via `new_default_prog`
@@ -682,6 +702,31 @@ impl CommandBuilder {
     }
 
     pub(crate) fn cmdline(&self) -> anyhow::Result<(Vec<u16>, Vec<u16>)> {
+        // raw 模式（Windows）：整个命令行原样传递，不做 argv 序列化。
+        // 供自解析命令行的程序（cmd.exe /c 等）保留其引号语义；
+        // lpApplicationName 取命令行第一个 token（支持引号内空格路径）。
+        #[cfg(windows)]
+        if let Some(raw) = &self.raw_cmdline {
+            let raw_os: Vec<u16> = raw.encode_wide().collect();
+            let mut exe: Vec<u16> = Vec::new();
+            let mut in_quote = false;
+            for &c in &raw_os {
+                if c == b'"' as u16 {
+                    in_quote = !in_quote;
+                } else if (c == b' ' as u16 || c == b'\t' as u16) && !in_quote {
+                    if !exe.is_empty() {
+                        break;
+                    }
+                } else {
+                    exe.push(c);
+                }
+            }
+            exe.push(0);
+            let mut cmdline = raw_os;
+            cmdline.push(0);
+            return Ok((exe, cmdline));
+        }
+
         let mut cmdline = Vec::<u16>::new();
 
         let exe: OsString = if self.is_default_prog() {

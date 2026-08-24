@@ -98,27 +98,33 @@ function loadSessionSizeConfigs() {
 export const state = {
   ws: null,
   reconnectTimer: null,
+  // 会话状态表：按 uid 索引（uid 为会话唯一稳定标识；sid 仅作展示名，可复用）。
+  // 同名 sid 会话先后创建时，新旧会话以不同 uid 并存，互不污染。
   sessions: {},
+  // 历史会话表：按 uid 索引（sid 可重复，同名历史多条保留）。
   history: {},
+  // 标签顺序：元素为会话 uid（特殊 tab 为其固定常量 id，如 __vnc__）
   tabOrder: [],
   historyVisible: false,
+  // 终端实例表：按会话 uid 索引
   termInstances: {},
+  // 乐观创建跟踪：元素为临时 sid（create 响应 sessionUid 到达后迁移为 uid 并清除）
   pendingCreates: new Set(),
   pendingSwitch: null,
   // 本 web 客户端的 uid（localStorage 持久化，刷新不变）。
   // WS 连接 URL 携带此 uid，后端自适应锁以 client_uid 为持有者标识。
   // 同一 client_uid 的多个标签页共享锁，刷新后锁可恢复/继承。
   clientUid: getOrCreateClientUid(),
-  // 本 client_uid 持有的自适应锁会话 sid 集合。
+  // 本 client_uid 持有的自适应锁会话 uid 集合。
   // 后端 AdaptiveLockService 按 client_uid 排他持有（localStorage 持久化，刷新不变）。
   // 前端通过 size_mode_ack(mode=adaptive) 确认自己已持锁，记录于此；
   // 收到 size_mode_changed adaptiveOwnerUid !== clientUid 或 adaptiveOwnerActive=false 时移除。
   // 刷新后从 ws_subscribed 响应的 adaptiveOwnerUid 恢复（若 === clientUid）。
   // 用途：区分"自己持有"与"他人持有"，前者 UI 正常，后者尺寸 UI 灰显 + 显示接管按钮。
-  localAdaptiveOwnerSids: new Set(),
-  // 按会话 sid 存储运行时字号（不持久化）。
+  localAdaptiveOwnerUids: new Set(),
+  // 按会话 uid 存储运行时字号（不持久化）。
   // 字号由 frameRatio + 当前 stage 尺寸反算得到，会话切换/打开时计算并写入此 Map。
-  // 用 sid 而非 uid：termInstances 也是按 sid 索引，关闭会话时一并清理。
+  // 用 uid 而非 sid：termInstances 也是按 uid 索引，关闭会话时一并清理。
   sessionFontSizes: {},
   sidebarCollapsed: localStorage.getItem('pty_sidebar_collapsed') === 'true',
   sidebarWidth: parseInt(localStorage.getItem('pty_sidebar_width') || String(DEFAULT_SIDEBAR_WIDTH), 10),
@@ -217,13 +223,71 @@ export function getSessionSizeConfig(uid) {
 }
 
 /**
- * 通过会话 sid 查找其 uid，再返回对应的尺寸配置。
- * 若 sid 不存在或 uid 未上报，返回默认配置。
- * @param {string} sid 会话 id
+ * 通过会话 uid 查找其尺寸配置（state.sessions 按 uid 索引）。
+ * 若 uid 不存在或会话未上报 uid，返回默认配置。
+ * @param {string} uid 会话 uid（或特殊 tab 的固定 id）
  */
-export function getSessionSizeConfigBySid(sid) {
-  const s = sid ? state.sessions[sid] : null;
+export function getSessionSizeConfigByUid(uid) {
+  const s = uid ? state.sessions[uid] : null;
   return getSessionSizeConfig(s && s.uid);
+}
+
+/**
+ * 统一会话查找：按会话 uid（或特殊 tab 常量 id，如 __vnc__）取会话对象。
+ * state.sessions 以 uid 为键；特殊 tab 以其固定常量 id 为键。
+ * @param {string} key 会话 uid 或特殊 tab 常量 id
+ * @returns {object|null}
+ */
+export function getSessionByKey(key) {
+  if (!key) return null;
+  return state.sessions[key] || null;
+}
+
+/**
+ * 按展示名（sid）反查活跃会话 uid。
+ * sid 可复用（同名会话先后创建），返回最新活跃会话的 uid；无匹配返回 null。
+ * @param {string} sid 展示名（用户自定义会话名）
+ * @returns {string|null}
+ */
+export function getUidBySid(sid) {
+  if (!sid) return null;
+  for (const s of Object.values(state.sessions)) {
+    if (s && s.id === sid && !s.history) return s.uid;
+  }
+  return null;
+}
+
+/**
+ * 按展示名（sid）反查历史会话 uid（同名历史多条时返回最新一条）。
+ * @param {string} sid 展示名
+ * @returns {string|null}
+ */
+export function getHistoryUidBySid(sid) {
+  if (!sid) return null;
+  let found = null;
+  for (const h of Object.values(state.history)) {
+    if (h && h.id === sid) {
+      found = h.uid || found;
+    }
+  }
+  return found;
+}
+
+/**
+ * 入站 WS 消息路由键解析：优先 sessionUid（后端权威路由键），
+ * 其次 msg.uid（session_detail/history_detail/session_created 等携带的权威 uid），
+ * 否则按 sessionId/session_id/id（sid）反查 uid；历史会话无 uid 时返回 null。
+ * 注意：sid 反查可能命中同名活跃会话（历史详情场景），故 uid/sessionUid 优先。
+ * @param {object} msg 入站消息
+ * @returns {string|null} 会话 uid；特殊 tab 消息（无 session 字段）返回 null
+ */
+export function resolveMsgUid(msg) {
+  if (!msg) return null;
+  const uid = msg.sessionUid || msg.uid;
+  if (uid) return uid;
+  const sid = msg.sessionId || msg.session_id || msg.id;
+  if (!sid) return null;
+  return getUidBySid(sid) || getHistoryUidBySid(sid) || null;
 }
 
 /**
@@ -297,15 +361,15 @@ export function setCustomSize(cols, rows) {
 // ── 按会话的运行时字号 & 持久化 frameRatio 访问 ──
 
 /**
- * 获取指定会话的运行时字号。
+ * 获取指定会话（按 uid）的运行时字号。
  * 字号不持久化，由 frameRatio + stage 尺寸反算后写入 state.sessionFontSizes。
  * 未设置时返回 DEFAULT_FONT_SIZE（供 ensureTerminal 初始化使用）。
- * @param {string} sid 会话 id
+ * @param {string} uid 会话 uid
  * @returns {number} 字号（已 clamp 到 [MIN_FONT_SIZE, MAX_FONT_SIZE]）
  */
-export function getSessionFontSize(sid) {
-  if (!sid) return DEFAULT_FONT_SIZE;
-  const v = state.sessionFontSizes[sid];
+export function getSessionFontSize(uid) {
+  if (!uid) return DEFAULT_FONT_SIZE;
+  const v = state.sessionFontSizes[uid];
   if (Number.isFinite(v) && v > 0) {
     return Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, Math.round(v)));
   }
@@ -313,24 +377,24 @@ export function getSessionFontSize(sid) {
 }
 
 /**
- * 设置指定会话的运行时字号（不持久化，仅写入内存 Map）。
+ * 设置指定会话（按 uid）的运行时字号（不持久化，仅写入内存 Map）。
  * 调用方负责先反算好字号再写入；本函数只做 clamp。
- * @param {string} sid 会话 id
+ * @param {string} uid 会话 uid
  * @param {number} size 字号
  */
-export function setSessionFontSize(sid, size) {
-  if (!sid) return;
+export function setSessionFontSize(uid, size) {
+  if (!uid) return;
   const v = Math.round(size);
   if (!Number.isFinite(v) || v <= 0) return;
-  state.sessionFontSizes[sid] = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, v));
+  state.sessionFontSizes[uid] = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, v));
 }
 
 /**
- * 清除指定会话的运行时字号（会话关闭时调用，避免内存泄漏）。
- * @param {string} sid 会话 id
+ * 清除指定会话（按 uid）的运行时字号（会话关闭时调用，避免内存泄漏）。
+ * @param {string} uid 会话 uid
  */
-export function clearSessionFontSize(sid) {
-  if (sid) delete state.sessionFontSizes[sid];
+export function clearSessionFontSize(uid) {
+  if (uid) delete state.sessionFontSizes[uid];
 }
 
 /**
@@ -395,45 +459,45 @@ export function loadTabState() {
 // ── 自适应锁本地持有者状态 ──
 
 /**
- * 判断本 client_uid 是否持有指定会话的自适应锁。
- * 优先检查 localAdaptiveOwnerSids（本端发起 set_size_mode 后的乐观标记），
+ * 判断本 client_uid 是否持有指定会话（按 uid）的自适应锁。
+ * 优先检查 localAdaptiveOwnerUids（本端发起 set_size_mode 后的乐观标记），
  * 其次检查 s.adaptiveOwnerUid === state.clientUid（后端权威状态，刷新后从 ws_subscribed 恢复）。
- * @param {string} sid 会话 id
+ * @param {string} uid 会话 uid
  * @returns {boolean}
  */
-export function isLocalAdaptiveOwner(sid) {
-  if (!sid) return false;
-  if (state.localAdaptiveOwnerSids.has(sid)) return true;
-  // 刷新后 localAdaptiveOwnerSids 为空，但后端锁仍属于本 client_uid，
+export function isLocalAdaptiveOwner(uid) {
+  if (!uid) return false;
+  if (state.localAdaptiveOwnerUids.has(uid)) return true;
+  // 刷新后 localAdaptiveOwnerUids 为空，但后端锁仍属于本 client_uid，
   // 从 ws_subscribed / size_mode_changed 同步的 adaptiveOwnerUid 判断
-  const s = state.sessions[sid];
+  const s = state.sessions[uid];
   return !!(s && s.adaptiveOwnerUid && s.adaptiveOwnerUid === state.clientUid);
 }
 
 /**
- * 设置本 client_uid 对指定会话的自适应锁持有状态（乐观标记）。
- * @param {string} sid 会话 id
+ * 设置本 client_uid 对指定会话（按 uid）的自适应锁持有状态（乐观标记）。
+ * @param {string} uid 会话 uid
  * @param {boolean} on true=持有, false=释放
  */
-export function setLocalAdaptiveOwner(sid, on) {
-  if (!sid) return;
+export function setLocalAdaptiveOwner(uid, on) {
+  if (!uid) return;
   if (on) {
-    state.localAdaptiveOwnerSids.add(sid);
+    state.localAdaptiveOwnerUids.add(uid);
   } else {
-    state.localAdaptiveOwnerSids.delete(sid);
+    state.localAdaptiveOwnerUids.delete(uid);
   }
 }
 
 /**
- * 判断指定会话的尺寸调整 UI 是否应被灰显（被其他 client_uid 持有自适应锁）。
+ * 判断指定会话（按 uid）的尺寸调整 UI 是否应被灰显（被其他 client_uid 持有自适应锁）。
  * 灰显条件：adaptiveOwnerActive=true 且本端不是持有者。
- * @param {string} sid 会话 id
+ * @param {string} uid 会话 uid
  * @returns {boolean}
  */
-export function isSizeUILocked(sid) {
-  const s = sid ? state.sessions[sid] : null;
+export function isSizeUILocked(uid) {
+  const s = uid ? state.sessions[uid] : null;
   if (!s) return false;
-  return !!s.adaptiveOwnerActive && !isLocalAdaptiveOwner(sid);
+  return !!s.adaptiveOwnerActive && !isLocalAdaptiveOwner(uid);
 }
 
 export function saveTabState() {

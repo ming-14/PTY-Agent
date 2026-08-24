@@ -6,7 +6,7 @@
 import threading
 import pytest
 
-from src.output.buffer import OutputBuffer
+from src.session.buffer import OutputBuffer
 
 
 class TestOutputBufferAppend:

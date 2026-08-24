@@ -25,13 +25,13 @@ from src.protocol.transfer import (
     FT_PLAN,
     TransferProtocolError,
 )
-from src.transfer.common import (
+from src.client.transfer.common import (
     ENTRY_DIR,
     ENTRY_FILE,
     TransferAbortedError,
     TransferError,
 )
-from src.transfer.scan import scan_tree
+from src.client.transfer.scan import scan_tree
 from config.plugins.files.history import FileHistoryStore
 from config.plugins.files.transfer.judge import build_plan
 from config.plugins.files.transfer.map import TransferMap, get_default_map

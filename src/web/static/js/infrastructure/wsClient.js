@@ -153,8 +153,8 @@ export function checkWsAlive() {
  */
 function _clearSubscribedOnReconnect() {
   let count = 0;
-  for (const sid of state.tabOrder) {
-    const s = state.sessions[sid];
+  for (const uid of state.tabOrder) {
+    const s = state.sessions[uid];
     if (s && s.running && s.subscribed) {
       s.subscribed = false;
       count++;
@@ -167,11 +167,32 @@ function _clearSubscribedOnReconnect() {
 
 export function wsSend(msg) {
   if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-    debug('ws', 'send type=%s sid=%s', msg.type, msg.session_id || '');
+    debug('ws', 'send type=%s sid=%s', msg.type, msg.session_id || msg.sessionUid || '');
     state.ws.send(JSON.stringify(msg));
   } else {
     warn('ws', 'send dropped (not open): type=%s', msg.type);
   }
+}
+
+/**
+ * 向指定会话发送消息：自动填充 sessionUid + sessionId（展示名）。
+ * 调用方只需提供 uid 和消息体，无需手动构造 session_id 字段。
+ * 不支持 create 消息（create 只有展示名，无 uid）。
+ *
+ * @param {string} uid 会话 uid（或特殊 tab 固定 id）
+ * @param {object} payload 消息体（不含 sessionUid/sessionId，由本函数补）
+ * @param {string} [displayName] 可选展示名（覆盖 session.id 自动值）
+ */
+export function sendToSession(uid, payload, displayName) {
+  if (!uid) return;
+  payload.sessionUid = uid;
+  if (displayName) {
+    payload.sessionId = displayName;
+  } else {
+    const s = state.sessions[uid];
+    if (s && s.id) payload.sessionId = s.id;
+  }
+  wsSend(payload);
 }
 
 function _startSystemStatsTimer() {

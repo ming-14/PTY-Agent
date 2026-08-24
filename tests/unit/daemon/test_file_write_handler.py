@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from config.plugins.files.config import MAX_CONTENT_LEN, MAX_PATH_LEN
+from config.plugins.files.settings import settings
 from src.plugins.base import ProcessPluginContext
 from config.plugins.files.files_plugin import FilesPlugin
 from config.plugins.files.state import get_default_store
@@ -61,12 +61,12 @@ class TestFileWriteHandler:
         assert resp["type"] == "error"
 
     def test_path_too_long(self, plugin, ctx):
-        resp = _call(plugin, ctx, path="C:/" + "a" * MAX_PATH_LEN, content="x")
+        resp = _call(plugin, ctx, path="C:/" + "a" * settings.max_path_len, content="x")
         assert resp["type"] == "error"
 
     def test_content_too_large(self, plugin, ctx, tmp_path):
         resp = _call(plugin, ctx, path=str(tmp_path / "big.txt"),
-                     content="x" * (MAX_CONTENT_LEN + 1))
+                     content="x" * (settings.max_content_len + 1))
         assert resp["type"] == "error"
 
     def test_io_error_reported(self, plugin, ctx, tmp_path):

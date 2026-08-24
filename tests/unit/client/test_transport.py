@@ -6,7 +6,8 @@
 
 import pytest
 
-from src.client.transport import Client, _has_shell_operators, _parse_iso_time
+from src.client.transport import Client
+from src.client.commands import _has_shell_operators, _parse_iso_time
 
 
 class _FakeCliPlugins:
@@ -65,7 +66,7 @@ class TestRoutePlugins:
         """cmd_exec --plugin ai：客户端 activate + cliPlugins 记录，不写入 daemon plugins"""
         sent = []
         monkeypatch.setattr(
-            "src.client.transport.print_response",
+            "src.client.presenter.print_response",
             lambda r: sent.append(r),
         )
         monkeypatch.setattr(
@@ -120,7 +121,7 @@ class TestSessionCliPlugins:
         """cmd_send 自动挂载会话上的 CLI 插件，请求不带 --plugin 相关字段"""
         sent = []
         monkeypatch.setattr(
-            "src.client.transport.print_response", lambda r: sent.append(r)
+            "src.client.presenter.print_response", lambda r: sent.append(r)
         )
 
         def fake_send_recv(self, msg, **kwargs):
@@ -143,7 +144,7 @@ class TestSessionCliPlugins:
         """cmd_read 自动挂载会话上的 CLI 插件"""
         sent = []
         monkeypatch.setattr(
-            "src.client.transport.print_response", lambda r: sent.append(r)
+            "src.client.presenter.print_response", lambda r: sent.append(r)
         )
 
         def fake_send_recv(self, msg, **kwargs):
@@ -163,7 +164,7 @@ class TestSessionCliPlugins:
         """无 CLI 插件宿主时不发插件查询"""
         called = []
         monkeypatch.setattr(
-            "src.client.transport.print_response", lambda r: called.append(r)
+            "src.client.presenter.print_response", lambda r: called.append(r)
         )
 
         def fake_send_recv(self, msg, **kwargs):
@@ -299,7 +300,7 @@ class TestClientShellOperators:
         """命令包含 shell 操作符时返回错误"""
         responses = []
         monkeypatch.setattr(
-            "src.client.transport.print_response",
+            "src.client.presenter.print_response",
             lambda r: responses.append(r),
         )
         client = Client()
@@ -315,7 +316,7 @@ class TestClientShellOperators:
         """--force-pty-mode 忽略 shell 操作符检测"""
         responses = []
         monkeypatch.setattr(
-            "src.client.transport.print_response",
+            "src.client.presenter.print_response",
             lambda r: responses.append(r),
         )
         monkeypatch.setattr(

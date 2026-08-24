@@ -87,6 +87,11 @@ class Response:
         return result
 
     @staticmethod
+    def wait_result(timeout: float, elapsed: float) -> dict:
+        """Wait 命令响应"""
+        return {"type": "wait", "timeout": timeout, "elapsed": elapsed}
+
+    @staticmethod
     def debug_information(
         processes=None,
         gui_windows=None,
@@ -198,37 +203,49 @@ class Response:
         return {"type": "subscribed", "sessionId": session_id, **fields}
 
     @staticmethod
-    def ws_output(session_id: str, data: str, stream: str, encoding: str) -> dict:
-        return {
+    def ws_output(session_id: str, session_uid: str = "", data: str = "", stream: str = "", encoding: str = "") -> dict:
+        msg = {
             "type": "output",
             "sessionId": session_id,
             "data": data,
             "stream": stream,
             "encoding": encoding,
         }
+        if session_uid:
+            msg["sessionUid"] = session_uid
+        return msg
 
     @staticmethod
-    def ws_session_ended(session_id: str, exit_code, error_message) -> dict:
-        return {
+    def ws_session_ended(session_id: str, session_uid: str = "", exit_code=None, error_message=None) -> dict:
+        msg = {
             "type": "session_ended",
             "sessionId": session_id,
             "exitCode": exit_code,
             "errorMessage": error_message,
         }
+        if session_uid:
+            msg["sessionUid"] = session_uid
+        return msg
 
     @staticmethod
-    def ws_session_event(session_id: str, event: dict) -> dict:
-        return {"type": "session_event", "sessionId": session_id, "event": event}
+    def ws_session_event(session_id: str, session_uid: str = "", event: dict = None) -> dict:
+        msg = {"type": "session_event", "sessionId": session_id, "event": event or {}}
+        if session_uid:
+            msg["sessionUid"] = session_uid
+        return msg
 
     @staticmethod
-    def ws_clipboard(session_id: str, selection: str, data: str) -> dict:
+    def ws_clipboard(session_id: str, session_uid: str = "", selection: str = "", data: str = "") -> dict:
         """OSC 52 剪贴板写推送（应用 → 终端 → 前端写系统剪贴板）"""
-        return {
+        msg = {
             "type": "clipboard",
             "sessionId": session_id,
             "selection": selection,
             "data": data,
         }
+        if session_uid:
+            msg["sessionUid"] = session_uid
+        return msg
 
     @staticmethod
     def ws_unsubscribed() -> dict:

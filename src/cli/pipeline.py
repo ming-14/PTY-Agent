@@ -69,19 +69,19 @@ def resolve_debug_mode(args, config_overrides: dict) -> None:
 
 
 def setup_cli_plugins():
-    """初始化 CLI 插件宿主（Plugin.kind=cli）
+    """初始化 CLI 插件宿主（清单 kind=cli）
 
-    与 daemon 插件同一注册体系（plugins.json），在客户端进程内加载执行；
-    初始化失败仅跳过，不影响命令执行。
+    与 daemon 插件同一清单体系（config/plugins/<id>/plugin.json），
+    在客户端进程内加载执行；初始化失败仅跳过，不影响命令执行。
     """
     try:
         from ..client.cli_plugins import CliPluginHost
         from ..client.presenter import set_render_hook
-        from ..config.plugins import PLUGIN_PATHS as _cli_plugin_paths
+        from ..config.plugins import PLUGIN_DIRS as _cli_plugin_dirs
 
         cli_plugins = None
-        if _cli_plugin_paths:
-            cli_plugins = CliPluginHost(_cli_plugin_paths)
+        if _cli_plugin_dirs:
+            cli_plugins = CliPluginHost(_cli_plugin_dirs)
             if not cli_plugins.is_empty():
                 set_render_hook(cli_plugins.render_hook)
     except Exception:

@@ -5,9 +5,9 @@
  * 通过调用视图函数和基础设施服务完成具体行为。
  */
 
-import { state, getSessionSizeConfigBySid } from '../../domain/state.js';
+import { state, getSessionSizeConfigByUid } from '../../domain/state.js';
 import { $, showConfirm, hideConfirm, showToast } from '../../infrastructure/domUtils.js';
-import { wsSend, checkWsAlive } from '../../infrastructure/wsClient.js';
+import { wsSend, checkWsAlive, sendToSession } from '../../infrastructure/wsClient.js';
 import {
   applyTerminalFrameSize,
   applyTerminalSize,
@@ -137,7 +137,7 @@ export function bindGlobalEvents() {
     const checked = $('restart-reassign-sid').checked;
     $('restart-sid-group').style.display = checked ? 'none' : '';
     if (!checked) {
-      $('restart-sid-input').value = state.restartTargetSid || '';
+      $('restart-sid-input').value = (state.restartTargetSid ? (state.history[state.restartTargetSid] && state.history[state.restartTargetSid].id) : '') || '';
       checkRestartSidConflict();
     }
   };
@@ -299,29 +299,30 @@ document.addEventListener('keydown', e => {
     const item = e.target.closest('.context-menu-item');
     if (!item) return;
     const action = item.dataset.action;
-    const sid = state.contextMenuTarget;
+    const uid = state.contextMenuTarget;
     const context = state.contextMenuContext;
     hideContextMenu();
-    if (!sid) return;
-    debug('ui', 'context-menu action=%s sid=%s context=%s', action, sid, context);
+    if (!uid) return;
+    const s = state.sessions[uid];
+    const displaySid = s ? s.id : uid;
+    debug('ui', 'context-menu action=%s uid=%s context=%s', action, uid, context);
     if (action === 'close-tab') {
-      closeTab(sid);
+      closeTab(uid);
     } else if (action === 'detail') {
-      wsSend({ type: 'session_detail', session_id: sid });
+      sendToSession(uid, { type: 'session_detail' });
     } else if (action === 'close-session') {
-      const s = state.sessions[sid];
       const body = s && s.running
-        ? t('session.confirmCloseRunning', { sid })
-        : t('session.confirmClose', { sid });
-      showConfirm(t('session.confirmCloseTitle'), body, () => killSession(sid));
+        ? t('session.confirmCloseRunning', { sid: displaySid })
+        : t('session.confirmClose', { sid: displaySid });
+      showConfirm(t('session.confirmCloseTitle'), body, () => killSession(uid));
     } else if (action === 'delete-session') {
-      const body = t('session.confirmDelete', { sid });
+      const body = t('session.confirmDelete', { sid: displaySid });
       showConfirm(t('session.confirmDeleteTitle'), body, () => {
-        removeSessionTab(sid, false);
-        wsSend({ type: 'delete_history', session_id: sid });
+        removeSessionTab(uid, false);
+        sendToSession(uid, { type: 'delete_history' });
       });
     } else if (action === 'restart-session') {
-      showRestartDialog(sid);
+      showRestartDialog(uid);
     }
   });
 
@@ -406,7 +407,7 @@ document.addEventListener('keydown', e => {
       if (!sid) return;
       const s = state.sessions[sid];
       const isHistory = !!(s && s.history);
-      const cfg = getSessionSizeConfigBySid(sid);
+      const cfg = getSessionSizeConfigByUid(sid);
       // 历史会话强制非 adaptive 路径（固定生前 cols/rows，按 frameRatio 反算字号）
       if (cfg.mode === 'adaptive' && !isHistory) {
         // 自适应：stage 变了，按保存的 ratio 设 frame 尺寸 + fit() 同步 cols/rows

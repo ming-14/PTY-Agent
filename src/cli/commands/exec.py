@@ -51,6 +51,13 @@ class ExecCommand(Command):
             "无终端回显、无快照、无 resize；增量输出+stderr 分离，支持写 stdin",
         )
         parser.add_argument(
+            "--shell",
+            default=None,
+            metavar="SHELL",
+            help="用指定 shell 包装执行命令（如 bash/cmd/pwsh；命令内的 shell 操作符 "
+            "| & > < && || ; 由该 shell 解析）。不指定时用 set-default shell（默认无包装）",
+        )
+        parser.add_argument(
             "--size", default=None, metavar="WxH", help="终端尺寸（如 120x40，默认 80x24）"
         )
         parser.add_argument(
@@ -90,4 +97,5 @@ class ExecCommand(Command):
             size=args.size,
             plugins=args.plugins,
             mode="subprocess" if args.subprocess else "pty",
+            shell=args.shell,
         )

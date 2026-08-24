@@ -35,7 +35,8 @@ class TestParseMatch:
 class TestGrepFallbackEngine:
     @pytest.fixture(autouse=True)
     def force_fallback(self, monkeypatch):
-        monkeypatch.setattr("config.plugins.files.search.grep.RG_EXE", None)
+        import config.plugins.files.settings as _s
+        monkeypatch.setattr(_s.settings, "rg_exe", None)
 
     def test_basic_matches(self, tmp_path):
         (tmp_path / "a.txt").write_text("line1 foo\nline2\n", encoding="utf-8")
@@ -100,7 +101,8 @@ class TestGrepFallbackEngine:
 class TestGrepRgEngine:
     @pytest.fixture
     def mock_rg(self, monkeypatch):
-        monkeypatch.setattr("config.plugins.files.search.grep.RG_EXE", "rg.exe")
+        import config.plugins.files.settings as _s
+        monkeypatch.setattr(_s.settings, "rg_exe", "rg.exe")
 
         def _run(cmd, capture_output=None, encoding=None, errors=None):
             class _P:
@@ -120,7 +122,8 @@ class TestGrepRgEngine:
         assert result.matches[0].line_number == 2
 
     def test_rg_command_contains_glob_and_escape(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("config.plugins.files.search.grep.RG_EXE", "rg.exe")
+        import config.plugins.files.settings as _s
+        monkeypatch.setattr(_s.settings, "rg_exe", "rg.exe")
         captured = {}
 
         def _run(cmd, capture_output=None, encoding=None, errors=None):
@@ -137,7 +140,8 @@ class TestGrepRgEngine:
         assert "a\\.b" in captured["cmd"]  # literal 转义
 
     def test_rg_error_falls_back(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("config.plugins.files.search.grep.RG_EXE", "rg.exe")
+        import config.plugins.files.settings as _s
+        monkeypatch.setattr(_s.settings, "rg_exe", "rg.exe")
 
         def _run(cmd, capture_output=None, encoding=None, errors=None):
             class _P:
@@ -152,7 +156,8 @@ class TestGrepRgEngine:
         assert len(result.matches) == 1
 
     def test_rg_missing_falls_back(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("config.plugins.files.search.grep.RG_EXE", None)
+        import config.plugins.files.settings as _s
+        monkeypatch.setattr(_s.settings, "rg_exe", None)
         (tmp_path / "a.txt").write_text("needle\n", encoding="utf-8")
         result = grep_files("needle", str(tmp_path))
         assert result.engine == "fallback"

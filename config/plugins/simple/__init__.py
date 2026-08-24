@@ -1,6 +1,6 @@
 """simple 插件 —— CLI 侧响应精简：只打印输出内容
 
-kind=cli：在客户端进程内执行（daemon 不加载）。
+kind=cli（见同目录 plugin.json）：在客户端进程内执行（daemon 不加载）。
 render_response 钩子把 exec/send/read/mouse 等输出类响应渲染为自然文本
 （替代默认 JSON 打印），末尾附统计尾巴：
 
@@ -18,12 +18,7 @@ from src.plugins.base import Plugin
 
 
 class SimplePlugin(Plugin):
-    name = "simple"
-    version = "1.0"
-    description = "CLI 响应精简：只打印输出内容（含 triggerReturnReason/执行时间尾巴）"
-    # CLI 形态：客户端进程内执行，daemon 跳过加载
-    kind = "cli"
-    triggers = []
+    """CLI 响应精简插件（元信息见同目录 plugin.json）"""
 
     def render_response(self, ctx, resp: dict):
         if resp.get("type") == "error":

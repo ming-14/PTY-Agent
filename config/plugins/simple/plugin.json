@@ -1,0 +1,9 @@
+{
+  "id": "simple",
+  "version": "2.0.0",
+  "kind": "cli",
+  "description": "CLI 响应精简：只打印输出内容（含 triggerReturnReason/执行时间尾巴）",
+  "hooks": {
+    "render_response": {}
+  }
+}

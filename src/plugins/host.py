@@ -1,11 +1,12 @@
-"""会话级插件宿主 — 挂载链与钩子调度
+"""会话级插件宿主 — 挂载链与钩子调度（HookEngine 驱动）
 
 持有当前会话挂载的插件实例链（挂载顺序即链顺序），提供：
-- 链式变换钩子：on_input / on_output / on_snapshot（管道式，任一返回 None 的输入被拦截）
-- 分发钩子：    on_event（事件订阅）/ poll_tick（定时轮询，按各插件 poll_interval 节流）
-- 生命周期：    attach / detach / detach_all
+- 链式变换钩子：on_input / on_output / on_snapshot（modify，任一返回 None 的输入被拦截）
+- 分发钩子：    on_event（事件订阅）/ poll_tick（定时轮询，按 pollInterval 节流）
+- 生命周期：    attach / detach / detach_all（attach 依次回调 on_init/on_attach）
 - 返回控制：    request_return（中断等待中的命令，原因透传）
 - 自我卸载：    self_unload（标记待卸载，当前钩子链结束后移除并触发 on_detach）
+- 总线发布：    publish_event（会话事件发布到 daemon 事件总线）
 
 所有插件调用统一异常隔离：插件异常只记日志，不中断主流程。
 
@@ -18,6 +19,7 @@ import time
 from typing import Dict, List, Optional
 
 from .base import Plugin, PluginContext
+from .hooks import HookEngine
 from ..logging import get_logger
 
 _logger = get_logger("pty-plugins")
@@ -26,14 +28,16 @@ _logger = get_logger("pty-plugins")
 class PluginHost:
     """会话级插件宿主（空链时所有调用零开销短路）"""
 
-    def __init__(self, session, plugins: Optional[List[Plugin]] = None):
+    def __init__(self, session, environment=None, plugins=None):
         self._session = session
+        self.environment = environment
         self._plugins: List[Plugin] = []
         self._lock = threading.Lock()
         self._pending_unload: List[Plugin] = []
         self._return_request: Optional[str] = None
         self._wait_active: bool = False
         self._last_poll: Dict[Plugin, float] = {}
+        self._engine = HookEngine()
         if plugins:
             for plugin in plugins:
                 self.attach(plugin)
@@ -61,7 +65,7 @@ class PluginHost:
     # ── 挂载/卸载 ─────────────────────────────────────────
 
     def attach(self, plugin: Plugin, session=None) -> bool:
-        """挂载插件（同名去重）并调用 on_attach；重名返回 False"""
+        """挂载插件（同名去重）并回调 on_init/on_attach；重名返回 False"""
         with self._lock:
             if any(p.name == plugin.name for p in self._plugins):
                 _logger.warning(
@@ -69,7 +73,9 @@ class PluginHost:
                 )
                 return False
             self._plugins.append(plugin)
+        self._engine.register(plugin)
         _logger.info("插件挂载: %s -> 会话 %s", plugin.name, self._session.id)
+        self._safe_call(plugin, "on_init", PluginContext(self._session, plugin, self))
         self._safe_call(plugin, "on_attach", PluginContext(self._session, plugin, self))
         return True
 
@@ -82,12 +88,13 @@ class PluginHost:
         return mounted
 
     def detach(self, plugin_name: str, exit_code=None) -> bool:
-        """按名卸载插件并调用 on_detach；未挂载返回 False"""
+        """按名卸载插件并回调 on_detach；未挂载返回 False"""
         with self._lock:
             inst = self.get(plugin_name)
             if inst is None:
                 return False
             self._plugins.remove(inst)
+        self._engine.unregister(inst)
         _logger.info("插件卸载: %s <- 会话 %s", plugin_name, self._session.id)
         self._safe_call(
             inst, "on_detach", PluginContext(self._session, inst, self), exit_code
@@ -103,6 +110,7 @@ class PluginHost:
             _logger.info(
                 "插件卸载(会话结束): %s <- 会话 %s", inst.name, self._session.id
             )
+            self._engine.unregister(inst)
             self._safe_call(
                 inst, "on_detach", PluginContext(self._session, inst, self), exit_code
             )
@@ -154,65 +162,32 @@ class PluginHost:
             self._return_request = None
             return req
 
-    # ── 钩子调度 ──────────────────────────────────────────
+    # ── 钩子调度（HookEngine 驱动） ───────────────────────
+
+    def _ctx(self, plugin: Plugin) -> PluginContext:
+        return PluginContext(self._session, plugin, self)
 
     def on_input(self, data):
         """PTY 写入前链式变换；任一插件返回 None 表示拦截（返回 None）"""
-        for plugin in list(self._plugins):
-            try:
-                result = plugin.on_input(
-                    PluginContext(self._session, plugin, self), data
-                )
-            except Exception:
-                _logger.exception("插件 %s on_input 异常", plugin.name)
-                continue
-            if result is None:
-                _logger.info(
-                    "插件 %s 拦截输入 (会话 %s)", plugin.name, self._session.id
-                )
-                self._flush_unload()
-                return None
-            data = result
+        result = self._engine.dispatch_modify("on_input", self._ctx, data)
         self._flush_unload()
-        return data
+        return result
 
     def on_output(self, data: bytes) -> bytes:
-        """reader 线程调用：链式变换 PTY 原始输出"""
-        for plugin in list(self._plugins):
-            try:
-                data = plugin.on_output(
-                    PluginContext(self._session, plugin, self), data
-                )
-                if data is None:
-                    data = b""
-            except Exception:
-                _logger.exception("插件 %s on_output 异常", plugin.name)
+        """reader 线程调用：链式变换 PTY 原始输出（None 视为清空）"""
+        result = self._engine.dispatch_modify("on_output", self._ctx, data)
         self._flush_unload()
-        return data
+        return b"" if result is None else result
 
     def on_snapshot(self, text: str) -> str:
-        """快照文本链式变换（handler 线程）"""
-        for plugin in list(self._plugins):
-            try:
-                text = plugin.on_snapshot(
-                    PluginContext(self._session, plugin, self), text
-                )
-                if text is None:
-                    text = ""
-            except Exception:
-                _logger.exception("插件 %s on_snapshot 异常", plugin.name)
+        """快照文本链式变换（handler 线程；None 视为空文本）"""
+        result = self._engine.dispatch_modify("on_snapshot", self._ctx, text)
         self._flush_unload()
-        return text
+        return "" if result is None else result
 
     def on_event(self, event: dict) -> None:
-        """事件分发：仅通知声明了 "event" 触发的插件"""
-        session = self._session
-        for plugin in list(self._plugins):
-            if "event" not in plugin.triggers:
-                continue
-            self._safe_call(
-                plugin, "on_event", PluginContext(session, plugin, self), event
-            )
+        """事件分发：仅通知声明了 "event" 触发的插件（引擎注册时已门控）"""
+        self._engine.dispatch_observe("on_event", self._ctx, event)
         self._flush_unload()
 
     def poll_tick(self) -> None:
@@ -222,17 +197,18 @@ class PluginHost:
             stale = [p for p in self._last_poll if p not in self._plugins]
             for p in stale:
                 self._last_poll.pop(p, None)
-        for plugin in list(self._plugins):
-            if "poll" not in plugin.triggers:
+        plugins = list(self._plugins)
+        for plugin in plugins:
+            manifest = getattr(plugin, "manifest", None)
+            if manifest is None or "poll" not in manifest.triggers:
                 continue
+            interval = manifest.poll_interval or 0.0
             with self._lock:
                 last = self._last_poll.get(plugin, 0.0)
-                if now - last < plugin.poll_interval:
+                if now - last < interval:
                     continue
                 self._last_poll[plugin] = now
-            self._safe_call(
-                plugin, "on_poll", PluginContext(self._session, plugin, self)
-            )
+            self._safe_call(plugin, "on_poll", PluginContext(self._session, plugin, self))
         self._flush_unload()
 
     def handle_command(self, plugin_name: str, msg: dict):
@@ -250,26 +226,18 @@ class PluginHost:
             return None
 
     def inspect_state(self) -> Optional[dict]:
-        """命令返回时的一次性状态检查
+        """命令返回时的一次性状态检查（provide：首个非 None 生效）"""
+        return self._engine.dispatch_provide("inspect_state", self._ctx)
 
-        按挂载顺序调用各插件的 inspect_state，首个返回非 None 结果的生效；
-        插件异常被隔离，不影响响应构造。
-        """
-        for plugin in list(self._plugins):
-            try:
-                result = plugin.inspect_state(
-                    PluginContext(self._session, plugin, self)
-                )
-            except Exception:
-                _logger.exception(
-                    "插件 %s inspect_state 异常 (会话 %s)",
-                    plugin.name,
-                    self._session.id,
-                )
-                continue
-            if result is not None:
-                return result
-        return None
+    def publish_event(self, topic: str, payload: dict) -> None:
+        """发布会话事件到 daemon 事件总线（无环境时静默跳过）"""
+        env = self.environment
+        if env is None:
+            return
+        try:
+            env.events.publish(topic, payload, source="session." + self._session.id)
+        except Exception:
+            _logger.exception("会话事件发布失败: %s", topic)
 
     # ── 工具 ──────────────────────────────────────────────
 

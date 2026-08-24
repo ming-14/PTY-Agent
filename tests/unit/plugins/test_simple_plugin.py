@@ -10,7 +10,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 sys.path.insert(0, _PROJECT_ROOT)
 
 from src.client.cli_plugins import CliContext  # noqa: E402
-from src.plugins.loader import extract_plugin_class, load_module, resolve_kind, validate_plugin  # noqa: E402
+from src.plugins.loader import load_plugin_dir  # noqa: E402
 
 _PLUGIN_PATH = os.path.join(_PROJECT_ROOT, "config", "plugins", "simple")
 
@@ -18,16 +18,15 @@ _PLUGIN_PATH = os.path.join(_PROJECT_ROOT, "config", "plugins", "simple")
 @pytest.fixture(scope="module")
 def plugin_cls():
     assert os.path.exists(_PLUGIN_PATH), "simple 目录不在 config/plugins/ 中"
-    cls = extract_plugin_class(load_module(_PLUGIN_PATH), _PLUGIN_PATH)
-    assert cls is not None
-    assert validate_plugin(cls)
-    assert resolve_kind(cls) == "cli"
-    return cls
+    loaded = load_plugin_dir(_PLUGIN_PATH)
+    assert loaded is not None
+    assert loaded.manifest.kind == "cli"
+    assert loaded.manifest.id == "simple"
+    return loaded.cls
 
 
 @pytest.fixture
 def plugin(plugin_cls):
-    client = type("FakeClient", (), {"name": "c"})()
     return plugin_cls()
 
 

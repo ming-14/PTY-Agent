@@ -17,7 +17,10 @@ sys.path.insert(0, _PROJECT_ROOT)
 
 from config.plugins.ai import AiPlugin  # noqa: E402
 from src.client.cli_plugins import CliPluginHost  # noqa: E402
-from src.plugins.base import Plugin  # noqa: E402
+from src.plugins.loader import load_plugin_dir  # noqa: E402
+from tests.helpers import make_manifest  # noqa: E402
+
+_AI_PATH = os.path.join(_PROJECT_ROOT, "config", "plugins", "ai")
 
 
 class _FakeClient:
@@ -28,9 +31,21 @@ def _make_resp(output="hello", uid="u1", type_="exec"):
     return {"type": type_, "outputStream": output, "uid": uid}
 
 
+def _ai_manifest():
+    loaded = load_plugin_dir(_AI_PATH)
+    if loaded is not None:
+        return loaded.manifest
+    return make_manifest("ai", kind="cli", commands=["exec", "send", "read", "mouse"])
+
+
 def _host_with_ai(plugin=None, client=None):
     host = CliPluginHost([], client or _FakeClient())
-    host._plugins = [plugin or AiPlugin()]
+    p = plugin or AiPlugin()
+    manifest = _ai_manifest()
+    p.name = manifest.id  # 加载器注入类属性，直连实例化时手动补
+    p.manifest = manifest
+    host._plugins = [p]
+    host._engine.register(p, p.manifest)
     return host
 
 
@@ -45,9 +60,9 @@ class TestAiPluginDecl:
     """插件声明：CLI 级 + 挂载后自动派发钩子"""
 
     def test_kind_and_commands(self):
-        p = AiPlugin()
-        assert p.kind == "cli"
-        assert set(p.commands) == {"exec", "send", "read", "mouse"}
+        manifest = _ai_manifest()
+        assert manifest.kind == "cli"
+        assert set(manifest.commands) == {"exec", "send", "read", "mouse"}
         # 未挂载时钩子不被调用（宿主按挂载状态过滤）
         host = _host_with_ai()
         resp = _make_resp()
@@ -64,10 +79,9 @@ class TestAiPluginDecl:
         assert resp["outputStream"] == "AI result"
 
     def test_commands_filter(self):
-        """未挂载的插件不参与钩子；commands 限制生效命令"""
+        """挂载但命令不在 commands 列表：不派发（ai 声明了 exec/send/read/mouse）"""
         p = AiPlugin()
         host = _host_with_ai(p)
-        # 挂载但命令不在 commands 列表：不派发（ai 声明了 exec/send/read/mouse）
         with patch("config.plugins.ai._load_aichat") as mock_load:
             resp = _make_resp(output="text")
             host.activate(["ai"])

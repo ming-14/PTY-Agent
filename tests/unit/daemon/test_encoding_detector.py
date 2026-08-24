@@ -5,8 +5,8 @@
 
 import pytest
 
-from src.encoding.detector import EncodingDetector
-from src.encoding.codec import (
+from src.session.detector import EncodingDetector
+from src.session.codec import (
     decode_strip_tail,
     detect_decode_ext,
     auto_detect,

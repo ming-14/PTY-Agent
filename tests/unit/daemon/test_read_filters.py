@@ -1,6 +1,6 @@
 """daemon/filtering.py 过滤工具单元测试 — lines/grep/column 组合语义"""
 
-from src.daemon.filtering import apply_lines_grep, filter_snapshot_lines
+from src.execution.filtering import apply_lines_grep, filter_snapshot_lines
 
 
 class _NullConn:
@@ -71,7 +71,7 @@ class TestApplyLinesGrep:
     def test_invalid_regex_returns_none_and_sends_error(self, monkeypatch):
         sent = []
         monkeypatch.setattr(
-            "src.daemon.handlers.utils.Message.send",
+            "src.execution.utils.Message.send",
             lambda sock, obj, **k: sent.append(obj),
         )
         out = apply_lines_grep("x", None, "[invalid", object())

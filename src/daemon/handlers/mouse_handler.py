@@ -4,16 +4,17 @@ from typing import Optional
 from ...protocol.message import Message
 from ...protocol.reasons import Reason
 from ...protocol.response import Response
-from .base import DaemonHandler, HandlerContext
+from .base import DaemonHandler
+from ...execution.context import HandlerContext
 from .exec_handler import _run_snapshot_flow
-from ..filtering import strip_if_needed
-from ..response import (
+from ...execution.filtering import strip_if_needed
+from ...execution.response import (
     attach_screen_buffer,
     build_result,
     describe_output_format,
     format_iso_ms,
 )
-from .utils import (
+from ...execution.utils import (
     apply_client_defaults,
     check_ended_session,
     validate_request,
@@ -27,7 +28,7 @@ _logger = get_logger("pty-daemon")
 class MouseHandler(DaemonHandler):
     def handle(self, ctx: HandlerContext, conn, msg: dict):
         from ...config.common import MAX_PATTERN_LEN, MAX_SESSION_ID_LEN
-        from ..conditions import RequestContext
+        from ...execution.conditions import RequestContext
 
         session_id = msg.get("id", "")
         trigger = msg.get("trigger")

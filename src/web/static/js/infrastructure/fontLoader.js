@@ -88,20 +88,20 @@ export function getTerminalFontFamily() {
  * 将字体应用到单个终端实例。
  * 设置 term.options.fontFamily 后，cell 尺寸可能变化，需重新计算 frame 尺寸。
  *
- * @param {string} sid 会话 id
+ * @param {string} uid 会话 uid
  */
-function _applyFontToSession(sid) {
-  const inst = state.termInstances[sid];
+function _applyFontToSession(uid) {
+  const inst = state.termInstances[uid];
   if (!inst || !inst.term) return;
   try {
     inst.term.options.fontFamily = getTerminalFontFamily();
     // 字体变更后 cell 像素尺寸可能变化，需重新计算 frame 尺寸
     requestAnimationFrame(() => {
-      try { applyTerminalFrameSize(sid); } catch (_) {}
+      try { applyTerminalFrameSize(uid); } catch (_) {}
     });
-    debug('font', 'font applied to sid=%s', sid);
+    debug('font', 'font applied to uid=%s', uid);
   } catch (e) {
-    warn('font', 'apply font to sid=%s failed: %s', sid, e);
+    warn('font', 'apply font to uid=%s failed: %s', uid, e);
   }
 }
 

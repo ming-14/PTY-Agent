@@ -13,9 +13,9 @@ import pytest
 
 from src.plugins.base import ProcessPluginContext
 from src.plugins.io import PluginIO
-from src.transfer.client_download import download
-from src.transfer.client_upload import upload
-from src.transfer.common import TransferError
+from src.client.transfer.client_download import download
+from src.client.transfer.client_upload import upload
+from src.client.transfer.common import TransferError
 from config.plugins.files.files_plugin import FilesPlugin
 from config.plugins.files.history import FileHistoryStore
 from config.plugins.files.state import FileRecordStore

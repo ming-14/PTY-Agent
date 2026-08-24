@@ -1,8 +1,9 @@
 
 from ...protocol.message import Message
 from ...protocol.response import Response
-from .base import DaemonHandler, HandlerContext
-from ..response import _EVENTS_NO_ARGS_HINT, _SESSION_ENDED_HINT
+from .base import DaemonHandler
+from ...execution.context import HandlerContext
+from ...execution.response import _EVENTS_NO_ARGS_HINT, _SESSION_ENDED_HINT
 from ...logging import get_logger
 
 _logger = get_logger("pty-daemon")

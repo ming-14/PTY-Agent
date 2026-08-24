@@ -13,7 +13,7 @@ from ..config.daemon import (
     WORKFLOW_MAX_RUNS,
     WORKFLOW_STEP_OUTPUT_LIMIT,
 )
-from ..daemon.handlers.base import HandlerContext
+from ..execution.context import HandlerContext
 from .definition import WorkflowDefinition
 from .engine import WorkflowEngine
 from .runner import RUN_CANCELLED, RUN_RUNNING, WorkflowRun

@@ -1,9 +1,0 @@
-{
-  "enabled": true,
-  "plugins": [
-    "config/plugins/state_check",
-    "config/plugins/files",
-    "config/plugins/ai",
-    "config/plugins/simple"
-  ]
-}

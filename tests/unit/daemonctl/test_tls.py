@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.daemonctl.tls import TLSClient
+from src.client.tls_client import TLSClient
 from src.auth.tls.known_hosts import KnownHosts
 
 
@@ -81,8 +81,8 @@ class TestTLSClientInit:
 class TestTLSClientConnectTofuFirstTrust:
     """TOFU 首次连接：自动信任"""
 
-    @patch("src.daemonctl.tls.socket.socket")
-    @patch("src.daemonctl.tls.ssl.SSLContext")
+    @patch("src.client.tls_client.socket.socket")
+    @patch("src.client.tls_client.ssl.SSLContext")
     def test_first_connection_auto_trusts(self, mock_ctx_cls, mock_sock_cls):
         """首次连接：KnownHosts.verify 返回 True（自动信任），返回 SSLSocket"""
         mock_ctx, mock_raw_sock, mock_ssl_sock = _setup_tls_mocks(
@@ -102,8 +102,8 @@ class TestTLSClientConnectTofuFirstTrust:
 class TestTLSClientConnectFingerprintMatch:
     """TOFU 后续连接：指纹匹配"""
 
-    @patch("src.daemonctl.tls.socket.socket")
-    @patch("src.daemonctl.tls.ssl.SSLContext")
+    @patch("src.client.tls_client.socket.socket")
+    @patch("src.client.tls_client.ssl.SSLContext")
     def test_matching_fingerprint_passes(self, mock_ctx_cls, mock_sock_cls):
         """后续连接：指纹匹配，verify 返回 True，返回 SSLSocket"""
         mock_ctx, mock_raw_sock, mock_ssl_sock = _setup_tls_mocks(
@@ -124,8 +124,8 @@ class TestTLSClientConnectFingerprintMatch:
 class TestTLSClientConnectFingerprintMismatch:
     """TOFU 指纹不匹配"""
 
-    @patch("src.daemonctl.tls.socket.socket")
-    @patch("src.daemonctl.tls.ssl.SSLContext")
+    @patch("src.client.tls_client.socket.socket")
+    @patch("src.client.tls_client.ssl.SSLContext")
     def test_strict_mode_rejects(self, mock_ctx_cls, mock_sock_cls):
         """严格模式：指纹不匹配 → ConnectionError，关闭 socket"""
         mock_ctx, mock_raw_sock, mock_ssl_sock = _setup_tls_mocks(
@@ -143,8 +143,8 @@ class TestTLSClientConnectFingerprintMismatch:
 
         mock_ssl_sock.close.assert_called_once()
 
-    @patch("src.daemonctl.tls.socket.socket")
-    @patch("src.daemonctl.tls.ssl.SSLContext")
+    @patch("src.client.tls_client.socket.socket")
+    @patch("src.client.tls_client.ssl.SSLContext")
     def test_non_strict_mode_continues(self, mock_ctx_cls, mock_sock_cls):
         """非严格模式：指纹不匹配 → 记录警告但返回 SSLSocket"""
         mock_ctx, mock_raw_sock, mock_ssl_sock = _setup_tls_mocks(
@@ -166,8 +166,8 @@ class TestTLSClientConnectFingerprintMismatch:
 class TestTLSClientConnectNoCert:
     """服务端未提供证书"""
 
-    @patch("src.daemonctl.tls.socket.socket")
-    @patch("src.daemonctl.tls.ssl.SSLContext")
+    @patch("src.client.tls_client.socket.socket")
+    @patch("src.client.tls_client.ssl.SSLContext")
     def test_no_cert_raises(self, mock_ctx_cls, mock_sock_cls):
         """getpeercert 返回 None → ConnectionError"""
         mock_ctx, mock_raw_sock, mock_ssl_sock = _setup_tls_mocks(
@@ -186,8 +186,8 @@ class TestTLSClientConnectNoCert:
 class TestTLSClientSslContextConfig:
     """SSLContext 配置测试：CERT_NONE + check_hostname=False"""
 
-    @patch("src.daemonctl.tls.socket.socket")
-    @patch("src.daemonctl.tls.ssl.SSLContext")
+    @patch("src.client.tls_client.socket.socket")
+    @patch("src.client.tls_client.ssl.SSLContext")
     def test_cert_none_configured(self, mock_ctx_cls, mock_sock_cls):
         """SSLContext 配置为 CERT_NONE（不验证 CA，用 TOFU 替代）"""
         mock_ctx, mock_raw_sock, mock_ssl_sock = _setup_tls_mocks(

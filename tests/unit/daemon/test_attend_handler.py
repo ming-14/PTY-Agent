@@ -14,7 +14,7 @@ import time
 import pytest
 
 from src.daemon.handlers.attend_handler import AttendHandler
-from src.daemon.handlers.base import HandlerContext
+from src.execution.context import HandlerContext
 from src.protocol.envelope import unwrap as _env_unwrap
 from src.protocol.message import Message
 from src.session.publisher import SessionPublisher

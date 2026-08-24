@@ -314,6 +314,7 @@ python app.py exec <id> -c <命令> [选项] [公共选项]
 | 选项                | 说明                                                         |
 | ------------------- | ------------------------------------------------------------ |
 | `--force-pty-mode`  | 强制模式：忽略 shell 操作符检测，原样拆分执行                 |
+| `--shell SHELL`     | 用指定 shell 包装执行命令（如 `bash`/`cmd`/`pwsh`）。命令内的 shell 操作符由该 shell 解析（无需 `--force-pty-mode`）；复杂引号按目标 shell 规则重组保真。不指定时用 `set-default shell`（默认 `none`=无包装）；找不到/不支持的 shell 报错 |
 | `--cwd DIR`         | 子进程工作目录（默认取调用方 CLI 的当前目录）                 |
 | `--env KEY=VALUE...`| 子进程环境变量（可多次指定），例：`--env TERM=xterm-256color COLORTERM=truecolor` |
 | `--size WxH`        | 终端尺寸（如 `120x40`，默认 `80x24`；仅新会话创建时生效）    |
@@ -691,6 +692,8 @@ python app.py wait [--timeout SECS] [公共选项]
 
 **说明：** 在守护进程侧等待指定秒数，用于脚本中的固定延时。
 
+**输出：** `[wait · ok · <实际耗时>] waited`（状态行风格，stdout）
+
 **示例：**
 
 ```bash
@@ -760,6 +763,7 @@ python app.py set-default <key> <value> [公共选项]
 | `response-format`      | 响应格式（stream/svg）                         |
 | `svg-compression-level`| SVG 压缩等级（0/1/2）                          |
 | `terminal-size`        | 终端尺寸（如 120x40）。对运行中的会话：下次 exec/send/read/mouse 携带时即刻 resize |
+| `shell`                | 默认 shell 包装（如 `cmd`/`bash`/`pwsh`；`none`=无包装）。仅新会话创建时生效 |
 
 **示例：**
 
@@ -828,24 +832,40 @@ python app.py file download remote_dir/local.txt ./local.txt -s myapp --force
 **用法：**
 
 ```bash
-python app.py plugin list                # 列出所有已加载插件
-python app.py plugin ls <id>             # 列出指定会话挂载的插件
-python app.py plugin attach <id> <name>  # 动态挂载插件到运行中的会话
-python app.py plugin detach <id> <name>  # 从会话卸载插件
+python app.py plugin list                        # 列出所有已加载插件（含状态/形态）
+python app.py plugin ls <id>                     # 列出指定会话挂载的插件
+python app.py plugin attach <id> <name>          # 动态挂载插件到运行中的会话
+python app.py plugin detach <id> <name>          # 从会话卸载插件
 python app.py plugin cmd <id> <name> <command> [args...]  # 调用插件自定义命令
+python app.py plugin install <path>              # 从目录安装插件（须含 plugin.json）
+python app.py plugin uninstall <name>            # 卸载插件（须先 disable）
+python app.py plugin enable <name>               # 启用插件
+python app.py plugin disable <name>              # 停用插件
+python app.py plugin reload <name>               # 热重载插件（重新加载代码与清单）
+python app.py plugin info <name>                 # 插件详情（清单/状态/权限/事件）
+python app.py plugin status <name>               # 插件运行状态
+python app.py plugin config <name> [key value]   # 查看/修改插件配置
 ```
 
 **子命令：**
 
 | 子命令 | 用法 | 说明 |
 | ------ | ---- | ---- |
-| `list` | `plugin list` | 列出已加载插件 |
+| `list` | `plugin list` | 列出已加载插件（含状态/形态） |
 | `ls`   | `plugin ls <id>` | 列出会话挂载的插件 |
 | `attach` | `plugin attach <id> <name>` | 动态挂载插件到运行中的会话 |
 | `detach` | `plugin detach <id> <name>` | 从会话卸载插件 |
 | `cmd`  | `plugin cmd <id> <name> <command> [args...]` | 调用插件自定义命令（参数可选） |
+| `install` | `plugin install <path>` | 从目录安装插件（校验清单后复制进 config/plugins，不自动启用） |
+| `uninstall` | `plugin uninstall <name>` | 卸载插件（须先 disable；清除代码/数据/状态记录） |
+| `enable` | `plugin enable <name>` | 启用插件（on_init → on_enable，订阅事件） |
+| `disable` | `plugin disable <name>` | 停用插件（on_disable，释放实例） |
+| `reload` | `plugin reload <name>` | 热重载插件（重新导入代码与清单，保持原启用状态） |
+| `info` | `plugin info <name>` | 插件详情（清单/状态/路径/权限/事件） |
+| `status` | `plugin status <name>` | 插件运行状态（info 的子集渲染） |
+| `config` | `plugin config <name> [key value]` | 查看配置；`key value` 形式为设置（value 支持 JSON 类型） |
 
-> 插件在类声明处用 `kind` 声明自己支持哪侧钩子：`cli`=客户端进程内（before_request / transform_response / render_response），`session`/`process`=daemon 侧挂载。`--plugin <name>` 仅在 `exec` 出现：一次性把插件挂载到会话，按 kind 自动分流——CLI 形态记录到会话，后续 `read/send/mouse` 客户端自动挂钩回调（无需再传 `--plugin`）；会话/进程形态在 daemon 挂载。未指定时按插件 `auto_load` 条件自动注入 daemon 插件。
+> 插件形态（kind）在 `plugin.json` 清单声明：`cli`=客户端进程内（before_request / transform_response / render_response），`session`/`process`=daemon 侧。`--plugin <name>` 仅在 `exec` 出现：一次性把插件挂载到会话，按 kind 自动分流——CLI 形态记录到会话，后续 `read/send/mouse` 客户端自动挂钩回调（无需再传 `--plugin`）；会话/进程形态在 daemon 挂载。未指定时按插件 `auto_load` 条件自动注入 daemon 插件。
 
 **示例：**
 
@@ -854,6 +874,10 @@ python app.py plugin list
 python app.py plugin ls myapp
 python app.py plugin attach myapp files
 python app.py plugin cmd myapp files <command>
+python app.py plugin info ai
+python app.py plugin config files
+python app.py plugin config files max_grep_matches 200
+python app.py plugin reload simple
 ```
 
 ### 4.17  attend - 接管会话为完整实时终端
@@ -918,14 +942,14 @@ daemon.py    = common.toml + daemon.toml + shared.toml + logging.toml + web.toml
 client.py    = common.toml + shared.toml + client.toml
 transfer.py  = transfer.toml
 sandbox.py   = daemon/sandbox.toml（可选，缺失即沙箱关闭）
-plugins.py   = config/plugins/plugins.json（可选，缺失即插件系统禁用）
+plugins.py   = config/plugins/ 目录发现（plugin.json）+ registry.json（可选，缺失即插件系统禁用）
 optional.py  = 可选模块惰性导入网关（web/vnc/screenshare/cursorlocator/sandbox/plugins 可用性探测 + 惰性导入）
 
-# 文件工具插件业务参数（读/写/搜索限制、忽略目录、RG_EXE）在插件自包含配置
-# config/plugins/files/files.toml（config.py 加载），不进核心配置目录
+# 插件业务参数在插件自包含配置：plugin.json config.defaults + 插件目录 config.yaml
+# （+ config.schema.json 校验），不进核心配置目录
 ```
 
-**可选配置缺失行为：** `web.toml` 缺失时视为 web 未启用（`ENABLE_WEB=False`，连带 VNC/FastScreen 禁用，守护进程正常启动）；`plugins.json` 缺失时插件系统禁用；`sandbox.toml` 缺失时沙箱关闭。`vnc.toml`/`vnc.example.toml` 为 winvnc.exe 运行时配置，Python 不加载。
+**可选配置缺失行为：** `web.toml` 缺失时视为 web 未启用（`ENABLE_WEB=False`，连带 VNC/FastScreen 禁用，守护进程正常启动）；`registry.json` 缺失时插件系统禁用；`sandbox.toml` 缺失时沙箱关闭。`vnc.toml`/`vnc.example.toml` 为 winvnc.exe 运行时配置，Python 不加载。
 
 **数据目录：** `~/.pty-agent/`
 

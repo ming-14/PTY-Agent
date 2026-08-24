@@ -1,0 +1,51 @@
+{
+  "type": "object",
+  "properties": {
+    "max_read_size": {
+      "type": "integer",
+      "minimum": 1024,
+      "description": "file read 单文件大小上限（字节）"
+    },
+    "default_read_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "file read 默认读取行数"
+    },
+    "max_line_length": {
+      "type": "integer",
+      "minimum": 80,
+      "description": "单行超过此长度截断显示"
+    },
+    "max_path_len": {
+      "type": "integer",
+      "minimum": 256,
+      "description": "路径参数长度上限"
+    },
+    "max_content_len": {
+      "type": "integer",
+      "minimum": 1024,
+      "description": "file write/edit 内容参数长度上限"
+    },
+    "max_grep_matches": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "file grep 返回匹配文件数上限"
+    },
+    "max_glob_files": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "file glob 返回文件数上限"
+    },
+    "rg_exe": {
+      "type": ["string", "null"],
+      "description": "rg 可执行文件路径；空 = 自动探测"
+    },
+    "ignored_dirs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "搜索忽略的目录名（路径任意段命中即跳过）"
+    }
+  }
+}

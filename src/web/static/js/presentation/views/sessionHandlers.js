@@ -40,18 +40,25 @@ export function getHandler(type) {
 }
 
 /**
- * 通过 sid 获取对应 handler。
- * 从 state.sessions[sid].type 查找 handler。
- * @param {string} sid 会话 id
+ * 通过会话键获取对应 handler。
+ * state.sessions 以 uid 为键（真实会话）或固定常量 id（VNC/FastScreen/Settings 特殊 tab）。
+ * 参数 key 为状态键：真实会话传 uid，特殊 tab 传其常量 id。
+ * 兼容旧调用点传展示名（sid）：真实会话展示名查不到返回 null（本就不是 handler tab），
+ * 特殊 tab 的常量 id 即其状态键，可命中。
+ * @param {string} key 会话状态键（uid 或特殊 tab 常量 id）
  * @returns {object|null} handler 对象
  */
-export function getHandlerBySid(sid) {
-  const s = state.sessions[sid];
+export function getHandlerByKey(key) {
+  const s = key ? state.sessions[key] : null;
   if (!s) {
-    warn('handlers', 'getHandlerBySid: sid=%s not in sessions', sid);
     return null;
   }
   return getHandler(s.type);
+}
+
+/** 兼容旧名称（逻辑同 getHandlerByKey）。 */
+export function getHandlerBySid(key) {
+  return getHandlerByKey(key);
 }
 
 /**

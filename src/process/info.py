@@ -91,7 +91,7 @@ def _format_exit_code_message(exit_code: int) -> Optional[str]:
 
     if IS_WINDOWS:
         try:
-            from .win32_error import format_process_exit_code
+            from .windows.win32_error import format_process_exit_code
 
             return format_process_exit_code(exit_code)
         except ImportError:
@@ -138,7 +138,7 @@ def _format_pty_error(exception: Exception) -> str:
         try:
             # OSError 格式：(error_code, message)
             if len(exception.args) >= 2 and isinstance(exception.args[0], int):
-                from .win32_error import format_create_process_error
+                from .windows.win32_error import format_create_process_error
 
                 return format_create_process_error(exception.args[0])
         except ImportError:

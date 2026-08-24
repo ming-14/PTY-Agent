@@ -26,7 +26,7 @@ from ..base import (
     ProcessNotification,
     ProcessTreeTracker,
 )
-from ..win32_error import STILL_ACTIVE
+from .win32_error import STILL_ACTIVE
 from .api import (
     _INVALID_HANDLE_VALUE,
     _JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION,

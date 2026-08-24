@@ -9,7 +9,7 @@ import pytest
 
 from src.process.monitor import ProcessMonitor
 from src.process.gui import GuiDetector
-from src.output.events import PendingEvent
+from src.process.base import PendingEvent
 
 
 class _MockTracker:

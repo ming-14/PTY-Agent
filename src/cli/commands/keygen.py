@@ -79,23 +79,20 @@ class KeygenCommand(Command):
         fingerprint = private_key.fingerprint
         _logger.info("Ed25519 密钥对已生成: %s", private_key_path)
 
+        # 服务端 authorized_keys 路径未知（daemon 可能跨机部署），
+        # 必须用 ~ 相对形式提示，不能用本机绝对路径
+        server_authorized_keys = os.path.join("~", ".pty-agent", "authorized_keys")
         emit(
             f"密钥对已生成:\n"
             f"  私钥: {private_key_path}\n"
             f"  公钥: {public_key_path}\n"
-            f"  指纹: {fingerprint}",
+            f"  指纹: {fingerprint}\n"
+            f"\n"
+            f"公钥已生成，请将其追加到服务端 authorized_keys 文件:\n"
+            f"  服务端：{server_authorized_keys}\n"
+            f"  公钥内容:\n"
+            f"  {public_line}",
             msg_type="raw",
-        )
-
-        authorized_keys_path = os.path.join(
-            os.path.expanduser("~"), ".pty-agent", "authorized_keys"
-        )
-        # stderr 提示：请将公钥追加到服务端 authorized_keys（走 presenter，输出到 stderr）
-        emit(
-            f"\n公钥已生成，请将其追加到服务端 authorized_keys 文件:\n"
-            f"  {authorized_keys_path}\n\n"
-            f"公钥内容:\n  {public_line}\n\n"
-            f"指纹: {fingerprint}"
         )
 
     @staticmethod

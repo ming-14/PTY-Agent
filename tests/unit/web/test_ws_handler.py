@@ -7,12 +7,12 @@ import asyncio
 import time
 import pytest
 
-from src.web.application.handlers import (
-    HandlerContext,
-    ListSessionsHandler,
+from src.web.application.handlers.base import HandlerContext
+from src.web.application.handlers.detail import (
     SessionDetailHandler,
     SessionDetailRefreshHandler,
 )
+from src.web.application.handlers.system import ListSessionsHandler
 from src.web.domain.entities import ActiveSession, HistoryDetail
 
 
@@ -92,6 +92,16 @@ class _MockSessionRepo:
     def get_session(self, sid):
         return self._sessions.get(sid)
 
+    def get_by_uid(self, uid):
+        for s in self._sessions.values():
+            if s.uid == uid:
+                return s
+        return None
+
+    def resolve_sid(self, sid):
+        s = self._sessions.get(sid)
+        return s.uid if s else None
+
     def list_sessions(self):
         return [
             ActiveSession(
@@ -118,8 +128,18 @@ class _MockHistoryRepo:
     def __init__(self, details=None):
         self._details = details or {}
 
-    def get_session_detail(self, sid):
-        return self._details.get(sid)
+    def get_session_detail(self, identifier):
+        # uid 优先，其次按 id(sid) 匹配
+        if identifier in self._details:
+            return self._details[identifier]
+        for d in self._details.values():
+            if isinstance(d, dict) and (
+                d.get("id") == identifier or d.get("uid") == identifier
+            ):
+                return d
+            if hasattr(d, "id") and (d.id == identifier or d.uid == identifier):
+                return d
+        return None
 
     def list_sessions(self):
         return []

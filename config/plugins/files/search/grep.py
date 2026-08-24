@@ -4,7 +4,7 @@
    用 rg 的真实 regex 语义；literal_text 时对 pattern 做 re.escape。
    rg 退出码 1 = 无匹配，合法空结果；其他非 0 退出（含 rg 缺失）→ 降级。
 引擎2（降级）: os.walk + 逐行 regex + SkipHidden 过滤，收集满上限提前停。
-两引擎结果统一按文件 modTime 排序（最新优先），上限 MAX_GREP_MATCHES。
+两引擎结果统一按文件 modTime 排序（最新优先），上限 settings.max_grep_matches。
 """
 
 import fnmatch
@@ -14,7 +14,7 @@ import re
 import subprocess
 from typing import List, Optional
 
-from config.plugins.files.config import MAX_GREP_MATCHES, RG_EXE
+from config.plugins.files.settings import settings
 from config.plugins.files.search.ignore import is_ignored
 
 _logger = logging.getLogger("pty-daemon")
@@ -74,17 +74,18 @@ def _sort_by_mtime(matches: List[GrepMatch]) -> None:
 
 
 def _limit_matches(matches: List[GrepMatch]) -> GrepResult:
-    truncated = len(matches) > MAX_GREP_MATCHES
-    return GrepResult(matches[:MAX_GREP_MATCHES], truncated, "")
+    truncated = len(matches) > settings.max_grep_matches
+    return GrepResult(matches[:settings.max_grep_matches], truncated, "")
 
 
 def _run_rg_engine(pattern: str, path: str, include: Optional[str],
                    literal_text: bool) -> Optional[List[GrepMatch]]:
     """rg 引擎；rg 缺失或非 0/1 退出返回 None 触发降级"""
-    if RG_EXE is None:
+    rg_exe = settings.rg_exe
+    if rg_exe is None:
         return None
     pattern_arg = re.escape(pattern) if literal_text else pattern
-    cmd = [RG_EXE, "-H", "-n", "--no-heading"]
+    cmd = [rg_exe, "-H", "-n", "--no-heading"]
     if include:
         cmd += ["--glob", include]
     cmd += [pattern_arg, path]
@@ -126,7 +127,7 @@ def _run_fallback_engine(pattern: str, path: str, include: Optional[str],
                     for lineno, line in enumerate(f, 1):
                         if regex.search(line):
                             matches.append(GrepMatch(full, lineno, line.rstrip("\r\n")))
-                            if len(matches) > MAX_GREP_MATCHES:
+                            if len(matches) > settings.max_grep_matches:
                                 stopped = True
                                 break
             except OSError as e:
@@ -149,7 +150,7 @@ def grep_files(pattern: str, path: str, include: Optional[str] = None,
         literal_text: 按字面量匹配
 
     Returns:
-        GrepResult：匹配按 modTime 最新优先，上限 MAX_GREP_MATCHES
+        GrepResult：匹配按 modTime 最新优先，上限 settings.max_grep_matches
     """
     engine = _run_rg_engine(pattern, path, include, literal_text)
     if engine is None:
@@ -158,7 +159,7 @@ def grep_files(pattern: str, path: str, include: Optional[str] = None,
         result = _limit_matches(matches)
         result.engine = "fallback"
         if result.truncated:
-            _logger.info("grep 降级引擎截断: path=%s max=%d", path, MAX_GREP_MATCHES)
+            _logger.info("grep 降级引擎截断: path=%s max=%d", path, settings.max_grep_matches)
         return result
     _sort_by_mtime(engine)
     result = _limit_matches(engine)

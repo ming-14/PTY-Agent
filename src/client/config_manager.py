@@ -24,6 +24,7 @@ _DEFAULTS: dict = {
     "response_format": "stream",
     "svg_compression_level": 1,
     "terminal_size": "80x24",
+    "shell": None,
 }
 
 # 会话级默认配置持久化文件（set-default 写入，所有 CLI 调用启动时加载）。

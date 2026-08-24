@@ -163,28 +163,28 @@ class WebServer:
         self._session_repo.set_on_session_created(self._on_manager_session_created)
         self._session_repo.set_on_session_removed(self._on_manager_session_removed)
 
-    def _on_manager_session_created(self, session_id: str):
-        _logger.info("manager session_created callback: %s", session_id)
+    def _on_manager_session_created(self, uid: str, sid: str):
+        _logger.info("manager session_created callback: sid=%s uid=%s", sid, uid)
         # 查询 session.uid 一并广播，前端可即时更新 sessions[sid].uid，
         # 避免 sizeSelector 等依赖 uid 的功能在 list 刷新前失效
-        uid = ""
-        try:
-            session = self._session_repo.get_session(session_id)
-            if session and getattr(session, "uid", ""):
-                uid = session.uid
-        except Exception:
-            _logger.exception(
-                "manager session_created get uid failed sid=%r", session_id
-            )
-        self._publisher.publish_session_created(session_id, uid)
+        if not uid:
+            try:
+                session = self._session_repo.get_session(sid)
+                if session and getattr(session, "uid", ""):
+                    uid = session.uid
+            except Exception:
+                _logger.exception(
+                    "manager session_created get uid failed sid=%r", sid
+                )
+        self._publisher.publish_session_created(sid, uid)
 
     def _on_manager_session_removed(
-        self, session_id: str, exit_code=None, error_message=None
+        self, uid: str, sid: str, exit_code=None, error_message=None
     ):
         _logger.info(
-            "manager session_removed callback: %s exit=%s", session_id, exit_code
+            "manager session_removed callback: sid=%s uid=%s exit=%s", sid, uid, exit_code
         )
-        self._publisher.publish_session_removed(session_id, exit_code, error_message)
+        self._publisher.publish_session_removed(sid, uid, exit_code, error_message)
 
     def start_background(self):
         _logger.info(

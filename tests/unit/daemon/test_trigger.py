@@ -7,7 +7,7 @@ import re
 import time
 import pytest
 
-from src.output.trigger import TriggerMatcher, safe_regex_search
+from src.session.trigger_matcher import TriggerMatcher, safe_regex_search
 
 
 class _MockBuffer:

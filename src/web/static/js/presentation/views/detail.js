@@ -8,10 +8,10 @@ import { $ } from '../../infrastructure/domUtils.js';
 import { escHtml, formatAbsoluteTime, formatRelativeTime } from '../../domain/formatters.js';
 import { state } from '../../domain/state.js';
 import { t } from '../../domain/i18n.js';
-import { wsSend } from '../../infrastructure/wsClient.js';
+import { wsSend, sendToSession } from '../../infrastructure/wsClient.js';
 import { DEFAULT_COLS, DEFAULT_ROWS } from '../../domain/constants.js';
 
-let currentDetailSid = null;
+let currentDetailUid = null;
 let currentTab = 'info';
 let detailData = null;
 let selectedProcessPid = null;
@@ -30,9 +30,9 @@ function updateDialogOrientation() {
   dialog.classList.toggle('vertical', vertical);
 }
 
-export function showDetailDialog(sid, data) {
-  const alreadyOpen = currentDetailSid === sid;
-  currentDetailSid = sid;
+export function showDetailDialog(uid, data) {
+  const alreadyOpen = currentDetailUid === uid;
+  currentDetailUid = uid;
   detailData = data;
   const isHistory = detailData && (detailData.source === 'history' || !detailData.running);
   if (!alreadyOpen) {
@@ -44,7 +44,7 @@ export function showDetailDialog(sid, data) {
   const overlay = $('detail-overlay');
   if (!overlay) return;
   overlay.style.display = 'flex';
-  $('detail-title').textContent = t('detail.title', { sid });
+  $('detail-title').textContent = t('detail.title', { sid: (data && data.id) || uid });
   renderTabs();
   renderContent();
   if (!alreadyOpen) startRefresh();
@@ -68,21 +68,23 @@ export function hideDetailDialog() {
     dialogResizeObserver.disconnect();
     dialogResizeObserver = null;
   }
-  currentDetailSid = null;
+  currentDetailUid = null;
   detailData = null;
   selectedProcessPid = null;
 }
 
 export function updateDetailData(data) {
-  if (!currentDetailSid) return;
-  if (data.id && data.id !== currentDetailSid) return;
+  if (!currentDetailUid) return;
+  const uid = data.sessionUid || data.uid || data.id;
+  if (uid && uid !== currentDetailUid) return;
   detailData = data;
   renderContent();
 }
 
 export function applyDetailRefresh(msg) {
-  if (!currentDetailSid || !detailData) return;
-  if (msg.id !== currentDetailSid) return;
+  if (!currentDetailUid || !detailData) return;
+  const uid = msg.sessionUid || msg.uid || msg.id;
+  if (uid && uid !== currentDetailUid) return;
 
   if (msg.tab === 'info') {
     if (msg.running !== undefined) detailData.running = msg.running;
@@ -113,7 +115,7 @@ export function appendDetailEvent(event) {
     renderEventItem(event);
   }
   if (currentTab === 'process' && (event.type === 'process_spawn' || event.type === 'process_exit' || event.type === 'process_crash')) {
-    wsSend({ type: 'session_detail', session_id: currentDetailSid });
+    sendToSession(currentDetailUid, { type: 'session_detail' });
   }
 }
 
@@ -131,15 +133,15 @@ function stopRefresh() {
 }
 
 function scheduleNext() {
-  if (!currentDetailSid || !detailData || !detailData.running) return;
+  if (!currentDetailUid || !detailData || !detailData.running) return;
   const interval = currentTab === 'process' ? PROCESS_REFRESH_MS : INFO_REFRESH_MS;
   refreshTimer = setTimeout(() => {
-    if (!currentDetailSid || !detailData) return;
+    if (!currentDetailUid || !detailData) return;
     if (currentTab === 'events') {
       scheduleNext();
       return;
     }
-    wsSend({ type: 'session_detail_refresh', session_id: currentDetailSid, tab: currentTab });
+    sendToSession(currentDetailUid, { type: 'session_detail_refresh', tab: currentTab });
     scheduleNext();
   }, interval);
 }
@@ -163,7 +165,7 @@ function renderTabs() {
       currentTab = t.key;
       renderTabs();
       if (currentTab === 'process' && prevTab !== 'process') {
-        wsSend({ type: 'session_detail', session_id: currentDetailSid });
+        sendToSession(currentDetailUid, { type: 'session_detail' });
       } else {
         renderContent();
       }

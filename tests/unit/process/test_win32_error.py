@@ -8,7 +8,7 @@
 
 import pytest
 
-from src.process.win32_error import (
+from src.process.windows.win32_error import (
     translate_windows_error,
     format_process_exit_code,
     format_create_process_error,

@@ -27,7 +27,9 @@ from .result import (
     SessionResult,
     StatusResult,
     StopResult,
+    WaitResult,
     WorkflowResult,
+    from_response,
 )
 
 _SHOW_DEBUG = False
@@ -125,6 +127,8 @@ def _render_typed(result: Result, out, err) -> bool:
         _render_list(result, out, err)
     elif isinstance(result, StatusResult):
         _render_status(result, out)
+    elif isinstance(result, WaitResult):
+        _render_wait(result, out)
     elif isinstance(result, EventsResult):
         _render_events(result, out, err)
     elif isinstance(result, (KillResult, StopResult, CloseWinResult)):
@@ -449,6 +453,11 @@ def _render_status(r: StatusResult, out) -> None:
     _write(out, _table(("key", "value"), rows))
 
 
+def _render_wait(r: WaitResult, out) -> None:
+    """wait 结果：``[wait · ok · <耗时>] waited``（状态行风格）"""
+    _write(out, f"[wait · ok · {r.elapsed:.2f}s] waited")
+
+
 def _render_events(r: EventsResult, out, err) -> None:
     rows = []
     for e in r.events:
@@ -479,7 +488,67 @@ def _render_single(r: Result, out, err) -> None:
 
 def _render_plugin(r: PluginResult, out, err) -> None:
     if r.plugins:
-        _write(out, _table(("NAME", "VERSION"), [(p.get("name", ""), str(p.get("version", ""))) for p in r.plugins]))
+        # list：列出已加载插件（含状态/形态）
+        if any("state" in p for p in r.plugins):
+            _write(
+                out,
+                _table(
+                    ("NAME", "VERSION", "STATE", "KIND"),
+                    [
+                        (
+                            p.get("name", ""),
+                            str(p.get("version", "")),
+                            p.get("state", ""),
+                            p.get("kind", ""),
+                        )
+                        for p in r.plugins
+                    ],
+                ),
+            )
+        else:
+            # ls：仅列出会话挂载插件
+            _write(
+                out,
+                _table(
+                    ("NAME", "VERSION"),
+                    [
+                        (p.get("name", ""), str(p.get("version", "")))
+                        for p in r.plugins
+                    ],
+                ),
+            )
+    elif r.result:
+        # cmd 命令结果：渲染为 JSON（含状态/错误/详情）
+        import json
+        _write(out, json.dumps(r.result, ensure_ascii=False, indent=2))
+    elif r.info:
+        # info / status
+        info = r.info
+        for key in (
+            "name", "version", "description", "kind", "state",
+            "path", "error",
+        ):
+            val = info.get(key)
+            if val not in (None, ""):
+                _write(out, "%-14s %s" % (key + ":", val))
+        if info.get("triggers"):
+            _write(out, "triggers:     %s" % ", ".join(info["triggers"]))
+        if info.get("messageTypes"):
+            _write(out, "messageTypes: %s" % ", ".join(info["messageTypes"]))
+        if info.get("permissions"):
+            _write(out, "permissions:  %s" % ", ".join(info["permissions"]))
+        if info.get("events"):
+            _write(out, "events:       %s" % ", ".join(info["events"]))
+        if info.get("autoLoad"):
+            _write(out, "autoLoad:     %s" % info["autoLoad"])
+        if info.get("pollInterval"):
+            _write(out, "pollInterval: %s" % info["pollInterval"])
+        if info.get("config"):
+            import json
+            _write(out, "config:\n%s" % json.dumps(info["config"], ensure_ascii=False, indent=2))
+    elif r.config:
+        import json
+        _write(out, json.dumps(r.config, ensure_ascii=False, indent=2))
     elif r.message:
         _write(err, fmt_message(r.message))
     else:
@@ -661,3 +730,11 @@ def _table(headers, rows) -> str:
     for row in rows:
         lines.append("  ".join(str(row[i]).ljust(widths[i]) for i in range(min(cols, len(row)))).rstrip())
     return "\n".join(lines)
+
+
+def print_response(resp: dict):
+    """渲染 daemon 响应（经类型化 Result + Presenter：内容→stdout / 元信息→stderr）
+
+    不再原样 JSON dump；错误走 stderr 并由 present() 记录 error 标志。
+    """
+    present(from_response(resp))

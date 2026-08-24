@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
-from src.encoding import detect_decode, decode_strip_tail
+from src.session.codec import detect_decode, decode_strip_tail
 
 # 自动探测仅回退到系统默认编码（Windows cp936 / 其他 GBK 系 locale）：
 # 系统编码为 UTF-8 的环境（现代 Linux）无 GBK 回退语义，无法自动识别

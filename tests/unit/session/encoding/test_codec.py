@@ -4,7 +4,7 @@ import locale
 
 import pytest
 
-from src.encoding.codec import (
+from src.session.codec import (
     _utf8_trim_tail,
     _gbk_trim_tail,
     decode_strip_tail,

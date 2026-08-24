@@ -73,9 +73,13 @@ class TestResponseErrorStructure:
         仅检查处理器中的字符串字面量（排除注释/docstring），确保用户可见错误为错误码结构。
         """
         root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-        handler_path = os.path.join(root, "src", "web", "application", "handlers.py")
-        with open(handler_path, encoding="utf-8") as fh:
-            src = fh.read()
+        handlers_dir = os.path.join(root, "src", "web", "application", "handlers")
+        sources = []
+        for name in sorted(os.listdir(handlers_dir)):
+            if name.endswith(".py"):
+                with open(os.path.join(handlers_dir, name), encoding="utf-8") as fh:
+                    sources.append(fh.read())
+        src = "\n".join(sources)
 
         # 剔除注释行 / docstring / 三引号块
         src = re.sub(r'"""(?:[^"]|"(?!"""))*"""', "", src, flags=re.S)

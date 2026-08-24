@@ -158,7 +158,7 @@ class TestCmdFileRead:
         sent = []
         responses = []
         monkeypatch.setattr(
-            "src.client.transport.print_response",
+            "src.client.presenter.print_response",
             lambda r: responses.append(r))
         monkeypatch.setattr(
             "src.client.transport.Client._send_recv",
@@ -176,7 +176,7 @@ class TestCmdFileRead:
     def test_omits_unset_options(self, monkeypatch):
         sent = []
         monkeypatch.setattr(
-            "src.client.transport.print_response", lambda r: None)
+            "src.client.presenter.print_response", lambda r: None)
         monkeypatch.setattr(
             "src.client.transport.Client._send_recv",
             lambda self, msg: (sent.append(msg), {})[1])
@@ -191,7 +191,7 @@ class TestCmdFileWrite:
     def test_sends_path_and_content(self, monkeypatch):
         sent = []
         monkeypatch.setattr(
-            "src.client.transport.print_response", lambda r: None)
+            "src.client.presenter.print_response", lambda r: None)
         monkeypatch.setattr(
             "src.client.transport.Client._send_recv",
             lambda self, msg: (sent.append(msg), {"type": "result"})[1])
@@ -208,7 +208,7 @@ class TestCmdFileEdit:
     def test_sends_normalized_branch(self, monkeypatch):
         sent = []
         monkeypatch.setattr(
-            "src.client.transport.print_response", lambda r: None)
+            "src.client.presenter.print_response", lambda r: None)
         monkeypatch.setattr(
             "src.client.transport.Client._send_recv",
             lambda self, msg: (sent.append(msg), {"type": "result"})[1])
@@ -227,7 +227,7 @@ class TestCmdFileGrepGlob:
     def test_grep_defaults_path_omitted(self, monkeypatch):
         sent = []
         monkeypatch.setattr(
-            "src.client.transport.print_response", lambda r: None)
+            "src.client.presenter.print_response", lambda r: None)
         monkeypatch.setattr(
             "src.client.transport.Client._send_recv",
             lambda self, msg: (sent.append(msg), {"type": "result"})[1])
@@ -242,7 +242,7 @@ class TestCmdFileGrepGlob:
     def test_grep_passes_relative_path(self, monkeypatch):
         sent = []
         monkeypatch.setattr(
-            "src.client.transport.print_response", lambda r: None)
+            "src.client.presenter.print_response", lambda r: None)
         monkeypatch.setattr(
             "src.client.transport.Client._send_recv",
             lambda self, msg: (sent.append(msg), {"type": "result"})[1])
@@ -257,7 +257,7 @@ class TestCmdFileGrepGlob:
     def test_glob_defaults_path_omitted(self, monkeypatch):
         sent = []
         monkeypatch.setattr(
-            "src.client.transport.print_response", lambda r: None)
+            "src.client.presenter.print_response", lambda r: None)
         monkeypatch.setattr(
             "src.client.transport.Client._send_recv",
             lambda self, msg: (sent.append(msg), {"type": "result"})[1])

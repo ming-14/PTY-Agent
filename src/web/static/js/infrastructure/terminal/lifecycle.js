@@ -6,11 +6,11 @@ import { state, getSessionFontSize, clearSessionFontSize, isSizeUILocked } from 
 import { debug } from '../../domain/logger.js';
 import { t } from '../../domain/i18n.js';
 import { $ } from '../domUtils.js';
-import { wsSend } from '../wsClient.js';
+import { wsSend, sendToSession } from '../wsClient.js';
 import { DEFAULT_FONT_SIZE, DEFAULT_COLS, DEFAULT_ROWS } from '../../domain/constants.js';
 import { currentTheme } from '../storage.js';
 import { applyTerminalSizeFromSession } from './shared.js';
-import { trackAppMouseMode, getInitialMouseOverride } from './mouseMode.js';
+import { trackAppMouseMode, getInitialMouseOverride, setAppMouseMode } from './mouseMode.js';
 import { shouldTrackFocus } from '../rimeManager.js';
 import { trackCursorSequences } from './cursorDebug.js';
 import { attachCustomKeyEventHandler } from './input.js';
@@ -19,13 +19,13 @@ import { isTermAtBottom, scrollTermToBottom, scrollTermToTop } from './scroll.js
 import { bindTerminalEvents } from './events.js';
 import { getTerminalFontFamily } from '../fontLoader.js';
 
-export function ensureTerminal(sid) {
-  if (state.termInstances[sid]) return;
+export function ensureTerminal(uid) {
+  if (state.termInstances[uid]) return;
 
-  const s = state.sessions[sid];
+  const s = state.sessions[uid];
   const container = $('terminal-container');
   const div = document.createElement('div');
-  div.id = 'term-' + sid;
+  div.id = 'term-' + uid;
   div.className = 'term-instance';
   container.appendChild(div);
 
@@ -105,9 +105,9 @@ export function ensureTerminal(sid) {
   };
 
   trackAppMouseMode(term, inst);
-  trackCursorSequences(term, sid);
-  attachCustomKeyEventHandler(term, sid);
-  bindTerminalEvents(term, inst, sid);
+  trackCursorSequences(term, uid);
+  attachCustomKeyEventHandler(term, uid);
+  bindTerminalEvents(term, inst, uid);
 
   try {
     term.resize(initCols, initRows);
@@ -116,7 +116,7 @@ export function ensureTerminal(sid) {
   }
 
   // 若当前会话不是活动标签，恢复隐藏状态
-  if (sid !== state.activeTab) {
+  if (uid !== state.activeTab) {
     div.classList.remove('active');
     if (wasFrameHidden) {
       frame.style.display = 'none';
@@ -125,8 +125,8 @@ export function ensureTerminal(sid) {
   }
 
   term.onData(data => {
-    const s = state.sessions[sid];
-    const inst = state.termInstances[sid];
+    const s = state.sessions[uid];
+    const inst = state.termInstances[uid];
 
     // 鼠标/焦点序列过滤（最后一道防线）：
     // xterm.js 内置的事件处理可能绕过 capture 阶段的 stopPropagation，
@@ -142,7 +142,7 @@ export function ensureTerminal(sid) {
         const dbg = document.getElementById('terminal-mouse-debug');
         if (dbg) dbg.textContent = data;
         if (inst && inst.appMouseMode && !inst.mouseInputOverride) {
-          debug('mouse', 'onData SGR dropped: mouseInputOverride off sid=%s', sid);
+          debug('mouse', 'onData SGR dropped: mouseInputOverride off uid=%s', uid);
           return;
         }
       } else if (c2 === 0x4d) {
@@ -151,45 +151,45 @@ export function ensureTerminal(sid) {
       } else if (c2 === 0x49 || c2 === 0x4f) {
         // \x1b[I / \x1b[O — 焦点报告（Focus In/Out）
         debug('focus', 'onData focus report: %s', JSON.stringify(data));
-        if (!shouldTrackFocus(sid)) {
-          debug('focus', 'onData focus report dropped: keyboard+mouse disabled sid=%s', sid);
+        if (!shouldTrackFocus(uid)) {
+          debug('focus', 'onData focus report dropped: keyboard+mouse disabled uid=%s', uid);
           return;
         }
       }
     }
 
     if (!s || !s.running || s.closing) {
-      debug('terminal', 'onData dropped: sid=%s running=%s closing=%s', sid, s && s.running, s && s.closing);
+      debug('terminal', 'onData dropped: uid=%s running=%s closing=%s', uid, s && s.running, s && s.closing);
       return;
     }
     if (inst && inst._readonly) {
-      debug('terminal', 'onData ignored: sid=%s readonly (history)', sid);
+      debug('terminal', 'onData ignored: uid=%s readonly (history)', uid);
       return;
     }
     // 沙箱会话为真实 ConPTY（hpcon），输入直接透传给 conhost：
     // 回显/行编辑/方向键历史由 conhost 处理，与原生 ConPTY 会话一致。
-    wsSend({ type: 'input', session_id: sid, data: data });
+    sendToSession(uid, { type: 'input', data: data });
   });
 
   term.onResize(({ cols, rows }) => {
     // 单路径同步（与 ttyd 一致）：
     //   所有 resize 都通过此回调统一发送给守护进程
     //   FitAddon.fit() / 用户切模式 / 窗口 resize 都会触发此回调
-    debug('terminal', 'onResize sid=%s cols=%s rows=%s', sid, cols, rows);
+    debug('terminal', 'onResize uid=%s cols=%s rows=%s', uid, cols, rows);
     // 外部 resize（session_resized / resize_complete 已含完整 snapshot，
     // 不需要再向服务端发 resize，否则会触发冗余的 resize_complete 导致
     // buffer 被写两遍 + _resizePending 竞态）
     if (inst._externalResize) {
       inst._externalResize = false;
-      debug('terminal', 'onResize skipped: sid=%s external resize (session_resized)', sid);
+      debug('terminal', 'onResize skipped: uid=%s external resize (session_resized)', uid);
       return;
     }
     // frame 尺寸需跟随 cell 像素变化（fontSize 不变时 cell 尺寸也不变，但 cols/rows 变了）
     // 用 requestAnimationFrame 避免在 resize 内同步触发布局抖动
     requestAnimationFrame(() => {
-      try { applyTerminalFrameSize(sid); } catch (_) {}
+      try { applyTerminalFrameSize(uid); } catch (_) {}
     });
-    const s2 = state.sessions[sid];
+    const s2 = state.sessions[uid];
     if (!s2 || !s2.running || s2.history || s2.closing) return;
 
     // 本端未持自适应锁时，禁止向后端发送 resize。
@@ -197,8 +197,8 @@ export function ensureTerminal(sid) {
     // 若放行会导致后端 ResizeHandler 拒绝并回弹"另一端正在自适应控制尺寸，请先接管"错误提示。
     // 直接 return：不设 _resizePending、不更新 s2.cols/rows、不发 wsSend，
     // 后续由 size_mode_changed 触发的 reapplyAllTerminalSizes 将 xterm 尺寸纠正回 fixed 模式。
-    if (isSizeUILocked(sid)) {
-      debug('terminal', 'onResize skipped: sid=%s locked by another connection', sid);
+    if (isSizeUILocked(uid)) {
+      debug('terminal', 'onResize skipped: uid=%s locked by another connection', uid);
       return;
     }
 
@@ -207,8 +207,8 @@ export function ensureTerminal(sid) {
     // output 对应旧尺寸，已被新 resize 取代 → 丢弃旧缓冲，重新开始收集。
     if (inst._resizePending && inst._resizeBuffer.length > 0) {
       debug('terminal',
-            'onResize sid=%s: nested resize, discard %d buffered outputs (old size)',
-            sid, inst._resizeBuffer.length);
+            'onResize uid=%s: nested resize, discard %d buffered outputs (old size)',
+            uid, inst._resizeBuffer.length);
       inst._resizeBuffer = [];
     }
     inst._resizePending = true;
@@ -217,16 +217,24 @@ export function ensureTerminal(sid) {
     // 更新会话状态缓存
     s2.cols = cols;
     s2.rows = rows;
-    wsSend({ type: 'resize', session_id: sid, cols: cols, rows: rows });
+    sendToSession(uid, { type: 'resize', cols: cols, rows: rows });
   });
 
-  state.termInstances[sid] = inst;
+  state.termInstances[uid] = inst;
+
+  // 订阅响应先于本函数到达时，后端权威鼠标模式暂存在 session._pendingAppMouseMode，
+  // inst 创建后回填（修复 setAppMouseMode 早退竞态导致的模式丢失）
+  if (s && s._pendingAppMouseMode !== undefined) {
+    const pending = s._pendingAppMouseMode;
+    delete s._pendingAppMouseMode;
+    setAppMouseMode(uid, pending);
+  }
 
   // 历史会话设为只读，禁止焦点/输入反馈
-  applyReadonlyState(sid, !!(s && s.history));
+  applyReadonlyState(uid, !!(s && s.history));
 
   // 初始化完成后立即应用一次 frame 尺寸，确保首次渲染正确
-  applyTerminalFrameSize(sid);
+  applyTerminalFrameSize(uid);
 
 }
 
@@ -390,8 +398,8 @@ export function replayPending(sid) {
   }
 }
 
-export function queuePendingOutput(sid, text) {
-  const s = state.sessions[sid];
+export function queuePendingOutput(uid, text) {
+  const s = state.sessions[uid];
   if (!s) return;
   if (!Array.isArray(s.pendingOutput)) s.pendingOutput = [];
   s.pendingOutput.push(text);
@@ -406,15 +414,16 @@ export function formatStderrText(text) {
 }
 
 export function handleOutput(msg) {
-  const sid = msg.sessionId;
-  const inst = state.termInstances[sid];
+  // 路由键：后端输出消息携带 sessionUid（优先），兼容旧 sessionId
+  const uid = msg._uid || msg.sessionUid || msg.sessionId;
+  const inst = state.termInstances[uid];
   let text = String(msg.data || '');
   // 子进程模式 stderr：以红色 ERR > 前缀逐行展示
   if (msg.stream === 'stderr') {
     text = formatStderrText(text);
   }
-  debug('terminal', 'handleOutput sid=%s inst=%s activeTab=%s len=%d stream=%s',
-        sid, !!inst, state.activeTab, text.length, msg.stream || 'pty');
+  debug('terminal', 'handleOutput uid=%s inst=%s activeTab=%s len=%d stream=%s',
+        uid, !!inst, state.activeTab, text.length, msg.stream || 'pty');
   if (inst) {
     // resize 进行中时缓冲 output，不直接写入 xterm.js。
     // 原因：ConPTY 在 resize 期间会发出针对旧/中间尺寸的 partial repaint
@@ -428,33 +437,38 @@ export function handleOutput(msg) {
       // 防止 WebSocket 断开/后端异常导致 _resizePending 永久卡住（用户看不到任何输出）。
       if (Date.now() - inst._resizeStartedAt > 2000) {
         debug('terminal',
-              'handleOutput sid=%s: resize pending timeout (%dms), discard %d buffered, resume normal',
-              sid, Date.now() - inst._resizeStartedAt, inst._resizeBuffer.length);
+              'handleOutput uid=%s: resize pending timeout (%dms), flush %d buffered, resume normal',
+              uid, Date.now() - inst._resizeStartedAt, inst._resizeBuffer.length);
+        const buf = inst._resizeBuffer;
         inst._resizePending = false;
         inst._resizeBuffer = [];
+        // 缓冲内容写入终端（新尺寸内容，不会错位）
+        if (buf.length > 0) {
+          inst.term.write(buf.join(''));
+        }
         // 继续走下面的正常写入路径（不 return）
       } else {
         inst._resizeBuffer.push(text);
         debug('terminal',
-              'handleOutput sid=%s BUFFERED (resize pending) len=%d buf_count=%d',
-              sid, text.length, inst._resizeBuffer.length);
+              'handleOutput uid=%s BUFFERED (resize pending) len=%d buf_count=%d',
+              uid, text.length, inst._resizeBuffer.length);
         return;
       }
     }
-    const s = state.sessions[sid];
+    const s = state.sessions[uid];
     const isHistory = s && s.history;
     // 不再排队，直接写入对应 xterm 实例
     // xterm.js 在 display:none 时 write 仍正常累积 scrollback（已验证）
     // 这样切回会话时 scrollback 完整，无需 replay
     const wasAtBottom = isTermAtBottom(inst.term);
-    debug('terminal', 'handleOutput write sid=%s history=%s wasAtBottom=%s divActive=%s',
-          sid, isHistory, wasAtBottom, inst.div.classList.contains('active'));
+    debug('terminal', 'handleOutput write uid=%s history=%s wasAtBottom=%s divActive=%s',
+          uid, isHistory, wasAtBottom, inst.div.classList.contains('active'));
     inst.term.write(text);
     if (isHistory) scrollTermToTop(inst.term);
-    else if (wasAtBottom && state.activeTab === sid) scrollTermToBottom(inst.term);
-    setTimeout(() => updateTerminalSnapshot(sid), 50);
+    else if (wasAtBottom && state.activeTab === uid) scrollTermToBottom(inst.term);
+    setTimeout(() => updateTerminalSnapshot(uid), 50);
   } else {
-    queuePendingOutput(sid, text);
+    queuePendingOutput(uid, text);
   }
 }
 

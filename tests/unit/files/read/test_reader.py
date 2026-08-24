@@ -73,9 +73,9 @@ class TestReadFile:
             read_file(str(p))
 
     def test_too_large(self, tmp_path):
-        from config.plugins.files.config import MAX_READ_SIZE
+        from config.plugins.files.settings import settings
         p = tmp_path / "big.txt"
-        p.write_bytes(b"x" * (MAX_READ_SIZE + 1))
+        p.write_bytes(b"x" * (settings.max_read_size + 1))
         with pytest.raises(FileToolError):
             read_file(str(p))
 

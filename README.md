@@ -37,7 +37,7 @@ Python 3.8+，核心依赖：
 
 可选依赖（缺失时自动降级，按需安装）：`wcwidth`（终端字符显示宽度计算）、`scour`（SVG 压缩，`--svg-compression-level` 1/2）、`Pillow`（PNG/JPG/BMP 位图渲染）、`psutil`（Web 系统 CPU/内存统计）。
 
-**可选功能模块**（`src/optional.py` 集中管理，缺失即功能禁用、主流程正常）：Web 界面（`web.toml` 缺失即关闭）、VNC 远程桌面（`bin/ultravnc` 缺失即禁用）、Screenshare 屏幕串流（`bin/fastscreencore` 缺失即禁用）、沙箱（`sandbox.toml` 缺失即关闭）、插件系统（`plugins.json` 缺失即禁用）。这些模块经惰性导入网关按需加载，文件可安全移除。
+**可选功能模块**（`src/optional.py` 集中管理，缺失即功能禁用、主流程正常）：Web 界面（`web.toml` 缺失即关闭）、VNC 远程桌面（`bin/ultravnc` 缺失即禁用）、Screenshare 屏幕串流（`bin/fastscreencore` 缺失即禁用）、沙箱（`sandbox.toml` 缺失即关闭）、插件系统（`registry.json` 缺失即禁用）。这些模块经惰性导入网关按需加载，文件可安全移除。
 
 ```powershell
 git clone <repo-url>

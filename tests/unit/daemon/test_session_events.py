@@ -7,7 +7,8 @@ import threading
 
 import pytest
 
-from src.output.events import PendingEvent, _events_to_dicts
+from src.process.base import PendingEvent
+from src.session.events_history import _events_to_dicts
 from src.protocol.reasons import Reason
 
 
@@ -129,8 +130,8 @@ class TestSessionEvents:
         def _mock_create_pty(*args, **kwargs):
             return _MockPty()
 
-        monkeypatch.setattr("src.session.session.session.create_pty", _mock_create_pty)
-        monkeypatch.setattr("src.session.session.session.create_process_tree_tracker",
+        monkeypatch.setattr("src.session.session.create_pty", _mock_create_pty)
+        monkeypatch.setattr("src.session.session.create_process_tree_tracker",
                             lambda: _MockTracker())
 
         sess = Session("test-sess", "echo hello")
@@ -397,8 +398,8 @@ class TestSessionDrain:
         def _mock_create_pty(*args, **kwargs):
             return mock_pty
 
-        monkeypatch.setattr("src.session.session.session.create_pty", _mock_create_pty)
-        monkeypatch.setattr("src.session.session.session.create_process_tree_tracker",
+        monkeypatch.setattr("src.session.session.create_pty", _mock_create_pty)
+        monkeypatch.setattr("src.session.session.create_process_tree_tracker",
                             lambda: _MockTracker())
 
         sess = Session("drain-test", "echo test")

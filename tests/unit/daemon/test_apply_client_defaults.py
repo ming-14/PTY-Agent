@@ -5,7 +5,7 @@
 子进程模式 / 未运行 / 尺寸未变 / 非法尺寸均静默跳过。
 """
 
-from src.daemon.handlers.utils import _parse_terminal_size, apply_client_defaults
+from src.execution.utils import _parse_terminal_size, apply_client_defaults
 
 
 class _FakeSession:

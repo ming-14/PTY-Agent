@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 if TYPE_CHECKING:
-    from ...session.session import Session
+    from ...session import Session
 
 from ..domain.entities import (
     ActiveSession,
@@ -28,7 +28,15 @@ class SessionRepository(ABC):
 
     @abstractmethod
     def get_session(self, session_id: str) -> Optional["Session"]:
-        """获取会话底层对象；不存在返回 None。"""
+        """获取会话底层对象（兼容 uid 或 sid）；不存在返回 None。"""
+
+    @abstractmethod
+    def get_by_uid(self, uid: str) -> Optional["Session"]:
+        """按 uid 精确获取会话。"""
+
+    @abstractmethod
+    def resolve_sid(self, sid: str) -> Optional[str]:
+        """解析 sid 对应的活跃会话 uid，不存在时返回 None。"""
 
     @abstractmethod
     def create_session(
@@ -47,14 +55,16 @@ class SessionRepository(ABC):
         """移除会话并返回结束信息。"""
 
     @abstractmethod
-    def set_on_session_created(self, callback: Callable[[str], None]) -> None:
-        """设置会话创建回调。"""
+    def set_on_session_created(
+        self, callback: Callable[[str, str], None]
+    ) -> None:
+        """设置会话创建回调（参数：uid, sid）。"""
 
     @abstractmethod
     def set_on_session_removed(
-        self, callback: Callable[[str, Optional[int], Optional[str]], None]
+        self, callback: Callable[[str, str, Optional[int], Optional[str]], None]
     ) -> None:
-        """设置会话移除回调。"""
+        """设置会话移除回调（参数：uid, sid, exit_code, error_message）。"""
 
 
 class HistoryRepository(ABC):
@@ -218,13 +228,18 @@ class EventPublisher(ABC):
 
     @abstractmethod
     def publish_session_removed(
-        self, session_id: str, exit_code: Optional[int], error_message: Optional[str]
+        self,
+        session_id: str,
+        uid: str = "",
+        exit_code: Optional[int] = None,
+        error_message: Optional[str] = None,
     ) -> None:
-        """广播会话移除事件。"""
+        """广播会话移除事件（携带 uid 供前端按 uid 清理状态）。"""
 
     @abstractmethod
     def publish_session_resized(
         self,
+        session_uid: str,
         session_id: str,
         cols: int,
         rows: int,
@@ -237,7 +252,7 @@ class EventPublisher(ABC):
         尺寸变更通知：当任意来源（网页 resize 请求 / 守护进程命令行）
         触发会话尺寸变更后，必须立刻通知所有订阅该会话的客户端调整终端显示。
 
-        - 仅发给 context.subscribed_session_ids 包含 session_id 的连接
+        - 仅发给 context.subscribed_session_ids 包含 session_uid 的连接
         - exclude_conn_id 指定发起方连接 ID（id(transport)），避免发起方重复处理
           （发起方已通过 resize_complete 消息完成本地调整）
         - snapshot / scrollback 为后端 reflow 后的完整内容，客户端据此重建 buffer
@@ -246,6 +261,7 @@ class EventPublisher(ABC):
     @abstractmethod
     def publish_size_mode_changed(
         self,
+        session_uid: str,
         session_id: str,
         adaptive_owner_active: bool,
         cols: Optional[int] = None,

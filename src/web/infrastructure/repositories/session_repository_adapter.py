@@ -2,7 +2,7 @@
 
 from typing import Any, Callable, Optional
 
-from ....session.session import Session
+from ....session import Session
 from ...application.ports import SessionRepository
 from ...domain.entities import ActiveSession, SessionEndedInfo
 
@@ -29,6 +29,12 @@ class SessionRepositoryAdapter(SessionRepository):
     def get_session(self, session_id: str) -> Optional[Session]:
         return self._manager.get_session(session_id)
 
+    def get_by_uid(self, uid: str) -> Optional[Session]:
+        return self._manager.get_by_uid(uid) if hasattr(self._manager, 'get_by_uid') else None
+
+    def resolve_sid(self, sid: str) -> Optional[str]:
+        return self._manager.resolve_sid(sid) if hasattr(self._manager, 'resolve_sid') else None
+
     def create_session(
         self,
         session_id: str,
@@ -54,10 +60,13 @@ class SessionRepositoryAdapter(SessionRepository):
             )
         return None
 
-    def set_on_session_created(self, callback: Callable[[str], None]) -> None:
+    def set_on_session_created(
+        self, callback: Callable[[str, str], None]
+    ) -> None:
         self._manager.set_on_session_created(callback)
 
     def set_on_session_removed(
-        self, callback: Callable[[str, Optional[int], Optional[str]], None]
+        self,
+        callback: Callable[[str, str, Optional[int], Optional[str]], None],
     ) -> None:
         self._manager.set_on_session_removed(callback)

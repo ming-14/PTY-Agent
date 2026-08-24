@@ -48,12 +48,12 @@ python app.py read myid -s
 
 ## 配置
 
-### 环境变量（覆盖插件默认）
+### 插件配置（plugin.json config.defaults + config.yaml）
 
-| 变量 | 默认 | 说明 |
+| 键 | 默认 | 说明 |
 |------|------|------|
-| `PTY_AI_PROMPT` | `全面分析该内容，只按内容说话，不给出下一步，不提建议` | 分析提示词 |
-| `PTY_AI_TIMEOUT` | `120` | aichat 调用超时（秒） |
+| `prompt`（环境变量 `PTY_PLUGIN_AI_PROMPT` 覆盖） | `全面分析该内容，只按内容说话，不给出下一步，不提建议` | 分析提示词 |
+| `timeout`（环境变量 `PTY_PLUGIN_AI_TIMEOUT` 覆盖） | `120` | aichat 调用超时（秒） |
 
 ### config.yaml（aichat 模型/密钥）
 
@@ -90,7 +90,7 @@ config/plugins/ai/
 
 ## 注册
 
-已注册于 `config/plugins/plugins.json`：
+内置于 `config/plugins/` 含 `plugin.json` 清单：
 
 ```json
 { "enabled": true, "plugins": ["config/plugins/state_check", "config/plugins/files", "config/plugins/ai", "config/plugins/simple"] }
