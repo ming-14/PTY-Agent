@@ -26,9 +26,13 @@ function _migrateOptimisticKey(displaySid, uid) {
   if (state.sessions[displaySid].uid) return; // 已迁移
   state.sessions[uid] = state.sessions[displaySid];
   delete state.sessions[displaySid];
-  // 终端实例一并迁移（乐观创建后 switchTab 可能已创建 termInstances[displaySid]）
+  // 终端实例不能随键迁移：实例内闭包（onData/onResize/onBinary 等）绑定的是
+  // 创建时的键（乐观 sid），迁移后输入/输出仍发往 sid → 后端按 uid 找不到会话
+  // → 新建会话无法输入。销毁旧实例，由 handleSubscribed→switchTab(realUid)
+  // →ensureTerminal(realUid) 用真实 uid 重建。
   if (state.termInstances[displaySid]) {
-    state.termInstances[uid] = state.termInstances[displaySid];
+    try { state.termInstances[displaySid].term.dispose(); } catch (_) {}
+    try { state.termInstances[displaySid].div.remove(); } catch (_) {}
     delete state.termInstances[displaySid];
   }
   const ti = state.tabOrder.indexOf(displaySid);

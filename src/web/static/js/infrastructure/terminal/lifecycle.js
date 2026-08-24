@@ -115,9 +115,13 @@ export function ensureTerminal(uid) {
   bindTerminalEvents(term, inst, uid);
 
   try {
-    // 初始化为会话尺寸：有意 resize（onResize 据此发后端，与订阅一致）
-    inst._pendingDaemonResize = true;
-    term.resize(initCols, initRows);
+    // 初始化为会话尺寸：仅在尺寸确实不同时设置有意标志并 resize——
+    // 否则 resize 是 no-op（不发 onResize），标志会卡死为 true，
+    // 之后任何容器自动 resize 被误判为有意 → 误发后端 → PTY 被重算。
+    if (term.cols !== initCols || term.rows !== initRows) {
+      inst._pendingDaemonResize = true;
+      term.resize(initCols, initRows);
+    }
   } catch (e) {
     console.error('initial resize failed', e);
   }

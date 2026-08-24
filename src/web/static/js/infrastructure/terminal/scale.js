@@ -37,6 +37,7 @@ import {
   MIN_FONT_SIZE, MAX_FONT_SIZE,
   FRAME_RATIO_MIN, FRAME_RATIO_MAX,
 } from '../../domain/constants.js';
+import { isTermAtBottom, scrollTermToBottom } from './scroll.js';
 
 /**
  * 通过 FitAddon 获取终端实例。
@@ -161,6 +162,8 @@ export function applyTerminalSize(uid, force, opts) {
       // 标记为有意 resize：onResize 据此发后端（区分 xterm 容器自动 resize——
       // 后者来自 Ctrl+滚轮缩放/框变化，必须回退而非同步 PTY）
       inst._pendingDaemonResize = true;
+      // 超时保险：onResize 未触发时清除标志，防止残留导致后续自动 resize 误发
+      setTimeout(() => { if (state.termInstances[uid]) state.termInstances[uid]._pendingDaemonResize = false; }, 300);
       console.log('[resize] applyTerminalSize DELIBERATE %s sid=%s %dx%d (flag set, term.resize)',
             mode, uid, cols, rows);
       inst.term.resize(cols, rows);
@@ -209,6 +212,9 @@ export function applyTerminalFontSize(uid) {
     return;
   }
   inst._pendingFontSize = undefined;
+  // 缩放前记录视图是否在底部：字号变化 → canvas 高度变化 → 视口像素滚动位置
+  // 不再对应"底部"（内容变短时视口停在原位置），缩放完成后恢复锚定。
+  inst._wasAtBottom = isTermAtBottom(inst.term);
   // 变更前 canvas 尺寸（设字体前读取，作为轮询对比基准）
   const beforeCanvas = getCanvasSize(inst.term);
   try {
@@ -234,6 +240,11 @@ function _waitCanvasChange(uid, before, attempts, intervalMs) {
     const changed = before && now && (Math.abs(now.w - before.w) > 0.5 || Math.abs(now.h - before.h) > 0.5);
     if (changed || waited >= attempts) {
       try { applyTerminalFrameSize(uid); } catch (_) {}
+      // 缩放前在底部则缩放完成后锚定回底部（canvas 高度变化导致视口漂移）
+      if (inst._wasAtBottom) {
+        inst._wasAtBottom = false;
+        try { scrollTermToBottom(inst.term); } catch (_) {}
+      }
       return;
     }
     waited += 1;
