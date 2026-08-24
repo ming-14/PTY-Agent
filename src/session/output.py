@@ -95,16 +95,20 @@ class OutputMixin:
         """
         return self._screen.get_cursor_seq()
 
-    def capture_scrollback(self) -> str:
+    def capture_scrollback(self, keep_ansi: bool = True) -> str:
         """捕获 scrollback 历史区为 ANSI 字符串（带 SGR 颜色）
 
         供 web 层 subscribe 响应返回给前端，
         前端写入 xterm.js 推入 scrollback 区，实现 F5 刷新/重开浏览器后 scrollback 不丢。
 
+        默认 keep_ansi=True：每行 SGR 内容 + \\r\\n（与 resize 路径一致，
+        前端统一按 \\r\\n 分行重建；若返回 \\n 分行的纯文本，前端 split('\\r\\n')
+        会把整段 scrollback 当作一行 → 按终端宽度折行错乱）。
+
         Returns:
             每行 ANSI 内容 + \\r\\n 的字符串；无 scrollback 时返回 ""。
         """
-        return self._screen.capture_scrollback()
+        return self._screen.capture_scrollback(keep_ansi=keep_ansi)
 
     def clear_scrollback(self) -> None:
         """清除 Grid scrollback 历史区
