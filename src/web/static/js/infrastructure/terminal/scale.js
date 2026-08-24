@@ -49,14 +49,27 @@ function getFitAddon(uid) {
 }
 
 /**
- * 应用终端框尺寸：所有模式下 frame 都跟随 xterm 实际渲染区。
+ * 读取 xterm 的 canvas 渲染尺寸（权威源，无需 DOM 度量）。
+ * 从 renderService.dimensions.css.canvas 直接读取——避免 DOM 布局时序
+ * 导致的"框不变字体变小"（.xterm-screen 的 style 更新可能滞后于渲染）。
+ * @param {object} term xterm.js Terminal 实例
+ * @returns {{w:number, h:number}|null} 像素尺寸，不可用时返回 null
+ */
+function getCanvasSize(term) {
+  const core = term._core;
+  if (!core) return null;
+  const d = core._renderService && core._renderService.dimensions;
+  if (d && d.css && d.css.canvas && d.css.canvas.width > 0 && d.css.canvas.height > 0) {
+    return { w: d.css.canvas.width, h: d.css.canvas.height };
+  }
+  return null;
+}
+
+/**
+ * 应用终端框尺寸：从 xterm canvas 权威尺寸跟随（无 DOM 布局时序依赖）。
  *
- * frame 始终 = .xterm-screen 尺寸（canvas 容器）：
- *   - 读 .xterm-screen 的 getBoundingClientRect 作为 frame 尺寸
- *   - .xterm-screen 尺寸 = cols × cellWidth × rows × cellHeight
- *   - .xterm 是 width:100%/height:100%，读 .xterm 会拿到 frame 尺寸（循环依赖）
- *
- * @param {string} sid 会话 ID
+ * frame 始终 = 终端内容实际渲染区（canvas 尺寸），长宽比按 cols×rows 键锁定，
+ * 防止字体度量取整导致缩放时框变形。不与其他元素（如 .xterm）产生循环依赖。
  */
 export function applyTerminalFrameSize(uid) {
   const inst = state.termInstances[uid];
@@ -67,50 +80,31 @@ export function applyTerminalFrameSize(uid) {
   // 不使用 .adaptive class，所有模式 frame 都跟随 xterm 实际渲染区
   frame.classList.remove('adaptive');
 
-  // 读 .xterm-screen（canvas 容器）而非 .xterm（后者是 100%，会拿到 frame 尺寸）
-  const termEl = inst.term.element
-    ? inst.term.element.querySelector('.xterm-screen')
-    : null;
-  if (!termEl) {
+  // ── 跟随 canvas 路径：读 renderService.dimensions.css.canvas（权威源） ──
+  // 不用 .xterm-screen 的 getBoundingClientRect：其 style 更新可能滞后于
+  // 渲染（导致"框不变字体变小"）；canvas 尺寸是 renderer 计算后的直接结果。
+  const canvas = getCanvasSize(inst.term);
+  if (!canvas || !canvas.w || !canvas.h) {
     // xterm 尚未渲染，仅活动标签需要重试（非活动标签 div 隐藏，无需设置 frame）
     if (state.activeTab === uid) {
       requestAnimationFrame(() => applyTerminalFrameSize(uid));
     }
     return;
   }
-  // 用 rAF 等待 xterm 完成当前帧渲染，避免读到陈旧尺寸
-  requestAnimationFrame(() => {
-    const rect = termEl.getBoundingClientRect();
-    if (!rect.width || !rect.height) {
-      // div 为 display:none 时 .xterm-screen 尺寸为 0。
-      // 仅当 sid 是当前活动标签时才重试（切标签后 div 刚可见但尚未渲染），
-      // 非活动标签的 div 本就是隐藏的，无需设置 frame，直接返回避免无限 rAF 循环
-      if (state.activeTab === uid) {
-        requestAnimationFrame(() => applyTerminalFrameSize(uid));
-      }
-      return;
-    }
-    // 长宽比锁定（防字体度量取整导致 Ctrl+滚轮缩放时框变形）：
-    // 字号变化时浏览器对 cellW/cellH 的非线性取整会使内容长宽比漂移
-    // （小字号尤其明显）。以 cols×rows 变化为键锁定基准长宽比：
-    // 宽度跟随 xterm 实际渲染宽度，高度按基准比例推导，
-    // 缩放时框保持恒定长宽比；resize（cols/rows 变化）后重新锁定。
-    const aspectKey = inst.term.cols + 'x' + inst.term.rows;
-    if (inst._frameAspectKey !== aspectKey) {
-      inst._frameAspectKey = aspectKey;
-      inst._frameAspect = rect.width / rect.height;
-    }
-    const aspect = inst._frameAspect || (rect.width / rect.height);
-    const w = Math.ceil(rect.width);
-    const h = Math.max(1, Math.round(w / aspect));
-    // frame 无 border（CSS 用 box-shadow 外部投影代替），box-sizing: content-box
-    // frame width = .xterm-screen width，frame 内容区 = .xterm-screen 尺寸
-    // .xterm (100%) = frame 内容区 = .xterm-screen，xterm 内部 canvas 渲染区与 buffer 完全匹配
-    frame.style.width = w + 'px';
-    frame.style.height = h + 'px';
-    frame.style.maxWidth = '';
-    frame.style.maxHeight = '';
-  });
+  // 长宽比锁定（防字体度量取整导致缩放时变形）：以 cols×rows 为键，
+  // 首次渲染（或 resize 后）锁定基准长宽比。
+  const aspectKey = inst.term.cols + 'x' + inst.term.rows;
+  if (inst._frameAspectKey !== aspectKey) {
+    inst._frameAspectKey = aspectKey;
+    inst._frameAspect = canvas.w / canvas.h;
+  }
+  const aspect = inst._frameAspect || (canvas.w / canvas.h);
+  const w = Math.ceil(canvas.w);
+  const h = Math.max(1, Math.round(w / aspect));
+  frame.style.width = w + 'px';
+  frame.style.height = h + 'px';
+  frame.style.maxWidth = '';
+  frame.style.maxHeight = '';
 
   if (state.activeTab === uid) {
     frame.style.display = 'block';
@@ -217,20 +211,37 @@ export function applyTerminalFontSize(uid) {
     return;
   }
   inst._pendingFontSize = undefined;
+  // 变更前 canvas 尺寸（设字体前读取，作为轮询对比基准）
+  const beforeCanvas = getCanvasSize(inst.term);
   try {
     inst.term.options.fontSize = fontSize;
   } catch (e) {
     console.error('set fontSize failed', e);
   }
-  // 不 fit，cols/rows 不变，frame 跟随新 cell 像素
-  requestAnimationFrame(() => {
-    try { applyTerminalFrameSize(uid); } catch (_) {}
-    // 再等一帧，确保 xterm 内部完全刷新（有些渲染器要两帧）
-    requestAnimationFrame(() => {
-      try { applyTerminalFrameSize(uid); } catch (_) {}
-    });
-  });
+  // 轮询 canvas 尺寸直到实际变化（或超时），再更新 frame：
+  // 修复"框大小不变只有字体变小"——renderer 重算 dimensions 是异步的，
+  // 直接 rAF 一次可能读到旧 canvas 尺寸；轮询保证 frame 跟随最终渲染结果。
+  _waitCanvasChange(uid, beforeCanvas, 8, 40);
   debug('terminal', 'applyTerminalFontSize uid=%s → %s', uid, fontSize);
+}
+
+/** 轮询等待 canvas 尺寸变化（最多 attempts 次、每次间隔 ms），变化后应用 frame */
+function _waitCanvasChange(uid, before, attempts, intervalMs) {
+  const inst = state.termInstances[uid];
+  if (!inst || !inst.term) return;
+  let waited = 0;
+  const tick = () => {
+    if (!state.termInstances[uid]) return;
+    const now = getCanvasSize(inst.term);
+    const changed = before && now && (Math.abs(now.w - before.w) > 0.5 || Math.abs(now.h - before.h) > 0.5);
+    if (changed || waited >= attempts) {
+      try { applyTerminalFrameSize(uid); } catch (_) {}
+      return;
+    }
+    waited += 1;
+    setTimeout(tick, intervalMs);
+  };
+  tick();
 }
 
 /**
@@ -490,12 +501,20 @@ export function zoomActiveSession(deltaRatio) {
 
   // 按比例缩放字号（等比例缩放帧尺寸，保持长宽比）：
   // 不用 stage 反算字号——computeFontSizeFromRatio 的 min(fontSizeByW, fontSizeByH)
-  // + floor 会产生"连续 tick 无变化然后跳变"的非线性死区；
-  // 按当前字号 × (nextRatio/currentRatio) 等比缩放，每 tick 帧尺寸
-  // 变化 ∝ 当前尺寸（等比线性），且不改变长宽比。
+  // + floor 会产生"连续 tick 无变化然后跳变"的非线性死区。
+  // 字号 = current × (nextRatio/currentRatio)，放大用 ceil、缩小用 floor，
+  // 保证每 tick 字号至少 ±1px → 帧宽步进 = cellW×cols ≈ 恒定（cellW 与字号
+  // 近似线性）→ 每 tick 帧变化一致（线性）；长宽比由 cellW/cellH 恒定性保持。
   const currentFontSize = getSessionFontSize(sid);
-  const targetFontSize = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE,
-    Math.round(currentFontSize * (nextRatio / currentRatio))));
+  const scale = nextRatio / currentRatio;
+  const scaled = currentFontSize * scale;
+  let targetFontSize;
+  if (scale > 1) {
+    targetFontSize = Math.ceil(scaled);
+  } else {
+    targetFontSize = Math.floor(scaled);
+  }
+  targetFontSize = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, targetFontSize));
   if (targetFontSize === currentFontSize) return false;
 
   // 保存 ratio（持久化）

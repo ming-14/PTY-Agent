@@ -21,10 +21,10 @@ from typing import Optional
 
 from ..config.common import IS_WINDOWS
 from ..config.client import CONNECT_MODE
+from ..config.default_keys import DEFAULT_VALUES as _DEFAULTS_MAP
 from ..protocol.response import Response
 from ..logging import get_logger
 from . import presenter
-from .config_manager import _DEFAULTS as _DEFAULTS_MAP
 
 _logger = get_logger("pty-client")
 
@@ -741,6 +741,20 @@ class ClientCommandsMixin:
                         "kind": "cli",
                     })
         presenter.print_response(resp)
+
+    def cmd_set_default(self, key: str, value):
+        """set-default 命令：把默认配置写入守护进程内存（不写文件）
+
+        Args:
+            key:   内部配置键（下划线形态）。
+            value: 归一化后的配置值。
+
+        Returns:
+            daemon 响应 dict（含设置后的全部全局默认 defaults）。
+        """
+        _logger.info("cmd_set_default: key=%s value=%r", key, value)
+        msg = {"type": "set_default", "key": key, "value": value}
+        return self._send_recv(msg)
 
     def cmd_wait(self, timeout: Optional[float] = None):
         """恒等待指定秒数（守护进程侧等待）

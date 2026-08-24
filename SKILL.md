@@ -358,9 +358,10 @@ python app.py plugin cmd <session-id> <name> <command> [args...]   # 调用插�
 
 ### set-default 用法
 
-覆盖全局默认配置（即只影响**之后**新建的会话的默认值，不影响已经创建的）
+覆盖全局默认配置（只影响**之后**新建的会话的默认值，不影响已经创建的）。
+默认配置存于**守护进程内存**（不写任何文件），daemon 重启即清空；命令返回时会列出当前全部默认值。
 
-- `app.py set-default <KEY> <VALUE>` 通用子命令：覆盖默认配置
+- `app.py set-default <KEY> <VALUE>` 通用子命令：覆盖默认配置（需 daemon 运行，自动拉起）
   - `<KEY>`可用键：`timeout`/`newline`/`keep-ansi`/`encoding`/`debug`/`send-eol`/`response-format`/`svg-compression-level`/`terminal-size`/`shell`，`<VALUE>`是配置值或者`on`/`off`
 
 ### 全局/通用选项

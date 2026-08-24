@@ -7,13 +7,7 @@ from src.client.config_manager import ConfigManager, _format_value
 
 @pytest.fixture(autouse=True)
 def _isolate_persistent_defaults(monkeypatch):
-    """隔离本机 ~/.pty-agent/client_defaults.json（set-default 持久化）
-
-    未隔离时用户机器上的持久化默认值会覆盖内置默认，导致断言不稳定。
-    """
-    monkeypatch.setattr(
-        "src.client.config_manager.load_persistent_defaults", lambda: {}
-    )
+    """set-default 全局默认存于守护进程内存（不写文件）；单测无需隔离"""
 
 
 class TestConfigManagerGet:

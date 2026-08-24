@@ -182,6 +182,9 @@ class _MockManager:
             s.stop()
         self._sessions.clear()
 
+    def get_global_defaults(self):
+        return {}
+
 
 def _setup_handler(auth_token="test-token", sessions=None):
     mgr = _MockManager(sessions)

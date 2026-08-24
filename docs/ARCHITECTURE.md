@@ -218,7 +218,7 @@ graph TB
 | `renderer/common.py` | `_expand_lines(buf)` | 将稀疏/全量 `lines` 统一展开为全量二维数组 |
 | `renderer/image.py` | `render_gdi()` / `render_pillow()` | 像素渲染后端（Windows GDI 原生 / Pillow 跨平台回退） |
 | `renderer/box_drawing.py` | - | Box Drawing 字符的 GDI 几何绘制原语（U+2500-U+259F） |
-| `config_manager.py` | `ConfigManager` 类 | 客户端配置管理器，支持 `--default` 临时覆盖默认值（按 session 持久化到守护进程侧） |
+| `config_manager.py` | `ConfigManager` 类 | 客户端配置管理器，支持 `--default` 临时覆盖默认值；`set-default` 全局默认存守护进程内存（不写文件） |
 | `config_manager.py` | `ConfigManager.get()` / `set()` / `show()` | 读取/设置/展示配置 |
 | `config_manager.py` | `parse_terminal_size(size_str)` | 解析终端尺寸字符串（如 "80x24"） |
 | `input.py` | `process_input(text, json_escaping, send_eol, enter_eol)` → tuple | 完整 JSON 反转移 + 控制字符展开 + 自动追加行尾符；**转义展开由守护进程统一调用**，`{enter}` 与默认行尾按会话模式决定（pty=`\r`、subprocess=`\n`） |
@@ -1360,7 +1360,7 @@ wait_for_trigger 轮询循环（0.1s 间隔）
 }
 ```
 
-> `plugin` 消息带 `action`（list/ls/attach/detach/cmd）；`file_*` 类型由进程级文件工具插件接管（`commandType` 逐字段兼容）。`set-default` 为纯客户端操作，不产生 daemon 消息。
+> `plugin` 消息带 `action`（list/ls/attach/detach/cmd）；`file_*` 类型由进程级文件工具插件接管（`commandType` 逐字段兼容）。`set-default` 产生 `set_default` daemon 消息（默认配置存守护进程内存，不写文件）；CLI 启动时经 `get_defaults` 拉取全局默认合并到本地配置。
 
 ### 响应格式
 

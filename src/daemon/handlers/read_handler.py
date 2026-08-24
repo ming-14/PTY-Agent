@@ -164,7 +164,9 @@ class ReadHandler(DaemonHandler):
         """read 会话处理主体（已持有 session.hold）"""
         from ...execution.conditions import RequestContext
 
-        if not apply_client_defaults(session, msg, conn):
+        if not apply_client_defaults(
+            session, msg, conn, global_defaults=ctx.manager.get_global_defaults()
+        ):
             return
 
         req = RequestContext.from_msg(msg)

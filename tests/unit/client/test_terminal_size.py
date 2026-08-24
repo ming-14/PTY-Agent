@@ -6,8 +6,9 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from src.client.config_manager import ConfigManager, parse_terminal_size, _DEFAULTS
+from src.client.config_manager import ConfigManager, parse_terminal_size
 from src.config.common import DEFAULT_COLS, DEFAULT_ROWS
+from src.config.default_keys import DEFAULT_VALUES as _DEFAULTS
 
 # spawn 探测用命令：Windows 用 cmd wrapper，Unix 直接 echo
 _SHELL_CMD = ["cmd", "/c", "echo", "hi"] if sys.platform == "win32" else ["echo", "hi"]
@@ -15,14 +16,7 @@ _SHELL_CMD = ["cmd", "/c", "echo", "hi"] if sys.platform == "win32" else ["echo"
 
 @pytest.fixture(autouse=True)
 def _isolate_persistent_defaults(monkeypatch):
-    """隔离本机 ~/.pty-agent/client_defaults.json（set-default 持久化）
-
-    未隔离时用户机器上的持久化默认值（如 terminal_size）会覆盖内置默认，
-    导致断言不稳定。
-    """
-    monkeypatch.setattr(
-        "src.client.config_manager.load_persistent_defaults", lambda: {}
-    )
+    """set-default 全局默认存于守护进程内存（不写文件）；单测无需隔离"""
 
 
 class TestParseTerminalSize:

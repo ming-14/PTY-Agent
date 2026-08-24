@@ -243,10 +243,7 @@ class TestClientApplyConfigDefaults:
 
     @pytest.fixture(autouse=True)
     def _isolate_persistent_defaults(self, monkeypatch):
-        """隔离本机 ~/.pty-agent/client_defaults.json（set-default 持久化）"""
-        monkeypatch.setattr(
-            "src.client.config_manager.load_persistent_defaults", lambda: {}
-        )
+        """set-default 全局默认存于守护进程内存（不写文件）；单测无需隔离"""
 
     def test_defaults(self):
         """未传参数时使用配置默认值"""

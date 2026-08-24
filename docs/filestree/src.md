@@ -30,7 +30,7 @@ src/
 │       ├── attend.py        # attend 命令（接管会话为完整实时终端）
 │       ├── wait.py          # wait 命令
 │       ├── keygen.py        # keygen 命令（本地命令，生成 Ed25519 密钥对）
-│       ├── set_default.py   # set-default 命令（本地命令，持久化默认配置）
+│       ├── set_default.py   # set-default 命令（发 set_default 消息，守护进程内存默认）
 │       ├── plugin.py        # plugin 命令（list/ls/attach/detach/cmd）
 │       ├── workflow.py      # workflow 命令（run/list/show/cancel + --vars 解析）
 │       └── file.py          # file 命令（read/write/edit/grep/glob/upload/download + 内容解析）

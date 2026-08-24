@@ -62,7 +62,7 @@ pip install -r requirements.txt
 | `closewin <id> <hwnd>` | 关闭 GUI 窗口 |
 | `mouse <id> <action>` | 发送鼠标动作 |
 | `workflow <run\|list\|show\|cancel>` | workflow 脚本编排（YAML 定义，DAG 并行 + 条件/变量/重试，后台执行） |
-| `set-default <key> <value>` | 覆盖默认配置（会话级） |
+| `set-default <key> <value>` | 覆盖默认配置（守护进程内存记忆，daemon 重启即清空） |
 | `plugin <list\|ls\|attach\|detach\|cmd>` | 插件管理 |
 | `file <read\|write\|edit\|grep\|glob\|upload\|download>` | 文件工具（读/写/唯一匹配替换/内容搜索/文件名匹配/上传/下载） |
 | `keygen` | 生成 Ed25519 密钥对 |

@@ -6,10 +6,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _isolate_persistent_defaults(monkeypatch):
-    """隔离本机 ~/.pty-agent/client_defaults.json（set-default 持久化）"""
-    monkeypatch.setattr(
-        "src.client.config_manager.load_persistent_defaults", lambda: {}
-    )
+    """set-default 全局默认存于守护进程内存（不写文件）；单测无需隔离"""
 
 
 # ---- ConfigManager 测试 ----

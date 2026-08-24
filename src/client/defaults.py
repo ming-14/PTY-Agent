@@ -4,13 +4,14 @@
 - _apply_config_defaults：timeout/keep_ansi/encoding/newline/send_eol 默认值合并
 - _get_client_defaults：收集与内置默认不同的客户端默认字段（随请求发送）
 - _merge_session_defaults：daemon 返回的会话默认值回填到本地配置
+- load_global_defaults：CLI 启动时从 daemon 拉取 set-default 全局默认（守护进程内存）
 - _maybe_save_encoding：编码记忆（探测结果落盘）
 """
 
 from typing import Optional
 
 from ..config.client import DEFAULT_TRIGGER_TIMEOUT
-from .config_manager import _DEFAULTS as _DEFAULTS_MAP
+from ..config.default_keys import DEFAULT_VALUES as _DEFAULTS_MAP
 
 
 class ClientDefaultsMixin:
@@ -69,6 +70,28 @@ class ClientDefaultsMixin:
                     self._config.set(key, val)
                 except (ValueError, KeyError):
                     pass
+
+    def load_global_defaults(self) -> None:
+        """CLI 启动时从 daemon 拉取 set-default 全局默认（守护进程内存）
+
+        set-default 的默认配置存于 daemon 内存（不写文件），CLI 每次调用
+        通过 get_defaults 消息拉取，合并进本地 ConfigManager：
+        仅采纳本地仍为内置默认（未被 --default/显式参数覆盖）的键，
+        保持优先级：显式参数 > --default > set-default 全局默认 > 内置默认。
+
+        daemon 不可达/响应异常时静默忽略（本次调用按无全局默认处理）。
+        """
+        try:
+            resp = self._send_recv({"type": "get_defaults"})
+        except SystemExit:
+            raise
+        except Exception:
+            return
+        if not isinstance(resp, dict):
+            return
+        defaults = resp.get("defaults")
+        if isinstance(defaults, dict):
+            self._merge_session_defaults({"sessionDefaults": defaults})
 
     def _maybe_save_encoding(self, encoding: Optional[str]):
         if encoding is not None and self._config.get("encoding") != encoding:

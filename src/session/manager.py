@@ -31,10 +31,26 @@ class SessionManager:
         self._lock = threading.Lock()
         self._history_store = history_store
         self.plugin_registry = plugin_registry
+        # set-default 全局默认配置：守护进程内存记忆（daemon 重启即清空）。
+        # 影响之后新建会话的默认值；--default/显式参数仍按优先级覆盖。
+        self._global_defaults: dict = {}
+        self._global_defaults_lock = threading.Lock()
         self._on_session_created: Optional[Callable[[str, str], None]] = None
         self._on_session_removed: Optional[
             Callable[[str, str, Optional[int], Optional[str]], None]
         ] = None
+
+    # ── set-default 全局默认（daemon 内存记忆） ──────────────
+
+    def set_global_default(self, key: str, value) -> None:
+        """设置全局默认配置（set-default 命令落点，仅内存，重启即清空）"""
+        with self._global_defaults_lock:
+            self._global_defaults[key] = value
+
+    def get_global_defaults(self) -> dict:
+        """返回全局默认配置副本（供请求处理时合并）"""
+        with self._global_defaults_lock:
+            return dict(self._global_defaults)
 
     def set_on_session_created(self, cb: Optional[Callable[[str, str], None]]):
         """设置会话创建回调（参数：uid, sid）"""

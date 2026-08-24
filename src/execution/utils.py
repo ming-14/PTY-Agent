@@ -20,8 +20,11 @@ def validate_field(value, name: str, max_len: int, conn) -> bool:
     return True
 
 
-def apply_client_defaults(session, msg: dict, conn=None) -> bool:
+def apply_client_defaults(session, msg: dict, conn=None, global_defaults: Optional[dict] = None) -> bool:
     """把 client_defaults 合入 session.client_config（daemon 侧权威落点）
+
+    全局默认（set-default 的守护进程内存记忆）先合入，再叠加本次请求
+    显式 client_defaults（--default 等）——显式值覆盖全局默认。
 
     对 encoding 键做与 CLI 侧同一白名单校验：非法编码拒绝写入并返回
     type:error（conn 可用时直接发送；conn 缺失时抛出 ValueError 兜底，绝不平静
@@ -30,10 +33,13 @@ def apply_client_defaults(session, msg: dict, conn=None) -> bool:
     Returns:
         True 表示已应用（或无可应用内容）；False 表示校验失败，调用方应中止。
     """
+    merged = dict(global_defaults) if global_defaults else {}
     client_defaults = msg.get("client_defaults")
-    if not client_defaults or not isinstance(client_defaults, dict):
+    if client_defaults and isinstance(client_defaults, dict):
+        merged.update(client_defaults)
+    if not merged:
         return True
-    bad_encoding = client_defaults.get("encoding")
+    bad_encoding = merged.get("encoding")
     if bad_encoding is not None and not is_valid_encoding(bad_encoding):
         err = (
             f"Invalid encoding: {bad_encoding!r}. "
@@ -44,8 +50,8 @@ def apply_client_defaults(session, msg: dict, conn=None) -> bool:
             Message.send(conn, Response.error(err))
             return False
         raise ValueError(err)
-    session.client_config.update(client_defaults)
-    _apply_resize_default(session, client_defaults)
+    session.client_config.update(merged)
+    _apply_resize_default(session, merged)
     return True
 
 

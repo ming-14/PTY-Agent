@@ -71,6 +71,9 @@ def main() -> None:
             config_overrides=config_overrides or None,
             cli_plugins=ctx.cli_plugins,
         )
+        # set-default 全局默认存于守护进程内存（不写文件）：每次 CLI 调用
+        # 启动时拉取合并到本地配置（仅采纳未被 --default/显式参数覆盖的键）
+        ctx.client.load_global_defaults()
 
     _logger.info("执行命令: %s id=%s", args.subcmd, getattr(args, "id", "N/A"))
 

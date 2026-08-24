@@ -21,6 +21,7 @@ from .mouse_handler import MouseHandler
 from .plugin_handler import PluginHandler
 from .read_handler import ReadHandler
 from .send_handler import SendHandler
+from .set_default_handler import GetDefaultsHandler, SetDefaultHandler
 from .status_handler import StatusHandler
 from .stop_handler import StopHandler
 from ...execution.utils import get_detail
@@ -100,6 +101,8 @@ class DaemonDispatcher:
             "plugin": PluginHandler(),
             "workflow": WorkflowHandler(),
             "attend": AttendHandler(),
+            "set_default": SetDefaultHandler(),
+            "get_defaults": GetDefaultsHandler(),
         }
         self._builtin_types = set(registry)
         # 进程级插件路由：插件声明的 message_types 注册到派发表；

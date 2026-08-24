@@ -62,7 +62,9 @@ class MouseHandler(DaemonHandler):
                 Message.send(conn, Response.error(f"Session '{session_id}' not found"))
             return
 
-        if not apply_client_defaults(session, msg, conn):
+        if not apply_client_defaults(
+            session, msg, conn, global_defaults=ctx.manager.get_global_defaults()
+        ):
             return
 
         if not session.running:
