@@ -37,7 +37,7 @@ import {
   MIN_FONT_SIZE, MAX_FONT_SIZE,
   FRAME_RATIO_MIN, FRAME_RATIO_MAX,
 } from '../../domain/constants.js';
-import { isTermAtBottom, scrollTermToBottom } from './scroll.js';
+import { isTermAtBottom } from './scroll.js';
 
 /**
  * 通过 FitAddon 获取终端实例。
@@ -212,11 +212,10 @@ export function applyTerminalFontSize(uid) {
     return;
   }
   inst._pendingFontSize = undefined;
-  // 缩放前记录视图是否在底部（供字号变化后同步锚定）
-  inst._wasAtBottom = isTermAtBottom(inst.term);
   // 字号变化前：cell 尺寸与字号近似线性（rowHeight ≈ fontSize × 常量），
   // 记录当前 cell 高度与字号，用于变化后同步预测新 rowHeight 并设置 scrollTop
   // ——消除"canvas 已变高但 scrollTop 未跟上"的中间帧（漂移根因）。
+  const wasAtBottom = isTermAtBottom(inst.term);
   const oldFontSize = inst.term.options.fontSize || fontSize;
   const oldCell = getTerminalCellSize(inst.term);
   // 变更前 canvas 尺寸（设字体前读取，作为轮询对比基准）
@@ -229,7 +228,7 @@ export function applyTerminalFontSize(uid) {
   // 同步锚定（漂移根因修复）：字号已变、xterm 的 scrollTop 更新在其内部
   // rAF 链中（晚于 canvas 渲染一帧）——此刻立即按预测 rowHeight 设置
   // scrollTop，浏览器下一帧绘制时视口已在底部，不存在中间帧上移。
-  if (inst._wasAtBottom && oldCell.h > 0 && oldFontSize > 0) {
+  if (wasAtBottom && oldCell.h > 0 && oldFontSize > 0) {
     const vp = inst.term.element
       ? inst.term.element.querySelector('.xterm-viewport')
       : null;
@@ -257,13 +256,6 @@ function _waitCanvasChange(uid, before, attempts, intervalMs) {
     finished = true;
     clearTimeout(timer);
     try { applyTerminalFrameSize(uid); } catch (_) {}
-    // 精确锚定：此刻 dimensions 已是新 cell 尺寸，同步设置 scrollTop
-    // （xterm 内部 _innerRefresh 的 rAF 可能晚于本 tick，先同步纠正，
-    // 视口在底部时后续 _innerRefresh 设置相同值，不会再次漂移）
-    if (inst._wasAtBottom) {
-      inst._wasAtBottom = false;
-      try { scrollTermToBottom(inst.term); } catch (_) {}
-    }
   };
   const timer = setTimeout(finish, attempts * intervalMs);
   const tick = () => {

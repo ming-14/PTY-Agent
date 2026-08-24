@@ -231,14 +231,6 @@ export function ensureTerminal(uid) {
       console.log('[resize] onResize -> AUTO-REVERT uid=%s %dx%d -> %dx%d (suppress backend resize)',
             uid, cols, rows, wantCols, wantRows);
       try { inst.term.resize(wantCols, wantRows); } catch (_) {}
-      // 回退的 resize 会触发 xterm reflow，重置视口滚动位置——若缩放前在底部
-      // （_wasAtBottom，applyTerminalFontSize 设置），回退完成后重新锚定回底部，
-      // 否则 _waitCanvasChange 的锚定会被此 reflow 冲掉（视图向上漂移且不回位）。
-      if (inst._wasAtBottom) {
-        requestAnimationFrame(() => {
-          try { scrollTermToBottom(inst.term); } catch (_) {}
-        });
-      }
       return;
     }
 
