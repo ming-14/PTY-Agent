@@ -665,26 +665,6 @@ export function handleResizeComplete(msg) {
   }
   debug('resize', 'resize_complete uid=%s %dx%d snapshot_len=%d scrollback_len=%d',
         uid, msg.cols, msg.rows, (msg.snapshot || '').length, (msg.scrollback || '').length);
-  // scrollback 状态审计：resize 后 xterm reflow 的缓冲行数与 ybase
-  //（scrollback 行数），对比后端返回的 scrollback，判断 reflow 是否丢行/错乱
-  try {
-    const buf = inst.term.buffer.active;
-    const ybaseEst = Math.max(0, buf.length - inst.term.rows);
-    debug('resize', 'resize_complete audit uid=%s term=%dx%d msg=%dx%d bufLines=%d ybaseEst=%d ydisp=%d',
-          uid, inst.term.cols, inst.term.rows, msg.cols, msg.rows,
-          buf.length, ybaseEst, buf.viewportY);
-    // scrollback 内容 dump：resize 后 scrollback 区域前后各 3 行文本，
-    // 确认 reflow 合并是否正确（行尾空格行拆分后是否恢复完整行）
-    const dump = [];
-    const start = Math.max(0, ybaseEst - 3);
-    const end = Math.min(buf.length - 1, ybaseEst + 3);
-    for (let i = start; i <= end; i++) {
-      const line = buf.getLine(i);
-      dump.push(line ? line.translateToString(true).trimEnd() : '<null>');
-    }
-    debug('resize', 'scrollbackDump uid=%s range=%d..%d: %s',
-          uid, start, end, JSON.stringify(dump));
-  } catch (e) {}
   const s = state.sessions[uid];
   const isHistory = !!(s && s.history);
   const snapshot = msg.snapshot || '';

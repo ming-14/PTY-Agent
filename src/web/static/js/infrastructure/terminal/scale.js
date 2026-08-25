@@ -172,11 +172,6 @@ export function applyTerminalSize(uid, force, opts) {
       setTimeout(() => { if (state.termInstances[uid]) state.termInstances[uid]._pendingDaemonResize = false; }, 300);
       debug('resize', 'applyTerminalSize DELIBERATE %s sid=%s %dx%d (flag set, term.resize)',
             mode, uid, cols, rows);
-      // reflow 宽度审计：term.resize 前打印会话期望尺寸与当前 xterm 尺寸，
-      // 确认 reflow 是否按后端实际尺寸进行（宽度不一致 → scrollback 重排错乱）
-      debug('resize', 'reflowAudit uid=%s mode=%s target=%dx%d termNow=%dx%d s.cols=%s s.rows=%s',
-            uid, mode, cols, rows, inst.term.cols, inst.term.rows,
-            s.cols, s.rows);
       inst.term.resize(cols, rows);
       debug('terminal', 'applyTerminalSize %s → term.resize sid=%s %dx%d (onResize will send)',
             mode, uid, cols, rows);

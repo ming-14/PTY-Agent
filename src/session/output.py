@@ -110,14 +110,6 @@ class OutputMixin:
         """
         return self._screen.capture_scrollback(keep_ansi=keep_ansi)
 
-    def clear_scrollback(self) -> None:
-        """清除 Grid scrollback 历史区
-
-        resize 后 ConPTY repaint 可能触发 index() 将可见区顶部行推入
-        scrollback，导致 scrollback 与 snapshot 内容重叠。
-        """
-        self._screen.clear_scrollback()
-
     def get_snapshot_diff(self, keep_ansi: bool = False) -> str:
         """获取终端屏幕快照中与上次相比变化的行
 
@@ -353,45 +345,10 @@ class OutputMixin:
                 "resize: returning scrollback len=%d (preserved)",
                 len(scrollback_ansi),
             )
-            # 手动合并拆分行：pywezterm 的 reflow 对"行尾空格行"（如 dir 的
-            # <DIR> 行）变宽时合并不完整（trimmed length < 宽度时不被识别为
-            # wrap）→ scrollback 残留拆分行 → 前端显示错乱。此处按文本规则
-            # 合并：当前行去 ANSI 后 trimmed 长度 < 目标宽度、行尾为空格、
-            # 且下一行以空格开头 → 视为拆分残留，合并（去下一行前导空格）。
-            scrollback_ansi = self._merge_scrollback_rows(
-                scrollback_ansi, cols
-            )
             return (snapshot, scrollback_ansi)
         except Exception as e:
             _logger.warning("resize: 返回 snapshot 失败: %s", e)
             return ("", "")
-
-    @staticmethod
-    def _merge_scrollback_rows(text: str, width: int) -> str:
-        """合并 scrollback 中 reflow 变宽未合并的拆分行（行尾空格行缺陷）。"""
-        if not text:
-            return text
-        import re
-
-        ansi_re = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
-        lines = text.split("\r\n")
-        if lines and lines[-1] == "":
-            lines.pop()
-        merged = []
-        i = 0
-        n = len(lines)
-        while i < n:
-            line = lines[i]
-            if i + 1 < n:
-                plain = ansi_re.sub("", line).rstrip()
-                nxt = lines[i + 1]
-                if len(plain) < width and line.endswith(" ") and nxt.startswith(" "):
-                    merged.append(line + nxt.lstrip())
-                    i += 2
-                    continue
-            merged.append(line)
-            i += 1
-        return "\r\n".join(merged) + ("\r\n" if text.endswith("\r\n") else "")
 
     def _apply_program_resize(self, cols: int, rows: int) -> None:
         """应用程序发起的尺寸变更（CSI 8;rows;colst）并广播

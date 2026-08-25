@@ -18,7 +18,6 @@ class _StubScreen:
     def __init__(self):
         self.feed_count = 0
         self.resize_called = None
-        self.cleared = False
         self._sb = "line-001\r\nline-002\r\nline-003\r\n"
         self._snap = "snapshot-text"
 
@@ -27,9 +26,6 @@ class _StubScreen:
 
     def capture_scrollback(self, keep_ansi=False):
         return self._sb
-
-    def clear_scrollback(self):
-        self.cleared = True
 
     def snapshot(self, keep_ansi=False, include_cursor=False):
         return self._snap
@@ -84,8 +80,6 @@ def test_resize_order_screen_capture_pty_no_clear():
     assert s._screen.resize_called == (120, 40)
     assert s._pty.resize_called == (120, 40)
     assert s._input_interceptor.resize_called == (120, 40)
-    # 模型 scrollback 保留（不清除）
-    assert not s._screen.cleared
 
 
 def test_resize_subprocess_raises():
@@ -135,26 +129,3 @@ def test_program_resize_same_size_skips():
     s._publisher = _StubPublisher()
     s._apply_program_resize(100, 30)  # 与当前尺寸相同
     assert s._publisher.calls == []
-
-
-def test_merge_scrollback_rows_merges_split_lines():
-    """行尾空格行（reflow 变宽未合并的拆分残留）按文本规则合并。"""
-    m = OutputMixin._merge_scrollback_rows
-    # 32 列拆分的 dir 行：第一段 trimmed < 宽度且行尾空格 + 第二段行首空格 → 合并
-    text = "2026/08/23  13:45    <DIR>      \r\n   __rikka_atomcode\r\nline-2\r\n"
-    out = m(text, 113)
-    assert out == "2026/08/23  13:45    <DIR>      __rikka_atomcode\r\nline-2\r\n"
-    # 行尾非空格的正常行不合并
-    text2 = "2026/08/20  23:47            14,691 _viminfo\r\nline-2\r\n"
-    out2 = m(text2, 113)
-    assert out2 == text2
-    # 空输入
-    assert m("", 113) == ""
-
-
-def test_merge_scrollback_rows_ignores_ansi():
-    """去 ANSI 后计算宽度，SGR 序列不参与合并判断。"""
-    m = OutputMixin._merge_scrollback_rows
-    text = "2026/08/23  13:45    <DIR>\x1b[0m      \r\n   __rikka_atomcode\r\n"
-    out = m(text, 113)
-    assert "__rikka_atomcode" in out and "\r\n   __rikka_atomcode" not in out
