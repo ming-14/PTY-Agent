@@ -169,3 +169,15 @@ def test_trim_scrollback_overlap_skips_empty_lines():
     snap = "\x1b[1;1H\x1b[0m__rikka_goose\x1b[2;1H\x1b[0m__rikka_kimi\x1b[3;1H\x1b[0mC:\\>"
     out = t(sb, snap)
     assert out == "line-001\r\nline-002\r\n"
+
+
+def test_trim_scrollback_internal_duplicate():
+    """scrollback 内部重复（尾部非空段 == 前面紧邻非空段，reflow 残留）被去掉。"""
+    t = OutputMixin._trim_scrollback_overlap
+    sb = ("line-001\r\nline-002\r\n__rikka_pi\r\n35 个文件\r\n90 个目录\r\n"
+          "\r\n__rikka_pi\r\n35 个文件\r\n90 个目录\r\n")
+    out = t(sb, "")
+    assert out == "line-001\r\nline-002\r\n__rikka_pi\r\n35 个文件\r\n90 个目录\r\n"
+    # 无重复时原样返回
+    sb2 = "line-001\r\nline-002\r\n__rikka_pi\r\n"
+    assert t(sb2, "") == sb2

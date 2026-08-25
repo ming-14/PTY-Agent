@@ -367,14 +367,15 @@ class OutputMixin:
 
     @staticmethod
     def _trim_scrollback_overlap(scrollback: str, snapshot: str) -> str:
-        """去掉 scrollback 尾部与 snapshot 头部内容相同的重叠行。
+        """去掉 scrollback 尾部的重复段（reflow 残留）。
 
-        snapshot（render_ansi）每行 CUP 定位 + SGR 内容，尾部空行不渲染；
-        scrollback（render_scrollback）含空行（\\r\\n\\r\\n）。匹配时
-        跳过空行（snapshot 无空行），滑动匹配 sb 非空行尾部最长后缀 ==
-        snap 任意偏移起的连续段。
+        两类重复：
+        1. 尾部 vs snapshot 头部（旧可见区行被 reflow 推入 scrollback，与
+           当前可见区内容相同）——滑动匹配（跳过空行，snapshot 无空行）
+        2. scrollback 内部重复（多次 resize 的 reflow 残留：尾部非空段与
+           前面紧邻的非空段相同，中间可能有空行）——去掉尾部重复段
         """
-        if not scrollback or not snapshot:
+        if not scrollback:
             return scrollback
         import re
 
@@ -382,33 +383,57 @@ class OutputMixin:
         sb_lines = scrollback.split("\r\n")
         if sb_lines and sb_lines[-1] == "":
             sb_lines.pop()
-        # snapshot 按 CSI 定位序列分割
-        cleaned = re.sub(r"\x1b\[\?[0-9;]*[hl]", "", snapshot)
-        snap_lines = [p for p in re.split(r"\x1b\[\d+;\d+[Hf]", cleaned) if p.strip()]
 
         def plain(line):
             return ansi_re.sub("", line).rstrip()
 
-        # sb 非空行序列（保留原始索引）
-        sb_nonempty = [(i, plain(sb_lines[i])) for i in range(len(sb_lines)) if sb_lines[i].strip()]
-        snap_nonempty = [plain(l) for l in snap_lines if l.strip()]
-
-        # 滑动匹配：sb 非空行尾部最长后缀 == snap 任意偏移连续段
-        max_trim = min(len(sb_nonempty), len(snap_nonempty), 100)
+        # ---- 1. 尾部 vs snapshot 头部 ----
         trim = 0
-        for start in range(max_trim, 0, -1):
-            for j in range(len(snap_nonempty) - start + 1):
-                if [p for _, p in sb_nonempty[-start:]] == snap_nonempty[j:j + start]:
-                    trim = start
+        if snapshot:
+            cleaned = re.sub(r"\x1b\[\?[0-9;]*[hl]", "", snapshot)
+            snap_lines = [p for p in re.split(r"\x1b\[\d+;\d+[Hf]", cleaned) if p.strip()]
+            snap_nonempty = [plain(l) for l in snap_lines if l.strip()]
+            sb_nonempty = [(i, plain(sb_lines[i])) for i in range(len(sb_lines)) if sb_lines[i].strip()]
+            max_trim = min(len(sb_nonempty), len(snap_nonempty), 100)
+            trim = 0
+            for start in range(max_trim, 0, -1):
+                for j in range(len(snap_nonempty) - start + 1):
+                    if [p for _, p in sb_nonempty[-start:]] == snap_nonempty[j:j + start]:
+                        trim = start
+                        break
+                if trim:
                     break
-            if trim:
+            if trim > 0:
+                sb_lines = sb_lines[: sb_nonempty[-trim][0]]
+
+        # ---- 2. scrollback 内部重复（尾部非空段 == 前面紧邻非空段）----
+        nonempty_idx = [i for i in range(len(sb_lines)) if sb_lines[i].strip()]
+        internal_trim = 0
+        # 尾部非空序列（倒序向前）
+        tail_seq = []
+        for i in reversed(nonempty_idx):
+            tail_seq.append(plain(sb_lines[i]))
+            if len(tail_seq) > 50:
                 break
-        # 换算 sb 原始行数（含空行）
-        if trim > 0:
-            idx = sb_nonempty[-trim][0]  # 匹配段在 sb 的起始索引
-            sb_lines = sb_lines[:idx]
-        _logger.info("resize: trim_overlap=%d (sb_lines=%d snap_lines=%d)",
-                     trim, len(sb_lines), len(snap_lines))
+        for n in range(len(tail_seq), 0, -1):
+            # 尾部 n 个非空行 == 前面紧邻 n 个非空行
+            if len(nonempty_idx) < 2 * n:
+                continue
+            tail = [plain(sb_lines[i]) for i in nonempty_idx[-n:]]
+            prev = [plain(sb_lines[i]) for i in nonempty_idx[-2 * n:-n]]
+            if tail == prev:
+                internal_trim = n
+                break
+        if internal_trim > 0:
+            # 去掉从"尾部重复段起点"（含中间空行）开始的所有行
+            start_idx = nonempty_idx[-internal_trim]
+            sb_lines = sb_lines[:start_idx]
+
+        _logger.info("resize: trim_overlap=%d internal_trim=%d (sb_lines=%d)",
+                     trim, internal_trim, len(sb_lines))
+        # 去掉尾部空行（trim 截断可能留下空行，join 后产生多余 \r\n\r\n）
+        while sb_lines and not sb_lines[-1].strip():
+            sb_lines.pop()
         return "\r\n".join(sb_lines) + ("\r\n" if scrollback.endswith("\r\n") else "")
 
     def _apply_program_resize(self, cols: int, rows: int) -> None:
