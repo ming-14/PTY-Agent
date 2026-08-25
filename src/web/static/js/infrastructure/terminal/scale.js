@@ -222,12 +222,10 @@ export function applyTerminalFontSize(uid) {
   // 因 scrollArea 取整不一致（在底部时 viewportY 可能 < length - rows），
   // 行级判定会误判，须用像素判定（scrollTop 距底部 ≤2px）。
   inst._wasAtBottom = _isViewportAtBottom(inst);
-  const vp0 = inst.term.element ? inst.term.element.querySelector('.xterm-viewport') : null;
   const buf0 = inst.term.buffer && inst.term.buffer.active;
-  debug('zoom', 'fontSizeBefore uid=%s target=%d wasAtBottom=%s vpY=%d ybase=%d bufLen=%d vp{scrollTop=%d scrollH=%d clientH=%d}',
+  debug('zoom', 'fontSizeBefore uid=%s target=%d wasAtBottom=%s vpY=%d bufLen=%d',
         uid, fontSize, inst._wasAtBottom,
-        buf0 ? buf0.viewportY : -1, buf0 ? buf0.ybase : -1, buf0 ? buf0.length : -1,
-        vp0 ? vp0.scrollTop : -1, vp0 ? vp0.scrollHeight : -1, vp0 ? vp0.clientHeight : -1);
+        buf0 ? buf0.viewportY : -1, buf0 ? buf0.length : -1);
   // 变更前 canvas 尺寸（设字体前读取，作为轮询对比基准）
   const beforeCanvas = getCanvasSize(inst.term);
   try {
@@ -249,12 +247,6 @@ export function applyTerminalFontSize(uid) {
       error('zoom', 'syncScrollArea failed: %s', e && e.message);
     }
   }
-  const vp1 = inst.term.element ? inst.term.element.querySelector('.xterm-viewport') : null;
-  const buf1 = inst.term.buffer && inst.term.buffer.active;
-  debug('zoom', 'fontSizeAfter uid=%s vpY=%d ybase=%d bufLen=%d vp{scrollTop=%d scrollH=%d clientH=%d}',
-        uid,
-        buf1 ? buf1.viewportY : -1, buf1 ? buf1.ybase : -1, buf1 ? buf1.length : -1,
-        vp1 ? vp1.scrollTop : -1, vp1 ? vp1.scrollHeight : -1, vp1 ? vp1.clientHeight : -1);
   // 轮询 canvas 尺寸直到实际变化（或超时），再更新 frame 并锚定底部
   _waitCanvasChange(uid, beforeCanvas, 8, 40);
   debug('zoom', 'fontSize uid=%s -> %d', uid, fontSize);
@@ -288,12 +280,6 @@ function _waitCanvasChange(uid, before, attempts, intervalMs) {
     finished = true;
     clearTimeout(timer);
     try { applyTerminalFrameSize(uid); } catch (_) {}
-    const vp = inst.term.element ? inst.term.element.querySelector('.xterm-viewport') : null;
-    const buf = inst.term.buffer && inst.term.buffer.active;
-    debug('zoom', 'waitCanvasFinish uid=%s seq=%d waited=%d wasAtBottom=%s vpY=%d ybase=%d bufLen=%d vp{scrollTop=%d scrollH=%d clientH=%d}',
-          uid, seq, waited, inst._wasAtBottom,
-          buf ? buf.viewportY : -1, buf ? buf.ybase : -1, buf ? buf.length : -1,
-          vp ? vp.scrollTop : -1, vp ? vp.scrollHeight : -1, vp ? vp.clientHeight : -1);
     if (inst._wasAtBottom) {
       inst._wasAtBottom = false;
       _anchorViewportToBottom(uid);
