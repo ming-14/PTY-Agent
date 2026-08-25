@@ -252,8 +252,17 @@ export function applyTerminalFontSize(uid) {
   debug('zoom', 'fontSize uid=%s -> %d', uid, fontSize);
 }
 
-/** 视口是否在像素底部（scrollTop 距底部 ≤2px） */
+/** 视口是否在底部：行级优先（vpY ≥ bufLen - rows - 1），像素兜底。
+ *
+ * 像素判定（scrollTop 距底部 ≤2px）在 scrollToBottom 锚定后可能因
+ * scrollArea 取整偏差误判 false（行级已到底但像素差一点）→ 下一轮不锚定
+ * → xterm resize 异步覆盖后漂移。行级判定与锚定语义一致（vpY 到底）。
+ */
 function _isViewportAtBottom(inst) {
+  const buf = inst.term.buffer && inst.term.buffer.active;
+  if (buf && buf.viewportY !== undefined && buf.length > 0) {
+    if (buf.viewportY >= buf.length - inst.term.rows - 1) return true;
+  }
   const vp = inst.term.element
     ? inst.term.element.querySelector('.xterm-viewport')
     : null;
@@ -311,10 +320,10 @@ function _waitCanvasChange(uid, before, attempts, intervalMs) {
  * 需 rAF 重试：applyTerminalFrameSize 改变 frame 尺寸后，xterm 的
  * ResizeObserver 异步触发 term.resize（rows 取整 ±1），ydisp 被重新换算
  * 漂离底部（114 → 110）——多帧重复 scrollToBottom 等 resize 稳定后保持。
- * 重试受轮次守卫（seq）约束：快速缩放进入新轮（seq 变化）时旧轮停止
- * 重试——否则旧轮的强制滚底会把新轮（可能在中部）的视图拉回底部。
+ * 重试直到行级到底（vpY ≥ bufLen - rows - 1）或上限 10 帧，受轮次守卫
+ * 约束：快速缩放进入新轮（seq 变化）时旧轮停止重试。
  */
-function _anchorViewportToBottom(uid, seq, retries = 5) {
+function _anchorViewportToBottom(uid, seq, retries = 10) {
   const inst = state.termInstances[uid];
   if (!inst || !inst.term) return;
   try {
@@ -322,9 +331,12 @@ function _anchorViewportToBottom(uid, seq, retries = 5) {
   } catch (e) {
     error('zoom', 'scrollToBottom failed: %s', e && e.message);
   }
-  if (retries > 0 && inst._zoomWaitSeq === seq) {
+  const buf = inst.term.buffer && inst.term.buffer.active;
+  const atBottom = buf && buf.viewportY !== undefined && buf.length > 0
+    && buf.viewportY >= buf.length - inst.term.rows - 1;
+  if (retries > 0 && inst._zoomWaitSeq === seq && !atBottom) {
     requestAnimationFrame(() => _anchorViewportToBottom(uid, seq, retries - 1));
-  } else if (retries === 0) {
+  } else if (retries === 0 || atBottom) {
     const vp = inst.term.element
       ? inst.term.element.querySelector('.xterm-viewport')
       : null;
