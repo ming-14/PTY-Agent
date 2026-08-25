@@ -105,17 +105,6 @@ body.touch-device .term-instance.active {
   display: none;
 }
 
-/* 光标隐藏（程序接管，如 vim/TUI）时：系统 IME 预编辑会把辅助 textarea
-   撑宽（预编辑文本显示），光标在终端右侧/右下角时 textarea 溢出容器右
-   边界（"顶破右边"）——限制宽度：预编辑文本不显示，候选窗口仍由系统
-   在输入位置绘制。class 由 cursorDebug 在 DECRST ?25l 时添加、DECSET
-   ?25h 时移除。 */
-.term-instance .xterm-helper-textarea.xterm-cursor-hidden {
-  max-width: 1px !important;
-  max-height: 1px !important;
-  overflow: hidden !important;
-}
-
 /* 移动端长按选择后显示的复制按钮 */
 .term-copy-btn {
   position: absolute;
