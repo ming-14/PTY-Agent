@@ -105,14 +105,6 @@ body.touch-device .term-instance.active {
   display: none;
 }
 
-/* IME 组合覆盖层（Chromium 组合时插入终端内显示预编辑文本的无 class
-   DIV/SPAN）：absolute + 静态位置——不占布局（预编辑增长不撑动
-   .xterm-screen），预编辑文本仍显示在原位。class 由 events.js 的
-   body MutationObserver 在检测到覆盖层时添加。 */
-.term-instance .xterm-ime-overlay {
-  position: absolute !important;
-}
-
 /* 移动端长按选择后显示的复制按钮 */
 .term-copy-btn {
   position: absolute;
