@@ -282,12 +282,12 @@ function _waitCanvasChange(uid, before, attempts, intervalMs) {
     try { applyTerminalFrameSize(uid); } catch (_) {}
     if (inst._wasAtBottom) {
       inst._wasAtBottom = false;
-      _anchorViewportToBottom(uid);
+      _anchorViewportToBottom(uid, seq);
     }
   };
   const timer = setTimeout(finish, attempts * intervalMs);
   const tick = () => {
-    if (!state.termInstances[uid] || inst._zoomWaitSeq !== seq) return;
+    if (!state.termInstances[uid] || inst._zoomWaitSeq !== seq || finished) return;
     const now = getCanvasSize(inst.term);
     const changed = before && now && (Math.abs(now.w - before.w) > 0.5 || Math.abs(now.h - before.h) > 0.5);
     if (changed || waited >= attempts) {
@@ -311,8 +311,10 @@ function _waitCanvasChange(uid, before, attempts, intervalMs) {
  * 需 rAF 重试：applyTerminalFrameSize 改变 frame 尺寸后，xterm 的
  * ResizeObserver 异步触发 term.resize（rows 取整 ±1），ydisp 被重新换算
  * 漂离底部（114 → 110）——多帧重复 scrollToBottom 等 resize 稳定后保持。
+ * 重试受轮次守卫（seq）约束：快速缩放进入新轮（seq 变化）时旧轮停止
+ * 重试——否则旧轮的强制滚底会把新轮（可能在中部）的视图拉回底部。
  */
-function _anchorViewportToBottom(uid, retries = 5) {
+function _anchorViewportToBottom(uid, seq, retries = 5) {
   const inst = state.termInstances[uid];
   if (!inst || !inst.term) return;
   try {
@@ -320,9 +322,9 @@ function _anchorViewportToBottom(uid, retries = 5) {
   } catch (e) {
     error('zoom', 'scrollToBottom failed: %s', e && e.message);
   }
-  if (retries > 0) {
-    requestAnimationFrame(() => _anchorViewportToBottom(uid, retries - 1));
-  } else {
+  if (retries > 0 && inst._zoomWaitSeq === seq) {
+    requestAnimationFrame(() => _anchorViewportToBottom(uid, seq, retries - 1));
+  } else if (retries === 0) {
     const vp = inst.term.element
       ? inst.term.element.querySelector('.xterm-viewport')
       : null;
@@ -652,8 +654,9 @@ export function resetActiveSessionZoom() {
     const frameH = cellH * inst.term.rows;
     const ratio = computeFrameRatio(frameW, frameH, contentW, contentH);
     setActiveSessionFrameRatio(ratio);
-    debug('terminal', 'resetActiveSessionZoom sid=%s mode=%s → fontSize=%d ratio=%.3f (cols/rows unchanged)',
-          sid, getSessionSizeConfigByUid(sid).mode, DEFAULT_FONT_SIZE, ratio);
+    // logger 不支持 %.3f，ratio 需先 toFixed 再拼接
+    debug('terminal', 'resetActiveSessionZoom sid=%s mode=%s → fontSize=%d ratio=%s (cols/rows unchanged)',
+          sid, getSessionSizeConfigByUid(sid).mode, DEFAULT_FONT_SIZE, ratio.toFixed(3));
   });
   return true;
 }
