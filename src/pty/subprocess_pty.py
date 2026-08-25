@@ -59,6 +59,10 @@ class SubprocessPseudoTerminal(PseudoTerminal):
         env_dict = _os_environ_copy()
         if isinstance(env, dict):
             env_dict.update(env)
+        # 终端颜色语义（同 wezterm_pty）：补 TERM/COLORTERM；NO_COLOR 在
+        # daemon 入口层剥离
+        env_dict.setdefault("TERM", "xterm-256color")
+        env_dict.setdefault("COLORTERM", "truecolor")
 
         try:
             popen_kwargs: dict = {

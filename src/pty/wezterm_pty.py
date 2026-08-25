@@ -119,6 +119,11 @@ class WeztermPseudoTerminal(PseudoTerminal):
             if enc_norm not in ("utf8", "utf"):
                 env_dict.setdefault("PYTHONIOENCODING", encoding)
                 env_dict.setdefault("PYTHONLEGACYWINDOWSSTDIO", "1")
+        # 终端颜色语义：TERM/COLORTERM 缺省时补支持颜色的值（程序据此检测
+        # 颜色支持）；NO_COLOR 在 daemon 入口层剥离（Rust 侧环境块 = 进程
+        # 环境 + 覆盖，Python 侧无法删除基础环境变量）。
+        env_dict.setdefault("TERM", "xterm-256color")
+        env_dict.setdefault("COLORTERM", "truecolor")
 
         try:
             # cmd /c <单字符串命令> 形态（--shell cmd 包装产物）：命令字符串

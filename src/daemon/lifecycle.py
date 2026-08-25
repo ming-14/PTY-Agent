@@ -92,6 +92,12 @@ def main():
     监听位置完全由 daemon.toml [listener] 段控制。
     入口处获取 Windows 命名互斥 / Unix flock 单实例锁，失败则直接退出。
     """
+    # 终端颜色语义：PTY 会话经 ConPTY + 前端 xterm 渲染 ANSI 颜色——剥离
+    # NO_COLOR（尊重该变量的程序会禁用颜色输出）。须在入口剥离：PTY 后端
+    #（Rust 侧）的环境块 = 进程环境 + env 覆盖，Python 侧无法删除基础
+    # 环境变量——os.environ.pop 只改 Python dict 不修改进程环境块，
+    # 须用 os.unsetenv 真正删除（Rust std::env 才能看到）。
+    os.unsetenv("NO_COLOR")
     _hide_console_window()
     _setup_logging()
     _ignore_console_ctrl()
