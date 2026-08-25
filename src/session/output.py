@@ -369,12 +369,10 @@ class OutputMixin:
     def _trim_scrollback_overlap(scrollback: str, snapshot: str) -> str:
         """去掉 scrollback 尾部与 snapshot 头部内容相同的重叠行。
 
-        snapshot 格式为每行 CSI 定位（\\x1b[<row>;1H）+ 内容，按定位序列
-        分割成行后再与 scrollback 尾部比较。重叠形态：reflow 把旧可见区
-        整段推入 scrollback 尾部，该段与当前可见区（snapshot 头部）内容
-        相同，但**可能从 snapshot 第 2 行起对齐**（snapshot 顶部行未被推入）
-        ——用滑动匹配：scrollback 尾部最长后缀 == snapshot 头部任意偏移起
-        的连续段。
+        snapshot（render_ansi）每行 CUP 定位 + SGR 内容，尾部空行不渲染；
+        scrollback（render_scrollback）含空行（\\r\\n\\r\\n）。匹配时
+        跳过空行（snapshot 无空行），滑动匹配 sb 非空行尾部最长后缀 ==
+        snap 任意偏移起的连续段。
         """
         if not scrollback or not snapshot:
             return scrollback
@@ -384,33 +382,31 @@ class OutputMixin:
         sb_lines = scrollback.split("\r\n")
         if sb_lines and sb_lines[-1] == "":
             sb_lines.pop()
-        # snapshot 按 CSI 定位序列分割（保留每行内容）
+        # snapshot 按 CSI 定位序列分割
         cleaned = re.sub(r"\x1b\[\?[0-9;]*[hl]", "", snapshot)
         snap_lines = [p for p in re.split(r"\x1b\[\d+;\d+[Hf]", cleaned) if p.strip()]
 
         def plain(line):
             return ansi_re.sub("", line).rstrip()
 
-        # 滑动匹配：sb 尾部最长后缀 == snap 头部任意偏移起的连续段
-        # 限制扫描范围（重叠段通常很小），避免大 scrollback 下 O(n³) 退化
-        max_trim = min(len(sb_lines), len(snap_lines), 100)
+        # sb 非空行序列（保留原始索引）
+        sb_nonempty = [(i, plain(sb_lines[i])) for i in range(len(sb_lines)) if sb_lines[i].strip()]
+        snap_nonempty = [plain(l) for l in snap_lines if l.strip()]
+
+        # 滑动匹配：sb 非空行尾部最长后缀 == snap 任意偏移连续段
+        max_trim = min(len(sb_nonempty), len(snap_nonempty), 100)
         trim = 0
         for start in range(max_trim, 0, -1):
-            for j in range(min(len(snap_lines) - start + 1, 100)):
-                ok = True
-                for i in range(start):
-                    if plain(sb_lines[-start + i]) != plain(snap_lines[j + i]):
-                        ok = False
-                        break
-                if ok:
+            for j in range(len(snap_nonempty) - start + 1):
+                if [p for _, p in sb_nonempty[-start:]] == snap_nonempty[j:j + start]:
                     trim = start
                     break
             if trim:
                 break
-        if trim > 0 and trim < len(sb_lines):
-            sb_lines = sb_lines[:-trim]
-        elif trim >= len(sb_lines):
-            sb_lines = []
+        # 换算 sb 原始行数（含空行）
+        if trim > 0:
+            idx = sb_nonempty[-trim][0]  # 匹配段在 sb 的起始索引
+            sb_lines = sb_lines[:idx]
         _logger.info("resize: trim_overlap=%d (sb_lines=%d snap_lines=%d)",
                      trim, len(sb_lines), len(snap_lines))
         return "\r\n".join(sb_lines) + ("\r\n" if scrollback.endswith("\r\n") else "")

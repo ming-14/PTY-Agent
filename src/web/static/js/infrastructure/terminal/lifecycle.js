@@ -345,7 +345,10 @@ export function restoreScrollbackAndSnapshot(term, scrollbackLines, snapshot, is
   }
 
   if (hasScrollback) {
-    // 模式 A：有 scrollback，清空 + 恢复 + 写 snapshot
+    // 模式 A：有 scrollback，清空 + 恢复 + 写 snapshot。
+    // 追加 R-1 个额外 \r\n：把写入的最后 R-1 行推回 scrollback（不丢尾部
+    // 历史）。后端 resize 返回前已 trim 掉 scrollback 尾部与 snapshot 的
+    // 重叠段（_trim_scrollback_overlap），推入的行不与可见区重复。
     term.write('\x1b[3J\x1b[2J\x1b[1;1H');
 
     const R = term.rows;

@@ -160,3 +160,12 @@ def test_trim_scrollback_overlap_sliding_offset():
     out = t(sb, snap)
     # __rikka_goose/__rikka_kimi 是 snapshot 第 2-3 行的内容 → 应被 trim
     assert out == "line-001\r\nline-002\r\n"
+
+
+def test_trim_scrollback_overlap_skips_empty_lines():
+    """scrollback 尾部有空行时跳过空行匹配（snapshot 无空行）。"""
+    t = OutputMixin._trim_scrollback_overlap
+    sb = "line-001\r\nline-002\r\n__rikka_goose\r\n__rikka_kimi\r\n\r\n"
+    snap = "\x1b[1;1H\x1b[0m__rikka_goose\x1b[2;1H\x1b[0m__rikka_kimi\x1b[3;1H\x1b[0mC:\\>"
+    out = t(sb, snap)
+    assert out == "line-001\r\nline-002\r\n"
