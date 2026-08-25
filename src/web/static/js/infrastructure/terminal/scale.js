@@ -252,22 +252,25 @@ export function applyTerminalFontSize(uid) {
   debug('zoom', 'fontSize uid=%s -> %d', uid, fontSize);
 }
 
-/** 视口是否在底部：行级优先（vpY ≥ bufLen - rows - 1），像素兜底。
+/** 视口是否在底部：像素优先（scrollTop 距底部 ≤2px），行级兜底。
  *
- * 像素判定（scrollTop 距底部 ≤2px）在 scrollToBottom 锚定后可能因
- * scrollArea 取整偏差误判 false（行级已到底但像素差一点）→ 下一轮不锚定
- * → xterm resize 异步覆盖后漂移。行级判定与锚定语义一致（vpY 到底）。
+ * 像素底部（scrollH - clientH）与用户滚轮到底一致；scrollToBottom 的
+ * ydisp=bufLen-rows 含尾部空行，会被 scrollTop clamp 到像素底部（拉锯
+ * 根源）——判定与锚定统一用像素底部。
  */
 function _isViewportAtBottom(inst) {
-  const buf = inst.term.buffer && inst.term.buffer.active;
-  if (buf && buf.viewportY !== undefined && buf.length > 0) {
-    if (buf.viewportY >= buf.length - inst.term.rows - 1) return true;
-  }
   const vp = inst.term.element
     ? inst.term.element.querySelector('.xterm-viewport')
     : null;
-  if (!vp) return false;
-  return (vp.scrollHeight - vp.clientHeight - vp.scrollTop) <= 2;
+  if (vp) {
+    const delta = vp.scrollHeight - vp.clientHeight - vp.scrollTop;
+    if (delta >= -2 && delta <= 2) return true;
+  }
+  const buf = inst.term.buffer && inst.term.buffer.active;
+  if (buf && buf.viewportY !== undefined && buf.length > 0) {
+    return buf.viewportY >= buf.length - inst.term.rows - 1;
+  }
+  return false;
 }
 
 /**
@@ -312,39 +315,38 @@ function _waitCanvasChange(uid, before, attempts, intervalMs) {
 /**
  * 锚定视口到底部。
  *
- * 用 term.scrollToBottom()（ydisp = bufLen - rows，内容底部）而非直接设
- * 像素 scrollTop：scrollH - clientH 因 scrollArea 取整偏差 ≠ 底部行 × rowH，
- * 设像素会触发 xterm scroll 事件反向同步 ydisp 到错误行（如底部 114 被
- * 同步成 105）→ 视图向上漂移几行。scrollToBottom 让 ydisp 正确。
+ * 设像素底部 scrollTop = scrollH - clientH（与用户滚轮到底一致）。
+ * 不用 scrollToBottom()：其 ydisp = bufLen - rows 含尾部空行，会被 xterm
+ * 的 scrollTop clamp（scrollArea maxLength）截断到像素底部 → 锚定值与
+ * 实际底部反复拉锯（日志：112 锚定后下一轮又 109，每轮抖动 3 行）。
  *
  * 需 rAF 重试：applyTerminalFrameSize 改变 frame 尺寸后，xterm 的
- * ResizeObserver 异步触发 term.resize（rows 取整 ±1），ydisp 被重新换算
- * 漂离底部（114 → 110）——多帧重复 scrollToBottom 等 resize 稳定后保持。
- * 重试直到行级到底（vpY ≥ bufLen - rows - 1）或上限 10 帧，受轮次守卫
- * 约束：快速缩放进入新轮（seq 变化）时旧轮停止重试。
+ * ResizeObserver 异步触发 term.resize（rows 取整 ±1），scrollH/clientH
+ * 变化——多帧重读重设直到像素底部稳定。重试受轮次守卫（seq）约束：
+ * 快速缩放进入新轮（seq 变化）时旧轮停止。
  */
 function _anchorViewportToBottom(uid, seq, retries = 10) {
   const inst = state.termInstances[uid];
   if (!inst || !inst.term) return;
+  const vp = inst.term.element
+    ? inst.term.element.querySelector('.xterm-viewport')
+    : null;
+  if (!vp) return;
   try {
-    inst.term.scrollToBottom();
+    vp.scrollTop = vp.scrollHeight - vp.clientHeight;
   } catch (e) {
-    error('zoom', 'scrollToBottom failed: %s', e && e.message);
+    error('zoom', 'anchor scrollTop failed: %s', e && e.message);
   }
-  const buf = inst.term.buffer && inst.term.buffer.active;
-  const atBottom = buf && buf.viewportY !== undefined && buf.length > 0
-    && buf.viewportY >= buf.length - inst.term.rows - 1;
+  const delta = vp.scrollHeight - vp.clientHeight - vp.scrollTop;
+  const atBottom = delta >= -2 && delta <= 2;
   if (retries > 0 && inst._zoomWaitSeq === seq && !atBottom) {
     requestAnimationFrame(() => _anchorViewportToBottom(uid, seq, retries - 1));
   } else if (retries === 0 || atBottom) {
-    const vp = inst.term.element
-      ? inst.term.element.querySelector('.xterm-viewport')
-      : null;
     const buf = inst.term.buffer && inst.term.buffer.active;
     debug('zoom', 'anchorBottom uid=%s vpY=%d bufLen=%d scrollTop=%d scrollH=%d clientH=%d',
           uid,
           buf ? buf.viewportY : -1, buf ? buf.length : -1,
-          vp ? vp.scrollTop : -1, vp ? vp.scrollHeight : -1, vp ? vp.clientHeight : -1);
+          vp.scrollTop, vp.scrollHeight, vp.clientHeight);
   }
 }
 
