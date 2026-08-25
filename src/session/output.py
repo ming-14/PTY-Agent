@@ -246,6 +246,10 @@ class OutputMixin:
         pty_ok = True
         try:
             if self._pty and hasattr(self._pty, "resize"):
+                # 丢弃窗口：repaint（旧宽度整屏重画）feed 进已 reflow 的模型
+                # 会产生错位行污染 scrollback——窗口内丢弃 repaint 字节，
+                # 模型保持 reflow 后的权威状态（snapshot 来自模型，无需 repaint）
+                self._screen.set_drop_feed(True)
                 self._pty.resize(cols, rows)
         except Exception as e:
             _logger.warning("resize pty failed: %s", e)
@@ -263,40 +267,44 @@ class OutputMixin:
         # 3. 短暂等待 ConPTY repaint（如果有的话）
         #    终端模型已有 reflow 后的旧内容，即使 ConPTY 不发 repaint，
         #    快照仍然包含正确的内容和光标位置
-        if pty_ok:
-            prior_feed = self._screen.feed_count
-            _logger.debug(
-                "resize: waiting for optional repaint feed, prior_feed_count=%d",
-                prior_feed,
-            )
-            # 最多等 200ms 让 reader feed repaint
-            waited_ms = 0
-            for _ in range(20):
+        try:
+            if pty_ok:
+                prior_feed = self._screen.feed_count
+                _logger.debug(
+                    "resize: waiting for optional repaint feed, prior_feed_count=%d",
+                    prior_feed,
+                )
+                # 最多等 200ms 让 reader feed repaint
+                waited_ms = 0
+                for _ in range(20):
+                    if self._screen.feed_count > prior_feed:
+                        break
+                    time.sleep(0.01)
+                    waited_ms += 10
+                # 若收到 repaint，再等 60ms 让字节稳定
                 if self._screen.feed_count > prior_feed:
-                    break
-                time.sleep(0.01)
-                waited_ms += 10
-            # 若收到 repaint，再等 60ms 让字节稳定
-            if self._screen.feed_count > prior_feed:
-                stable_ms = 0
-                last_count = self._screen.feed_count
-                for _ in range(10):
-                    time.sleep(0.03)
-                    cur_count = self._screen.feed_count
-                    if cur_count == last_count:
-                        stable_ms += 30
-                        if stable_ms >= 60:
-                            break
-                    else:
-                        stable_ms = 0
-                        last_count = cur_count
-            _logger.debug(
-                "resize: waited %dms, feed_count %d→%d (Δ=%d)",
-                waited_ms,
-                prior_feed,
-                self._screen.feed_count,
-                self._screen.feed_count - prior_feed,
-            )
+                    stable_ms = 0
+                    last_count = self._screen.feed_count
+                    for _ in range(10):
+                        time.sleep(0.03)
+                        cur_count = self._screen.feed_count
+                        if cur_count == last_count:
+                            stable_ms += 30
+                            if stable_ms >= 60:
+                                break
+                        else:
+                            stable_ms = 0
+                            last_count = cur_count
+                _logger.debug(
+                    "resize: waited %dms, feed_count %d→%d (Δ=%d)",
+                    waited_ms,
+                    prior_feed,
+                    self._screen.feed_count,
+                    self._screen.feed_count - prior_feed,
+                )
+        finally:
+            # 结束丢弃窗口：无论 repaint 是否到达，后续真实输出恢复正常 feed
+            self._screen.set_drop_feed(False)
 
         # snapshot 前 cursor 位置（诊断用）
         try:
@@ -345,10 +353,59 @@ class OutputMixin:
                 "resize: returning scrollback len=%d (preserved)",
                 len(scrollback_ansi),
             )
+            # 去重叠：resize 变窄→变宽后，reflow 会把旧可见区顶部行推入
+            # scrollback（ConPTY 保留 scrollback 语义），capture 的 scrollback
+            # 尾部与 snapshot（当前可见区）顶部内容相同——前端重建后用户
+            # 滚动到底部看到重复行。返回前按行比较去掉尾部重叠行。
+            scrollback_ansi = self._trim_scrollback_overlap(
+                scrollback_ansi, snapshot
+            )
             return (snapshot, scrollback_ansi)
         except Exception as e:
             _logger.warning("resize: 返回 snapshot 失败: %s", e)
             return ("", "")
+
+    @staticmethod
+    def _trim_scrollback_overlap(scrollback: str, snapshot: str) -> str:
+        """去掉 scrollback 尾部与 snapshot 头部内容相同的重叠行。
+
+        snapshot 格式为每行 CSI 定位（\\x1b[<row>;1H）+ 内容，按定位序列
+        分割成行后再与 scrollback 尾部比较。重叠形态：reflow 把旧可见区
+        整段推入 scrollback 尾部，与当前可见区（snapshot 头部）内容相同
+        （正序）——取 scrollback 尾部与 snapshot 头部的最长正序匹配段去掉。
+        """
+        if not scrollback or not snapshot:
+            return scrollback
+        import re
+
+        ansi_re = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
+        sb_lines = scrollback.split("\r\n")
+        if sb_lines and sb_lines[-1] == "":
+            sb_lines.pop()
+        # snapshot 按 CSI 定位序列分割（保留每行内容）
+        cleaned = re.sub(r"\x1b\[\?[0-9;]*[hl]", "", snapshot)
+        snap_lines = [p for p in re.split(r"\x1b\[\d+;\d+[Hf]", cleaned) if p.strip()]
+
+        def plain(line):
+            return ansi_re.sub("", line).rstrip()
+
+        max_trim = min(len(sb_lines), len(snap_lines))
+        trim = 0
+        # 从最长候选向下找：sb 尾部 start 行 == snap 头部 start 行（正序）
+        for start in range(max_trim, 0, -1):
+            ok = True
+            for i in range(start):
+                if plain(sb_lines[-start + i]) != plain(snap_lines[i]):
+                    ok = False
+                    break
+            if ok:
+                trim = start
+                break
+        if trim > 0 and trim < len(sb_lines):
+            sb_lines = sb_lines[:-trim]
+        elif trim >= len(sb_lines):
+            sb_lines = []
+        return "\r\n".join(sb_lines) + ("\r\n" if scrollback.endswith("\r\n") else "")
 
     def _apply_program_resize(self, cols: int, rows: int) -> None:
         """应用程序发起的尺寸变更（CSI 8;rows;colst）并广播

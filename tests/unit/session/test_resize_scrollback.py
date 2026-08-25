@@ -24,6 +24,9 @@ class _StubScreen:
     def resize(self, cols, rows):
         self.resize_called = (cols, rows)
 
+    def set_drop_feed(self, drop):
+        self.drop_feed = drop
+
     def capture_scrollback(self, keep_ansi=False):
         return self._sb
 
@@ -129,3 +132,18 @@ def test_program_resize_same_size_skips():
     s._publisher = _StubPublisher()
     s._apply_program_resize(100, 30)  # 与当前尺寸相同
     assert s._publisher.calls == []
+
+
+def test_trim_scrollback_overlap_removes_duplicated_tail():
+    """scrollback 尾部与 snapshot 头部相同的行（reflow 推入的旧可见区行）被去掉。"""
+    t = OutputMixin._trim_scrollback_overlap
+    sb = "line-001\r\nline-002\r\n__rikka_goose\r\n__rikka_kimi\r\n"
+    snap = "\x1b[1;1H\x1b[0m__rikka_goose\x1b[2;1H\x1b[0m__rikka_kimi\x1b[3;1H\x1b[0mC:\\>"
+    out = t(sb, snap)
+    assert out == "line-001\r\nline-002\r\n"
+    # 无重叠时原样返回
+    sb2 = "line-001\r\nline-002\r\n"
+    assert t(sb2, snap) == sb2
+    # 空输入
+    assert t("", snap) == ""
+    assert t(sb, "") == sb
