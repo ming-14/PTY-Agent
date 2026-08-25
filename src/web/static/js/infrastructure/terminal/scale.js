@@ -98,6 +98,7 @@ export function applyTerminalFrameSize(uid) {
   frame.style.height = Math.ceil(canvas.h) + 'px';
   frame.style.maxWidth = '';
   frame.style.maxHeight = '';
+  debug('layout', 'applyFrame uid=%s w=%d h=%d (canvas)', uid, Math.ceil(canvas.w), Math.ceil(canvas.h));
 
   if (state.activeTab === uid) {
     frame.style.display = 'block';

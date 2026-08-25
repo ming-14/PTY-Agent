@@ -52,6 +52,11 @@ export {
   isFrameAtMaxSize,
 } from './terminal/events.js';
 
+// frame 尺寸变化监控（诊断 IME/输入导致"框被顶动"）
+export {
+  monitorTerminalFrame,
+} from './terminal/events.js';
+
 // 光标调试
 export {
   logCursorState,

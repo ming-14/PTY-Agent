@@ -23,6 +23,29 @@ const WHEEL_DELTA = 120;
 const WHEEL_LINES = 3;
 
 /**
+ * 监控 terminal-frame 的 style 变化（诊断 IME/输入导致"框被顶动"）。
+ *
+ * 记录每次 frame style 变化后的实际 rect + cols/rows——配合 onResize
+ * 日志定位：框动是 applyTerminalFrameSize 主动设置（resize/zoom），还是
+ * 外部（IME textarea 撑宽等）导致布局变化。
+ */
+export function monitorTerminalFrame() {
+  const frame = document.getElementById('terminal-frame');
+  if (!frame) return;
+  const obs = new MutationObserver(() => {
+    try {
+      const r = frame.getBoundingClientRect();
+      const inst = state.activeTab ? state.termInstances[state.activeTab] : null;
+      debug('layout', 'frame-style: w=%d h=%d x=%d y=%d cols=%s rows=%s',
+            Math.round(r.width), Math.round(r.height), Math.round(r.x), Math.round(r.y),
+            inst && inst.term ? inst.term.cols : '?', inst && inst.term ? inst.term.rows : '?');
+    } catch (_) {}
+  });
+  obs.observe(frame, { attributes: true, attributeFilter: ['style'] });
+  return obs;
+}
+
+/**
  * 检查当前活动会话的框是否已撑满 stage（再增大就会超出）。
  *
  * 统一基于"当前 frame 实际尺寸是否已达到 stage 内容区尺寸"判断。
