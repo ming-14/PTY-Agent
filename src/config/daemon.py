@@ -5,7 +5,9 @@
 日志跨侧共享配置（格式/归档/异步队列）来自 logging.toml，侧专属（级别/分组）来自 daemon/logging.toml。
 """
 
-from ._build import build_config
+import os
+
+from ._build import build_config, resolve_data_path
 from ._loader import flatten, load_toml
 
 # web.toml 为可选配置：缺失时视为 web 未启用（ENABLE_WEB=False，其余字段给默认值），
@@ -40,6 +42,16 @@ _WEB_DEFAULTS = {
     "IME_KB_SCALE": 1.0,
 }
 
+# 认证/TLS 路径默认值：daemon.toml 中为空时回落 <DATA_DIR> 下默认子路径，
+# 自定义 DATA_DIR（common.toml [paths]）后自动跟随
+_AUTH_PATH_DEFAULTS = {
+    "PUBKEY_AUTHORIZED_KEYS": "authorized_keys",
+    "PUBKEY_KEY_DIR": "keys",
+    "TLS_CERT_DIR": "certs",
+    "TLS_CERT_FILE": "certs/daemon.crt",
+    "TLS_KEY_FILE": "certs/daemon.key",
+}
+
 try:
     _web_file = flatten(load_toml("web.toml", "daemon"))
 except FileNotFoundError:
@@ -53,6 +65,9 @@ _all = build_config(
     flatten(load_toml("logging.toml", "daemon")),
     _web,
 )
+
+for key, default_sub in _AUTH_PATH_DEFAULTS.items():
+    _all[key] = resolve_data_path(_all.get(key, ""), _all["DATA_DIR"], default_sub)
 
 globals().update(_all)
 __all__ = list(_all.keys())

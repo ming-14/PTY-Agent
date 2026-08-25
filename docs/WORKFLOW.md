@@ -67,7 +67,7 @@ steps:
 - `type` 必须属于五类之一；每类必填字段缺失时报错
 - `depends_on` 引用不存在的 id、依赖自身、构成依赖环均拒绝
 - `on_error` / `retry` / `retry_interval` / `max_parallel` 取值范围校验
-- 定义文件大小上限 1 MB（`WORKFLOW_MAX_FILE_SIZE`）
+- 定义文件大小上限 20 MB（`WORKFLOW_MAX_FILE_SIZE`）
 
 定义文件由 CLI 本机读取（UTF-8）后发送 daemon 解析，跨机 tls 部署语义不变。
 
@@ -257,7 +257,7 @@ python app.py workflow cancel <run-id> [公共选项]
 
 | 命令 | 说明 |
 |------|------|
-| `run` | 启动（后台执行）。定义文件从本机读取（UTF-8，1 MB 上限）；`--vars` 可多个；`--parallel` 覆盖定义 max_parallel |
+| `run` | 启动（后台执行）。定义文件从本机读取（UTF-8，20 MB 上限）；`--vars` 可多个；`--parallel` 覆盖定义 max_parallel |
 | `list` | 所有运行（含已结束）：runId/name/status/startedAt/finishedAt/stepCount |
 | `show` | 单次运行完整状态：run 级状态 + 每步骤状态（含 attempts 尝试次数，output 截断至 4096 字符）+ 事件日志 |
 | `cancel` | 请求取消：置位取消事件，执行中的步骤最快 0.1s 内响应；已终态运行幂等 |
@@ -287,7 +287,7 @@ python app.py workflow cancel <run-id> [公共选项]
 | 运行记录上限 | 50 | `WORKFLOW_MAX_RUNS`（超限自动淘汰最旧终态；全部运行中则拒绝新 run） |
 | 默认并行度 | 4 | `WORKFLOW_DEFAULT_PARALLEL` |
 | 步骤输出保存上限 | 4096 字符 | `WORKFLOW_STEP_OUTPUT_LIMIT`（仅 show 日志，不影响真实输出） |
-| 定义文件上限 | 1 MB | `WORKFLOW_MAX_FILE_SIZE` |
+| 定义文件上限 | 20 MB | `WORKFLOW_MAX_FILE_SIZE` |
 
 运行记录仅保存在内存（daemon 重启即清空）；daemon 停止时未完成运行随守护进程终止。
 

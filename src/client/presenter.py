@@ -146,10 +146,18 @@ def _render_typed(result: Result, out, err) -> bool:
 
 
 def _render_session(r: SessionResult, out, err) -> None:
-    # mouse 光标定位：结果即正文（无快照框、不套 hit 前缀），如 [cursor] col=5 row=6
+    # mouse 光标定位：结果即正文（无快照框、不套 hit 前缀），如 [cursor] col=5 row=6 line=...
     cursor = (r.raw or {}).get("cursor")
     if cursor:
-        _write(out, f"[cursor] col={cursor.get('col')} row={cursor.get('row')}")
+        line = cursor.get("line")
+        if line:
+            _write(
+                out,
+                f"[cursor] col={cursor.get('col')} row={cursor.get('row')} "
+                f"line={line!r}",
+            )
+        else:
+            _write(out, f"[cursor] col={cursor.get('col')} row={cursor.get('row')}")
         _write(out, _status_line(r))
         return
 

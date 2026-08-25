@@ -180,6 +180,18 @@ class WorkflowEngine:
                         try:
                             ok = bool(eval_expr(step.condition, ns))
                         except ExpressionError as e:
+                            if step.on_error == "ignore":
+                                # on_error=ignore：条件求值失败视为成功（同步骤执行失败语义）
+                                run.mark_step_done(
+                                    sid,
+                                    "",
+                                    None,
+                                    None,
+                                    note="if 条件求值错误已忽略（on_error=ignore）: %s" % e,
+                                )
+                                state[sid] = STEP_DONE
+                                _notify_dependents(sid)
+                                continue
                             state[sid] = STEP_FAILED
                             run.mark_step_failed(sid, "if 条件求值失败: %s" % e)
                             _notify_dependents(sid)
@@ -228,10 +240,28 @@ class WorkflowEngine:
                     if session_id is not None:
                         running_sessions.discard(session_id)
                     ret = fut.result()
-                    state[step.id] = ret["status"]
-                    if ret["status"] == STEP_DONE:
-                        results[step.id] = ret["result"]
-                    if ret["status"] == STEP_FAILED and step.on_error == "fail":
+                    status = ret["status"]
+                    if status == STEP_FAILED and step.on_error == "ignore":
+                        # on_error=ignore：失败视为成功——状态记 done、note 记录
+                        # 被忽略的错误、结果照常发布，依赖本步骤的步骤正常执行
+                        # （文档：ignore 视为成功，note 记录被忽略的错误）
+                        error = ret["error"] or ""
+                        output = (ret["result"] or {}).get("output", "")
+                        reason = (ret["result"] or {}).get("reason")
+                        exit_code = (ret["result"] or {}).get("exit_code")
+                        run.mark_step_done(
+                            step.id,
+                            output,
+                            reason,
+                            exit_code,
+                            note="错误已忽略（on_error=ignore）: %s" % error,
+                        )
+                        status = STEP_DONE
+                        results[step.id] = ret["result"] or {}
+                    state[step.id] = status
+                    if status == STEP_DONE:
+                        results.setdefault(step.id, ret["result"])
+                    if status == STEP_FAILED and step.on_error == "fail":
                         fatal = ret["error"] or "step failed: %s" % step.id
                     _notify_dependents(step.id)
         finally:

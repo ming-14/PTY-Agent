@@ -2,7 +2,7 @@
 
 提供跨平台的进程级单实例保证（守护进程与客户端控制方共用）：
 - Windows：命名互斥体 (CreateMutex)，同一用户会话内互斥。
-- Unix：基于文件的排他锁 (flock)，锁文件位于 ~/.pty-agent/daemon.lock。
+- Unix：基于文件的排他锁 (flock)，锁文件位于 <DATA_DIR>/daemon.lock（DATA_DIR 见 common.toml [paths]）。
 
 该类只负责"是否已有实例在运行"的判断，不替代共享内存的端口/令牌传递。
 """

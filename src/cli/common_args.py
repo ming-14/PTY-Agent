@@ -36,19 +36,26 @@ def _encoding_type(value: str) -> str:
 
 
 class _DefaultArgsAction(argparse.Action):
-    """--default KEY VALUE：解析期校验 encoding 键取值
+    """--default KEY VALUE：解析期校验 encoding 键取值与 shell 键拒绝
 
     与 --encoding 同一白名单规则；非法取值（如 --default encoding zzzz）
     在参数解析阶段即被拒绝（parser.error，退出码 2），不会进入
     ConfigManager / client_defaults / daemon sessionDefaults。
+    shell 键仅 set-default 可设（exec 会话创建时按需取用），--default 拒绝。
     """
 
     def __call__(self, parser, namespace, values, option_string=None):
         key, value = values
-        if _parse_default_key(key) == "encoding" and not is_valid_encoding(value):
+        internal_key = _parse_default_key(key)
+        if internal_key == "encoding" and not is_valid_encoding(value):
             parser.error(
                 f"argument --default: invalid encoding value: {value!r} "
                 "(use a valid codec name like utf-8, gbk, cp936, or omit for auto detection)"
+            )
+        if internal_key == "shell":
+            parser.error(
+                "argument --default: 'shell' 不支持（shell 仅 set-default 可设，"
+                "或 exec 用 --shell 指定）"
             )
         items = getattr(namespace, self.dest, None)
         if items is None:

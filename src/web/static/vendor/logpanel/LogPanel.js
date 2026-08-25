@@ -1009,7 +1009,7 @@ export class LogPanel {
   }
 
   _safeGetSize() { try { return this._source.getSize ? this._source.getSize() : 0; } catch (_) { return 0; } }
-  _safeGetCapacity() { try { return this._source.getCapacity ? this._source.getCapacity() : 1000; } catch (_) { return 1000; } }
+  _safeGetCapacity() { try { return this._source.getCapacity ? this._source.getCapacity() : 4000; } catch (_) { return 4000; } }
 
   // ──────────────────────────────────────────────
   // 几何持久化

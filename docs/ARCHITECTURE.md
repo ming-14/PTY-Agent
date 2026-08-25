@@ -758,7 +758,7 @@ client/renderer/:_expand_lines() → 全量二维数组 → GDI/SVG/Pillow/文�
 | `daemon/server.py:DaemonServer` | 编排多个 Listener：`run()` 根据 `[listener]` 段的 `*_ENABLED` 决定启动哪些 Listener，构建每个 Listener 的 `AuthContext`，管理生命周期 |
 | `client/tls_client.py:TLSClient` | TLS 客户端连接器：CERT_NONE 模式（不验证 CA）+ TOFU 指纹验证。首次连接自动信任证书指纹，后续连接比对，不匹配按 `TOFU_STRICT` 拒绝或警告 |
 | `auth/tls/cert_manager.py:CertificateManager` | 守护进程首次启动自动生成自签 TLS 证书（有效期 `TLS_CERT_VALIDITY_DAYS` 天），后续启动加载已有证书 |
-| `auth/tls/known_hosts.py:KnownHosts` | 客户端 TOFU 信任存储：`~/.pty-agent/known_hosts` 文件，格式 `host:port fingerprint` |
+| `auth/tls/known_hosts.py:KnownHosts` | 客户端 TOFU 信任存储：`<DATA_DIR>/known_hosts` 文件（默认 `~/.pty-agent/known_hosts`），格式 `host:port fingerprint` |
 
 **连接路由逻辑**（`client/connection.py:ClientConnectionMixin._connect()`）：
 
@@ -1462,9 +1462,9 @@ daemon `daemon/handlers/dispatcher.py` 拆请求信封并还原扁平 body 交 h
 
 | 常量名 | 值 | 所属配置 | 说明 |
 |--------|-----|---------|------|
-| `DATA_DIR` | `~/.pty-agent/` | `common.py` | 数据目录（运行时计算） |
+| `DATA_DIR` | `~/.pty-agent/` | `common.py` | 数据目录（`common.toml [paths]` 配置，支持 `~` 与 `%VAR%/$VAR` 展开） |
 | `PROJECT_ROOT` | 动态 | `common.py` | 项目根目录（src 的父目录，运行时计算） |
-| `LOG_DIR` | `~/.pty-agent/logs/` | `daemon.py` | 运行时日志目录（运行时计算） |
+| `LOG_DIR` | `~/.pty-agent/logs/` | `_build.py` | 运行时日志目录（由 `DATA_DIR` 派生：`<DATA_DIR>/logs`） |
 | `IS_WINDOWS` | 动态 | `common.py` | 平台标识（`sys.platform == "win32"`，运行时计算） |
 | `_MAX_STRIP_TRIES` | `20` | `session/codec.py` | 尾部截断最大尝试次数 |
 

@@ -24,7 +24,6 @@
 import { state, getSessionSizeConfigByUid, getSessionFontSize, setSessionFontSize,
          getSessionFrameRatio, setActiveSessionFrameRatio, DEFAULT_FRAME_RATIO } from '../../domain/state.js';
 import { debug, error } from '../../domain/logger.js';
-import { $ } from '../domUtils.js';
 import { sendToSession } from '../wsClient.js';
 import {
   applyTerminalSizeFromSession,

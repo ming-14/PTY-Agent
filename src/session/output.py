@@ -164,13 +164,14 @@ class OutputMixin:
           光标绑定文本行，与 ConPTY 坐标系完全一致）
         - 立即捕获 scrollback（此刻的 scrollback 是纯 reflow 历史，
           不含后续 repaint 推入的可见区行 → 与 snapshot 天然无重叠）
-        - 再 resize PTY（ConPTY 内部 reflow；宽度变化时会发 repaint）
-        - 短暂等待 ConPTY repaint（如果有的话），让终端模型同步到最新状态
-        - 清除终端模型 scrollback（仅清 repaint 竞态推入的冗余行，
-          保证后续订阅/--full 捕获不重叠；返回的 scrollback 是第 2 步副本）
+        - 再 resize PTY（ConPTY 内部 reflow；宽度变化时会发 repaint），
+          期间设置 drop_feed 丢弃窗口：repaint（旧宽度整屏重画）feed 进
+          已 reflow 的模型会产生错位行污染 scrollback——窗口内丢弃
+        - 短暂等待 repaint（若到达）后结束丢弃窗口
         - 返回 (snapshot, scrollback)：snapshot 含 VT 颜色序列 + 真实光标位置，
           scrollback 为 reflow 历史（每行 ANSI + \\r\\n）
-        - 前端收到后 \\x1b[3J + scrollback + \\x1b[2J + snapshot 重建
+        - 前端 resize 场景不重建 scrollback（ttyd 式：xterm 单一源，自身
+          reflow + snapshot 更新可见区）；订阅恢复场景用 scrollback 重建
 
         关键不变量：snapshot 的可见区内容和光标 == ConPTY 的可见区内容和光标。
         违背此不变量会导致 resize 后 ConPTY 的绝对光标定位（\\x1b[row;colH）
@@ -181,7 +182,7 @@ class OutputMixin:
         Returns:
             (snapshot, scrollback) 元组：snapshot 为屏幕快照（含 VT 颜色序列
             与光标位置），scrollback 为 reflow 历史（ANSI + \\r\\n，无历史为 ""），
-            供前端重建 buffer 使用。
+            供前端订阅恢复/可见区更新使用。
         """
         if getattr(self, "mode", "pty") == "subprocess":
             raise RuntimeError("子进程模式不支持 resize（无终端）")

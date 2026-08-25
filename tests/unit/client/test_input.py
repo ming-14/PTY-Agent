@@ -113,8 +113,15 @@ class TestExpandControlCharacters:
         assert expand_control_characters("`}") == "}"
         assert expand_control_characters("a`{b`}c") == "a{b}c"
 
-    def test_unmatched_brace_left_literal(self):
-        assert expand_control_characters("{ctrl+a") == "{ctrl+a"
+    def test_unmatched_brace_left_raises(self):
+        # SKILL.md：单独的 {/} 会报错（防漏写 } 的转义被静默当字面量）
+        with pytest.raises(ValueError, match="未配对"):
+            expand_control_characters("{ctrl+a")
+
+    def test_unmatched_brace_right_raises(self):
+        # SKILL.md：单独的 {/} 会报错
+        with pytest.raises(ValueError, match="未配对"):
+            expand_control_characters("abc}")
 
     def test_ctrl_letter(self):
         assert expand_control_characters("{ctrl+a}") == "\x01"

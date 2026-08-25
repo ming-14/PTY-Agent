@@ -5,6 +5,8 @@
   由 _loader.py 基于 __file__ 定位，与运行 cwd 无关。
 - 配置按侧分离：共享配置（common/shared/transfer.toml）留根目录，
   daemon 专属在 daemon/ 子目录，client 专属在 client/ 子目录。
+- 所有 TOML 配置 key 均可被环境变量覆写（PTY_AGENT_<key>，优先级：环境变量 > 文件），
+  规则见 _loader.apply_env_overrides 与 config/README.md「环境变量覆写」。
 - 代码加载器位于 src/config/，按"每个被加载的 TOML 一个模块"划分：
 
     common.py   ← common.toml                全项目通用（路径 / 平台 / 输入限制 / 认证开关）

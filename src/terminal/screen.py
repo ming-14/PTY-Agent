@@ -63,6 +63,7 @@ class TerminalScreen:
         self._feed_count = 0
         self._feed_bytes = 0
         self._feed_errors = 0
+        self._drop_feed = False
         self._change_event = threading.Event()
         self._backend = create_backend(cols, rows, hlimit)
         # 渲染缓存：屏幕内容仅随 feed（feed_count）或 resize（cols/rows）变化，
@@ -121,10 +122,26 @@ class TerminalScreen:
     def feed_count(self) -> int:
         return self._feed_count
 
+    def set_drop_feed(self, drop: bool) -> None:
+        """设置/清除 feed 丢弃窗口。
+
+        resize 期间 ConPTY 发送整屏 repaint（旧宽度内容），feed 进已 reflow
+        到新宽度的模型会产生错位行污染 scrollback。resize 窗口内丢弃这些
+        字节（模型 reflow 状态是权威，snapshot 来自模型无需 repaint）。
+        """
+        with self._lock:
+            self._drop_feed = drop
+            _logger.debug("screen: drop_feed=%s", drop)
+
     def feed(self, data: bytes) -> None:
         if not self.available:
             return
-        self._feed_count += 1
+        with self._lock:
+            self._feed_count += 1
+            if self._drop_feed:
+                _logger.debug("feed: dropped %d bytes (resize repaint window, count=%d)",
+                              len(data), self._feed_count)
+                return
         self._feed_bytes += len(data)
         # 备用屏幕/鼠标追踪/光标/paste 模式状态由 pywezterm 绑定层跟踪
         # （feed 时扫描 DECSET，暴露 mode_restore_seq/get_mouse_encoding 查询）
@@ -188,7 +205,17 @@ class TerminalScreen:
                 line = ""
                 cells = self._backend.cells()
                 if 0 <= y < len(cells):
-                    line = "".join(c[_CELL_DATA] for c in cells[y]).rstrip()
+                    # 稀疏网格：按列号对齐填充（wide 字符跳过的空白格不出现在
+                    # snapshot 中，直接拼接会挤掉行内空隙）
+                    row_cells = sorted(cells[y], key=lambda c: c[_CELL_COL])
+                    if row_cells:
+                        width = row_cells[-1][_CELL_COL] + 1
+                        buf = [" "] * width
+                        for c in row_cells:
+                            col = c[_CELL_COL]
+                            if 0 <= col < width:
+                                buf[col] = c[_CELL_DATA] or " "
+                        line = "".join(buf).rstrip()
                 return {"col": x + 1, "row": y + 1, "line": line}
             except Exception:
                 return {"col": 0, "row": 0, "line": ""}
@@ -287,23 +314,6 @@ class TerminalScreen:
                 _logger.debug("capture_scrollback 异常: %s", e)
                 return ""
 
-    def clear_scrollback(self) -> None:
-        """清除后端 scrollback 历史区
-
-        resize 后 ConPTY repaint 可能触发 index() 将可见区顶部行推入
-        scrollback，导致模型 scrollback 与模型可见区内容重叠（成为 repaint
-        竞态冗余）。clear 用于 resize 后清除这些冗余，保证后续订阅/--full
-        的 capture_scrollback 与 snapshot 不重叠。
-        resize 响应中返回的 scrollback 是 resize 开始时捕获的干净副本，
-        不受此清除影响。
-        """
-        if not self.available:
-            return
-        with self._lock:
-            try:
-                self._backend.clear_scrollback()
-            except Exception as e:
-                _logger.debug("clear_scrollback 异常: %s", e)
 
     @property
     def scrollback_lines_count(self) -> int:

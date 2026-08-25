@@ -158,6 +158,12 @@ class DaemonServer:
                 state_store=PluginStateStore(),
             )
             _logger.info("插件注册表初始化完成，位置: %s", PLUGIN_DIRS)
+            # 新 daemon 周期：重置插件文档发送状态（只发一次语义）
+            try:
+                from ..plugins.context import reset_context_state
+                reset_context_state()
+            except Exception:
+                _logger.exception("插件文档状态重置失败")
             return registry
         except Exception:
             _logger.exception("插件注册表初始化失败，插件系统禁用")

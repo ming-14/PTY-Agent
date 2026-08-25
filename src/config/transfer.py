@@ -5,9 +5,10 @@
 src/client/transport.py（CLI 超时）、files 插件 daemon 侧。
 """
 
-from ._loader import load_toml
+from ._loader import apply_env_overrides, flatten, load_toml
 
-_cfg = load_toml("transfer.toml")["transfer"]
+# 展平后统一经环境变量覆写（PTY_AGENT_TRANSFER_* 覆盖文件值）
+_cfg = apply_env_overrides(flatten(load_toml("transfer.toml")))
 
 TRANSFER_CHUNK_SIZE = int(_cfg["TRANSFER_CHUNK_SIZE"])
 TRANSFER_MAX_FILES = int(_cfg["TRANSFER_MAX_FILES"])

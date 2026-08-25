@@ -5,8 +5,7 @@
 import { state, getSessionFontSize, clearSessionFontSize, isSizeUILocked } from '../../domain/state.js';
 import { debug } from '../../domain/logger.js';
 import { t } from '../../domain/i18n.js';
-import { $ } from '../domUtils.js';
-import { wsSend, sendToSession } from '../wsClient.js';
+import { sendToSession } from '../wsClient.js';
 import { DEFAULT_FONT_SIZE, DEFAULT_COLS, DEFAULT_ROWS } from '../../domain/constants.js';
 import { currentTheme } from '../storage.js';
 import { applyTerminalSizeFromSession } from './shared.js';
@@ -297,9 +296,11 @@ export function applyReadonlyState(sid, readonly) {
 }
 
 /**
- * 恢复 scrollback 并写入 snapshot（用于首次订阅/resize_complete 场景）
+ * 恢复 scrollback 并写入 snapshot（用于首次订阅/刷新恢复场景）
  *
- * 守护进程返回 scrollback + snapshot，前端需要：
+ * 订阅路径（ttyd 式方案）：前端 xterm 是 scrollback 单一源，resize 时
+ * 不重建（restoreScrollbackAndSnapshot 传 shouldRebuild=false，只更新
+ * 可见区）；刷新/断连重连时后端 capture scrollback + 本函数一次性重建：
  *   1. \x1b[3J 清空 scrollback
  *   2. \x1b[2J\x1b[1;1H 清空可见屏幕 + 光标定位到 (0, 0)
  *   3. 写入 scrollback 行 + 额外 \r\n 推入 scrollback 区
@@ -315,6 +316,7 @@ export function applyReadonlyState(sid, readonly) {
  * @param {string[]} scrollbackLines scrollback 行的 ANSI 字符串数组
  * @param {string} snapshot 后端返回的屏幕快照（含 VT 序列与光标定位）
  * @param {boolean} isHistory 是否历史会话（true 滚到顶端，false 滚到底部）
+ * @param {boolean} shouldRebuild 是否重建 scrollback（订阅=true；resize=false）
  */
 export function restoreScrollbackAndSnapshot(term, scrollbackLines, snapshot, isHistory = false, shouldRebuild = true) {
   const hasScrollback = !!(scrollbackLines && scrollbackLines.length > 0);
@@ -328,7 +330,7 @@ export function restoreScrollbackAndSnapshot(term, scrollbackLines, snapshot, is
   };
 
   if (!shouldRebuild) {
-    // resize 场景且后端 scrollback 为空：保留前端已有 scrollback，
+    // resize 场景：不重建 scrollback（前端 xterm 单一源，自身 reflow），
     // 只清可见区 + 写 snapshot（不清空——\x1b[3J 会清掉前端历史）
     if (snapshot && snapshot.length > 0) {
       debug('terminal', 'restoreScrollback: resize mode, keep existing scrollback');
@@ -341,10 +343,8 @@ export function restoreScrollbackAndSnapshot(term, scrollbackLines, snapshot, is
   }
 
   if (hasScrollback) {
-    // 模式 A：有 scrollback，清空 + 恢复 + 写 snapshot。
-    // 追加 R-1 个额外 \r\n：把写入的最后 R-1 行推回 scrollback（不丢尾部
-    // 历史）。后端 resize 返回前已 trim 掉 scrollback 尾部与 snapshot 的
-    // 重叠段（_trim_scrollback_overlap），推入的行不与可见区重复。
+    // 模式 A：有 scrollback（订阅恢复），清空 + 恢复 + 写 snapshot。
+    // 追加 R-1 个额外 \r\n：把写入的最后 R-1 行推回 scrollback（不丢尾部历史）。
     term.write('\x1b[3J\x1b[2J\x1b[1;1H');
 
     const R = term.rows;

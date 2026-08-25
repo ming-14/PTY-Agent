@@ -200,15 +200,21 @@ def expand_control_characters_full(text: str, *, enter_eol: str = "\r") -> tuple
             while j < n and not (text[j] == "}" and text[j - 1] != "`"):
                 j += 1
             if j == n:
-                out.append("{")
-                i += 1
-                continue
+                # 孤立的 {（无配对 }）：按文档"单独的 {/} 会报错"拒绝，
+                # 防止漏写 } 的转义被静默当字面量（如 {ctrl+a）
+                raise ValueError(
+                    f"未配对的 '{{' 无法识别。"
+                    f"'{'{'}' 和 '{'}'}' 需成对使用或使用反引号转义："
+                    f"`{'{'}  `{'}'}  "
+                    f"（例：a`{'{'}b`{'}'}c → a{{b}}c）。"
+                    f"支持的转义：{{ctrl+a}}, {{alt+x}}, {{enter}}, {{tab}}, {{up}}, {{f1}} 等。"
+                )
             body = text[i + 1 : j]
             expanded = _expand_control_token(body, enter_eol=enter_eol)
             if expanded is None:
                 raise ValueError(
                     f"无法识别的转义序列 '{{{body}}}'。"
-                    f"-j 模式下 '{' 和 '}' 需使用反引号转义："
+                    f"'{'{'}' 和 '{'}'}' 需使用反引号转义："
                     f"`{'{'}  `{'}'}  "
                     f"（例：a`{'{'}b`{'}'}c → a{{b}}c）。"
                     f"支持的转义：{{ctrl+a}}, {{alt+x}}, {{enter}}, {{tab}}, {{up}}, {{f1}} 等。"
@@ -217,6 +223,15 @@ def expand_control_characters_full(text: str, *, enter_eol: str = "\r") -> tuple
             pauses.append(sum(map(len, out)))
             i = j + 1
             continue
+        if ch == "}":
+            # 孤立的 }：同样按文档"单独的 {/} 会报错"拒绝
+            raise ValueError(
+                f"未配对的 '}}' 无法识别。"
+                f"'{'{'}' 和 '{'}'}' 需成对使用或使用反引号转义："
+                f"`{'{'}  `{'}'}  "
+                f"（例：a`{'{'}b`{'}'}c → a{{b}}c）。"
+                f"支持的转义：{{ctrl+a}}, {{alt+x}}, {{enter}}, {{tab}}, {{up}}, {{f1}} 等。"
+            )
         out.append(ch)
         i += 1
     return "".join(out), pauses

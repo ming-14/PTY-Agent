@@ -6,6 +6,7 @@ run 由 client 侧读取 YAML 定义文件，发送 daemon 解析执行。
 
 from typing import Optional
 
+from ..config.daemon import WORKFLOW_MAX_FILE_SIZE
 from ..protocol.response import Response
 from ..logging import get_logger
 from . import presenter
@@ -37,6 +38,14 @@ class ClientWorkflowCommandsMixin:
                 data = f.read()
         except OSError as e:
             presenter.print_response(Response.error("读取 workflow 文件失败: %s" % e))
+            return
+        if len(data) > WORKFLOW_MAX_FILE_SIZE:
+            presenter.print_response(
+                Response.error(
+                    "workflow 定义文件超过上限 %d 字节（当前 %d 字节）"
+                    % (WORKFLOW_MAX_FILE_SIZE, len(data))
+                )
+            )
             return
         try:
             text = data.decode("utf-8")

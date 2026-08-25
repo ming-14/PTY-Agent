@@ -69,6 +69,10 @@ def create_pty(
                     encoding=encoding,
                     tracker=tracker,
                 )
+            except FileNotFoundError:
+                # 命令不存在（如可执行文件缺失）：不是 PTY 后端问题，
+                # 直接透传让上层给出"命令不可执行"的准确错误，不尝试其他后端
+                raise
             except Exception as e:
                 _logger.warning(
                     "create_pty: WeztermPseudoTerminal failed: %s, falling back", e

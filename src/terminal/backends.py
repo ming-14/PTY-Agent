@@ -276,11 +276,6 @@ class WeztermBackend(ScreenBackend):
             return ""
         return self._term.mode_restore_seq()
 
-    def clear_scrollback(self) -> None:
-        if self._term is None:
-            return
-        self._term.clear_scrollback()
-
     @property
     def scrollback_lines_count(self) -> int:
         if self._term is None:

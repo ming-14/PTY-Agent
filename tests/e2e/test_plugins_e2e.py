@@ -337,6 +337,7 @@ class TestPluginSessionE2E:
         finally:
             _stop_session(session)
 
+    
 
 class _FakeConn:
     """捕获 Message.send 输出的假连接"""

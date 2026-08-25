@@ -12,7 +12,7 @@ import threading
 from typing import Callable, Optional
 
 from ..auth.context import AuthContext
-from ..config.daemon import SOCKET_LISTEN_BACKLOG
+from ..config.daemon import IS_WINDOWS, SOCKET_LISTEN_BACKLOG
 from ..logging import get_logger
 
 _logger = get_logger("pty-daemon")
@@ -68,7 +68,16 @@ class Listener:
         不开始监听，仅绑定。用于端口冲突检测和获取实际端口号。
         """
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if IS_WINDOWS:
+            # Windows 的 SO_REUSEADDR 允许两个进程绑定同一端口（bind/listen 均
+            # 静默成功但端口实际不可用，netstat 无监听器）；SO_EXCLUSIVEADDRUSE
+            # 正确拒绝已占用端口（10048），且不影响 TIME_WAIT 快速重启重绑
+            exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+            if exclusive is not None:
+                self._sock.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+        else:
+            # Unix：SO_REUSEADDR 仅允许 TIME_WAIT 重绑（快速重启），无双绑定问题
+            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind((self._host, self._port))
         actual_port = self._sock.getsockname()[1]
         _logger.debug(

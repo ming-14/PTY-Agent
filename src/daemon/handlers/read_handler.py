@@ -229,9 +229,15 @@ class ReadHandler(DaemonHandler):
             return
 
         # 非等待：直接返回快照（--full/--lines 时含 scrollback 历史）
+        # 与子进程模式对齐"都不带 → 1s 后返回"语义：无参数快照先等 1s 收集
+        # 输出再返回（--default timeout 可调整等待时长）；查询类（--full/-l/
+        # --column/--offset）立即返回不等待
         # 显式 --offset：与子进程模式语义一致，从原始输出缓冲区增量读取，
         # 返回"该偏移之后的新增输出"，响应 outputOffset 为缓冲结束偏移。
         # （offset 未显式给定时保持快照语义，read 默认返回可见屏幕快照）
+        is_query = cond.full or lines_param is not None or req.column is not None
+        if offset is None and not is_query:
+            time.sleep(min(cond.timeout, 1.0))
         if offset is not None:
             output, cur_offset = session.get_output_with_offset(
                 from_offset=offset, encoding=req.encoding

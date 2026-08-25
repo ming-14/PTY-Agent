@@ -715,7 +715,7 @@ python app.py keygen [--force | -f] [--key-dir DIR] [--comment TEXT | -C TEXT]
 | 选项                  | 说明                              |
 | --------------------- | --------------------------------- |
 | `--force`, `-f`       | 覆盖已存在的密钥文件              |
-| `--key-dir DIR`       | 密钥目录（默认 `~/.pty-agent/keys`） |
+| `--key-dir DIR`       | 密钥目录（默认 `<DATA_DIR>/keys`，即 `~/.pty-agent/keys`） |
 | `--comment TEXT`, `-C TEXT` | 公钥注释（默认 `用户名@主机名`） |
 
 **输出：**
@@ -824,7 +824,7 @@ python app.py file download remote_dir/local.txt ./local.txt -s myapp --force
 
 - `file write` / `file edit`（replace/delete）受 read-before-write 状态机保护：必须先 `file read` 且期间未被外部修改，否则拒绝并提示
 - `--content-file` / `--old-file` / `--new-file` 在 CLI 侧按 UTF-8 读取（非法编码报错），CRLF 规范化为 LF（与 `file read` 视图一致），内容再走同一传输链路，不受命令行长度限制
-- 每次写操作在 ~/.pty-agent/history.db 的 `files_history` 表落版本链（initial → v1 → v2），便于后续回溯；当前不提供查询命令
+- 每次写操作在 `<DATA_DIR>/history.db` 的 `files_history` 表落版本链（initial → v1 → v2），便于后续回溯；当前不提供查询命令
 - `file grep` / `file glob` 结果按文件修改时间最新优先，上限 100 条（超出截断并标记）
 - `file upload` / `file download` 走二进制帧传输，不受 JSON 消息长度（MAX_MESSAGE_LENGTH）限制；upload 落盘后写 history 版本链 + 状态机双刷（与 write 一致），download 不落 history；传输中断/超时会清理临时文件
 
@@ -914,7 +914,7 @@ python app.py attend <id> [公共选项]
 | 选项                | 说明                                            |
 | ------------------- | ----------------------------------------------- |
 | `--encoding ENC`    | 终端编码（如 utf-8, gbk），本次调用记忆         |
-| `--default KEY VALUE` | 设置默认配置（可多次指定）。可用键同 `set-default` |
+| `--default KEY VALUE` | 设置默认配置（可多次指定）。可用键同 `set-default`（**不含 `shell`**；`shell` 仅 `set-default` 可设） |
 | `--debug-output`    | 响应中输出 `debugInformation`（进程树/GUI 窗口/事件），默认关闭 |
 
 **示例：**
@@ -928,8 +928,10 @@ python app.py read s1 --debug-output
 **配置优先级：**
 
 ```
-命令行显式参数  >  --default 覆盖值  >  代码内置默认值
+命令行显式参数  >  --default 覆盖值  >  set-default 全局默认（守护进程内存）  >  代码内置默认值
 ```
+
+**注意：** `--default terminal-size NxN` 不是配置，是实时调整终端尺寸，对运行中的会话即刻生效；`--default` 不支持 `shell`（请用 `--shell` 或 `set-default shell`）。
 
 ---
 
@@ -954,7 +956,7 @@ optional.py  = 可选模块惰性导入网关（web/vnc/screenshare/cursorlocato
 
 **可选配置缺失行为：** `web.toml` 缺失时视为 web 未启用（`ENABLE_WEB=False`，连带 VNC/FastScreen 禁用，守护进程正常启动）；`registry.json` 缺失时插件系统禁用；`sandbox.toml` 缺失时沙箱关闭。`vnc.toml`/`vnc.example.toml` 为 winvnc.exe 运行时配置，Python 不加载。
 
-**数据目录：** `~/.pty-agent/`
+**数据目录：** `<DATA_DIR>/`（由 `common.toml [paths] DATA_DIR` 配置，默认 `~/.pty-agent`，支持 `~` 与 `%VAR%/$VAR` 展开）
 
 | 路径               | 说明                       |
 | ------------------ | -------------------------- |
@@ -962,7 +964,7 @@ optional.py  = 可选模块惰性导入网关（web/vnc/screenshare/cursorlocato
 | `authorized_keys`  | 公钥白名单（服务端）       |
 | `known_hosts`      | TOFU 信任存储（客户端）    |
 | `certs/`           | TLS 自签证书               |
-| `logs/`            | 日志文件                   |
+| `logs/`            | 日志文件（`LOG_DIR` 由此派生） |
 
 ### 6.1  common.toml - 共有配置
 
@@ -1024,14 +1026,16 @@ AUTH_TOKEN_ROTATE_INTERVAL = 1800
 AUTH_TOKEN_GRACE_PERIOD    = 120
 
 # 公私钥认证（[listener] TLS_ENABLED=true 时生效）
+# 路径字段为空 = 默认位于 <DATA_DIR> 下（DATA_DIR 见 common.toml [paths]），
+# 支持 ~ 与 %VAR%/$VAR 展开；自定义 DATA_DIR 后自动跟随
 PUBKEY_ALGORITHM       = "ed25519"
-PUBKEY_AUTHORIZED_KEYS = "~/.pty-agent/authorized_keys"
-PUBKEY_KEY_DIR         = "~/.pty-agent/keys"
+PUBKEY_AUTHORIZED_KEYS = ""             # 默认 <DATA_DIR>/authorized_keys
+PUBKEY_KEY_DIR         = ""             # 默认 <DATA_DIR>/keys
 
 # TLS 服务端（[listener] TLS_ENABLED=true 时生效）
-TLS_CERT_DIR           = "~/.pty-agent/certs"
-TLS_CERT_FILE          = "~/.pty-agent/certs/daemon.crt"
-TLS_KEY_FILE           = "~/.pty-agent/certs/daemon.key"
+TLS_CERT_DIR           = ""             # 默认 <DATA_DIR>/certs
+TLS_CERT_FILE          = ""             # 默认 <DATA_DIR>/certs/daemon.crt
+TLS_KEY_FILE           = ""             # 默认 <DATA_DIR>/certs/daemon.key
 TLS_CERT_VALIDITY_DAYS = 365
 TLS_CERT_SUBJECT_CN    = "pty-agent-daemon"
 ```
@@ -1062,16 +1066,18 @@ DEFAULT_TRIGGER_TIMEOUT = 120.0
 
 [auth]
 # 公私钥认证（CONNECT_MODE=tls 时生效）
-PUBKEY_PRIVATE_KEY_PATH = "~/.pty-agent/keys/id_ed25519"  # 客户端私钥
-KNOWN_HOSTS_FILE        = "~/.pty-agent/known_hosts"      # TOFU 信任存储文件
-TOFU_STRICT             = true                            # true=指纹不匹配拒绝，false=仅警告
+# 路径字段为空 = 默认位于 <DATA_DIR> 下（DATA_DIR 见 common.toml [paths]），
+# 支持 ~ 与 %VAR%/$VAR 展开；自定义 DATA_DIR 后自动跟随
+PUBKEY_PRIVATE_KEY_PATH = ""          # 默认 <DATA_DIR>/keys/id_ed25519
+KNOWN_HOSTS_FILE        = ""          # 默认 <DATA_DIR>/known_hosts
+TOFU_STRICT             = true        # true=指纹不匹配拒绝，false=仅警告
 ```
 
 ### 6.4  日志配置
 
 日志系统位于 `src/logging/` 子包，基于异步队列（`QueueHandler` + 后台单线程 `pty-log-writer`），
-业务线程零阻塞。日志文件写入 `<用户目录>/.pty-agent/logs/`，按模块分组拆分（时间戳命名），
-后台线程自动将前一日（本地 0 点前）的 `*.log` gzip 归档为 `.log.gz`。
+业务线程零阻塞。日志文件写入 `<DATA_DIR>/logs/`（DATA_DIR 见 common.toml [paths]，默认 `~/.pty-agent`），
+按模块分组拆分（时间戳命名），后台线程自动将前一日（本地 0 点前）的 `*.log` gzip 归档为 `.log.gz`。
 
 配置文件组织：
 - `config/logging.toml` — 跨侧共享（格式 / 归档间隔 / 异步队列容量）

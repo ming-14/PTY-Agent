@@ -199,6 +199,17 @@ class Message:
                 _logger.warning(
                     "recv: fd=%d line too large (%d), dropping", sock.fileno(), len(buf)
                 )
+                # 明确告知对端超限原因，避免调用方把 recv=None 误判为认证失败
+                try:
+                    Message.send(
+                        sock,
+                        {
+                            "type": "error",
+                            "message": "消息超过大小上限 (%d bytes)" % MAX_MESSAGE_LENGTH,
+                        },
+                    )
+                except Exception:
+                    pass
                 Message._recv_buffers.pop(sock_key, None)
                 return None
 

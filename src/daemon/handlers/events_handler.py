@@ -1,3 +1,5 @@
+from datetime import datetime
+from typing import Optional
 
 from ...protocol.message import Message
 from ...protocol.response import Response
@@ -9,6 +11,46 @@ from ...logging import get_logger
 _logger = get_logger("pty-daemon")
 
 
+def _event_time_to_ts(ev: dict) -> Optional[float]:
+    """事件 dict 的 time 字段（本地时区 ISO 字符串）转时间戳；失败返回 None"""
+    t = ev.get("time")
+    if not t:
+        return None
+    try:
+        return datetime.fromisoformat(t).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def _filter_event_dicts(
+    events: list,
+    last: Optional[int] = None,
+    since: Optional[float] = None,
+    until: Optional[float] = None,
+) -> list:
+    """对事件 dict 列表应用 last/since/until 过滤（ended 会话历史回放用）
+
+    语义与 running 会话的 EventHistoryManager.get_all 对齐：since/until 为
+    时间戳（含边界），last 取末尾 N 条；time 解析失败的事件保留（不因过滤丢事件）。
+    """
+    if since is not None or until is not None:
+        filtered = []
+        for ev in events:
+            ts = _event_time_to_ts(ev)
+            if ts is None:
+                filtered.append(ev)
+                continue
+            if since is not None and ts < since:
+                continue
+            if until is not None and ts > until:
+                continue
+            filtered.append(ev)
+        events = filtered
+    if last is not None and last > 0:
+        events = events[-last:]
+    return events
+
+
 class EventsHandler(DaemonHandler):
     def handle(self, ctx: HandlerContext, conn, msg: dict):
         session_id = msg.get("id", "")
@@ -16,24 +58,35 @@ class EventsHandler(DaemonHandler):
         if not session_id:
             Message.send(conn, Response.error("Missing session id"))
             return
+
+        last_n = msg.get("last")
+        since = msg.get("since")
+        until = msg.get("until")
+        has_filter = last_n is not None or since is not None or until is not None
+
         session = ctx.manager.get_session(session_id)
         if not session:
             hs = ctx.manager._history_store
             if hs:
                 ended_events = hs.get_ended_events(session_id)
                 if ended_events is not None:
+                    # ended 会话历史回放同样应用过滤，与 running 会话语义一致
+                    filtered = _filter_event_dicts(
+                        ended_events, last=last_n, since=since, until=until
+                    )
+                    _logger.info(
+                        "_handle_events ended replay: id=%r raw=%d filtered=%d",
+                        session_id,
+                        len(ended_events),
+                        len(filtered),
+                    )
                     resp = Response.events_result(
-                        session_id, ended_events, len(ended_events), _SESSION_ENDED_HINT
+                        session_id, filtered, len(filtered), _SESSION_ENDED_HINT
                     )
                     Message.send(conn, resp)
                     return
             Message.send(conn, Response.error(f"Session '{session_id}' not found"))
             return
-
-        last_n = msg.get("last")
-        since = msg.get("since")
-        until = msg.get("until")
-        has_filter = last_n is not None or since is not None or until is not None
 
         _logger.info(
             "_handle_events: id=%r last=%s since=%s until=%s pending=%d history=%d",

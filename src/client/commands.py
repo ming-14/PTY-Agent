@@ -103,6 +103,14 @@ class ClientCommandsMixin:
         from .daemonctl import is_running
 
         if is_running():
+            # 守护进程启动：输出进程级插件上下文（<插件名>.md）给用户
+            try:
+                from ..plugins.context import output_process_contexts
+                from ..config.plugins import PLUGIN_DIRS
+
+                output_process_contexts(PLUGIN_DIRS)
+            except Exception:
+                pass
             resp = self._send_recv({"type": "list"}, autostart=False)
             presenter.print_response(resp)
 
@@ -118,26 +126,19 @@ class ClientCommandsMixin:
         if port is None:
             presenter.print_response({"type": "status", "running": False})
             return
-        pid = None
-        if CONNECT_MODE == "token":
-            from .daemonctl import _find_daemon_pid
-
-            pid = _find_daemon_pid()
         try:
             resp = self._send_recv({"type": "status"}, autostart=False)
             presenter.print_response(resp)
         except SystemExit:
             presenter.print_response({"type": "status", "running": False})
         except Exception as e:
+            # 连接失败即视为未运行（tls/basic 模式目标不可达时曾误报 running=yes）；
+            # 失败原因输出 stderr，状态展示为 running=no
+            _logger.warning("status 探测失败: %s", e)
             presenter.print_response(
-                {
-                    "type": "status",
-                    "running": True,
-                    "pid": pid,
-                    "port": port,
-                    "message": str(e),
-                }
+                {"type": "error", "message": f"status failed: {e}"}
             )
+            presenter.print_response({"type": "status", "running": False})
 
     def cmd_exec(
         self,

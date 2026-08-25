@@ -597,7 +597,7 @@ class WebServer:
             _logger.info("VNC proxy: closed from %s", remote)
 
         # 设置 REST 端点（/api/settings*）
-        # 默认值来自 web.toml，用户覆盖项持久化到 ~/.pty-agent/web_user_choice.json
+        # 默认值来自 web.toml，用户覆盖项由前端 localStorage 持久化
         try:
             settings_router = create_settings_router(auth_validator=_http_auth)
             app.include_router(settings_router)

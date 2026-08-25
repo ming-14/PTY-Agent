@@ -69,19 +69,20 @@ class TestPresenter:
         m._error_seen = False
 
     def test_mouse_cursor_result_line(self):
-        """_get_cursor_location → [cursor] col=.. row=..（结果正文，非 cursor: 前缀）"""
+        """_get_cursor_location → [cursor] col=.. row=.. line=..（结果正文，非 cursor: 前缀）"""
         self._reset()
         r = from_response(
             {
                 "commandType": "mouse",
                 "sessionId": "t_py",
-                "cursor": {"col": 5, "row": 23},
+                "cursor": {"col": 5, "row": 23, "line": ">>> hello"},
                 "triggerReturnReason": "ok",
                 "program": {"running": True, "ptyType": "conpty", "mode": "pty"},
             }
         )
         out, _ = _cap(lambda o, e: present(r, o, e))
         assert "[cursor] col=5 row=23" in out
+        assert "line='>>> hello'" in out
         assert "cursor: col=" not in out
 
     def test_session_content_stdout_meta_stderr(self):

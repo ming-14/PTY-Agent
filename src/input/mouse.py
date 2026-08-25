@@ -128,9 +128,11 @@ class MouseActionEncoder:
 
         每次 click 的 press+release 合并为单次 write 原子发送，
         避免程序读到拆散的半截序列。
-
-        双击/三击时，第二次及后续的 press 事件标记 double_click=True。
-        Windows TUI 程序（tcell/tview/gdu）依赖 press 间隔识别双击。
+        双击/三击时，第二次及后续的 press 通过 0.05s 间隔体现双击语义
+        （Windows TUI 程序 tcell/tview/gdu 依赖 press 间隔识别双击）。
+        注意：SGR 序列本身不携带双击标志；Windows ConPTY 在把 SGR 转换回
+        控制台输入事件时可能对 alt 修饰（SGR bit3）产生额外的
+        DOUBLE_CLICK dwEventFlags（转换层行为，不影响点击送达）。
         """
         self._validate(coord)
         if button not in _BUTTON_MAP:
@@ -143,10 +145,7 @@ class MouseActionEncoder:
             sgr_data = _sgr_sequence(
                 coord.col, coord.row, btn_value, False
             ) + _sgr_sequence(coord.col, coord.row, btn_value, True)
-            double_click = i >= 1
-            ops.append(
-                {"type": "write", "data": sgr_data, "double_click": double_click}
-            )
+            ops.append({"type": "write", "data": sgr_data})
             if i < count - 1:
                 ops.append({"type": "sleep", "duration": 0.05})
         return ops

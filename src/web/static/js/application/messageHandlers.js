@@ -14,7 +14,7 @@ import { debug, info, warn, error } from '../domain/logger.js';
 import { DEFAULT_COLS, DEFAULT_ROWS } from '../domain/constants.js';
 import { t, i18nError } from '../domain/i18n.js';
 import { ports } from './ports.js';
-import { wsSend, sendToSession } from '../infrastructure/wsClient.js';
+import { sendToSession } from '../infrastructure/wsClient.js';
 
 // ── 乐观创建键迁移助手 ──────────────────────────────────────
 // submitNewSession/submitRestartSession 先用用户自定义 sid 作为临时键

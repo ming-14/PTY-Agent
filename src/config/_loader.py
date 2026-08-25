@@ -1,7 +1,9 @@
-"""配置加载工具 —— TOML 文件读取、展平、合并"""
+"""配置加载工具 —— TOML 文件读取、展平、合并、环境变量覆写"""
 
 import functools
+import json
 import os
+import warnings
 
 try:
     import tomllib
@@ -75,3 +77,63 @@ def merge(*sources: dict) -> dict:
                 raise ValueError(f"配置 key 冲突: {k!r} 在不同 TOML 文件中重复定义")
             merged[k] = v
     return merged
+
+
+# 环境变量覆写前缀：PTY_AGENT_<配置 key>（如 DATA_DIR → PTY_AGENT_DATA_DIR）
+ENV_PREFIX = "PTY_AGENT_"
+
+# bool 取值映射（大小写不敏感）
+_TRUE_STRINGS = {"true", "1", "yes", "on"}
+_FALSE_STRINGS = {"false", "0", "no", "off"}
+
+
+def _coerce_env_value(env_value: str, file_value):
+    """将环境变量字符串按配置原值类型转换
+
+    bool/int/float/str 按类型转换；list/dict（如 sandbox 的 net_allowlist）
+    按 JSON 解析；None 原样返回字符串。
+    """
+    if isinstance(file_value, bool):
+        v = env_value.strip().lower()
+        if v in _TRUE_STRINGS:
+            return True
+        if v in _FALSE_STRINGS:
+            return False
+        raise ValueError(f"invalid boolean value: {env_value!r}")
+    if isinstance(file_value, int):
+        return int(env_value)
+    if isinstance(file_value, float):
+        return float(env_value)
+    if isinstance(file_value, (list, dict)):
+        return json.loads(env_value)
+    return env_value
+
+
+def apply_env_overrides(config: dict, prefix: str = ENV_PREFIX) -> dict:
+    """用环境变量覆写配置 key（优先级：环境变量 > 文件）
+
+    约定：环境变量名 = prefix + 配置 key（如 DATA_DIR → PTY_AGENT_DATA_DIR），
+    仅对配置中已存在的 key 生效，未设置的变量不改变任何值。
+    取值按文件原值类型转换（bool/int/float/str，list/dict 按 JSON）；
+    转换失败时警告并保留文件值，不阻断启动。
+
+    Args:
+        config: 展平后的配置 dict（merge 结果）。
+        prefix: 环境变量前缀。
+
+    Returns:
+        覆写后的新 dict（不修改入参）。
+    """
+    overridden = dict(config)
+    for key, file_value in config.items():
+        env_value = os.environ.get(prefix + key)
+        if env_value is None:
+            continue
+        try:
+            overridden[key] = _coerce_env_value(env_value, file_value)
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            warnings.warn(
+                f"环境变量 {prefix + key} 取值 {env_value!r} 无法按配置类型 "
+                f"{type(file_value).__name__} 转换: {exc}，忽略该覆写"
+            )
+    return overridden

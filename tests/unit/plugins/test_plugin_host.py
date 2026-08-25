@@ -357,3 +357,5 @@ class TestHandleCommand:
         p = LoggingPlugin()
         h = PluginHost(session, plugins=[p])
         assert h.handle_command("ghost", {}) is None
+
+

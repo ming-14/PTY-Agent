@@ -12,7 +12,8 @@
 - storage:   插件存储（kv/文件/sqlite 三种视图）
 - permissions: 能力检查 + 审计
 - environment: 运行环境（daemon 全局共享能力集合）
-- io:        进程级插件 I/O 端口（连接收发通道，用于多帧传输协议）
+- context:     插件上下文输出（<插件目录>/<插件名>.md，CLI 输出给用户）
+- io:          进程级插件 I/O 端口（连接收发通道，用于多帧传输协议）
 """
 
 from .base import HANDLED, Plugin, PluginContext, ProcessPluginContext, VALID_HOOKS
@@ -26,6 +27,16 @@ from .config import PluginConfig, ConfigError
 from .storage import PluginStorage, KvStore, FileStore
 from .permissions import PermissionChecker, PermissionDenied
 from .environment import PluginEnvironment
+from .context import (
+    context_text,
+    find_plugin_dir,
+    load_context_state,
+    output_context,
+    output_process_contexts,
+    reset_context_state,
+    save_context_state,
+    scan_plugin_dirs,
+)
 
 __all__ = [
     "HANDLED",
@@ -52,4 +63,12 @@ __all__ = [
     "PermissionChecker",
     "PermissionDenied",
     "PluginEnvironment",
+    "context_text",
+    "find_plugin_dir",
+    "load_context_state",
+    "output_context",
+    "output_process_contexts",
+    "reset_context_state",
+    "save_context_state",
+    "scan_plugin_dirs",
 ]

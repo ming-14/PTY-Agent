@@ -54,9 +54,7 @@ def test_backend_scrollback_and_clear():
     assert sb, "scrollback 不应为空"
     assert "line 0" in sb, sb[:200]
     assert backend.scrollback_lines_count > 0
-    backend.clear_scrollback()
-    assert backend.scrollback_lines_count == 0
-    # 清 scrollback 后可见区仍保留最后一行
+    # 可见区最后一行保留（feed 完成后可见区 = 最后 5 行）
     text = backend.render_plain()
     assert "line 19" in text, text
 
@@ -90,8 +88,6 @@ def test_screen_scrollback_api():
     sb = screen.capture_scrollback()
     assert sb
     assert screen.scrollback_lines_count > 0
-    screen.clear_scrollback()
-    assert screen.scrollback_lines_count == 0
 
 
 def test_full_snapshot_combines_scrollback_and_visible():

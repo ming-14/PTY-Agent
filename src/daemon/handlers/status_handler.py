@@ -1,7 +1,7 @@
 import os
 import time
 
-from ...config.daemon import WEB_HOST, WEB_PORT
+from ...config.daemon import ENABLE_WEB, WEB_HOST, WEB_PORT
 from ...protocol.message import Message
 from ...protocol.response import Response
 from .base import DaemonHandler
@@ -38,6 +38,7 @@ class StatusHandler(DaemonHandler):
             uptime=round(uptime, 1) if uptime is not None else None,
             active_sessions=active,
             ended_sessions=ended,
-            web_url=f"http://{WEB_HOST}:{WEB_PORT}/",
+            # web 关闭（ENABLE_WEB=False）时无监听器，不携带 URL 避免误报
+            web_url=f"http://{WEB_HOST}:{WEB_PORT}/" if ENABLE_WEB else "",
         )
         Message.send(conn, resp)

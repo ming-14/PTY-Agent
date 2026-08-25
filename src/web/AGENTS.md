@@ -1,0 +1,1 @@
+static网页日志必须走log注册，禁止console.log

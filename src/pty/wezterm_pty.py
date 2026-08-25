@@ -14,6 +14,7 @@
 """
 
 import os
+import shutil
 import sys
 from typing import List, Optional
 
@@ -37,6 +38,31 @@ except ImportError:
     pywezterm = None  # type: ignore[assignment]
 
 _logger = get_logger("pty-wezterm")
+
+
+def _check_command_exists(command: list) -> None:
+    """spawn 前预检命令可执行性（可执行文件缺失时给出准确错误）
+
+    只检查命令首元素是否可解析为可执行文件（绝对路径直接校验存在性，
+    否则在 PATH 中查找）；找不到抛 FileNotFoundError（消息含命令名），
+    让上层区分"命令不可执行"与"PTY 后端创建失败"。
+    """
+    if not command:
+        return
+    exe = command[0]
+    if not exe:
+        return
+    # 绝对/相对路径：直接校验文件存在
+    if os.sep in exe or (IS_WINDOWS and "/" in exe):
+        if not os.path.isfile(exe):
+            raise FileNotFoundError(f"可执行文件不存在: {exe!r}")
+        return
+    # PATH 查找（Windows 下含 PATHEXT 扩展名尝试）
+    found = shutil.which(exe)
+    if found is None:
+        raise FileNotFoundError(
+            f"命令不存在或不在 PATH 中: {exe!r}（请检查命令名或 PATH）"
+        )
 
 
 class WeztermPseudoTerminal(PseudoTerminal):
@@ -107,9 +133,17 @@ class WeztermPseudoTerminal(PseudoTerminal):
             ):
                 # 完整命令行原样传给 CreateProcess，绕过 argv 引号序列化
                 raw_cmdline = " ".join(command)
+            # 命令可执行性预检：可执行文件不存在时（如 PATH 中找不到），
+            # 在 Python 侧抛出 FileNotFoundError 给出准确错误，避免底层
+            # CreateProcess 失败被误报为"PTY 后端创建失败"
+            _check_command_exists(command)
             pid, handle = self._pty.spawn(
                 command, cwd=cwd, env=env_dict, raw_cmdline=raw_cmdline
             )
+        except FileNotFoundError:
+            # 命令不存在：保留 OSError 语义透传，让上层给出"命令不可执行"
+            self._pty.close()
+            raise
         except Exception as e:
             self._pty.close()
             raise RuntimeError(f"wezterm spawn 失败: {e}") from e

@@ -31,7 +31,7 @@ _ATTEND_MAX_QUEUE = 4 * 1024 * 1024
 # 发送线程空闲轮询间隔（秒）
 _IDLE_POLL = 0.2
 # 单帧原始输出上限（字节）：PTY_READ_SIZE 即读块上限，此处兜底避免超
-# MAX_MESSAGE_LENGTH（1MB）导致客户端 recv 失败
+# MAX_MESSAGE_LENGTH（消息总大小上限）导致客户端 recv 失败
 _MAX_FRAME = 65536
 
 

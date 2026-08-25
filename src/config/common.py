@@ -7,12 +7,22 @@ import os
 import sys
 from typing import Optional
 
-from ._loader import flatten, load_toml, merge
+from ._loader import apply_env_overrides, flatten, load_toml, merge
 
-_all = merge(flatten(load_toml("common.toml")))
+# 环境变量覆写（PTY_AGENT_<key>，优先级高于文件）：先覆写再算 DATA_DIR，
+# 保证 PTY_AGENT_DATA_DIR 经 ~/%VAR% 展开后同样生效
+_all = apply_env_overrides(merge(flatten(load_toml("common.toml"))))
 
 _all["IS_WINDOWS"] = sys.platform == "win32"
-_all["DATA_DIR"] = os.path.join(os.path.expanduser("~"), ".pty-agent")
+# DATA_DIR 来自 common.toml [paths]：支持 ~ 与 %VAR%/$VAR 展开，空值回落默认家目录；
+# normpath 归一化分隔符（TOML 中 ~ 展开后可能混用 / 与 \）
+_all["DATA_DIR"] = os.path.normpath(
+    os.path.expandvars(
+        os.path.expanduser(
+            _all.get("DATA_DIR") or os.path.join(os.path.expanduser("~"), ".pty-agent")
+        )
+    )
+)
 _all["PROJECT_ROOT"] = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
