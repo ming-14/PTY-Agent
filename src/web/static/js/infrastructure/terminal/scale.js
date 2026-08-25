@@ -222,6 +222,12 @@ export function applyTerminalFontSize(uid) {
   // 因 scrollArea 取整不一致（在底部时 viewportY 可能 < length - rows），
   // 行级判定会误判，须用像素判定（scrollTop 距底部 ≤2px）。
   inst._wasAtBottom = _isViewportAtBottom(inst);
+  const vp0 = inst.term.element ? inst.term.element.querySelector('.xterm-viewport') : null;
+  const buf0 = inst.term.buffer && inst.term.buffer.active;
+  debug('zoom', 'fontSizeBefore uid=%s target=%d wasAtBottom=%s vpY=%d ybase=%d bufLen=%d vp{scrollTop=%d scrollH=%d clientH=%d}',
+        uid, fontSize, inst._wasAtBottom,
+        buf0 ? buf0.viewportY : -1, buf0 ? buf0.ybase : -1, buf0 ? buf0.length : -1,
+        vp0 ? vp0.scrollTop : -1, vp0 ? vp0.scrollHeight : -1, vp0 ? vp0.clientHeight : -1);
   // 变更前 canvas 尺寸（设字体前读取，作为轮询对比基准）
   const beforeCanvas = getCanvasSize(inst.term);
   try {
@@ -243,6 +249,12 @@ export function applyTerminalFontSize(uid) {
       error('zoom', 'syncScrollArea failed: %s', e && e.message);
     }
   }
+  const vp1 = inst.term.element ? inst.term.element.querySelector('.xterm-viewport') : null;
+  const buf1 = inst.term.buffer && inst.term.buffer.active;
+  debug('zoom', 'fontSizeAfter uid=%s vpY=%d ybase=%d bufLen=%d vp{scrollTop=%d scrollH=%d clientH=%d}',
+        uid,
+        buf1 ? buf1.viewportY : -1, buf1 ? buf1.ybase : -1, buf1 ? buf1.length : -1,
+        vp1 ? vp1.scrollTop : -1, vp1 ? vp1.scrollHeight : -1, vp1 ? vp1.clientHeight : -1);
   // 轮询 canvas 尺寸直到实际变化（或超时），再更新 frame 并锚定底部
   _waitCanvasChange(uid, beforeCanvas, 8, 40);
   debug('zoom', 'fontSize uid=%s -> %d', uid, fontSize);
@@ -259,18 +271,29 @@ function _isViewportAtBottom(inst) {
 
 /**
  * 轮询等待 canvas 尺寸变化（最多 attempts 帧，intervalMs 超时兜底），
- * 变化后应用 frame；若缩放前视口在底部，同步锚定回像素底部。
+ * 变化后应用 frame；若缩放前视口在底部，同步锚定回底部。
+ *
+ * 轮次标记防快速连续缩放干扰：每轮调用递增 inst._zoomWaitSeq，finish/tick
+ * 只认当前轮——旧轮（前一次缩放的 rAF 残留）canvas 变化晚到时不执行
+ * finish（否则会错时清 _wasAtBottom / 重复锚定）。
  */
 function _waitCanvasChange(uid, before, attempts, intervalMs) {
   const inst = state.termInstances[uid];
   if (!inst || !inst.term) return;
+  const seq = (inst._zoomWaitSeq = (inst._zoomWaitSeq || 0) + 1);
   let waited = 0;
   let finished = false;
   const finish = () => {
-    if (finished) return;
+    if (finished || inst._zoomWaitSeq !== seq) return;
     finished = true;
     clearTimeout(timer);
     try { applyTerminalFrameSize(uid); } catch (_) {}
+    const vp = inst.term.element ? inst.term.element.querySelector('.xterm-viewport') : null;
+    const buf = inst.term.buffer && inst.term.buffer.active;
+    debug('zoom', 'waitCanvasFinish uid=%s seq=%d waited=%d wasAtBottom=%s vpY=%d ybase=%d bufLen=%d vp{scrollTop=%d scrollH=%d clientH=%d}',
+          uid, seq, waited, inst._wasAtBottom,
+          buf ? buf.viewportY : -1, buf ? buf.ybase : -1, buf ? buf.length : -1,
+          vp ? vp.scrollTop : -1, vp ? vp.scrollHeight : -1, vp ? vp.clientHeight : -1);
     if (inst._wasAtBottom) {
       inst._wasAtBottom = false;
       _anchorViewportToBottom(uid);
@@ -278,7 +301,7 @@ function _waitCanvasChange(uid, before, attempts, intervalMs) {
   };
   const timer = setTimeout(finish, attempts * intervalMs);
   const tick = () => {
-    if (!state.termInstances[uid]) return;
+    if (!state.termInstances[uid] || inst._zoomWaitSeq !== seq) return;
     const now = getCanvasSize(inst.term);
     const changed = before && now && (Math.abs(now.w - before.w) > 0.5 || Math.abs(now.h - before.h) > 0.5);
     if (changed || waited >= attempts) {
@@ -292,30 +315,37 @@ function _waitCanvasChange(uid, before, attempts, intervalMs) {
 }
 
 /**
- * 锚定视口到像素底部（scrollTop = scrollH - clientH），并确认 2 帧防 xterm
- * 残留 rAF 覆盖。不调用 scrollToBottom：ydisp 与像素底部因取整不一致，
- * 触发 scroll 事件会反向把 ydisp 同步回 scrollTop/rowH，破坏一致性。
+ * 锚定视口到底部。
+ *
+ * 用 term.scrollToBottom()（ydisp = bufLen - rows，内容底部）而非直接设
+ * 像素 scrollTop：scrollH - clientH 因 scrollArea 取整偏差 ≠ 底部行 × rowH，
+ * 设像素会触发 xterm scroll 事件反向同步 ydisp 到错误行（如底部 114 被
+ * 同步成 105）→ 视图向上漂移几行。scrollToBottom 让 ydisp 正确。
+ *
+ * 需 rAF 重试：applyTerminalFrameSize 改变 frame 尺寸后，xterm 的
+ * ResizeObserver 异步触发 term.resize（rows 取整 ±1），ydisp 被重新换算
+ * 漂离底部（114 → 110）——多帧重复 scrollToBottom 等 resize 稳定后保持。
  */
-function _anchorViewportToBottom(uid) {
+function _anchorViewportToBottom(uid, retries = 5) {
   const inst = state.termInstances[uid];
   if (!inst || !inst.term) return;
-  const vp = inst.term.element
-    ? inst.term.element.querySelector('.xterm-viewport')
-    : null;
-  if (!vp) return;
-  vp.scrollTop = vp.scrollHeight - vp.clientHeight;
-  let cf = 2;
-  const confirm = () => {
-    if (cf-- <= 0) return;
-    if (!state.termInstances[uid]) return;
-    const v2 = state.termInstances[uid].term.element
-      ? state.termInstances[uid].term.element.querySelector('.xterm-viewport')
+  try {
+    inst.term.scrollToBottom();
+  } catch (e) {
+    error('zoom', 'scrollToBottom failed: %s', e && e.message);
+  }
+  if (retries > 0) {
+    requestAnimationFrame(() => _anchorViewportToBottom(uid, retries - 1));
+  } else {
+    const vp = inst.term.element
+      ? inst.term.element.querySelector('.xterm-viewport')
       : null;
-    if (v2) v2.scrollTop = v2.scrollHeight - v2.clientHeight;
-    requestAnimationFrame(confirm);
-  };
-  requestAnimationFrame(confirm);
-  debug('zoom', 'anchorBottom uid=%s scrollH-clientH=%d', uid, vp.scrollHeight - vp.clientHeight);
+    const buf = inst.term.buffer && inst.term.buffer.active;
+    debug('zoom', 'anchorBottom uid=%s vpY=%d bufLen=%d scrollTop=%d scrollH=%d clientH=%d',
+          uid,
+          buf ? buf.viewportY : -1, buf ? buf.length : -1,
+          vp ? vp.scrollTop : -1, vp ? vp.scrollHeight : -1, vp ? vp.clientHeight : -1);
+  }
 }
 
 /**
