@@ -233,14 +233,17 @@ export function applyTerminalFontSize(uid) {
   } catch (e) {
     error('zoom', 'set fontSize failed: %s', e && e.message);
   }
-  // 同步触发 xterm 视口刷新（漂移根因修复）：
+  // 同步触发 xterm 视口刷新：
   // fontSize setter 同步链中 DomRenderer._updateDimensions 已同步更新
   // dimensions，但 xterm 的 scrollTop 更新（_innerRefresh）在其内部 rAF 中
   // （下一帧）——中间帧 canvas 已变高但 scrollArea/scrollTop 未跟上，
-  // 放大时视口相对上移（漂移）。syncScrollArea(true) 同步执行 _innerRefresh：
-  // 更新 scrollArea 高度 + scrollTop = ydisp × newRowHeight 一步到位
-  // （xterm 自身公式，无取整/clamp 偏差），任意滚动位置保持相对位置。
-  if (core && core.viewport && typeof core.viewport.syncScrollArea === 'function') {
+  // 放大时视口相对上移。syncScrollArea(true) 同步执行 _innerRefresh：
+  // 更新 scrollArea 高度 + scrollTop = ydisp × newRowHeight 一步到位。
+  // 注意：底部时**跳过** syncScrollArea——其 scrollTop 重算会被 xterm
+  // clamp（滚动范围底部 < buffer 底部，含尾部空行）→ scroll 事件反向
+  // 同步 ydisp 到 clamp 值 → 内容从用户看到的 buffer 底部跳到滚动范围
+  // 底部（反复跳变）。底部直接 scrollToBottom 锚定（内容保持）。
+  if (!inst._wasAtBottom && core && core.viewport && typeof core.viewport.syncScrollArea === 'function') {
     try {
       core.viewport.syncScrollArea(true);
     } catch (e) {
@@ -252,11 +255,12 @@ export function applyTerminalFontSize(uid) {
   debug('zoom', 'fontSize uid=%s -> %d', uid, fontSize);
 }
 
-/** 视口是否在底部：像素优先（scrollTop 距底部 ≤2px），行级兜底。
+/** 视口是否在底部：像素或行级任一判定到底即 true。
  *
- * 像素底部（scrollH - clientH）与用户滚轮到底一致；scrollToBottom 的
- * ydisp=bufLen-rows 含尾部空行，会被 scrollTop clamp 到像素底部（拉锯
- * 根源）——判定与锚定统一用像素底部。
+ * 像素底部（scrollTop 距底部 ≤2px）与滚动条到底一致；行级底部
+ * （vpY ≥ bufLen - rows - 1）与 scrollToBottom 锚定语义一致。
+ * 两种底部状态（滚动条到底 / buffer 底部含尾部空行）都视为在底部，
+ * 缩放后都应锚定保持。
  */
 function _isViewportAtBottom(inst) {
   const vp = inst.term.element
@@ -315,38 +319,39 @@ function _waitCanvasChange(uid, before, attempts, intervalMs) {
 /**
  * 锚定视口到底部。
  *
- * 设像素底部 scrollTop = scrollH - clientH（与用户滚轮到底一致）。
- * 不用 scrollToBottom()：其 ydisp = bufLen - rows 含尾部空行，会被 xterm
- * 的 scrollTop clamp（scrollArea maxLength）截断到像素底部 → 锚定值与
- * 实际底部反复拉锯（日志：112 锚定后下一轮又 109，每轮抖动 3 行）。
+ * 用 term.scrollToBottom()（ydisp = bufLen - rows，用户看到的 buffer 底部）
+ * ——不设像素 scrollTop：像素底部（scrollH - clientH）是滚动范围底部
+ * （含尾部空行的 clamp），设像素会把内容推到滚动范围底部（视觉"向上"）。
+ * 底部缩放已跳过 syncScrollArea（无 clamp 副作用），scrollToBottom 的内容
+ * 保持稳定。
  *
- * 需 rAF 重试：applyTerminalFrameSize 改变 frame 尺寸后，xterm 的
- * ResizeObserver 异步触发 term.resize（rows 取整 ±1），scrollH/clientH
- * 变化——多帧重读重设直到像素底部稳定。重试受轮次守卫（seq）约束：
- * 快速缩放进入新轮（seq 变化）时旧轮停止。
+ * rAF 重试：applyTerminalFrameSize 改变 frame 尺寸后，xterm 的
+ * ResizeObserver 异步触发 term.resize（rows 取整 ±1），ydisp 被重新换算
+ * 漂离底部——多帧重复 scrollToBottom 直到行级到底（bufLen - rows - 1）
+ * 或上限 10 帧。重试受轮次守卫（seq）约束：快速缩放进入新轮（seq 变化）
+ * 时旧轮停止。
  */
 function _anchorViewportToBottom(uid, seq, retries = 10) {
   const inst = state.termInstances[uid];
   if (!inst || !inst.term) return;
-  const vp = inst.term.element
-    ? inst.term.element.querySelector('.xterm-viewport')
-    : null;
-  if (!vp) return;
   try {
-    vp.scrollTop = vp.scrollHeight - vp.clientHeight;
+    inst.term.scrollToBottom();
   } catch (e) {
-    error('zoom', 'anchor scrollTop failed: %s', e && e.message);
+    error('zoom', 'scrollToBottom failed: %s', e && e.message);
   }
-  const delta = vp.scrollHeight - vp.clientHeight - vp.scrollTop;
-  const atBottom = delta >= -2 && delta <= 2;
+  const buf = inst.term.buffer && inst.term.buffer.active;
+  const atBottom = buf && buf.viewportY !== undefined && buf.length > 0
+    && buf.viewportY >= buf.length - inst.term.rows - 1;
   if (retries > 0 && inst._zoomWaitSeq === seq && !atBottom) {
     requestAnimationFrame(() => _anchorViewportToBottom(uid, seq, retries - 1));
   } else if (retries === 0 || atBottom) {
-    const buf = inst.term.buffer && inst.term.buffer.active;
+    const vp = inst.term.element
+      ? inst.term.element.querySelector('.xterm-viewport')
+      : null;
     debug('zoom', 'anchorBottom uid=%s vpY=%d bufLen=%d scrollTop=%d scrollH=%d clientH=%d',
           uid,
           buf ? buf.viewportY : -1, buf ? buf.length : -1,
-          vp.scrollTop, vp.scrollHeight, vp.clientHeight);
+          vp ? vp.scrollTop : -1, vp ? vp.scrollHeight : -1, vp ? vp.clientHeight : -1);
   }
 }
 
