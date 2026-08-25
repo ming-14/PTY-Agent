@@ -1,6 +1,9 @@
 {
   "enabled": true,
   "plugins": {
+    "2048": {
+      "enabled": true
+    },
     "files": {
       "enabled": true
     },

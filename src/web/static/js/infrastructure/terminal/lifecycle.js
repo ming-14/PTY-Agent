@@ -5,6 +5,7 @@
 import { state, getSessionFontSize, clearSessionFontSize, isSizeUILocked } from '../../domain/state.js';
 import { debug } from '../../domain/logger.js';
 import { t } from '../../domain/i18n.js';
+import { $ } from '../domUtils.js';
 import { sendToSession } from '../wsClient.js';
 import { DEFAULT_FONT_SIZE, DEFAULT_COLS, DEFAULT_ROWS } from '../../domain/constants.js';
 import { currentTheme } from '../storage.js';

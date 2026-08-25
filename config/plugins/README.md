@@ -154,6 +154,33 @@ python app.py plugin status <name>               # 运行状态
 python app.py plugin config <name> [key value]   # 查看/修改配置
 ```
 
+## 上下文输出（<插件名>.md）
+
+插件目录下若存在 `<插件名>.md`（如 `state_check.md`、`files.md`），其内容会
+**输出到 CLI 给用户看**（stderr 信息区，不进入会话输出/终端画面）：
+
+```
+[plugin state_check context]
+<state_check.md 内容>
+[plugin state_check context end]
+```
+
+**输出时机（按形态）：**
+
+| 形态 | 输出时机 | 说明 |
+|------|----------|------|
+| `process` | 守护进程启动时 | `app.py start` 后 CLI 输出进程级插件上下文 |
+| `session` | exec 启用时 | `exec --plugin <name>` 时 CLI 输出该插件上下文 |
+| `cli` | exec 启用时 | `exec --plugin <name>` 时 CLI 输出该插件上下文 |
+
+约定：
+- 输出到 CLI（stderr 信息区），**不注入会话输出流、不渲染进终端画面**
+- **只发一次**：每个 daemon 周期内每插件文档只输出一次，重启 daemon 后重新发送（新周期）
+- **内容变化重发**：同周期内插件 .md 文件内容更新（sha256 变化）自动重新发送
+- 上限 64KB，超出截断并追加 `[context truncated]` 提示
+- 文件缺失/读取失败仅跳过，不影响插件加载与挂载
+- 重置：删除 `~/.pty-agent/plugin-context-state.json` 或重启 daemon
+
 ## 插件一览
 
 | 插件 | 形态 | 功能 |

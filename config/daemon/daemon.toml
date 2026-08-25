@@ -29,7 +29,8 @@ SOCKET_LISTEN_BACKLOG  = 5
 PTY_READ_SIZE          = 65536
 
 [named_resource]
-JOB_OBJECT_NAME_PREFIX = "Local\\PTYJob_"
+# JOB_OBJECT_NAME_PREFIX = "Local\\PTYJob_"
+JOB_OBJECT_NAME_PREFIX = ""
 
 [input_limit]
 MAX_SESSIONS = 50
@@ -38,7 +39,7 @@ MAX_SESSIONS = 50
 WORKFLOW_MAX_RUNS          = 50
 WORKFLOW_DEFAULT_PARALLEL  = 4
 WORKFLOW_STEP_OUTPUT_LIMIT = 4096
-WORKFLOW_MAX_FILE_SIZE     = 1048576
+WORKFLOW_MAX_FILE_SIZE     = 20971520
 
 [auth]
 # Token 认证（[listener] TOKEN_ENABLED=true 时生效）
@@ -46,13 +47,15 @@ AUTH_TOKEN_ROTATE_INTERVAL = 1800
 AUTH_TOKEN_GRACE_PERIOD    = 120
 
 # 公私钥认证（[listener] TLS_ENABLED=true 时生效）
+# 以下路径字段为空 = 默认位于 <DATA_DIR> 下（DATA_DIR 见 common.toml [paths]），
+# 支持 ~ 与 %VAR%/$VAR 展开；自定义 DATA_DIR 后这些路径自动跟随
 PUBKEY_ALGORITHM       = "ed25519"
-PUBKEY_AUTHORIZED_KEYS = "~/.pty-agent/authorized_keys"
-PUBKEY_KEY_DIR         = "~/.pty-agent/keys"
+PUBKEY_AUTHORIZED_KEYS = ""             # 默认 <DATA_DIR>/authorized_keys
+PUBKEY_KEY_DIR         = ""             # 默认 <DATA_DIR>/keys
 
 # TLS 服务端（[listener] TLS_ENABLED=true 时生效）
-TLS_CERT_DIR           = "~/.pty-agent/certs"
-TLS_CERT_FILE          = "~/.pty-agent/certs/daemon.crt"
-TLS_KEY_FILE           = "~/.pty-agent/certs/daemon.key"
+TLS_CERT_DIR           = ""             # 默认 <DATA_DIR>/certs
+TLS_CERT_FILE          = ""             # 默认 <DATA_DIR>/certs/daemon.crt
+TLS_KEY_FILE           = ""             # 默认 <DATA_DIR>/certs/daemon.key
 TLS_CERT_VALIDITY_DAYS = 365
 TLS_CERT_SUBJECT_CN    = "pty-agent-daemon"

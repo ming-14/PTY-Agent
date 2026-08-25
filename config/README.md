@@ -23,7 +23,7 @@ daemon 支持三种独立监听器，各自配置监听位置（host/port），�
 
 ```
 config/
-├── common.toml          # 共享：终端 / 压缩 / 输入限制 / AI 超时
+├── common.toml          # 共享：终端 / 压缩 / 输入限制 / 数据目录（DATA_DIR）
 ├── shared.toml          # 共享：协议 / IPC 命名 / daemon 控制 / 日志格式
 ├── transfer.toml        # 共享：传输协议帧参数
 ├── daemon/
@@ -47,7 +47,7 @@ config/
 
 | 文件 | 加载模块 | 消费方 | 说明 |
 |------|----------|--------|------|
-| `common.toml` | `common.py` | 全项目 | 终端默认值 / 压缩 / 输入限制 / AI 超时 |
+| `common.toml` | `common.py` | 全项目 | 终端默认值 / 压缩 / 输入限制 / 数据目录（`DATA_DIR`，日志/凭据/插件/历史库的根目录） |
 | `shared.toml` | `shared.py`（合并） | 全项目 | 协议缓冲 / IPC 命名 / daemon 控制超时 / 日志格式 |
 | `daemon/daemon.toml` | `daemon.py`（合并） | 守护进程 | 三监听器（`[listener]`：basic/token/tls，含 `BASIC_PASSWORD`）/ 缓冲 / 触发超时 / backlog / 命名资源 / 认证参数（轮换周期、授权公钥、TLS 证书） |
 | `daemon/logging.toml` | `daemon.py`（合并） | 守护进程 | 日志级别 / logger 分组 / 归档间隔 |
@@ -64,6 +64,29 @@ config/
 |------|--------|------|
 | `daemon/vnc.toml` | winvnc.exe（部署参考） | VNC 运行时参数（端口 / 密码 / 日志）。Python 侧 VNC 开关在 `daemon/web.toml [vnc]` 节 |
 | `daemon/vnc.example.toml` | 人工 | `vnc.toml` 的示例模板 |
+
+## 环境变量覆写
+
+所有 TOML 配置 key 均可用环境变量覆写，**优先级：环境变量 > 文件**。
+
+- 环境变量名 = `PTY_AGENT_` + 配置 key（大写），如：
+
+  | TOML key | 环境变量 | 类型 |
+  |----------|---------|------|
+  | `DATA_DIR` | `PTY_AGENT_DATA_DIR` | str（~/%VAR% 展开） |
+  | `ENABLE_WEB` | `PTY_AGENT_ENABLE_WEB` | bool |
+  | `AUTH_TOKEN_ROTATE_INTERVAL` | `PTY_AGENT_AUTH_TOKEN_ROTATE_INTERVAL` | int |
+  | `CONNECT_MODE` | `PTY_AGENT_CONNECT_MODE` | str |
+  | `TRANSFER_CHUNK_SIZE` | `PTY_AGENT_TRANSFER_CHUNK_SIZE` | int |
+
+- 取值按文件原值类型转换：bool 接受 `true/false/1/0/yes/no/on/off`（大小写不敏感）；
+  int/float 直接转换；list/dict（如 `ISOLATION_NET_ALLOWLIST`）按 JSON 解析；
+  str 原样。转换失败时警告并保留文件值，不阻断启动。
+- 仅对配置中已存在的 key 生效；环境变量设置了但配置中无对应 key 时被忽略。
+- 运行时常量（IS_WINDOWS/PROJECT_ROOT/LOG_DIR 等非 TOML 配置）不参与覆写。
+- sandbox 配置按 `<节名>_<键名>` 展平后覆写（如 `PTY_AGENT_SANDBOX_ENABLED`、
+  `PTY_AGENT_QUOTA_MEMORY_MB`、`PTY_AGENT_ISOLATION_NET_POLICY`）。
+- `PTY_AGENT_CONFIG_DIR` 为加载器专属变量（测试隔离重定向配置目录），非配置 key。
 
 ## 规则
 

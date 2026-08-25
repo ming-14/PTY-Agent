@@ -1,0 +1,19 @@
+{
+  "id": "2048",
+  "version": "1.0.0",
+  "kind": "cli",
+  "description": "2048 游戏：exec 命令改写为执行插件自带 main.py（w/a/s/d 控制，quit 退出）",
+  "commands": [
+    "exec"
+  ],
+  "hooks": {
+    "before_request": {}
+  },
+  "config": {
+    "defaults": {
+      "timeout": 10,
+      "trigger": "quit",
+      "interpreter": ""
+    }
+  }
+}

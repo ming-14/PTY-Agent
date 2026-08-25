@@ -65,7 +65,7 @@ python -c "import sys,importlib.util as u; print('[FAIL] Python >= 3.8 required,
 | `advsend <session-id> <options>` | 发送输入到运行中的会话（JSON + 控制字符转义解码） | 同 `send` | `advsend server -i "{ctrl+c}" -e none` |
 | `read <session-id> [options]` | 读取会话输出 | `-l <N>`, `-g "<regex>"`, `-o <path>` | `read myid -l 10` |
 | `list` | 列出所有会话 | | |
-| `kill <session-id>` | 终止会话 | | |
+| `kill <session-id>` | 终止会话；会话结束后会变成`ended`状态，使用`kill`命令彻底去除且移出会话列表 | | |
 | `events <session-id> [options]` | 查看会话运行程序生命周期事件 | `-l <N>`, `--since <iso-datetime\|HH:MM>` | `events myid -l 10` |
 | `closewin <session-id> <window-handle>` | 关闭 GUI 窗口；`<window-handle>`支持十进制或 0x十六进制| | |
 | `mouse <session-id> <action>` | 发送鼠标动作到 PTY 会话 | `--button`, `--count`, `--ctrl`, `--shift`, `--alt`, `--grep` | `mouse myid click 10,5 --button right` / `mouse myid _get_cursor_location` |
@@ -503,7 +503,7 @@ steps:
 ```
 
 解析期校验（run 时即报错，不产生运行）：id 非空唯一、type 合法且必填字段齐全、
-`depends_on` 引用存在且无环、`on_error`/`retry`/`max_parallel` 取值合法、定义文件上限 1 MB。
+`depends_on` 引用存在且无环、`on_error`/`retry`/`max_parallel` 取值合法、定义文件上限 20 MB。
 
 **步骤类型**：
 

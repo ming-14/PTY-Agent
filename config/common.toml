@@ -1,4 +1,9 @@
-# 共有配置 —— Daemon 与 Client 均需使用的常量（终端默认尺寸 / 压缩等级 / 输入限制）
+# 共有配置 —— Daemon 与 Client 均需使用的常量（终端默认尺寸 / 压缩等级 / 输入限制 / 数据目录）
+
+[paths]
+# 运行时数据根目录：日志（<DATA_DIR>/logs）、单实例锁、SHM 回退文件、插件存储、history.db 等
+# 支持 ~ 与 %VAR%/$VAR 环境变量展开；空值回落到默认 ~/.pty-agent
+DATA_DIR = "~/.pty-agent"
 
 [terminal]
 DEFAULT_COLS = 80

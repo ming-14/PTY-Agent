@@ -656,9 +656,8 @@ export function handleResizeComplete(msg) {
   }
   if (msg.cols !== inst.term.cols || msg.rows !== inst.term.rows) {
     // 响应到达时 term 已被更新的 resize 覆盖：丢弃过期响应。
-    // 注意：本端发起的 resize 依赖此响应恢复 scrollback，若被丢弃
-    // 且无后续响应 → scrollback 丢失（此场景需由后续 session_resized
-    // 广播或再次 resize 恢复）。
+    // ttyd 式：resize 不重建 scrollback，仅更新可见区——过期响应丢弃后
+    // 可见区由后续 session_resized 广播或再次 resize 的 snapshot 收敛。
     debug('resize', 'resize_complete uid=%s STALE dropped: msg=%dx%d term=%dx%d scrollback_len=%d',
           uid, msg.cols, msg.rows, inst.term.cols, inst.term.rows, (msg.scrollback || '').length);
     return;

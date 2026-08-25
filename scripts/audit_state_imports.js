@@ -25,7 +25,10 @@ for (const file of walk(ROOT)) {
     for (const name of imported) {
       // 别名导入（as）跳过（形如 A as B）
       const bare = name.split(/\s+as\s+/)[0].trim();
-      const re = new RegExp(`\\b${bare}\\b`);
+      // 转义正则特殊字符（$ 等），用"前后非单词字符"界定标识符
+      //（\b 对 $ 无效——$ 本身非单词字符，$('x') 的 \b 不成立）
+      const escaped = bare.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp('(^|[^\\w])' + escaped + '($|[^\\w])');
       if (!re.test(rest)) {
         console.log(`[未使用导入] ${rel}: ${name} (from ${m[2]})`);
         problems++;

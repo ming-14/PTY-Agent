@@ -23,6 +23,8 @@ DEFAULT_TRIGGER_TIMEOUT = 120.0
 
 [auth]
 # 公私钥认证（CONNECT_MODE=tls 时生效）
-PUBKEY_PRIVATE_KEY_PATH = "~/.pty-agent/keys/id_ed25519"  # 客户端私钥
-KNOWN_HOSTS_FILE        = "~/.pty-agent/known_hosts"      # TOFU 信任存储文件
-TOFU_STRICT             = true                            # true=指纹不匹配拒绝，false=仅警告
+# 路径字段为空 = 默认位于 <DATA_DIR> 下（DATA_DIR 见 common.toml [paths]），
+# 支持 ~ 与 %VAR%/$VAR 展开；自定义 DATA_DIR 后自动跟随
+PUBKEY_PRIVATE_KEY_PATH = ""          # 默认 <DATA_DIR>/keys/id_ed25519
+KNOWN_HOSTS_FILE        = ""          # 默认 <DATA_DIR>/known_hosts
+TOFU_STRICT             = true        # true=指纹不匹配拒绝，false=仅警告

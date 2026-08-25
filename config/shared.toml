@@ -8,7 +8,10 @@
 
 [protocol]
 SOCKET_RECV_BUFSIZE = 4096
-MAX_MESSAGE_LENGTH  = 1_048_576   # 1 MB
+# 消息总大小上限。需大于 workflow 定义文件上限（20MB）经 JSON 序列化 +
+# 信封/凭证/签名后的体积（UTF-8 非 ASCII 会转义膨胀），留足余量防止
+# 协议层先于 workflow 层拦截大定义文件。
+MAX_MESSAGE_LENGTH  = 50_331_648   # 48 MB
 
 [ipc]
 SINGLE_INSTANCE_MUTEX_NAME = "Local\\PTYAgentSingleInstance"
