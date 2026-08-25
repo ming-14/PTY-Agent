@@ -23,13 +23,12 @@ const WHEEL_DELTA = 120;
 const WHEEL_LINES = 3;
 
 /**
- * 监控 terminal-frame 的尺寸/位置变化（诊断 IME/输入导致"框被顶动"）。
+ * 监控终端布局变化（诊断 IME 组词时预编辑 DOM 节点撑动布局）。
  *
- * 三层监控：
- * 1. MutationObserver（style 属性）——applyFrame/resize 主动设置
- * 2. ResizeObserver（尺寸）——父级布局撑动导致 frame 尺寸变
- * 3. rAF 位置轮询（x/y）——父级布局撑动导致 frame 位置变（style 不变）
- * 配合 onResize 日志定位"框被顶动"的来源。
+ * 三层：
+ * 1. frame style/尺寸/位置（MutationObserver + ResizeObserver + rAF）
+ * 2. body 新增节点（组词时预编辑节点必然插入 DOM——记录 tag/class/id）
+ * 3. .xterm-screen rect（frame 内内容被撑动）
  */
 export function monitorTerminalFrame() {
   const frame = document.getElementById('terminal-frame');
@@ -43,13 +42,11 @@ export function monitorTerminalFrame() {
             inst && inst.term ? inst.term.cols : '?', inst && inst.term ? inst.term.rows : '?');
     } catch (_) {}
   };
-  // 1. style 属性变化（applyFrame 等主动设置）
+  // 1. frame style/尺寸/位置
   const obsStyle = new MutationObserver(() => logFrame('style'));
   obsStyle.observe(frame, { attributes: true, attributeFilter: ['style'] });
-  // 2. 尺寸变化（父级布局撑动）
   const obsResize = new ResizeObserver(() => logFrame('resize'));
   try { obsResize.observe(frame); } catch (_) {}
-  // 3. 位置变化（rAF 轮询 x/y——ResizeObserver 不报位置）
   let lastX = null;
   let lastY = null;
   const tick = () => {
@@ -64,6 +61,52 @@ export function monitorTerminalFrame() {
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
+  // 2. body 新增节点（IME 组合覆盖层）：Chromium 在组合时创建无 class 的
+//    DIV/SPAN 插入终端内显示预编辑文本（static/inline 占布局——预编辑增长
+//    撑动 .xterm-screen 左移）。检测到（frame 内 + 无 class 的 DIV/SPAN）
+//    即加 class，CSS 设 absolute（不占流但显示在原位）。
+  let lastAddedLog = 0;
+  const obsBody = new MutationObserver((muts) => {
+    const now = Date.now();
+    for (const m of muts) {
+      for (const n of m.addedNodes) {
+        if (n.nodeType !== 1) continue;
+        const tag = n.tagName || '?';
+        const cls = (n.className && n.className.toString ? n.className.toString() : '').slice(0, 60);
+        const id = n.id || '';
+        if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'LINK') continue;
+        const inFrame = frame.contains(n);
+        // IME 组合覆盖层：frame 内、无 class 的 DIV/SPAN → 加 class 不占布局
+        if (inFrame && !cls && (tag === 'DIV' || tag === 'SPAN')) {
+          try { n.classList.add('xterm-ime-overlay'); } catch (_) {}
+        }
+        if (now - lastAddedLog < 200) continue;
+        lastAddedLog = now;
+        const p = n.parentNode;
+        const pTag = p ? (p.tagName || '?') : '?';
+        const pCls = p && p.className && p.className.toString ? p.className.toString().slice(0, 40) : '';
+        debug('layout', 'body-added: <%s class="%s" id="%s"> parent=<%s class="%s"> inFrame=%s',
+              tag, cls, id, pTag, pCls, inFrame ? 'Y' : 'N');
+      }
+    }
+  });
+  try { obsBody.observe(document.body, { childList: true, subtree: true }); } catch (_) {}
+  // 3. .xterm-screen rect（frame 内内容被撑动）
+  let lastScreen = null;
+  const tickScreen = () => {
+    try {
+      const sc = frame.querySelector('.xterm-screen') || frame.querySelector('.xterm-rows');
+      if (sc) {
+        const r = sc.getBoundingClientRect();
+        if (lastScreen && (Math.abs(r.width - lastScreen.w) > 0.5 || Math.abs(r.height - lastScreen.h) > 0.5 || Math.abs(r.x - lastScreen.x) > 0.5 || Math.abs(r.y - lastScreen.y) > 0.5)) {
+          debug('layout', 'screen-rect: w=%d h=%d x=%d y=%d', Math.round(r.width), Math.round(r.height), Math.round(r.x), Math.round(r.y));
+        }
+        lastScreen = { w: r.width, h: r.height, x: r.x, y: r.y };
+      }
+    } catch (_) {}
+    requestAnimationFrame(tickScreen);
+  };
+  requestAnimationFrame(tickScreen);
 }
 
 /**
