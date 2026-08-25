@@ -76,10 +76,6 @@ export function ensureTerminal(uid) {
     cols: initCols,
     rows: initRows,
     altClickMovesCursor: false,
-    // windowsMode：xterm.js 官方 Windows/ConPTY 模式——
-    // resize 时 scrollback 不 reflow（xterm 自身 reflow 对行尾空格行有
-    // 合并缺陷），scrollback 由后端 pywezterm 模型权威重建。
-    windowsMode: true,
   });
 
   if (WebLinksAddon) {

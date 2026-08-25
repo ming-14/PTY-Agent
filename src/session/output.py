@@ -353,88 +353,10 @@ class OutputMixin:
                 "resize: returning scrollback len=%d (preserved)",
                 len(scrollback_ansi),
             )
-            # 去重叠：resize 变窄→变宽后，reflow 会把旧可见区顶部行推入
-            # scrollback（ConPTY 保留 scrollback 语义），capture 的 scrollback
-            # 尾部与 snapshot（当前可见区）顶部内容相同——前端重建后用户
-            # 滚动到底部看到重复行。返回前按行比较去掉尾部重叠行。
-            scrollback_ansi = self._trim_scrollback_overlap(
-                scrollback_ansi, snapshot
-            )
             return (snapshot, scrollback_ansi)
         except Exception as e:
             _logger.warning("resize: 返回 snapshot 失败: %s", e)
             return ("", "")
-
-    @staticmethod
-    def _trim_scrollback_overlap(scrollback: str, snapshot: str) -> str:
-        """去掉 scrollback 尾部的重复段（reflow 残留）。
-
-        两类重复：
-        1. 尾部 vs snapshot 头部（旧可见区行被 reflow 推入 scrollback，与
-           当前可见区内容相同）——滑动匹配（跳过空行，snapshot 无空行）
-        2. scrollback 内部重复（多次 resize 的 reflow 残留：尾部非空段与
-           前面紧邻的非空段相同，中间可能有空行）——去掉尾部重复段
-        """
-        if not scrollback:
-            return scrollback
-        import re
-
-        ansi_re = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
-        sb_lines = scrollback.split("\r\n")
-        if sb_lines and sb_lines[-1] == "":
-            sb_lines.pop()
-
-        def plain(line):
-            return ansi_re.sub("", line).rstrip()
-
-        # ---- 1. 尾部 vs snapshot 头部 ----
-        trim = 0
-        if snapshot:
-            cleaned = re.sub(r"\x1b\[\?[0-9;]*[hl]", "", snapshot)
-            snap_lines = [p for p in re.split(r"\x1b\[\d+;\d+[Hf]", cleaned) if p.strip()]
-            snap_nonempty = [plain(l) for l in snap_lines if l.strip()]
-            sb_nonempty = [(i, plain(sb_lines[i])) for i in range(len(sb_lines)) if sb_lines[i].strip()]
-            max_trim = min(len(sb_nonempty), len(snap_nonempty), 100)
-            trim = 0
-            for start in range(max_trim, 0, -1):
-                for j in range(len(snap_nonempty) - start + 1):
-                    if [p for _, p in sb_nonempty[-start:]] == snap_nonempty[j:j + start]:
-                        trim = start
-                        break
-                if trim:
-                    break
-            if trim > 0:
-                sb_lines = sb_lines[: sb_nonempty[-trim][0]]
-
-        # ---- 2. scrollback 内部重复（尾部非空段 == 前面紧邻非空段）----
-        nonempty_idx = [i for i in range(len(sb_lines)) if sb_lines[i].strip()]
-        internal_trim = 0
-        # 尾部非空序列（倒序向前）
-        tail_seq = []
-        for i in reversed(nonempty_idx):
-            tail_seq.append(plain(sb_lines[i]))
-            if len(tail_seq) > 50:
-                break
-        for n in range(len(tail_seq), 0, -1):
-            # 尾部 n 个非空行 == 前面紧邻 n 个非空行
-            if len(nonempty_idx) < 2 * n:
-                continue
-            tail = [plain(sb_lines[i]) for i in nonempty_idx[-n:]]
-            prev = [plain(sb_lines[i]) for i in nonempty_idx[-2 * n:-n]]
-            if tail == prev:
-                internal_trim = n
-                break
-        if internal_trim > 0:
-            # 去掉从"尾部重复段起点"（含中间空行）开始的所有行
-            start_idx = nonempty_idx[-internal_trim]
-            sb_lines = sb_lines[:start_idx]
-
-        _logger.info("resize: trim_overlap=%d internal_trim=%d (sb_lines=%d)",
-                     trim, internal_trim, len(sb_lines))
-        # 去掉尾部空行（trim 截断可能留下空行，join 后产生多余 \r\n\r\n）
-        while sb_lines and not sb_lines[-1].strip():
-            sb_lines.pop()
-        return "\r\n".join(sb_lines) + ("\r\n" if scrollback.endswith("\r\n") else "")
 
     def _apply_program_resize(self, cols: int, rows: int) -> None:
         """应用程序发起的尺寸变更（CSI 8;rows;colst）并广播

@@ -668,39 +668,32 @@ export function handleResizeComplete(msg) {
   const s = state.sessions[uid];
   const isHistory = !!(s && s.history);
   const snapshot = msg.snapshot || '';
-  const scrollbackAnsi = msg.scrollback || '';
-  // resize 场景用后端 scrollback 重建（后端 pywezterm 模型权威——验证脚本
-  // 确认多次 resize 后 scrollback 完整，无拆分残留）；后端 scrollback 为空
-  // 时保留前端已有内容（不清空——模式 B 的 \x1b[3J 会清掉前端历史）
-  if (snapshot.length > 0 || scrollbackAnsi.length > 0) {
-    try {
-      const scrollbackLines = scrollbackAnsi ? scrollbackAnsi.split('\r\n') : [];
-      if (scrollbackLines.length > 0 && scrollbackLines[scrollbackLines.length - 1] === '') {
-        scrollbackLines.pop();
-      }
-      debug('resize', 'resize_complete rebuild uid=%s scrollback_lines=%d snapshot_len=%d rebuild=%s',
-            uid, scrollbackLines.length, snapshot.length, scrollbackLines.length > 0);
-      ports.terminal.restoreScrollbackAndSnapshot(
-        inst.term, scrollbackLines, snapshot, isHistory, scrollbackLines.length > 0);
-    } catch (e) {
-      error('session', 'resize_complete apply scrollback+snapshot failed: %s', e && e.message);
-    }
+  // ttyd 方案：前端 xterm 是 scrollback 单一源，resize 时不重建 scrollback
+  //（保留前端累积），只更新可见区（后端 snapshot 权威）。
+  if (snapshot) {
+    debug('resize', 'resize_complete update visible uid=%s', uid);
+    ports.terminal.restoreScrollbackAndSnapshot(inst.term, [], snapshot, isHistory, false);
   }
-  // resize 期间缓冲的输出：不丢弃，重建后写入终端。
-  // 缓冲内容为后端模型已 feed 的真实输出（含 resize 后的新内容），
-  // snapshot 之后到达的输出不在 snapshot 中，丢弃会导致前端永久丢失
-  // （后端模型有、前端无——此前"丢弃 partial repaint"的假设过度）。
-  // 写入安全：缓冲字节是模型在快照后继续 feed 的流，含新尺寸的 CUP
-  // 定位序列，snapshot 重建后写入与模型状态一致（repaint 部分重复写
-  // 同内容，光标定位后收敛，无错位）。
+  // resize 期间缓冲的输出：重建后处理。
+  // 缓冲内容主要为 ConPTY repaint（旧宽度整屏重画，以光标定位 (0,0) 开头）
+  // ——旧宽度坐标在新宽度前端错位且 snapshot 已覆盖可见区，丢弃；
+  // 非 repaint 的真实输出（resize 期间的新内容）保留写入。
   const buffered = inst._resizeBuffer;
   inst._resizePending = false;
   inst._resizeBuffer = [];
   if (buffered.length > 0) {
     try {
-      inst.term.write(buffered.join(''));
-      debug('session', 'resize_complete uid=%s: replayed %d buffered outputs (len=%d)',
-            uid, buffered.length, buffered.reduce((a, b) => a + b.length, 0));
+      const joined = buffered.join('');
+      // repaint 特征：整屏重画以光标定位起始（\x1b[H 或 \x1b[1;1H）
+      const isRepaint = /^\x1b\[(\??[Hf]|1;1[Hf])/.test(joined);
+      if (isRepaint) {
+        debug('session', 'resize_complete uid=%s: dropped repaint buffer (len=%d)',
+              uid, joined.length);
+      } else {
+        inst.term.write(joined);
+        debug('session', 'resize_complete uid=%s: replayed %d buffered outputs (len=%d)',
+              uid, buffered.length, joined.length);
+      }
     } catch (e) {
       error('session', 'resize_complete replay buffered outputs failed: %s', e && e.message);
     }
@@ -741,21 +734,11 @@ export function handleSessionResized(msg) {
       try { ports.terminal.applyTerminalFrameSize(uid); } catch (_) {}
     });
   }
-  if (snapshot.length > 0 || scrollbackAnsi.length > 0) {
-    try {
-      const scrollbackLines = scrollbackAnsi ? scrollbackAnsi.split('\r\n') : [];
-      if (scrollbackLines.length > 0 && scrollbackLines[scrollbackLines.length - 1] === '') {
-        scrollbackLines.pop();
-      }
-      debug('resize', 'session_resized rebuild uid=%s scrollback_lines=%d snapshot_len=%d rebuild=%s',
-            uid, scrollbackLines.length, snapshot.length, scrollbackLines.length > 0);
-      // resize 广播场景同 handleResizeComplete：后端 scrollback 非空则重建
-      //（权威正确），为空则保留前端（不清空）
-      ports.terminal.restoreScrollbackAndSnapshot(
-        inst.term, scrollbackLines, snapshot, false, scrollbackLines.length > 0);
-    } catch (e) {
-      error('session', 'session_resized apply scrollback+snapshot failed: %s', e && e.message);
-    }
+  // ttyd 方案：resize 不重建 scrollback（前端 xterm 单一源，自身 reflow），
+  // 只更新可见区（后端 snapshot 权威）
+  if (snapshot) {
+    debug('resize', 'session_resized update visible uid=%s', uid);
+    ports.terminal.restoreScrollbackAndSnapshot(inst.term, [], snapshot, false, false);
   }
   if (state.activeTab === uid) {
     ports.ui.updateStatusInfo(uid);
