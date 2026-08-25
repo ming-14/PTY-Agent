@@ -23,26 +23,47 @@ const WHEEL_DELTA = 120;
 const WHEEL_LINES = 3;
 
 /**
- * 监控 terminal-frame 的 style 变化（诊断 IME/输入导致"框被顶动"）。
+ * 监控 terminal-frame 的尺寸/位置变化（诊断 IME/输入导致"框被顶动"）。
  *
- * 记录每次 frame style 变化后的实际 rect + cols/rows——配合 onResize
- * 日志定位：框动是 applyTerminalFrameSize 主动设置（resize/zoom），还是
- * 外部（IME textarea 撑宽等）导致布局变化。
+ * 三层监控：
+ * 1. MutationObserver（style 属性）——applyFrame/resize 主动设置
+ * 2. ResizeObserver（尺寸）——父级布局撑动导致 frame 尺寸变
+ * 3. rAF 位置轮询（x/y）——父级布局撑动导致 frame 位置变（style 不变）
+ * 配合 onResize 日志定位"框被顶动"的来源。
  */
 export function monitorTerminalFrame() {
   const frame = document.getElementById('terminal-frame');
   if (!frame) return;
-  const obs = new MutationObserver(() => {
+  const logFrame = (why) => {
     try {
       const r = frame.getBoundingClientRect();
       const inst = state.activeTab ? state.termInstances[state.activeTab] : null;
-      debug('layout', 'frame-style: w=%d h=%d x=%d y=%d cols=%s rows=%s',
-            Math.round(r.width), Math.round(r.height), Math.round(r.x), Math.round(r.y),
+      debug('layout', 'frame-changed[%s]: w=%d h=%d x=%d y=%d cols=%s rows=%s',
+            why, Math.round(r.width), Math.round(r.height), Math.round(r.x), Math.round(r.y),
             inst && inst.term ? inst.term.cols : '?', inst && inst.term ? inst.term.rows : '?');
     } catch (_) {}
-  });
-  obs.observe(frame, { attributes: true, attributeFilter: ['style'] });
-  return obs;
+  };
+  // 1. style 属性变化（applyFrame 等主动设置）
+  const obsStyle = new MutationObserver(() => logFrame('style'));
+  obsStyle.observe(frame, { attributes: true, attributeFilter: ['style'] });
+  // 2. 尺寸变化（父级布局撑动）
+  const obsResize = new ResizeObserver(() => logFrame('resize'));
+  try { obsResize.observe(frame); } catch (_) {}
+  // 3. 位置变化（rAF 轮询 x/y——ResizeObserver 不报位置）
+  let lastX = null;
+  let lastY = null;
+  const tick = () => {
+    try {
+      const r = frame.getBoundingClientRect();
+      if (lastX !== null && (r.x !== lastX || r.y !== lastY)) {
+        logFrame('pos');
+      }
+      lastX = r.x;
+      lastY = r.y;
+    } catch (_) {}
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
 }
 
 /**
