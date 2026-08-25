@@ -371,8 +371,10 @@ class OutputMixin:
 
         snapshot 格式为每行 CSI 定位（\\x1b[<row>;1H）+ 内容，按定位序列
         分割成行后再与 scrollback 尾部比较。重叠形态：reflow 把旧可见区
-        整段推入 scrollback 尾部，与当前可见区（snapshot 头部）内容相同
-        （正序）——取 scrollback 尾部与 snapshot 头部的最长正序匹配段去掉。
+        整段推入 scrollback 尾部，该段与当前可见区（snapshot 头部）内容
+        相同，但**可能从 snapshot 第 2 行起对齐**（snapshot 顶部行未被推入）
+        ——用滑动匹配：scrollback 尾部最长后缀 == snapshot 头部任意偏移起
+        的连续段。
         """
         if not scrollback or not snapshot:
             return scrollback
@@ -389,22 +391,28 @@ class OutputMixin:
         def plain(line):
             return ansi_re.sub("", line).rstrip()
 
-        max_trim = min(len(sb_lines), len(snap_lines))
+        # 滑动匹配：sb 尾部最长后缀 == snap 头部任意偏移起的连续段
+        # 限制扫描范围（重叠段通常很小），避免大 scrollback 下 O(n³) 退化
+        max_trim = min(len(sb_lines), len(snap_lines), 100)
         trim = 0
-        # 从最长候选向下找：sb 尾部 start 行 == snap 头部 start 行（正序）
         for start in range(max_trim, 0, -1):
-            ok = True
-            for i in range(start):
-                if plain(sb_lines[-start + i]) != plain(snap_lines[i]):
-                    ok = False
+            for j in range(min(len(snap_lines) - start + 1, 100)):
+                ok = True
+                for i in range(start):
+                    if plain(sb_lines[-start + i]) != plain(snap_lines[j + i]):
+                        ok = False
+                        break
+                if ok:
+                    trim = start
                     break
-            if ok:
-                trim = start
+            if trim:
                 break
         if trim > 0 and trim < len(sb_lines):
             sb_lines = sb_lines[:-trim]
         elif trim >= len(sb_lines):
             sb_lines = []
+        _logger.info("resize: trim_overlap=%d (sb_lines=%d snap_lines=%d)",
+                     trim, len(sb_lines), len(snap_lines))
         return "\r\n".join(sb_lines) + ("\r\n" if scrollback.endswith("\r\n") else "")
 
     def _apply_program_resize(self, cols: int, rows: int) -> None:

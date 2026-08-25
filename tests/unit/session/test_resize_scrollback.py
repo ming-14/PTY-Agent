@@ -147,3 +147,16 @@ def test_trim_scrollback_overlap_removes_duplicated_tail():
     # 空输入
     assert t("", snap) == ""
     assert t(sb, "") == sb
+
+
+def test_trim_scrollback_overlap_sliding_offset():
+    """重叠段从 snapshot 第 2 行起对齐（顶部行未被推入）——滑动匹配。"""
+    t = OutputMixin._trim_scrollback_overlap
+    sb = "line-001\r\nline-002\r\n__rikka_goose\r\n__rikka_kimi\r\n"
+    snap = ("\x1b[1;1H\x1b[0m__rikka_atomcode"
+            "\x1b[2;1H\x1b[0m__rikka_goose"
+            "\x1b[3;1H\x1b[0m__rikka_kimi"
+            "\x1b[4;1H\x1b[0mC:\\>")
+    out = t(sb, snap)
+    # __rikka_goose/__rikka_kimi 是 snapshot 第 2-3 行的内容 → 应被 trim
+    assert out == "line-001\r\nline-002\r\n"
