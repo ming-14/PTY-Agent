@@ -18,14 +18,25 @@ export function trackCursorSequences(term, uid) {
       return;
     }
     debug('cursor', 'trackCursorSequences: registering handlers sid=%s', uid);
-    // DECSET CSI ? Pm h: 特别关注 Ps=12 开始闪烁光标、Ps=25 显示光标
+    // 辅助 textarea：光标隐藏（程序接管光标）时 IME 预编辑会把 textarea
+    // 撑宽（预编辑文本显示），光标在右侧/右下角时溢出容器右边界（"顶破
+    // 右边"）——加 class 限制宽度（预编辑不显示，候选窗口仍正常跟随）。
+    // DECSET CSI ? Pm h: Ps=25 显示光标
     parser.registerCsiHandler({ final: 'h', prefix: '?' }, params => {
+      if (params && params.params && params.params.includes(25)) {
+        const ta = term.textarea || (term._core && term._core.textarea);
+        if (ta) ta.classList.remove('xterm-cursor-hidden');
+      }
       debug('cursor', 'DECSET sid=%s params=%o blink=%s style=%s',
             uid, params, term.options.cursorBlink, term.options.cursorStyle);
       return false;
     });
-    // DECRST CSI ? Pm l: 特别关注 Ps=12 停止闪烁光标、Ps=25 隐藏光标
+    // DECRST CSI ? Pm l: Ps=25 隐藏光标
     parser.registerCsiHandler({ final: 'l', prefix: '?' }, params => {
+      if (params && params.params && params.params.includes(25)) {
+        const ta = term.textarea || (term._core && term._core.textarea);
+        if (ta) ta.classList.add('xterm-cursor-hidden');
+      }
       debug('cursor', 'DECRST sid=%s params=%o blink=%s style=%s',
             uid, params, term.options.cursorBlink, term.options.cursorStyle);
       return false;
