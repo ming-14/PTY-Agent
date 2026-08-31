@@ -6,8 +6,9 @@ resize 同步、终端状态查询。输入写入见 io.py。
 """
 
 from ..logging import get_logger
+import logging
 import time
-from typing import List, Optional
+from typing import Optional
 
 _logger = get_logger("pty-session")
 
@@ -230,15 +231,17 @@ class OutputMixin:
                     len(scrollback_ansi),
                     scrollback_ansi[:80].replace("\r", "\\r").replace("\x1b", "\\e"),
                 )
-                # 内容级诊断：scrollback 前 3 行与总行数，确认 reflow 后宽度正确
-                sb_lines = scrollback_ansi.split("\r\n") if scrollback_ansi else []
-                if sb_lines and sb_lines[-1] == "":
-                    sb_lines.pop()
-                _logger.debug(
-                    "resize: scrollback lines=%d first3=%r",
-                    len(sb_lines),
-                    [l.replace("\x1b", "\\e")[:60] for l in sb_lines[:3]],
-                )
+                # 内容级诊断：scrollback 前 3 行与总行数，确认 reflow 后宽度正确。
+                # split 全量 scrollback 开销大，仅在 DEBUG 启用时构造
+                if _logger.isEnabledFor(logging.DEBUG):
+                    sb_lines = scrollback_ansi.split("\r\n") if scrollback_ansi else []
+                    if sb_lines and sb_lines[-1] == "":
+                        sb_lines.pop()
+                    _logger.debug(
+                        "resize: scrollback lines=%d first3=%r",
+                        len(sb_lines),
+                        [l.replace("\x1b", "\\e")[:60] for l in sb_lines[:3]],
+                    )
             except Exception as e:
                 _logger.warning("resize: capture scrollback failed (non-fatal): %s", e)
 

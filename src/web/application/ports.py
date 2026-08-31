@@ -3,6 +3,7 @@
 定义了应用层与外部基础设施交互所需的能力。内层（应用层、领域层）
 通过这些抽象与外层（基础设施层）解耦。
 """
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Callable, Optional
@@ -47,6 +48,7 @@ class SessionRepository(ABC):
         env: Optional[dict] = None,
         cols: Optional[int] = None,
         rows: Optional[int] = None,
+        mode: str = "pty",
     ) -> Any:
         """创建并启动会话。"""
 
@@ -195,13 +197,6 @@ class ConnectionContext(ABC):
         自适应锁以 client_uid 为持有者标识，刷新后 uid 不变，锁可恢复/继承。
         """
 
-    @abstractmethod
-    def set_client_uid(self, uid: Optional[str]) -> None:
-        """设置本连接的 web 客户端 uid。
-
-        在 WS 连接建立时由 server.py 从 URL query 读取并注入。
-        """
-
 
 class SystemStatsProvider(ABC):
     """系统资源统计提供者抽象。"""
@@ -217,6 +212,10 @@ class ShellProvider(ABC):
     @abstractmethod
     def list_shells(self) -> dict:
         """返回 shell 名称到路径的映射。"""
+
+    @abstractmethod
+    def default_cwd(self) -> str:
+        """返回守护进程的当前工作目录。"""
 
 
 class EventPublisher(ABC):

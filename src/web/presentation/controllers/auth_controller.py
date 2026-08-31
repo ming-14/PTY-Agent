@@ -152,19 +152,26 @@ def create_auth_router(session_store: SessionStore, password_hash: str) -> APIRo
             )
             return JSONResponse(status_code=400, content={"error": "invalid_body"})
 
+        if not isinstance(body, dict):
+            return JSONResponse(status_code=400, content={"error": "invalid_body"})
+
         submitted = body.get("password", "")
 
         if password_hash:
-            # 有密码哈希时，校验密码（空密码也放行）
-            if submitted:
-                submitted_hash = hash_password(submitted)
-                if submitted_hash != password_hash:
-                    remote = request.client.host if request.client else "-"
-                    _logger.warning("login: wrong password from %s", remote)
-                    return JSONResponse(
-                        status_code=401, content={"error": "unauthorized"}
-                    )
-            # 空密码直接放行
+            # 有密码哈希时，必须提交非空且匹配的密码；空密码/缺失字段直接拒绝
+            if not submitted:
+                remote = request.client.host if request.client else "-"
+                _logger.warning("login: empty password from %s", remote)
+                return JSONResponse(
+                    status_code=401, content={"error": "unauthorized"}
+                )
+            submitted_hash = hash_password(submitted)
+            if submitted_hash != password_hash:
+                remote = request.client.host if request.client else "-"
+                _logger.warning("login: wrong password from %s", remote)
+                return JSONResponse(
+                    status_code=401, content={"error": "unauthorized"}
+                )
         # 无密码哈希时，任何密码都放行（免密模式）
 
         token = session_store.create(max_age=_COOKIE_MAX_AGE)

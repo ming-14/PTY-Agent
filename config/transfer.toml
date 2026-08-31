@@ -1,7 +1,7 @@
 # 文件传输协议配置 —— file upload/download（daemon 与 CLI 两端共享）
 # 加载入口：src/config/transfer.py（TRANSFER_* 常量）
 # 消费方：src/protocol/transfer.py（帧协议）、src/transfer/*（CLI 驱动）、
-#         src/client/transport.py（CLI 超时）、files 插件 daemon 侧
+#         src/client/transport.py（CLI 超时）、src/files/transfer/（daemon 侧传输业务）
 
 [transfer]
 TRANSFER_CHUNK_SIZE = 262144       # 传输数据帧大小（256KB）

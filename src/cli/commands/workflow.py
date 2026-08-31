@@ -11,6 +11,8 @@ class WorkflowCommand(Command):
 
     name = "workflow"
     help = "workflow 脚本编排（run/list/show/cancel）"
+    # 公共参数已在各子子命令解析器手动注册（add_common_args），避免两级重复
+    use_common_args = False
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         wf_sub = parser.add_subparsers(dest="workflow_subcmd", help="workflow 子命令")
@@ -67,3 +69,5 @@ class WorkflowCommand(Command):
             ctx.client.cmd_workflow_show(args.run_id)
         elif args.workflow_subcmd == "cancel":
             ctx.client.cmd_workflow_cancel(args.run_id)
+        else:
+            ctx.parser.print_help()

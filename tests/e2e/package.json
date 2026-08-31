@@ -1,0 +1,17 @@
+{
+  "name": "pty-agent-web-e2e",
+  "private": true,
+  "type": "module",
+  "description": "PTY-Agent 前端 e2e 测试（Playwright + 假 WS 后端）",
+  "scripts": {
+    "test:ime": "node test_xterm_ime.mjs",
+    "test:regression": "node test_xterm_regression.mjs",
+    "server": "node mock_backend.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.0.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.40.0"
+  }
+}

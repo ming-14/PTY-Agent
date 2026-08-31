@@ -21,6 +21,7 @@ from ..execution.context import HandlerContext
 from ..execution.filtering import filter_snapshot_lines
 from ..execution.output_policy import resolve_output
 from ..execution.conditions import ReturnConditions
+from ..execution.utils import check_ended_session
 from ..protocol.reasons import Reason
 from .definition import ParsedStep, WorkflowDefinition
 from .expr import ExpressionError, eval_expr, render_value
@@ -335,9 +336,16 @@ class WorkflowEngine:
     # ── 各步骤类型实现 ──
 
     def _get_session(self, ctx, session_id: str):
-        """取会话（不存在或已结束时报错）"""
+        """取会话（不存在或已结束时报错）
+
+        与 CLI send/read 对齐：自然结束（ended）的会话区分于"从未存在"，
+        报"已结束"而非"不存在"（结束的会话已移出内存活跃表，get_session
+        返回 None，需查历史区分）。
+        """
         session = ctx.manager.get_session(session_id)
         if session is None:
+            if check_ended_session(ctx.manager, session_id):
+                raise RuntimeError("会话 '%s' 已结束（先 kill 再重新 exec）" % session_id)
             raise RuntimeError("会话 '%s' 不存在" % session_id)
         self._wait_session_ready(session, session_id)
         if not session.running:
@@ -377,6 +385,13 @@ class WorkflowEngine:
                 raise RuntimeError("会话 '%s' 已结束（先 kill 再重新 exec）" % session_id)
             session = existing
         else:
+            # 与 CLI exec 对齐：自然结束（ended）的会话拒绝复用，不得静默新建同名
+            # 会话重新执行命令（自然结束后会话已移出内存活跃表，get_session 返回
+            # None，若不加此检查会误走「新建」分支造成意外副作用）。
+            if check_ended_session(ctx.manager, session_id):
+                raise RuntimeError(
+                    "会话 '%s' 已结束（先 kill 再重新 exec）" % session_id
+                )
             plugins = ctx.manager.match_auto_load(
                 command, raw.get("cwd"), raw.get("env")
             )
@@ -391,6 +406,7 @@ class WorkflowEngine:
                 plugins=plugins or None,
                 mode=raw.get("mode", "pty"),
             )
+            session.add_common_mark("normal")  # workflow 创建的会话视为普通 exec
 
         # 持有会话：exec 流程可能等待输出（子进程可能在等待期间快速退出，
         # 由 manager 触发 release_components）；hold 确保会话结束只延迟释放
@@ -507,6 +523,8 @@ class WorkflowEngine:
         session_id = raw["session"]
         session = ctx.manager.get_session(session_id)
         if session is None:
+            if check_ended_session(ctx.manager, session_id):
+                raise RuntimeError("会话 '%s' 已结束（先 kill 再重新 exec）" % session_id)
             raise RuntimeError("会话 '%s' 不存在" % session_id)
         trigger = raw.get("trigger")
         # 持有会话：等待输出/构建响应期间会话可能自然结束（含多步骤
@@ -558,6 +576,8 @@ class WorkflowEngine:
     def _kill_type(self, ctx, run, step, raw: dict) -> tuple:
         session_id = raw["session"]
         if ctx.manager.get_session(session_id) is None:
+            if check_ended_session(ctx.manager, session_id):
+                raise RuntimeError("会话 '%s' 已结束（先 kill 再重新 exec）" % session_id)
             raise RuntimeError("会话 '%s' 不存在" % session_id)
         ctx.manager.remove_session(session_id)
         return STEP_DONE, {

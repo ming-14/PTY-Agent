@@ -1,48 +1,54 @@
 # -*- coding: utf-8 -*-
+#
+# PTY-Agent 依赖说明
+# ===================
+# 本文件涵盖运行时核心依赖 + 可选降级依赖 + 测试依赖。
+# 构建工具（BUILD.py）自行处理 maturin/msvc 等构建时依赖，不在此列。
+#
+# 非 PyPI 的 vendored 依赖（构建产物，由 BUILD.py 编制）：
+#   pywezterm < bin/pywezterm       — WezTerm PTY 后端（Rust 编译，maturin）
+#   win_sandbox_native < bin/win_sandbox/_native — Windows 沙箱原生层（C++ pybind11）
+#   fastscreencore < bin/fastscreencore         — 屏幕共享引擎（C++ dll）
+#   cursorlocator  < bin/cursorlocator           — 鼠标光标定位器（pyd）
+#   rg             < bin/rg                       — ripgrep 全文搜索二进制
+# 以上均在运行时自动从 bin/ 加载，无需 pip 安装。
 
 # ===================== 运行时核心依赖 =====================
+# 以下包在 CLI 侧顶层硬导入，不装直接报错（CLI 和 daemon 共用）。
 
-# TOML 配置解析（Python <3.11 回退，3.11+ 用标准库 tomllib）
-tomli>=2.0; python_version < "3.11"
+tomli>=2.0; python_version < "3.11" # TOML 配置解析，Python<3.11 必须装，3.11+ 用标准库 tomllib
+pyyaml>=6.0 # Workflow 编排，插件配置
+psutil>=5.9 # 进程存在性探测（pid_exists），CLI daemonctl 启动就加载
 
-# 认证：Ed25519 公私钥签名、OpenSSH 密钥格式解析（CONNECT_MODE=tls 时需要）
-cryptography>=41.0
+# ===================== 可选依赖（缺失时自动关闭） =====================
+# 以下功能开启但依赖缺失时，daemon 启动提示并自动禁用该功能。
+# 依赖清单与 src/optional._FEATURE_DEPS 对应。
 
 # Web 前端 / 终端网关 (FastAPI 应用、WebSocket 服务)
-fastapi>=0.111
-uvicorn[standard]>=0.30
-starlette>=0.37
-websockets>=12.0
+fastapi>=0.111 # 路由、请求/响应模型
+uvicorn[standard]>=0.30 # ASGI 服务器
+starlette>=0.37 # WebSocket 传输层
+websockets>=12.0 # WebSocket 协议（被 starlette 内部使用）
 
-# Workflow 编排 (src/workflow/definition.py)：YAML 定义文件解析
-pyyaml>=6.0
+# 屏幕捕获 H.264 编码（需要屏幕捕获时取消注释）
+numpy>=1.24 # 帧数据数值处理
+av>=11.0 # PyAV，封装 ffmpeg 做视频编码/解码
 
-# MCP Server 封装 (mcp_server.py)：把 CLI 暴露为 MCP 工具
-mcp>=1.0
-
-# H.264 视频流编码 (src/screenshare/streamers/encoding/h264.py)
-#   av    — PyAV，封装 ffmpeg 做视频编码/解码
-#   numpy — 帧数据数值处理
-numpy>=1.24
-av>=11.0
-
-# 进程信息/系统统计 (src/process、src/web/.../stats_provider.py)：
-# 统一以 psutil 查询进程名/路径/命令行/内存/CPU/创建时间与进程树，勿手写 ctypes//proc
-psutil>=5.9
+# Ed25519 签名、TLS 证书、VNC 密码加密
+# 仅在 tls 监听器 / keygen 命令 / VNC 启用时需要
+# basic（含空密码）和 token 模式只用标准库 hmac，不装也不影响
+cryptography>=41.0
 
 # ===================== 可选依赖（缺失时自动降级） =====================
-# 以下包在代码中均以 try/except ImportError 保护，未安装时相关功能降级，不影响主流程。
-# 按需取消注释安装即可。
+# 以下包缺失时对应功能优雅降级，不会报错中断。
 
-# wcwidth   — 终端字符显示宽度计算（CJK/零宽字符），供客户端渲染使用
-wcwidth>=0.2
+# wcwidth>=0.2 # 终端字符显示宽度计算（CJK/零宽字符），供客户端渲染使用
+scour>=0.2 # SVG 压缩（--svg-compression-level 1/2），缺失时降级为 level 0
+# Pillow>=10.0
 
-# scour     — SVG 压缩（--svg-compression-level 1/2），缺失时降级为 level 0
-scour
-
-# Pillow    — PNG/JPG/BMP 终端快照渲染 (src/client/renderer.py)，缺失时仅支持 .svg
-Pillow>=10.0
 
 # ===================== 测试依赖 =====================
 pytest>=7.0
-pytest-timeout>=2.0
+pytest-timeout>=2.0 # 测试超时（pytest.ini 中 timeout = 60）
+pytest-asyncio>=0.21 # 异步测试支持（大量 e2e 测试使用 @pytest.mark.asyncio）
+httpx>=0.27 # FastAPI TestClient 所需（httpx 是 TestClient 的 http 传输后端）

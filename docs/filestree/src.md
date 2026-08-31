@@ -58,6 +58,32 @@ src/
 │   # 提供 *available() 与 get_*_cls() 工厂函数，缺失模块返回 None/False 不抛 ImportError；
 │   # 供 daemon/（惰性获取 WebServer）与 web/（惰性获取 Vnc/Screenshare/CursorLocator adapter）使用
 
+├── files/                  # ═══════ 文件工具业务层（内置，原 files 功能内化） ═══════
+│   ├── __init__.py          # 包导出
+│   ├── errors.py            # 异常类型（FileToolError / FileReadRequiredError / FilePermissionDeniedError）
+│   ├── paths.py             # 路径解析（resolve_session_path / is_within / normalize_key）
+│   ├── state.py             # 读写状态机 FileRecordStore（read-before-write）
+│   ├── history.py           # SQLite 版本链 FileHistoryStore
+│   ├── diff.py              # unified diff 生成
+│   ├── permission.py        # 权限检查策略 PermissionPolicy
+│   ├── settings.py          # 运行参数 Settings（默认值常量 + daemon 级单例）
+│   ├── read/                # ═══ file read 用例 ═══
+│   │   ├── __init__.py
+│   │   └── reader.py        # read_file + ReadResult + 相似名建议
+│   ├── write/               # ═══ file write / edit 用例 ═══
+│   │   ├── __init__.py
+│   │   └── writer.py        # write_file / edit_file + WriteResult
+│   ├── search/              # ═══ file grep / glob 用例 ═══
+│   │   ├── __init__.py
+│   │   ├── grep.py          # grep_files（rg 双引擎）
+│   │   ├── glob_.py         # glob_files（rg 双引擎）
+│   │   └── ignore.py        # 搜索忽略过滤（隐藏文件 + ignored_dirs）
+│   └── transfer/            # ═══ file upload / download 传输 ═══
+│       ├── __init__.py
+│       ├── judge.py         # 相同文件判定 + 传输计划（纯函数）
+│       ├── map.py           # TransferMap（mtime 映射表，SQLite 持久化）
+│       └── transfer.py      # daemon_upload / daemon_download（原生 conn 帧收发）
+│
 ├── protocol/                # ═══════ 通信协议层 ═══════
 │   ├── __init__.py
 │   ├── message.py           # Message 类（JSON 换行分隔协议：编码/解码/收发 + ping 探测）
@@ -112,17 +138,11 @@ src/
 │   │   ├── client_upload.py # CLI 侧上传驱动（握手→清单→逐文件→进度）
 │   │   └── client_download.py # CLI 侧下载驱动
 │   │   # 注：daemon 侧传输业务（judge/map/daemon_upload/daemon_download）位于
-│   │   #     config/plugins/files/ 插件；帧编解码在 protocol/transfer.py
+│   │   #     src/files/transfer/；帧编解码在 protocol/transfer.py
 │   ├── attend.py            # attend 交互引擎（ReadConsoleInputW 输入 + 原始字节透传渲染 + 帧循环）
 │   ├── result.py            # 类型化结果模型（Result / from_response 工厂，含稳定错误码）
 │   ├── presenter.py         # 人类可读渲染层（内容→stdout / 元信息→stderr / 错误+退出码；含 print_response）
 │   ├── cli_plugins.py       # CLI 插件宿主（CliPluginHost，kind=cli 钩子链）
-│   ├── renderer/            # ═══ 终端快照渲染器（SVG / Pillow / GDI / box-drawing） ═══
-│   │   ├── __init__.py      # 包导出（render_to_file / render_svg_string / is_image_ext）
-│   │   ├── common.py        # 渲染共享基础（颜色映射 / 字符宽度 / 行格式展开）
-│   │   ├── svg.py           # SVG 矢量渲染 + scour 压缩
-│   │   ├── image.py         # 像素渲染后端（Pillow 跨平台 / Windows GDI 原生）
-│   │   └── box_drawing.py   # Box Drawing 字符的 GDI 几何绘制原语
 │   ├── config_manager.py    # 纯内存客户端配置管理（--default 临时覆盖）
 │   └── input.py             # 输入文本处理（process_input / unescape_json_string / safe_print）
 
@@ -139,6 +159,7 @@ src/
 │       ├── exec_handler.py  # exec 命令处理
 │       ├── send_handler.py  # send 命令处理
 │       ├── read_handler.py  # read 命令处理
+│       ├── file_handler.py  # file 命令处理（read/write/edit/grep/glob/upload/download，内置）
 │       ├── list_handler.py  # list 命令处理
 │       ├── kill_handler.py  # kill 命令处理
 │       ├── events_handler.py # events 命令处理
@@ -178,7 +199,7 @@ src/
 │   ├── host.py              # PluginHost（会话级挂载链、钩子调度、返回控制）
 │   ├── hooks.py             # HookEngine（优先级 + modify/observe/intercept/provide/aggregate）
 │   ├── events.py            # EventBus（daemon 级 pub/sub，主题通配）
-│   ├── config.py            # PluginConfig（清单默认 + config.yaml + 环境变量 + schema 校验）
+│   ├── config.py            # PluginConfig（清单默认 + 内存覆盖 + schema 校验）
 │   ├── storage.py           # PluginStorage（kv/文件/sqlite 三种视图）
 │   ├── permissions.py       # PermissionChecker（能力检查 + 审计）
 │   ├── environment.py       # PluginEnvironment（daemon 全局共享能力集合）

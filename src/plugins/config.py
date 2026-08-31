@@ -1,53 +1,21 @@
-"""插件配置 — 清单默认 + config.yaml + 环境变量覆盖，schema 校验
+"""插件配置 — 清单默认 + 内存覆盖，schema 校验
 
 分层（后层覆盖前层）：
 1. plugin.json config.defaults（基准默认值）
-2. 插件目录 config.yaml（用户可改，缺失时按默认值自动生成）
-3. 环境变量 PTY_PLUGIN_<ID>_<KEY>（扁平键，最高优先，键名含 - 转 _）
+2. plugin config set 的内存覆盖（守护进程内存记忆，重启即恢复默认）
 
+与 daemon set-default 的"内存记忆"语义一致：不读写 config.yaml、不做任何持久化。
 config.schema.json（JSON Schema 子集，可选）在合并后校验，失败时插件加载报错
 （BROKEN 状态，错误信息可见）。
 """
 
-import json
-import os
 import re
 import threading
-from typing import Any, Dict, List, Optional, Tuple, Union
-
-import yaml
-
-from ..logging import get_logger
-
-_logger = get_logger("pty-plugins")
-
-CONFIG_FILE = "config.yaml"
+from typing import Optional
 
 
 class ConfigError(Exception):
     """插件配置错误（加载/校验失败）"""
-
-
-def _coerce_env(value: str, default_type) -> Any:
-    """环境变量字符串按默认值类型做类型转换；失败返回原字符串"""
-    if default_type is bool:
-        return value.lower() in ("true", "1", "yes")
-    if default_type is int:
-        try:
-            return int(value)
-        except (ValueError, TypeError):
-            return value
-    if default_type is float:
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return value
-    if isinstance(default_type, (list, dict)):
-        try:
-            return json.loads(value)
-        except (ValueError, TypeError):
-            return value
-    return value
 
 
 # ── JSON Schema 子集校验 ─────────────────────────────────
@@ -150,61 +118,28 @@ def _validate_schema(value, schema: dict, path: str = "") -> Optional[str]:
 
 
 class PluginConfig:
-    """插件配置视图（线程安全读取）"""
+    """插件配置视图（内存态，线程安全读取）
 
-    def __init__(
-        self,
-        plugin_id: str,
-        plugin_dir: str,
-        defaults: dict,
-        schema: Optional[dict],
-    ):
-        self._id = plugin_id
-        self._file = os.path.join(plugin_dir, CONFIG_FILE)
+    默认值来自 plugin.json config.defaults；plugin config set 仅覆盖内存，
+    守护进程重启即恢复默认（与 daemon set-default 语义一致）。
+    """
+
+    def __init__(self, defaults: dict, schema: Optional[dict]):
         self._defaults = dict(defaults or {})
         self._schema = schema
         self._lock = threading.Lock()
         self._values: dict = {}
-        self._env_prefix = (
-            "PTY_PLUGIN_" + plugin_id.upper().replace("-", "_")
-        )
-        self.load()
+        self.reset()
 
-    def load(self) -> None:
-        """重读配置：默认 + yaml + env 合并并校验；缺失 yaml 时自动生成"""
+    def reset(self) -> None:
+        """重置为默认值（初始/恢复默认）"""
         values = dict(self._defaults)
-        if os.path.isfile(self._file):
-            try:
-                with open(self._file, "r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f) or {}
-            except (OSError, yaml.YAMLError) as e:
-                raise ConfigError("config.yaml 读取失败: %s" % e)
-            if not isinstance(data, dict):
-                raise ConfigError("config.yaml 顶层必须为映射")
-            values.update(data)
-        else:
-            self._write_defaults()
-        # 环境变量覆盖
-        for key in list(values):
-            env_key = self._env_prefix + "_" + key.upper()
-            if env_key in os.environ:
-                values[key] = _coerce_env(os.environ[env_key], type(values[key]))
         if self._schema is not None:
             err = _validate_schema(values, self._schema, "")
             if err:
                 raise ConfigError("配置校验失败: %s" % err)
         with self._lock:
             self._values = values
-
-    def _write_defaults(self) -> None:
-        """按默认值生成 config.yaml（自愈：缺失即生成，静默忽略失败）"""
-        try:
-            with open(self._file, "w", encoding="utf-8") as f:
-                yaml.safe_dump(
-                    self._defaults, f, allow_unicode=True, sort_keys=False
-                )
-        except OSError as e:
-            _logger.warning("插件 %s 生成 config.yaml 失败: %s", self._id, e)
 
     def get(self, key: str, default=None):
         with self._lock:
@@ -215,7 +150,7 @@ class PluginConfig:
             return dict(self._values)
 
     def set(self, key: str, value) -> None:
-        """设置并持久化到 config.yaml（校验通过后生效）"""
+        """设置配置值（仅内存，校验通过后生效，重启清空）"""
         with self._lock:
             values = dict(self._values)
         values[key] = value
@@ -223,10 +158,5 @@ class PluginConfig:
             err = _validate_schema(values, self._schema, "")
             if err:
                 raise ConfigError("配置校验失败: %s" % err)
-        try:
-            with open(self._file, "w", encoding="utf-8") as f:
-                yaml.safe_dump(values, f, allow_unicode=True, sort_keys=False)
-        except OSError as e:
-            raise ConfigError("配置写入失败: %s" % e)
         with self._lock:
             self._values = values

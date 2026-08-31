@@ -1,0 +1,3 @@
+# 分析产物（由 analyze.py + gen_html.py 自动生成）
+_analysis.json
+code-scale-report.html

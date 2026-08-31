@@ -469,5 +469,5 @@ def _api(name, restype, argtypes):
 - `config/` 包不导入任何其他项目业务模块
 - 常量名全大写 `SCREAMING_SNAKE_CASE`
 - 所有模块从 `config/` 包导入所需常量，不要重复定义
-- 配置文件：`common.toml` / `shared.toml` / `transfer.toml`（根）、`daemon/daemon.toml` / `daemon/logging.toml` / `daemon/web.toml`（可选，缺失即 web 禁用） / `daemon/sandbox.toml`（可选，缺失即沙箱关闭）、`client/client.toml`（项目根 `config/`，加载器在 `src/config/`）；`daemon/vnc.toml` / `daemon/vnc.example.toml` 为 winvnc.exe 外部配置，Python 不加载。插件业务参数由插件自包含配置（`plugin.json` config.defaults + `config.yaml`，可选的 `config.schema.json` 校验）提供；`registry.json` 可选，缺失即插件系统禁用
+- 配置文件：`common.toml` / `shared.toml` / `transfer.toml`（根）、`daemon/daemon.toml` / `daemon/logging.toml` / `daemon/web.toml`（可选，缺失即 web 禁用） / `daemon/sandbox.toml`（可选，缺失即沙箱关闭）、`client/client.toml`（项目根 `config/`，加载器在 `src/config/`）；`daemon/vnc.toml` / `daemon/vnc.example.toml` 为 winvnc.exe 外部配置，Python 不加载。插件业务参数由插件自包含配置（`plugin.json` config.defaults + 内存覆盖，可选的 `config.schema.json` 校验）提供；`registry.json` 可选，缺失即插件系统禁用
 - 加载机制：`_loader.py` 提供 `load_toml()` / `flatten()` / `merge()` 工具函数

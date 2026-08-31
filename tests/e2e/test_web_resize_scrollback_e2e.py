@@ -6,8 +6,8 @@
   2. scrollback 内容包含 resize 前滚出可见区的行（不丢历史）
   3. resize 后可见区 snapshot 正常（内容/光标不因 scrollback 保留而错乱）
 
-前置条件：守护进程运行中（python -m src start）。
-守护进程不在时整个模块 skip（不失败）。
+daemon 由 web_daemon fixture 自动启动（未运行则启动、结束后停止），
+不要求外部手动 `python -m src start`。
 
 运行：
   python -m pytest tests/e2e/test_web_resize_scrollback_e2e.py -v
@@ -15,7 +15,7 @@
 
 import asyncio
 import json
-import socket
+import sys
 import time
 import uuid
 
@@ -25,18 +25,20 @@ websockets = pytest.importorskip("websockets", reason="需要 websockets 库")
 
 _WS_URL = "ws://localhost:18766/ws"
 
+# 用 python3 -u -i 创建交互式会话（Linux 上 python 可能不存在，用 python3）
+_CREATE_CMD = (
+    "cmd /c chcp 65001 >nul & python -u -i"
+    if sys.platform == "win32" else
+    "python3 -u -i"
+)
+# Linux PTY 上 \r\n 会导致 REPL 多行输入执行异常，仅用 \n
+_EOL = "\r\n" if sys.platform == "win32" else "\n"
 
-def _daemon_alive() -> bool:
-    try:
-        with socket.create_connection(("127.0.0.1", 18766), timeout=1.0):
-            return True
-    except OSError:
-        return False
 
-
-pytestmark = pytest.mark.skipif(
-    not _daemon_alive(),
-    reason="守护进程未运行（python -m src start），跳过 e2e")
+@pytest.fixture(scope="module", autouse=True)
+def _web_daemon(web_daemon):
+    """web e2e 自启 daemon（复用 conftest.web_daemon）：未运行则启动、结束后停止"""
+    yield
 
 
 async def recv_until(ws, pred, timeout=8.0, collect=None):
@@ -78,7 +80,7 @@ async def test_resize_preserves_scrollback():
         # 1. 创建会话
         await ws.send(json.dumps({
             "type": "create", "session_id": sid,
-            "command": "cmd /c chcp 65001 >nul & python -u -i",
+            "command": _CREATE_CMD,
             "cols": 100, "rows": 24,
         }))
         sub = await recv_until(ws, lambda m: m.get("type") == "subscribed" and m.get("sessionId") == sid)
@@ -90,11 +92,12 @@ async def test_resize_preserves_scrollback():
         script = "for i in range(200):\n print(f'sb-line-{i:04d}')\n"
         await ws.send(json.dumps({
             "type": "input", "sessionUid": uid,
-            "data": script.replace("\n", "\r\n") + "\r\n",
+            "data": script.replace("\n", _EOL) + _EOL,
         }))
         out = []
+        # WSL/CI 慢文件系统上 Python 启动 + 200 行输出可能超过 12s，放宽到 30s
         await recv_until(ws, lambda m: m.get("type") == "output" and "sb-line-0199" in m.get("data", ""),
-                         timeout=12.0, collect=out)
+                         timeout=30.0, collect=out)
         assert any("sb-line-0199" in d for d in out), "输出未到达"
         await asyncio.sleep(0.5)
 
@@ -141,7 +144,7 @@ async def test_resize_other_client_receives_scrollback():
         # A 创建并订阅
         await ws_a.send(json.dumps({
             "type": "create", "session_id": sid,
-            "command": "cmd /c chcp 65001 >nul & python -u -i",
+            "command": _CREATE_CMD,
             "cols": 100, "rows": 24,
         }))
         sub_a = await recv_until(ws_a, lambda m: m.get("type") == "subscribed" and m.get("sessionId") == sid)
@@ -159,10 +162,10 @@ async def test_resize_other_client_receives_scrollback():
         script = "for i in range(150):\n print(f'other-line-{i:04d}')\n"
         await ws_a.send(json.dumps({
             "type": "input", "sessionUid": uid,
-            "data": script.replace("\n", "\r\n") + "\r\n",
+            "data": script.replace("\n", _EOL) + _EOL,
         }))
         await recv_until(ws_a, lambda m: m.get("type") == "output" and "other-line-0149" in m.get("data", ""),
-                         timeout=12.0)
+                         timeout=30.0)
         await asyncio.sleep(0.3)
 
         # A 发起 resize；B 应收到 session_resized（含 scrollback）

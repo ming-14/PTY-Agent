@@ -1,4 +1,9 @@
 import ctypes as c
+import sys
+import pytest
+
+if sys.platform != "win32":
+    pytest.skip("Windows-Only Manual Test", allow_module_level=True)
 
 kernel32 = c.windll.kernel32
 h = kernel32.GetStdHandle(-10)

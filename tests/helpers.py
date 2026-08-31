@@ -75,12 +75,3 @@ def write_plugin_dir(tmp_path, plugin_id: str, kind: str, src: str,
     )
     (pdir / "__init__.py").write_text(src, encoding="utf-8")
     return str(pdir)
-
-
-def write_config_yaml(plugin_dir: str, values: dict) -> str:
-    """写入插件目录 config.yaml（覆盖默认）"""
-    import yaml
-    path = os.path.join(plugin_dir, "config.yaml")
-    with open(path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(values, f, allow_unicode=True, sort_keys=False)
-    return path

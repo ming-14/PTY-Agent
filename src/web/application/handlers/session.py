@@ -46,6 +46,7 @@ class CreateSessionHandler(MessageHandler):
         cwd = msg.get("cwd")
         env = msg.get("env")
         mode = msg.get("mode", "pty")
+        shell = msg.get("shell")
 
         parsed_command = command
         if isinstance(command, str):
@@ -58,6 +59,16 @@ class CreateSessionHandler(MessageHandler):
                 return [Response.error(f"failed to parse command: {e}")]
             if not parsed_command:
                 return [Response.error("empty command after parsing")]
+
+        # shell 包装：选择 shell 时用该 shell 启动（与 daemon exec --shell 一致，
+        # wrap_command 内部 which 解析路径，不支持/找不到时抛 ValueError）
+        if shell and isinstance(parsed_command, list) and parsed_command:
+            try:
+                from ....common.shells import wrap_command
+
+                parsed_command = wrap_command(parsed_command, shell)
+            except ValueError as e:
+                return [Response.error(str(e))]
 
         try:
             session = await ctx.executor.run(
@@ -77,6 +88,9 @@ class CreateSessionHandler(MessageHandler):
             except Exception:
                 pass
             return [Response.error(f"create failed: {e}")]
+
+        # 来源标记：web 创建视为普通 exec
+        session.add_common_mark("normal")
 
         # 创建成功后自动订阅（传 uid，避免 sid 解析竞态）
         return await SubscribeSessionHandler().handle(
@@ -194,7 +208,7 @@ class SubscribeSessionHandler(MessageHandler):
                     "subscribed: mode restore seq failed sid=%s: %s", session_id, e
                 )
 
-        # 子进程模式：附带 stderr 全文（前端以 ERR > 前缀单独展示）
+        # 子进程模式：附带 stderr 全文（前端以红色逐行展示）
         stderr_replay = ""
         if is_subprocess:
             try:

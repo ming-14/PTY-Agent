@@ -33,7 +33,7 @@ from typing import List, Optional
 from ..config.common import DEFAULT_COLS, DEFAULT_ROWS, IS_WINDOWS
 from ..config.daemon import MAX_OUTPUT_BUFFER, STOP_TIMEOUT
 from .detector import EncodingDetector
-from ..input import InputInterceptor
+from ..input.interceptor import InputInterceptor
 from .buffer import OutputBuffer
 from .events_history import EventHistoryManager
 from .trigger_matcher import TriggerMatcher
@@ -116,6 +116,10 @@ class Session(
         self._stdout_cursor = 0
         self._stderr_read_offset = 0
         self._trig_mat = TriggerMatcher(decode_func=self._decode_only_len)
+        # 触发状态互斥锁：前台等待（exec/send/read/mouse）与后台通知线程
+        # （notify worker）并发操作同一 _trig_mat 时经此串行化，
+        # 保证同一会话同时仅一个等待者（set→wait→check→clear 序列原子性）
+        self._trig_lock = threading.RLock()
         self._evt_hist = EventHistoryManager()
         self._tracker = create_process_tree_tracker()
         # 会话级插件宿主：须在后台线程构造前创建（Components 引用）
@@ -196,6 +200,8 @@ class Session(
         self._screen_buffer_cache: Optional[tuple] = None
         # 不使用 _suppress_publish_until 抑制 ConPTY repaint：
         # 让 ConPTY 输出直达前端，并通过 snapshot 强制 resync（term.reset + write）。
+        self.__dict__["__common_mark"] = []  # 来源标记（"normal"/"subagent" 等，插件用）
+        self.tag: list = []                  # 用户标签（预留，供后续 --tag 批量操作）
 
     # ════════════════════════════════════════════════════════════
     # 生命周期
@@ -624,3 +630,18 @@ class Session(
     @property
     def publisher(self) -> "SessionPublisher":
         return self._publisher
+
+    # ── 来源标记（__common_mark） ──────────────────────────
+
+    def add_common_mark(self, mark: str) -> None:
+        """追加来源标记（幂等，重复打标忽略）"""
+        marks = self.__dict__.get("__common_mark")
+        if marks is None:
+            marks = []
+            self.__dict__["__common_mark"] = marks
+        if mark not in marks:
+            marks.append(mark)
+
+    def has_common_mark(self, mark: str) -> bool:
+        """检查是否包含指定来源标记"""
+        return mark in self.__dict__.get("__common_mark", ())

@@ -1,10 +1,11 @@
-"""沙箱配置 —— win-sandbox 委派（Windows 专属，daemon 侧）
+"""沙箱配置 —— win_sandbox_native（pybind11 in-process）委派（Windows 专属，daemon 侧）
 
 来源: daemon/sandbox.toml（可选；不存在时沙箱功能关闭）
 
-导出的 QUOTA / ISOLATION 直接对齐 win-sandbox start_process 参数
-（quota / isolation_policy dict），供 src/sandbox/ 使用。
-依赖定位：bin/win_sandbox（vendored python 包 + pyd）。
+导出的 QUOTA 直接对齐 win_sandbox_native 的配额参数（quota dict），
+供 src/sandbox/ 使用。ISOLATION 兼容接受（网络/剪贴板策略在新沙箱不生效）。
+依赖定位：bin/win_sandbox/_native/win_sandbox_native*.pyd（经 vendored
+包 bin/win_sandbox 加载，见 src/sandbox/manager.py）。
 """
 
 from ._loader import apply_env_overrides, load_toml
@@ -32,16 +33,16 @@ if _cfg is not None:
     ENABLED = _flat["SANDBOX_ENABLED"]
     LOG_LEVEL = _flat["SANDBOX_LOG_LEVEL"]
 
-    # ── 资源配额（对齐 win-sandbox quota payload）──
+    # ── 资源配额（对齐 win_sandbox_native quota 参数）──
     QUOTA = {
         _k[len("QUOTA_"):].lower(): _v
         for _k, _v in _flat.items()
         if _k.startswith("QUOTA_")
     }
 
-    # ── 隔离策略（对齐 win-sandbox isolation_policy payload）──
-    # 仅含标量/结构化数据（net_policy/net_allowlist/clipboard_isolate），无环境
-    # 变量路径字段；浅拷贝一层防止外部引用改动，manager 不会原地修改
+    # ── 隔离策略（兼容接受；新沙箱无网络/剪贴板策略）──
+    # 键名保留兼容（net_policy/net_allowlist/clipboard_isolate），manager
+    # 接受但不生效（能力范围裁剪为文件隔离 + 资源限制）
     ISOLATION = {
         _k[len("ISOLATION_"):].lower(): _v
         for _k, _v in _flat.items()

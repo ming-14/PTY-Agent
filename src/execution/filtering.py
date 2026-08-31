@@ -14,6 +14,25 @@ from ..protocol.message import Message
 from ..protocol.response import Response
 
 
+# 终端快照行分隔：行首 CSI 光标定位序列（\x1b[<row>;<col>H / f）
+_CURSOR_POS_RE = re.compile(r"\x1b\[\d*(?:;\d+)?[Hf]")
+
+
+def _snapshot_lines(output: str) -> list:
+    """按终端快照的实际行分隔拆行
+
+    快照文本行由 CSI 光标定位序列（如 ``\\x1b[1;1H``）分隔而非换行符，
+    直接 splitlines 会把整屏当作一行，导致 -l/--lines/-g/--column
+    全部失效。先按定位序列拆分为屏幕行，再做行过滤。
+    """
+    if "\x1b[" not in output:
+        return output.splitlines()
+    parts = _CURSOR_POS_RE.split(output)
+    # 首个定位序列前的空串（快照常以 \x1b[1;1H 开头）剔除
+    lines = [p for p in parts if p != ""]
+    return lines
+
+
 def _filter_indexed(lines, lines_param, grep, column) -> list:
     """统一过滤核心：返回 ``[(原序号, 文本)]``（保留行在原输出中的 0-based 序）
 
@@ -75,7 +94,7 @@ def filter_snapshot_lines(
         return output
     try:
         idx_lines = _filter_indexed(
-            output.splitlines(), lines_param, grep, column_param
+            _snapshot_lines(output), lines_param, grep, column_param
         )
     except ValueError:
         return ""

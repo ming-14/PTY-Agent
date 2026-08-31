@@ -2,8 +2,8 @@
 
 覆盖：manager 全链路（start/start_process/query/terminate/close）、
 SandboxPty 完整终端语义（回显/退出码/进程树终止）。
-非管理员环境：Low IL 无写保护（NO_WRITE_UP），系统目录只读可访问；
-隔离策略仅网络维度（无路径白名单/能力集）。
+隔离机制：WRITE_RESTRICTED 受限令牌 + Job（写受 capability SID 限制，
+读/网络/进程可见性不受限）。
 """
 
 import glob
@@ -87,7 +87,12 @@ class TestManagerE2E:
     def test_start_and_ready(self):
         m = self._manager()
         assert m._instance is not None
-        assert m._instance.process_count == 0
+        # 原生实例可用：经 manager 启动进程并查询 Job 内进程列表
+        m.start_process("cmd.exe /c ping -n 2 127.0.0.1 >nul & echo ready", working_dir=os.getcwd())
+        import time
+        time.sleep(1.0)
+        assert m.get_process_list()
+        m.terminate()
 
     def test_run_echo_and_exit_code(self):
         # SandboxPty 全链路：ConPTY 输出回显 + Job 退出码

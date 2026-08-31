@@ -12,6 +12,7 @@
 
 import logging
 import os
+import sys
 from typing import Dict, Optional
 
 from . import registry
@@ -26,8 +27,12 @@ _dispatcher: Optional[AsyncLogDispatcher] = None
 _archiver: Optional[LogArchiver] = None
 
 
-def _assemble(config: LoggingConfig) -> Dict[str, str]:
-    """按配置装配日志系统，返回 {分组名: 日志文件路径}"""
+def _assemble(config: LoggingConfig, console: bool = False) -> Dict[str, str]:
+    """按配置装配日志系统，返回 {分组名: 日志文件路径}
+
+    Args:
+        console: 同时向 stderr 输出（前台运行 / 服务监督器场景，供 s6-log 等捕获）。
+    """
     global _dispatcher
 
     os.makedirs(config.log_dir, exist_ok=True)
@@ -52,6 +57,10 @@ def _assemble(config: LoggingConfig) -> Dict[str, str]:
     formatter = ContextFormatter(config.log_format, datefmt=config.log_date_format)
     _dispatcher = AsyncLogDispatcher(queue_size=config.queue_size)
     queue_handler = _dispatcher.create_queue_handler()
+    # 前台模式：额外向 stderr 输出（监督器日志捕获），与文件 handler 同一 formatter
+    console_handler = logging.StreamHandler(sys.stderr) if console else None
+    if console_handler is not None:
+        console_handler.setFormatter(formatter)
 
     files: Dict[str, str] = {}
     for group, names in config.groups.items():
@@ -66,6 +75,8 @@ def _assemble(config: LoggingConfig) -> Dict[str, str]:
             logger = logging.getLogger(name)
             logger.handlers.clear()
             logger.addHandler(queue_handler)
+            if console_handler is not None:
+                logger.addHandler(console_handler)
             logger.setLevel(level)
             logger.propagate = False
         files[group] = log_file
@@ -74,12 +85,15 @@ def _assemble(config: LoggingConfig) -> Dict[str, str]:
     return files
 
 
-def setup_daemon_logging() -> Dict[str, str]:
+def setup_daemon_logging(console: bool = False) -> Dict[str, str]:
     """daemon 侧装配：8 分组 → 异步队列 → 文件 + 启动归档线程
 
     分组与级别映射：
     - daemon/session/pty/protocol/auth/sandbox → DAEMON_LOG_LEVEL
     - web/screenshare → WEB_LOG_LEVEL
+
+    Args:
+        console: 同时向 stderr 输出（前台运行 / 服务监督器场景）。
 
     Returns:
         {分组名: 日志文件路径}
@@ -140,7 +154,7 @@ def setup_daemon_logging() -> Dict[str, str]:
         archive_interval=LOG_ARCHIVE_INTERVAL,
         queue_size=LOG_QUEUE_SIZE,
     )
-    files = _assemble(config)
+    files = _assemble(config, console=console)
 
     if files:
         _archiver = LogArchiver(LOG_DIR, LOG_ARCHIVE_INTERVAL)

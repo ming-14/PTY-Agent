@@ -15,11 +15,6 @@ def _parse_default_key(key: str) -> str:
     return key.replace("-", "_")
 
 
-def _format_config_key(key: str) -> str:
-    """内部配置键（下划线）转 CLI 展示键（连字符）"""
-    return key.replace("_", "-")
-
-
 def _encoding_type(value: str) -> str:
     """argparse type：--encoding 取值必须为合法编码名
 
@@ -131,6 +126,13 @@ def add_session_io_args(parser: argparse.ArgumentParser) -> None:
         default=False,
         help="仅返回屏幕变化的行（需快照模式，stream 格式）",
     )
+    parser.add_argument(
+        "--notify",
+        action="store_true",
+        default=False,
+        help="注册通知订阅：命令立即返回（等待通知），条件满足时后台发布通知"
+        "（用 wait 查看摘要，notice <nid> 查看完整内容）",
+    )
 
 
 def add_output_args(parser: argparse.ArgumentParser) -> None:
@@ -170,6 +172,6 @@ def warn_idle_without_idle_timeout(args) -> None:
 
 
 def abort_error(message: str) -> None:
-    """打印错误并提前退出（等价原 main 的 emit_error + return，退出码 0）"""
+    """打印错误并提前退出（用法错误，与 argparse parser.error 一致，退出码 2）"""
     emit_error(message)
-    raise SystemExit(0)
+    raise SystemExit(2)

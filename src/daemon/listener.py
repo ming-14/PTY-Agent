@@ -12,10 +12,19 @@ import threading
 from typing import Callable, Optional
 
 from ..auth.context import AuthContext
-from ..config.daemon import IS_WINDOWS, SOCKET_LISTEN_BACKLOG
+from ..config.daemon import (
+    CONNECTION_READ_TIMEOUT,
+    IS_WINDOWS,
+    MAX_CONNECTIONS,
+    SOCKET_LISTEN_BACKLOG,
+)
 from ..logging import get_logger
 
 _logger = get_logger("pty-daemon")
+
+# 全局并发连接槽位：所有 Listener 实例共享（跨 basic/token/tls 端口合计上限），
+# 超限时 accept 后立即拒绝，防止 Slowloris 占满连接线程与内存
+_CONNECTION_SLOTS = threading.BoundedSemaphore(MAX_CONNECTIONS)
 
 
 class Listener:
@@ -23,6 +32,12 @@ class Listener:
 
     每个 Listener 负责一个 (host, port, transport, auth_context) 组合。
     TCP/TLS 传输层在此封装，accept 后派发给 DaemonDispatcher。
+
+    连接级防护（Slowloris DoS）：
+    - 读超时：连接在 _handle_connection 开头设置 CONNECTION_READ_TIMEOUT，
+      TLS 握手也受此超时约束（wrap_socket 继承底层 socket 超时语义）。
+    - 连接数上限：全局 MAX_CONNECTIONS 槽位（跨所有 Listener 共享），
+      超限时 accept 后立即关闭并记录 warning，不建线程。
 
     生命周期：
         1. bind()  — 创建 socket 并绑定端口（检测端口冲突），返回实际端口
@@ -121,10 +136,14 @@ class Listener:
         下一次超时醒来即退出（Unix 的 close 不中断阻塞中的 accept）。
         TLS 握手在连接线程内执行（_handle_connection）：慢握手
         （客户端延迟 ClientHello）不阻塞 accept 循环与其他连接。
+        连接数上限在此检查：超限时立即关闭，不进入线程（槽位全局共享）。
         """
         while self._running:
+            sock = self._sock
+            if sock is None:
+                break
             try:
-                conn, addr = self._sock.accept()
+                conn, addr = sock.accept()
             except socket.timeout:
                 continue
             except OSError:
@@ -133,6 +152,21 @@ class Listener:
                         "Listener [%s] accept 异常", self._transport, exc_info=True
                     )
                 break
+
+            # 连接数上限：全局槽位满则拒绝（关闭套接字让对端立即感知），
+            # 不创建线程，防止慢客户端占满 daemon 线程/内存
+            if not _CONNECTION_SLOTS.acquire(blocking=False):
+                _logger.warning(
+                    "Listener [%s] 连接数达上限 (%d)，拒绝连接: %s",
+                    self._transport,
+                    MAX_CONNECTIONS,
+                    addr,
+                )
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                continue
 
             _logger.debug("Listener [%s] 接受连接: %s", self._transport, addr)
 
@@ -145,26 +179,43 @@ class Listener:
             t.start()
 
     def _handle_connection(self, conn, addr):
-        """连接线程入口：TLS 包装（慢握手在此执行）+ 派发给 handler"""
-        if self._transport == "tls" and self._ssl_context is not None:
-            try:
-                conn = self._ssl_context.wrap_socket(conn, server_side=True)
-            except Exception:
-                _logger.warning(
-                    "Listener [%s] TLS 握手失败: %s",
-                    self._transport,
-                    addr,
-                    exc_info=True,
-                )
+        """连接线程入口：读超时 + TLS 包装（慢握手在此执行）+ 派发给 handler
+
+        读超时在 TLS 包装前设置：wrap_socket 继承底层 socket 的超时语义，
+        慢握手（客户端延迟 ClientHello）同样受超时约束，不再永久占线程。
+        超时仅作用于"读请求"阶段——dispatcher 为单次 recv 模型，recv 完成
+        后 handler 处理不涉及 socket；响应发送前 dispatcher 恢复无超时
+        （见 dispatcher.handle），避免大响应被写超时误杀。
+        """
+        try:
+            conn.settimeout(CONNECTION_READ_TIMEOUT)
+            if self._transport == "tls" and self._ssl_context is not None:
                 try:
-                    conn.close()
-                except OSError:
-                    pass
-                return
-        self._handler.handle(conn, addr)
+                    conn = self._ssl_context.wrap_socket(conn, server_side=True)
+                except Exception:
+                    _logger.warning(
+                        "Listener [%s] TLS 握手失败: %s",
+                        self._transport,
+                        addr,
+                        exc_info=True,
+                    )
+                    try:
+                        conn.close()
+                    except OSError:
+                        pass
+                    return
+            self._handler.handle(conn, addr)
+        finally:
+            # 释放连接槽位（accept 时 acquire；无论正常/异常路径都归还）
+            _CONNECTION_SLOTS.release()
 
     def stop(self):
-        """停止 accept 线程，关闭 socket"""
+        """停止 accept 线程，关闭 socket
+
+        已 accept 的连接不在此强制关闭：由 dispatcher.handle 的 finally
+        负责关闭（读超时也会让慢连接在 CONNECTION_READ_TIMEOUT 内退出），
+        连接槽位随线程结束归还。
+        """
         self._running = False
         if self._sock is not None:
             try:

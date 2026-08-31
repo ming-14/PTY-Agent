@@ -1,0 +1,93 @@
+# PTY-Agent CI：自动安装环境 → 自动构建发布包 → 自动跑全量测试
+#
+# 矩阵：Windows（完整构建：wezterm-py/fastscreen/win-sandbox/rime + 下载工具）
+#       Linux（wezterm-py/rime + 下载工具；Windows 专属组件自动跳过）
+#
+# 关键点：
+# - 先跑 BUILD.py（编译 wezterm-py 等二进制到 bin/），再跑 pytest，
+#   保证 web e2e / attend e2e 的 _HAS_WEZTERM 为真、能真实运行而非跳过
+# - cargo target + pip + npm 均做缓存，缩短重复构建时间
+# - BUILD.py 步骤失败仅告警不中断（下载源偶发不可达时构建仍能完成）
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Set up Node (rime webpack)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web_rime/plugin/package-lock.json
+
+      - name: Set up Rust (wezterm-py)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo (wezterm-py)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: wezterm-py
+
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev libfontconfig1-dev \
+            cmake ninja-build
+
+      # Windows runner 自带 VS Build Tools + cmake + ninja + vcvars64，
+      # Linux 上 fastscreen/win-sandbox 为 Windows 专属组件自动跳过，无需额外配置
+
+      - name: Install Python deps (runtime + test)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pytest pytest-timeout pytest-asyncio \
+            httpx websockets maturin
+
+      - name: Build release package
+        run: python BUILD.py
+        shell: bash
+
+      - name: Run full test suite
+        run: python -m pytest tests/ -q --tb=short
+        shell: bash
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pty-agent-${{ matrix.os }}
+          path: pty-agent-*.zip
+          if-no-files-found: ignore

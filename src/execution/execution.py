@@ -28,6 +28,7 @@ def _run_snapshot_flow(
     extra_fields: Optional[dict] = None,
     send_response: bool = True,
     cancel_event: Optional[threading.Event] = None,
+    apply_filter: bool = False,
 ):
     from .output_policy import (
         resolve_output,
@@ -50,8 +51,11 @@ def _run_snapshot_flow(
     prior_lines = []
     if result_type != "exec" and (has_trigger or has_idle):
         prior_snapshot = session.get_snapshot(keep_ansi=keep_ansi)
-        # 循环内不变，提升出等待循环（避免每轮重复 splitlines）
-        prior_lines = prior_snapshot.splitlines() if prior_snapshot else []
+        # 循环内不变，提升出等待循环（避免每轮重复拆分）
+        # 快照行由 CSI 光标定位序列分隔而非换行符，统一走 filtering 的屏幕行拆分
+        from .filtering import _snapshot_lines
+
+        prior_lines = _snapshot_lines(prior_snapshot) if prior_snapshot else []
 
     # [缓解方案] --newline 回显行排除：本次 send 写入的输入文本按行拆分，
     # 回显行（prompt + 输入文本）以输入行结尾，从匹配候选中剔除，避免
@@ -75,6 +79,9 @@ def _run_snapshot_flow(
             idle_timeout=idle_timeout,
             idle_after_first_output=idle_after_first,
         )
+        # 触发等待序列持会话级锁：同一会话同时仅一个等待者
+        # （前台命令与后台 notify worker 互斥，防 _trig_mat 状态并发覆写）
+        session._trig_lock.acquire()
         last_snapshot = ""
         deadline = time.time() + timeout
         if result_type == "exec":
@@ -139,7 +146,9 @@ def _run_snapshot_flow(
                         if newline_ok:
                             check_text = snapshot
                             if prior_lines:
-                                cur_lines = snapshot.splitlines()
+                                from .filtering import _snapshot_lines
+
+                                cur_lines = _snapshot_lines(snapshot)
                                 diff_lines = [
                                     l
                                     for i, l in enumerate(cur_lines)
@@ -198,8 +207,8 @@ def _run_snapshot_flow(
         finally:
             if host is not None:
                 host.exit_wait()
-
-        session.clear_trigger()
+            session.clear_trigger()
+            session._trig_lock.release()
     else:
         matched, reason = False, Reason.OK
         # 显式 --timeout：以完整 timeout 为等待预算等待返回条件（命令自然结束/
@@ -248,6 +257,11 @@ def _run_snapshot_flow(
             matched, reason = result
 
     output = resolve_output(session, cond)
+    # exec/send/mouse 行数过滤（-l）：read 由 read_handler 自行过滤（避免双重过滤）
+    if apply_filter and req.lines is not None:
+        from .filtering import filter_snapshot_lines
+
+        output = filter_snapshot_lines(output, req.lines)
     return assemble_response(
         ctx,
         conn,
@@ -268,9 +282,10 @@ def _interruptible_sleep(duration: float, cancel_event, on_cancel):
     """分段睡眠：cancel_event 置位时执行 on_cancel 回调并提前返回
 
     长等待（无 trigger 的固定等待）在取消时可及时中断，回调返回后
-    上层即以 reason=cancelled 结束步骤。
+    上层即以 reason=cancelled 结束步骤。有 cancel_event 时一律分段
+    睡眠并检查，避免短等待（≤1s）期间取消被延迟。
     """
-    if cancel_event is None or duration <= 1.0:
+    if cancel_event is None:
         time.sleep(duration)
         return
     deadline = time.time() + duration
@@ -374,6 +389,7 @@ def _run_subprocess_trigger_flow(
     extra_fields: Optional[dict] = None,
     send_response: bool = True,
     cancel_event: Optional[threading.Event] = None,
+    apply_filter: bool = False,
 ):
     """子进程模式 trigger 流程：增量文本匹配（复用 TriggerMatcher）"""
     from .filtering import strip_if_needed
@@ -399,30 +415,43 @@ def _run_subprocess_trigger_flow(
         idle_timeout=idle_timeout,
         idle_after_first_output=idle_after_first,
     )
-    matched, reason = session.wait_for_trigger(
-        timeout, gui_short_circuit=False, cancel_event=cancel_event
-    )
-    output, delivered_end = session.get_output_with_offset(
-        from_offset=trigger_offset, encoding=req.encoding
-    )
-    # 增量交付：推进消费游标到已交付末尾
-    session.advance_stdout_cursor(delivered_end)
-    output = strip_if_needed(output, msg)
-    ret = assemble_response(
-        ctx,
-        conn,
-        session,
-        msg,
-        output=output,
-        matched=matched,
-        reason=reason,
-        result_type=result_type,
-        extra_fields=extra_fields,
-        send_response=send_response,
-        attach_stderr=True,
-        include_debug=msg.get("debug"),
-    )
-    session.clear_trigger()
+    # 触发等待序列持会话级锁：同一会话同时仅一个等待者（前台/后台互斥）
+    session._trig_lock.acquire()
+    try:
+        matched, reason = session.wait_for_trigger(
+            timeout, gui_short_circuit=False, cancel_event=cancel_event
+        )
+        output, delivered_end = session.get_output_with_offset(
+            from_offset=trigger_offset, encoding=req.encoding
+        )
+        # 增量交付：推进消费游标到已交付末尾
+        session.advance_stdout_cursor(delivered_end)
+        output = strip_if_needed(output, msg)
+        # exec/send 行数过滤（-l）：子进程模式行按换行分隔，直接 apply_lines_grep
+        if apply_filter and req.lines is not None:
+            from .filtering import apply_lines_grep
+
+            filtered = apply_lines_grep(output, req.lines, None, conn)
+            if filtered is None:
+                return
+            output = filtered
+        ret = assemble_response(
+            ctx,
+            conn,
+            session,
+            msg,
+            output=output,
+            matched=matched,
+            reason=reason,
+            result_type=result_type,
+            extra_fields=extra_fields,
+            send_response=send_response,
+            attach_stderr=True,
+            include_debug=msg.get("debug"),
+        )
+    finally:
+        session.clear_trigger()
+        session._trig_lock.release()
     return ret
 
 
@@ -436,6 +465,7 @@ def _run_subprocess_no_trigger_flow(
     send_response: bool = True,
     from_offset: Optional[int] = None,
     cancel_event: Optional[threading.Event] = None,
+    apply_filter: bool = False,
 ):
     """子进程模式无 trigger 流程：idle-timeout / 固定等待 → 增量输出 + stderr
 
@@ -459,29 +489,37 @@ def _run_subprocess_no_trigger_flow(
     session.wait_for_initial_output(timeout=0.5)
 
     if idle_timeout is not None:
-        session.set_trigger(
-            pattern=r"(?!x)x",
-            newline=False,
-            fresh=True,
-            start_offset=session.output_offset,
-            idle_timeout=idle_timeout,
-            idle_after_first_output=idle_after_first,
-        )
-        matched, reason = session.wait_for_trigger(
-            timeout=cond.timeout, cancel_event=cancel_event
-        )
-        session.clear_trigger()
+        session._trig_lock.acquire()
+        try:
+            session.set_trigger(
+                pattern=r"(?!x)x",
+                newline=False,
+                fresh=True,
+                start_offset=session.output_offset,
+                idle_timeout=idle_timeout,
+                idle_after_first_output=idle_after_first,
+            )
+            matched, reason = session.wait_for_trigger(
+                timeout=cond.timeout, cancel_event=cancel_event
+            )
+        finally:
+            session.clear_trigger()
+            session._trig_lock.release()
     elif explicit_timeout:
-        session.set_trigger(
-            pattern=r"(?!x)x",
-            newline=False,
-            fresh=True,
-            start_offset=session.output_offset,
-        )
-        matched, reason = session.wait_for_trigger(
-            timeout=cond.timeout, cancel_event=cancel_event
-        )
-        session.clear_trigger()
+        session._trig_lock.acquire()
+        try:
+            session.set_trigger(
+                pattern=r"(?!x)x",
+                newline=False,
+                fresh=True,
+                start_offset=session.output_offset,
+            )
+            matched, reason = session.wait_for_trigger(
+                timeout=cond.timeout, cancel_event=cancel_event
+            )
+        finally:
+            session.clear_trigger()
+            session._trig_lock.release()
     else:
         matched, reason = False, Reason.OK
 
@@ -497,6 +535,14 @@ def _run_subprocess_no_trigger_flow(
     # 增量交付：推进消费游标到已交付末尾（后续默认读取不再重复此段）
     session.advance_stdout_cursor(delivered_end)
     output = strip_if_needed(output, msg)
+    # exec/send 行数过滤（-l）
+    if apply_filter and req.lines is not None:
+        from .filtering import apply_lines_grep
+
+        filtered = apply_lines_grep(output, req.lines, None, conn)
+        if filtered is None:
+            return
+        output = filtered
     return assemble_response(
         ctx,
         conn,

@@ -9,7 +9,7 @@
 import argparse
 import re
 import sys
-from typing import Dict
+from typing import Dict, Optional
 
 from .base import Command, CommandContext
 from .common_args import add_common_args
@@ -54,11 +54,19 @@ class CommandRegistry:
         return self._commands[name]
 
     def build_parser(
-        self, *, prog: str, description: str, epilog: str
+        self,
+        *,
+        prog: str,
+        description: str,
+        epilog: str,
+        plugin_registrations: Optional[dict] = None,
     ) -> argparse.ArgumentParser:
         """构建顶层解析器与全部子命令解析器
 
         构建即全量冲突扫描：重复子命令名 / 子命令内重复选项字符串均由 argparse 暴露。
+        plugin_registrations: {命令名: [OptionRegistration]} —— 插件声明的 CLI 选项
+        （cli_options.build_option_registrations 产出），按命令注册到子命令解析器；
+        冲突选项已被检测前置排除，不会触发 argparse 重复选项错误。
         """
         parser = _HintParser(
             prog=prog,
@@ -83,6 +91,8 @@ class CommandRegistry:
             if cmd.use_common_args:
                 add_common_args(p)
             cmd.add_arguments(p)
+            for reg in (plugin_registrations or {}).get(name, []):
+                p.add_argument(*reg.strings, **reg.kwargs)
         return parser
 
     def dispatch(self, args, ctx: CommandContext) -> None:

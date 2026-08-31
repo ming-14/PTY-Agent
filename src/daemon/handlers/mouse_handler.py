@@ -5,8 +5,8 @@ from ...protocol.message import Message
 from ...protocol.reasons import Reason
 from ...protocol.response import Response
 from .base import DaemonHandler
+from ...execution import _run_snapshot_flow
 from ...execution.context import HandlerContext
-from .exec_handler import _run_snapshot_flow
 from ...execution.filtering import strip_if_needed
 from ...execution.response import (
     attach_screen_buffer,
@@ -20,6 +20,8 @@ from ...execution.utils import (
     validate_request,
     validate_trigger_regex,
 )
+from ..notifications import build_notify_waiting_response, spawn_notify_worker
+from ...plugins.cli_options import validate_plugin_options
 from ...logging import get_logger
 
 _logger = get_logger("pty-daemon")
@@ -61,6 +63,15 @@ class MouseHandler(DaemonHandler):
             else:
                 Message.send(conn, Response.error(f"Session '{session_id}' not found"))
             return
+
+        # 插件选项校验与合并（mouse 消息下发更新会话插件选项）
+        plugin_options = msg.get("pluginOptions")
+        if plugin_options is not None:
+            err = validate_plugin_options(plugin_options)
+            if err:
+                Message.send(conn, Response.error(err))
+                return
+            session.plugin_host.update_options(plugin_options)
 
         if not apply_client_defaults(
             session, msg, conn, global_defaults=ctx.manager.get_global_defaults()
@@ -154,9 +165,22 @@ class MouseHandler(DaemonHandler):
                 cursor=cursor,
             )
             return
+        # --notify 分支：动作已执行，立即返回 notify_waiting，后台线程继续等待
+        if msg.get("notify"):
+            resp = build_notify_waiting_response(ctx, session, msg, result_type="mouse")
+            resp["performed"] = True
+            resp["action"] = msg.get("action")
+            resp["grep"] = msg.get("grep")
+            Message.send(conn, resp)
+            spawn_notify_worker(
+                ctx, session, msg, result_type="mouse",
+                extra_fields={"performed": True},
+            )
+            return
         # pty 恒为快照，trigger/idle-timeout 由快照流程内部处理
         _run_snapshot_flow(
-            ctx, conn, session, msg, result_type="mouse", extra_fields=extra
+            ctx, conn, session, msg, result_type="mouse", extra_fields=extra,
+            apply_filter=True,
         )
 
 

@@ -1,6 +1,6 @@
 """领域实体与值对象。"""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 
@@ -13,6 +13,7 @@ class ActiveSession:
     command: str
     running: bool
     start_time: float
+    tag: list = field(default_factory=list)
 
 
 @dataclass
@@ -28,6 +29,7 @@ class HistorySession:
     exit_code: Optional[int]
     error_message: Optional[str]
     uid: str = ""
+    tag: list = field(default_factory=list)
 
 
 @dataclass

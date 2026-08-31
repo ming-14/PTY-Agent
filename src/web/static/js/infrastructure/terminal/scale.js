@@ -31,6 +31,7 @@ import {
   getTerminalCellSize,
   computeFrameRatio,
   computeFontSizeFromRatio,
+  isSubprocessSession,
 } from './shared.js';
 import {
   DEFAULT_FONT_SIZE,
@@ -130,10 +131,27 @@ export function applyTerminalSize(uid, force, opts) {
   const inst = state.termInstances[uid];
   if (!s || !inst) return;
 
-  // 子进程模式无终端（PTY）：不发送 resize（后端会拒绝并报错）。
-  // 子进程会话的 termInstance 仅用于显示输出，无 cols/rows 语义。
-  if (s.mode === 'subprocess' || s.ptyType === 'subprocess') {
-    debug('terminal', 'applyTerminalSize skip: subprocess sid=%s', uid);
+  // 子进程模式：无后端 PTY，尺寸仅前端本地生效。
+  // term.resize 调整前端显示（onResize 子进程分支更新 s.cols/s.rows，不发后端）。
+  if (isSubprocessSession(s)) {
+    if (getSessionSizeConfigByUid(uid).mode === 'adaptive') {
+      applySessionFrameRatio(uid);
+      debug('terminal', 'applyTerminalSize subprocess adaptive → applySessionFrameRatio sid=%s', uid);
+      return;
+    }
+    const size = applyTerminalSizeFromSession(s);
+    if (!size) return;
+    if (inst.term.cols !== size.cols || inst.term.rows !== size.rows) {
+      try {
+        inst.term.resize(size.cols, size.rows);
+        debug('terminal', 'applyTerminalSize subprocess LOCAL sid=%s %dx%d (front-end only)',
+              uid, size.cols, size.rows);
+      } catch (e) {
+        error('resize', 'resize failed: %s', e && e.message);
+      }
+    } else {
+      debug('terminal', 'applyTerminalSize subprocess skip sid=%s (size unchanged)', uid);
+    }
     return;
   }
 
@@ -236,19 +254,15 @@ export function applyTerminalFontSize(uid) {
   }
   // 同步触发 xterm 视口刷新：
   // fontSize setter 同步链中 DomRenderer._updateDimensions 已同步更新
-  // dimensions，但 xterm 的 scrollTop 更新（_innerRefresh）在其内部 rAF 中
-  // （下一帧）——中间帧 canvas 已变高但 scrollArea/scrollTop 未跟上，
-  // 放大时视口相对上移。syncScrollArea(true) 同步执行 _innerRefresh：
-  // 更新 scrollArea 高度 + scrollTop = ydisp × newRowHeight 一步到位。
-  // 注意：底部时**跳过** syncScrollArea——其 scrollTop 重算会被 xterm
-  // clamp（滚动范围底部 < buffer 底部，含尾部空行）→ scroll 事件反向
-  // 同步 ydisp 到 clamp 值 → 内容从用户看到的 buffer 底部跳到滚动范围
-  // 底部（反复跳变）。底部直接 scrollToBottom 锚定（内容保持）。
-  if (!inst._wasAtBottom && core && core.viewport && typeof core.viewport.syncScrollArea === 'function') {
+  // dimensions，但滚动位置（scrollTop = ydisp × newRowHeight）由 viewport
+  // 维护，需显式 queueSync 重算滚动区域高度与 scrollTop。
+  // 注意：底部时**跳过** queueSync——底部锚定由 _anchorViewportToBottom
+  // 处理（scrollToBottom 语义），避免重复同步。
+  if (!inst._wasAtBottom && core && core._viewport && typeof core._viewport.queueSync === 'function') {
     try {
-      core.viewport.syncScrollArea(true);
+      core._viewport.queueSync();
     } catch (e) {
-      error('zoom', 'syncScrollArea failed: %s', e && e.message);
+      error('zoom', 'viewport queueSync failed: %s', e && e.message);
     }
   }
   // 轮询 canvas 尺寸直到实际变化（或超时），再更新 frame 并锚定底部
@@ -262,10 +276,12 @@ export function applyTerminalFontSize(uid) {
  * （vpY ≥ bufLen - rows - 1）与 scrollToBottom 锚定语义一致。
  * 两种底部状态（滚动条到底 / buffer 底部含尾部空行）都视为在底部，
  * 缩放后都应锚定保持。
+ *
+ * 6.0.0 中滚动容器为 .xterm-scrollable-element（.xterm-viewport 为空壳）。
  */
 function _isViewportAtBottom(inst) {
   const vp = inst.term.element
-    ? inst.term.element.querySelector('.xterm-viewport')
+    ? inst.term.element.querySelector('.xterm-scrollable-element')
     : null;
   if (vp) {
     const delta = vp.scrollHeight - vp.clientHeight - vp.scrollTop;
@@ -323,8 +339,8 @@ function _waitCanvasChange(uid, before, attempts, intervalMs) {
  * 用 term.scrollToBottom()（ydisp = bufLen - rows，用户看到的 buffer 底部）
  * ——不设像素 scrollTop：像素底部（scrollH - clientH）是滚动范围底部
  * （含尾部空行的 clamp），设像素会把内容推到滚动范围底部（视觉"向上"）。
- * 底部缩放已跳过 syncScrollArea（无 clamp 副作用），scrollToBottom 的内容
- * 保持稳定。
+ * 底部缩放已跳过 viewport queueSync（非底部才需要），scrollToBottom 的
+ * 内容保持稳定。
  *
  * rAF 重试：applyTerminalFrameSize 改变 frame 尺寸后，xterm 的
  * ResizeObserver 异步触发 term.resize（rows 取整 ±1），ydisp 被重新换算
@@ -347,7 +363,7 @@ function _anchorViewportToBottom(uid, seq, retries = 10) {
     requestAnimationFrame(() => _anchorViewportToBottom(uid, seq, retries - 1));
   } else if (retries === 0 || atBottom) {
     const vp = inst.term.element
-      ? inst.term.element.querySelector('.xterm-viewport')
+      ? inst.term.element.querySelector('.xterm-scrollable-element')
       : null;
     debug('zoom', 'anchorBottom uid=%s vpY=%d bufLen=%d scrollTop=%d scrollH=%d clientH=%d',
           uid,

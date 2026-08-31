@@ -53,7 +53,7 @@ class TestConnectBasic:
 
 
 class TestConnectAutoStart:
-    """_connect 自动启动守护进程测试"""
+    """_connect autostart=True 自动启动守护进程测试"""
 
     def test_auto_starts_when_not_running(self):
         started = {"called": False}
@@ -73,7 +73,7 @@ class TestConnectAutoStart:
              patch("src.client.daemonctl.start_daemon", side_effect=mock_start):
             client = Client()
             try:
-                client._connect()
+                client._connect(autostart=True)
             except SystemExit:
                 pass
             assert started["called"]
@@ -87,7 +87,7 @@ class TestConnectAutoStart:
 
 
 class TestConnectZombieRecovery:
-    """_connect 僵死守护进程自动恢复测试"""
+    """_connect autostart=True 僵死守护进程自动恢复测试"""
 
     def test_restarts_when_daemon_dies_mid_connect(self):
         call_count = {"n": 0}
@@ -107,7 +107,7 @@ class TestConnectZombieRecovery:
              patch("src.client.daemonctl.start_daemon", side_effect=mock_start):
             client = Client()
             try:
-                client._connect()
+                client._connect(autostart=True)
             except SystemExit:
                 pass
             assert restarted["called"]
@@ -140,7 +140,7 @@ class TestConnectZombieRecovery:
              patch("src.client.daemonctl.start_daemon"):
             client = Client()
             try:
-                sock = client._connect()
+                sock = client._connect(autostart=True)
                 assert sock is not None
                 sock.close()
             except Exception:

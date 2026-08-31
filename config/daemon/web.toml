@@ -3,7 +3,7 @@
 
 [server]
 ENABLE_WEB          = true       # Web 服务器启用开关；关闭时自动禁用 VNC 和 FastScreen
-WEB_HOST = "0.0.0.0"
+WEB_HOST = "127.0.0.1"
 WEB_PORT = 18766
 WEB_PASSWORD_HASH = ""          # Web 密码认证（SHA-256 hex）；空=无认证（向后兼容），设值=启用
                                   # 生成: python -c "import hashlib; print(hashlib.sha256(b'your_password').hexdigest())"
@@ -11,16 +11,16 @@ WEB_PASSWORD_HASH = ""          # Web 密码认证（SHA-256 hex）；空=无认
 [vnc]
 ENABLE_VNC         = true
 VNC_WINVNC_PATH    = ""
-VNC_MODULE_DIR = ""
+VNC_MODULE_DIR = ""            # 预留，当前未消费（adapter 自行推导路径）
 
 [fastscreen]
 ENABLE_FASTSCREEN           = true
-FASTSCREEN_PACKAGE_DIR      = ""
+FASTSCREEN_PACKAGE_DIR      = ""       # 预留，当前未消费（adapter 自行推导路径）
 FASTSCREEN_DEFAULT_FPS      = 30
-FASTSCREEN_DEFAULT_QUALITY  = 0.8
+FASTSCREEN_DEFAULT_QUALITY  = 0.8      # 预留，当前未消费（settings_schema 只映射 fsFps/fsBitrate/fsStreamFormat）
 FASTSCREEN_DEFAULT_BITRATE  = 2_000_000
-FASTSCREEN_DEFAULT_GOP_SIZE = 30
-FASTSCREEN_DEFAULT_METHOD   = "auto"
+FASTSCREEN_DEFAULT_GOP_SIZE = 30       # 预留，当前未消费
+FASTSCREEN_DEFAULT_METHOD   = "auto"   # 预留，当前未消费
 # 传输协议默认值（auto/mjpeg/mse/webcodecs），可被 web_user_choice.json 覆盖
 FASTSCREEN_DEFAULT_STREAM_FORMAT = "mse"
 

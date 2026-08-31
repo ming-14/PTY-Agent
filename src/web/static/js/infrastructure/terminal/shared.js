@@ -17,6 +17,16 @@ import { getSessionSizeConfig } from '../../domain/state.js';
 import { DEFAULT_COLS, DEFAULT_ROWS, MIN_FONT_SIZE, MAX_FONT_SIZE } from '../../domain/constants.js';
 
 /**
+ * 判断会话是否为子进程模式（无终端，输入直写 stdin，尺寸仅前端本地生效）。
+ * 全前端统一入口：mode（后端权威）或 ptyType（后端类型）任一为 subprocess 即判定。
+ * @param {object} s 会话对象
+ * @returns {boolean}
+ */
+export function isSubprocessSession(s) {
+  return !!(s && (s.mode === 'subprocess' || s.ptyType === 'subprocess'));
+}
+
+/**
  * 根据该会话自身的尺寸模式返回终端应使用的 cols/rows。
  *
  * 按会话 uid 查询配置，每个会话独立维护模式与自定义值。

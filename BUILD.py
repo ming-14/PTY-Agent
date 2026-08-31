@@ -19,10 +19,11 @@ wezterm-py，下载 aichat / ripgrep / UltraVNC / terminal_injector 并统一放
     DOWNLOAD_TERMINALINJECTOR  - 是否下载 terminal_injector（默认 true）
     BUILD_RIME                 - 是否构建 rime-plugin（默认 true）
     DOWNLOAD_RG                - 是否下载 ripgrep（默认 true）
+    DOWNLOAD_FONTS             - 是否下载 MapleMono NF CN 字体（默认 true）
 
 命令行参数：
     -NoAichat / -NoFastscreen / -NoWinsandbox / -NoWeztermPy / -NoUltravnc /
-    -NoTerminalInjector / -NoRime / -NoRg   跳过对应步骤（大小写不敏感）
+    -NoTerminalInjector / -NoRime / -NoRg / -NoFonts   跳过对应步骤（大小写不敏感）
     -Mirror <url> / -m <url>                 指定 GitHub 下载镜像
     -ApiMirror <url> / -am <url>             指定 GitHub API 镜像
 
@@ -171,18 +172,29 @@ def find_vcvars():
                 return candidate
     pf = os.environ.get("ProgramFiles", r"C:\Program Files")
     candidates = []
-    for version in ("2022", "17", "18"):
-        for edition in ("Community", "BuildTools"):
+    # 版本目录两种命名并存：VS 2019/2022 用年份，VS 2026 用主版本号（18）
+    for version in ("18", "2022", "17", "2019"):
+        for edition in ("Community", "Professional", "Enterprise", "BuildTools", "Preview"):
             candidates.append(pf / Path("Microsoft Visual Studio") / version / edition /
                               "VC" / "Auxiliary" / "Build" / "vcvars64.bat")
     return next((p for p in candidates if p.is_file()), None)
 
 
 def write_cmd_wrapper(prefix, lines):
-    """写临时 .cmd 脚本：vcvars 环境注入/跨进程环境配置只能经 cmd 执行。"""
+    """写临时 .cmd 脚本：vcvars 环境注入/跨进程环境配置只能经 cmd 执行。
+
+    cmd 按 ANSI 代码页（系统 ACP，简中为 GBK）逐行解析 .cmd，UTF-8 写入会让
+    非 ASCII 路径（如中文用户名）乱码；故按 ACP 编码，无法表示时回退 UTF-8 并告警。
+    """
     cmd_file = Path(tempfile.gettempdir()) / "{}_{}.cmd".format(prefix, uuid.uuid4().hex[:8])
     content = "@echo off\nchcp 65001 >nul\n" + "\n".join(lines) + "\nexit /b %errorlevel%\n"
-    cmd_file.write_text(content, encoding="utf-8")
+    encoding = "cp{}".format(ctypes.windll.kernel32.GetACP()) if IS_WINDOWS else "utf-8"
+    try:
+        content.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        logger.warning("[cmd] 路径含 %s 无法表示的字符，回退 UTF-8 写入 %s", encoding, cmd_file)
+        encoding = "utf-8"
+    cmd_file.write_text(content, encoding=encoding)
     return cmd_file
 
 
@@ -244,6 +256,14 @@ def step_clean_platform_artifacts():
         if native_dir.is_dir():
             shutil.rmtree(native_dir)
             logger.info("已删除 Windows 专属残留目录: %s", native_dir)
+        # Unix 平台删除 bin/ 根残留的 Windows pyd 与 fastscreen.dll
+        for f in SCRIPT_DIR.glob("bin/win_sandbox_native*.pyd"):
+            f.unlink(missing_ok=True)
+            logger.info("已删除跨平台残留: %s", f)
+        fs_dll = SCRIPT_DIR / "bin" / "fastscreencore" / "fastscreen.dll"
+        if fs_dll.is_file():
+            fs_dll.unlink()
+            logger.info("已删除跨平台残留: %s", fs_dll)
 
 
 def step_build_rime():
@@ -329,6 +349,26 @@ def step_clean_gitkeep():
             logger.info("已删除: %s", f)
 
 
+def step_prune_dev_files():
+    """删除发布目录中的开发期文件：apikey.env / .gitignore / tests / .pytest_cache。
+
+    apikey.env 为 aichat 密钥文件（含多种 provider 的 key），.gitignore 与
+    tests / .pytest_cache 仅对仓库开发有意义（忽略规则、单元测试与其缓存），
+    发布包中携带会泄漏配置或增大体积。按名字删除（2048、subagent 等插件自带
+    测试与其缓存），不会误伤同名的业务模块。
+    """
+    # 先收集后删除：rglob 生成期删除目录会让后续 scandir 抛 FileNotFoundError
+    dev_dirs = [p for p in OUTPUT_DIR.rglob("*")
+                if p.is_dir() and p.name in ("tests", ".pytest_cache")]
+    for d in sorted(dev_dirs, key=lambda p: len(p.parts), reverse=True):
+        shutil.rmtree(d, ignore_errors=True)
+        logger.info("已删除: %s", d)
+    for f in OUTPUT_DIR.rglob("*"):
+        if f.is_file() and f.name in ("apikey.env", ".gitignore"):
+            f.unlink(missing_ok=True)
+            logger.info("已删除: %s", f)
+
+
 def step_clean_logs():
     """删除发布目录日志：log/、logs/ 目录整体删除，散落 *.log 文件删除。"""
     for dir_name in ("log", "logs"):
@@ -368,7 +408,11 @@ def step_build_fastscreen():
     rc = run_cmd([cmake, "-S", str(fs_source), "-B", str(fs_build),
                   "-G", "Visual Studio 18 2026", "-A", "x64"])
     if rc != 0:
+        logger.info("[fastscreen] 指定 VS 生成器失败，回退默认生成器")
         rc = run_cmd([cmake, "-S", str(fs_source), "-B", str(fs_build)])
+        if rc != 0:
+            logger.warning("[fastscreen] cmake configure 失败，跳过编译")
+            return
     rc = run_cmd([cmake, "--build", str(fs_build), "--config", "Release", "-j"])
     if rc != 0:
         logger.warning("[fastscreen] 编译失败")
@@ -386,8 +430,13 @@ def step_build_fastscreen():
 
 def step_build_win_sandbox():
     """编译 win_sandbox_native.pyd（pybind11 + Ninja；vcvars 环境经临时 .cmd 注入）。"""
-    ws_source = SCRIPT_DIR / "win-sandbox"
+    ws_source = SCRIPT_DIR / "sandbox" / "src"
     ws_build = ws_source / "build"
+    # 清理 bin/ 根过期的旧 pyd，避免构建产物与旧文件混用
+    old_pyd = SCRIPT_DIR / "bin" / "win_sandbox_native.cp311-win_amd64.pyd"
+    if old_pyd.is_file():
+        old_pyd.unlink()
+        logger.info("已删除 bin/ 根过期 pyd: %s", old_pyd.name)
     cmake = shutil.which("cmake")
     if not cmake:
         logger.warning("[win-sandbox] cmake 未找到，跳过编译")
@@ -419,7 +468,7 @@ def step_build_win_sandbox():
     pyd_dst_dir = SCRIPT_DIR / "bin" / "win_sandbox" / "_native"
     pyd_dst_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(str(pyd), str(pyd_dst_dir))
-    # vendored python 包装：构建产物目录优先，用 win-sandbox/python 源覆盖保证与 pyd 版本一致
+    # vendored python 包装：构建产物目录优先，用 sandbox 下的 py 源覆盖保证与 pyd 版本一致
     py_src = ws_source / "python" / "win_sandbox"
     if py_src.is_dir():
         for py_file in py_src.glob("*.py"):
@@ -697,8 +746,8 @@ def step_download_terminal_injector():
     """下载 terminal_injector 到源目录基础包 bin\\terminal_injector。"""
     dest_dir = SCRIPT_DIR / "bin" / "terminal_injector"
     try:
-        original = "https://github.com/ming-14/terminal-injector/releases/download/v1.0/" \
-                   "terminal_injector_x64_v1.0.zip"
+        original = "https://github.com/ming-14/terminal-injector/releases/download/v1.2/" \
+                   "terminal-injector-x64.zip"
         zip_path = _download_to_temp(_mirror_url(original), label="terminal_injector")
         extract_dir = _extract_to_temp(zip_path, "terminal_injector")
         try:
@@ -711,7 +760,53 @@ def step_download_terminal_injector():
         logger.warning("[terminal_injector] 下载/安装失败: %s", exc)
 
 
+def step_download_fonts():
+    """下载 MapleMono NF CN 字体（首选等宽字体，含 ASCII/CJK/Nerd Font 符号）到 src/assets/fonts/。
+
+    只提取 Regular 与 Bold 两个字重（各约 20MB），避免解压全套 17 个文件（约 350MB）。
+    """
+    dest_dir = SCRIPT_DIR / "src" / "assets" / "fonts"
+    try:
+        original = "https://github.com/subframe7536/maple-font/releases/download/v7.9/" \
+                   "MapleMono-NF-CN.zip"
+        zip_path = _download_to_temp(_mirror_url(original), label="maple-font")
+        extract_dir = _extract_to_temp(zip_path, "maple-font")
+        try:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            for name in ("MapleMono-NF-CN-Regular.ttf", "MapleMono-NF-CN-Bold.ttf"):
+                src = extract_dir / name
+                if src.is_file():
+                    shutil.copy2(str(src), str(dest_dir / name))
+            logger.info("[maple-font] 已安装到: %s (%d 文件)", dest_dir, len(list(dest_dir.glob("*.ttf"))))
+        finally:
+            shutil.rmtree(extract_dir, ignore_errors=True)
+            zip_path.unlink(missing_ok=True)
+    except Exception as exc:
+        logger.warning("[maple-font] 下载/安装失败: %s", exc)
+
+
 # ===================== 发布收尾 =====================
+
+def step_package_zip():
+    """把发布目录打包为 pty-agent-{win_x86-64|linux_x86-64}.zip。
+
+    zip 顶层直接是 src/bin/config/app.py/SKILL.md（不带 pty-agent 目录前缀），
+    与解压即用（zip 解到目录后直接 python app.py）的发布形态一致。
+    """
+    platform_tag = "win_x86-64" if IS_WINDOWS else "linux_x86-64"
+    zip_path = SCRIPT_DIR / "pty-agent-{}.zip".format(platform_tag)
+    zip_path.unlink(missing_ok=True)
+    logger.info("[package] 打包发布目录: %s", zip_path)
+    with zipfile.ZipFile(str(zip_path), "w", zipfile.ZIP_DEFLATED) as zf:
+        for item in OUTPUT_DIR.rglob("*"):
+            if not item.is_file():
+                continue
+            rel = item.relative_to(OUTPUT_DIR)
+            if any(part.startswith(".") for part in rel.parts):
+                continue
+            zf.write(str(item), str(rel))
+    logger.info("[package] 打包完成: %s (%.1f MB)", zip_path, zip_path.stat().st_size / (1024 * 1024))
+
 
 def step_final_cleanup():
     """删除发布目录中不应携带的配置/日志/缓存文件。"""
@@ -726,8 +821,6 @@ def step_final_cleanup():
     (OUTPUT_DIR / "config" / "plugins" / "ai" / "config" / "config.yaml").unlink(
         missing_ok=True
     )
-    # apikey.env 为 aichat 密钥文件（含多种 provider 的 key），不入发布包
-    (OUTPUT_DIR / "config" / "apikey.env").unlink(missing_ok=True)
     # winvnc 运行时配置：删真实 vnc.toml（可能含密码），保留 vnc.example.toml 作模板
     (OUTPUT_DIR / "config" / "daemon" / "vnc.toml").unlink(missing_ok=True)
     ultravnc_dir = OUTPUT_DIR / "bin" / "ultravnc"
@@ -744,7 +837,7 @@ def build_parser():
     """命令行解析：-NoX 跳过开关 + 镜像参数（大小写不敏感）。"""
     parser = argparse.ArgumentParser(description="PTY-Agent 发布构建脚本")
     flags = ["NoAichat", "NoFastscreen", "NoWinsandbox", "NoWeztermPy",
-             "NoUltravnc", "NoTerminalInjector", "NoRime", "NoRg"]
+             "NoUltravnc", "NoTerminalInjector", "NoRime", "NoRg", "NoFonts"]
     for flag in flags:
         parser.add_argument("-" + flag, "-" + flag.lower(), dest=flag,
                             action="store_true", help="跳过 %s 步骤" % flag[2:])
@@ -813,6 +906,10 @@ def main():
         steps.append(("下载 ripgrep", step_download_rg))
     else:
         logger.info("[rg] 跳过下载（DOWNLOAD_RG=false 或 -NoRg）")
+    if _enabled(args.NoFonts, "DOWNLOAD_FONTS"):
+        steps.append(("下载 MapleMono 字体", step_download_fonts))
+    else:
+        logger.info("[fonts] 跳过下载（DOWNLOAD_FONTS=false 或 -NoFonts）")
 
     # 所有产物已落入基础包源码目录，最后整体复制进干净的发布目录并收尾
     steps += [
@@ -820,7 +917,9 @@ def main():
         ("清理 __pycache__", step_clean_pycache),
         ("删除 .gitkeep", step_clean_gitkeep),
         ("清理日志文件", step_clean_logs),
+        ("删除开发期文件", step_prune_dev_files),
         ("清理发布目录冗余文件", step_final_cleanup),
+        ("打包发布 zip", step_package_zip),
     ]
 
     for name, step in steps:

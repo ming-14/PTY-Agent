@@ -79,12 +79,17 @@ class ClientDefaultsMixin:
         仅采纳本地仍为内置默认（未被 --default/显式参数覆盖）的键，
         保持优先级：显式参数 > --default > set-default 全局默认 > 内置默认。
 
-        daemon 不可达/响应异常时静默忽略（本次调用按无全局默认处理）。
+        daemon 未运行时静默跳过（exec 由自身 autostart 拉起，其余命令
+        由 _send_recv 报 daemon not running）。
         """
         try:
-            resp = self._send_recv({"type": "get_defaults"})
+            from .daemonctl import _daemon_ready
+
+            if not _daemon_ready():
+                return
+            resp = self._send_recv({"type": "get_defaults"}, autostart=False)
         except SystemExit:
-            raise
+            return
         except Exception:
             return
         if not isinstance(resp, dict):

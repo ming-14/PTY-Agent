@@ -8,7 +8,7 @@ import sys
 from typing import Optional
 
 from ..client.config_manager import ConfigManager
-from ..client.presenter import emit, emit_error, set_debug_mode, set_render_hook
+from ..client.presenter import emit, emit_error, set_debug_mode
 from .common_args import _parse_default_key
 from ..logging import get_logger
 
@@ -50,8 +50,6 @@ def apply_config_ops(args, parser) -> Optional[dict]:
             return None
 
     handled = default_vals is not None
-    if handled and args.subcmd is not None:
-        return overrides
     if args.subcmd is not None:
         return overrides
     return None if handled or args.show_config is not None else overrides

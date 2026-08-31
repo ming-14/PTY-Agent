@@ -7,7 +7,7 @@ import pytest
 
 from src.cli.commands import register_all
 from src.cli.commands.events import _maybe_expand_time
-from src.cli.common_args import _format_config_key, _parse_default_key
+from src.cli.common_args import _parse_default_key
 from src.cli.registry import CommandRegistry
 
 
@@ -33,16 +33,6 @@ class TestParseDefaultKey:
 
     def test_keep_ansi(self):
         assert _parse_default_key("keep-ansi") == "keep_ansi"
-
-
-class TestFormatConfigKey:
-    """_format_config_key 测试"""
-
-    def test_underscore_to_hyphen(self):
-        assert _format_config_key("output_by_natural_language") == "output-by-natural-language"
-
-    def test_no_underscore(self):
-        assert _format_config_key("timeout") == "timeout"
 
 
 class TestMaybeExpandTime:

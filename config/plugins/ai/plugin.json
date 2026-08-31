@@ -10,6 +10,7 @@
     "mouse"
   ],
   "hooks": {
+    "check_request": {},
     "transform_response": {}
   },
   "permissions": {
@@ -18,11 +19,5 @@
       "filesystem.execute",
       "network.connect"
     ]
-  },
-  "config": {
-    "defaults": {
-      "prompt": "全面分析该内容，只按内容说话，不给出下一步，不提建议",
-      "timeout": 120
-    }
   }
 }

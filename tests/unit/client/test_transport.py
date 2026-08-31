@@ -11,17 +11,31 @@ from src.client.commands import _has_shell_operators, _parse_iso_time
 
 
 class _FakeCliPlugins:
-    """模拟 CliPluginHost：仅 names()/activate()"""
+    """模拟 CliPluginHost 钩子链接口：names()/activate()/三阶段钩子"""
 
     def __init__(self, names):
         self._names = names
         self.active = []
+        self.options = {}
 
     def names(self):
         return self._names
 
-    def activate(self, names):
+    def activate(self, names, options=None):
         self.active = list(names)
+        self.options = options or {}
+
+    def before_request(self, command, msg):
+        """请求发送前链式变换；None 表示不修改"""
+        return None
+
+    def transform_response(self, command, resp):
+        """响应收到后链式变换；返回原 resp 表示不修改"""
+        return resp
+
+    def render_response(self, command, resp):
+        """响应打印前渲染；None 表示不提供自定义渲染"""
+        return None
 
 
 class TestRoutePlugins:
@@ -70,7 +84,7 @@ class TestRoutePlugins:
             lambda r: sent.append(r),
         )
         monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
+            Client, "_send_recv",
             lambda self, msg, **kwargs: sent.append(msg) or {"type": "result", "session_id": "s"},
         )
         cli = _FakeCliPlugins(["ai"])
@@ -93,7 +107,7 @@ class TestSessionCliPlugins:
         """按会话挂载列表 ∩ CLI 插件名取 cli 钩子"""
         cli = _FakeCliPlugins(["ai"])
         monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
+            Client, "_send_recv",
             lambda self, msg, **kwargs: {
                 "type": "result",
                 "action": "ls",
@@ -111,7 +125,7 @@ class TestSessionCliPlugins:
     def test_session_cli_plugins_error_returns_empty(self, monkeypatch):
         """会话不存在（ls 报错）返回空列表"""
         monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
+            Client, "_send_recv",
             lambda self, msg, **kwargs: {"type": "error", "message": "no session"},
         )
         client = Client(cli_plugins=_FakeCliPlugins(["ai"]))
@@ -131,7 +145,7 @@ class TestSessionCliPlugins:
             sent.append(msg)
             return {"type": "result", "session_id": "s"}
 
-        monkeypatch.setattr("src.client.transport.Client._send_recv", fake_send_recv)
+        monkeypatch.setattr(Client, "_send_recv", fake_send_recv)
         cli = _FakeCliPlugins(["ai"])
         client = Client(cli_plugins=cli)
         client.cmd_send(session_id="s", input_text="print(1)")
@@ -154,7 +168,7 @@ class TestSessionCliPlugins:
             sent.append(msg)
             return {"type": "result", "session_id": "s"}
 
-        monkeypatch.setattr("src.client.transport.Client._send_recv", fake_send_recv)
+        monkeypatch.setattr(Client, "_send_recv", fake_send_recv)
         cli = _FakeCliPlugins(["simple"])
         client = Client(cli_plugins=cli)
         client.cmd_read(session_id="s")
@@ -171,7 +185,7 @@ class TestSessionCliPlugins:
             called.append(msg.get("type"))
             return {"type": "result", "session_id": "s"}
 
-        monkeypatch.setattr("src.client.transport.Client._send_recv", fake_send_recv)
+        monkeypatch.setattr(Client, "_send_recv", fake_send_recv)
         client = Client(cli_plugins=None)
         client.cmd_read(session_id="s")
         # 只发 read，不额外发 plugin ls 查询
@@ -317,7 +331,7 @@ class TestClientShellOperators:
             lambda r: responses.append(r),
         )
         monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
+            Client, "_send_recv",
             lambda self, msg, **kwargs: {"type": "result", "session_id": "test"},
         )
         client = Client()
@@ -352,7 +366,7 @@ class TestClientCmdMouse:
         """cmd_mouse 构造 mouse click 消息"""
         sent = []
         monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
+            Client, "_send_recv",
             lambda self, msg, **kwargs: sent.append(msg) or {"commandType": "mouse", "performed": True},
         )
         client = Client()
@@ -367,7 +381,7 @@ class TestClientCmdMouse:
         """cmd_mouse 构造 mouse drag 消息"""
         sent = []
         monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
+            Client, "_send_recv",
             lambda self, msg, **kwargs: sent.append(msg) or {"commandType": "mouse", "performed": True},
         )
         client = Client()
@@ -385,7 +399,7 @@ class TestClientCmdMouse:
         """cmd_mouse 传递输出控制参数"""
         sent = []
         monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
+            Client, "_send_recv",
             lambda self, msg, **kwargs: sent.append(msg) or {"commandType": "mouse", "performed": True},
         )
         client = Client()
@@ -397,4 +411,5 @@ class TestClientCmdMouse:
         assert sent[0]["trigger"] == ">>>"
         assert sent[0]["timeout"] == 5
         assert sent[0]["snapshot_diff"] is True
-        assert sent[0]["include_screen_buffer"] is True
+        # v7: 图片/svg 输出请求服务端渲染（daemon pywezterm 渲染）
+        assert sent[0]["render_format"] == "svg"

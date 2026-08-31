@@ -7,6 +7,7 @@
   鼠标动作执行（perform_mouse_action，CLI/daemon 特性，产生 SGR 字节直接写 pty）。
 """
 
+import functools
 import time
 from typing import Callable, Optional
 
@@ -14,6 +15,15 @@ from .mouse import Coord, MouseActionEncoder, MouseError, grep_screen
 from ..logging import get_logger
 
 _logger = get_logger("pty-session")
+
+
+@functools.lru_cache(maxsize=64)
+def _normalize_encoding(name: str) -> str:
+    """编码名归一化（lower + 去连字符/下划线），结果按 name 缓存
+
+    每次 write_input 都调用，避免重复字符串处理。
+    """
+    return name.lower().replace("-", "").replace("_", "")
 
 
 class InputInterceptor:
@@ -54,7 +64,7 @@ class InputInterceptor:
         """
         input_encoding = child_encoding or encoding
         if isinstance(data, str) and input_encoding:
-            enc_norm = input_encoding.lower().replace("-", "").replace("_", "")
+            enc_norm = _normalize_encoding(input_encoding)
             if enc_norm not in ("utf8", "utf"):
                 _logger.debug(
                     "intercept: encoding=%s → encode input to %s",

@@ -131,17 +131,7 @@ class PluginHandler(DaemonHandler):
             return
         inst = registry.instantiate(name)
         if inst is None:
-            entry = registry._entries.get(name) if hasattr(registry, "_entries") else None
-            if entry is not None and entry.manifest.kind == "process":
-                msg_types = ", ".join(list(entry.manifest.message_types)[:3])
-                Message.send(
-                    conn,
-                    Response.error(
-                        f"插件 {name} 为进程级插件（经 {msg_types} 等消息直调），不支持会话挂载"
-                    ),
-                )
-            else:
-                Message.send(conn, Response.error(f"插件未加载: {name}"))
+            Message.send(conn, Response.error(f"插件未加载: {name}"))
             return
         if not session.plugin_host.attach(inst):
             Message.send(conn, Response.error(f"插件 {name} 已挂载到会话，禁止重复挂载"))
@@ -188,17 +178,6 @@ class PluginHandler(DaemonHandler):
             return
         result = session.plugin_host.handle_command(name, msg)
         if result is None:
-            if registry is not None:
-                entry = registry._entries.get(name) if hasattr(registry, "_entries") else None
-                if entry is not None and entry.manifest.kind == "process":
-                    msg_types = ", ".join(list(entry.manifest.message_types)[:3])
-                    Message.send(
-                        conn,
-                        Response.error(
-                            f"插件 {name} 为进程级插件（经 {msg_types} 等消息直调），不支持 plugin cmd"
-                        ),
-                    )
-                    return
             Message.send(conn, Response.error(f"插件 {name} 未处理命令: {command}"))
             return
         Message.send(

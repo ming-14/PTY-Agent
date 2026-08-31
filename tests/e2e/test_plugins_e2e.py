@@ -16,19 +16,15 @@
 不经网络层，不依赖守护进程状态。
 """
 
-import json
 import os
 import sys
 import time
 import threading
 
-import pytest
-
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from src.plugins.base import Plugin  # noqa: E402
 from src.plugins.registry import PluginRegistry  # noqa: E402
 from src.session.manager import SessionManager  # noqa: E402
 from tests.helpers import write_plugin_dir  # noqa: E402
@@ -170,7 +166,7 @@ class TestPluginSessionE2E:
             result = build_result(manager, session.id, "x", True, "matched",
                                   consume_events=False, session=session)
             di = result["program"]["debugInformation"]
-            assert di["plugins"] == [{"name": "transform", "version": "1.0"}]
+            assert di["plugins"] == [{"name": "transform", "version": "1.0", "options": {}}]
         finally:
             _stop_session(session)
 

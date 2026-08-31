@@ -76,7 +76,7 @@ class LogArchiver:
             dst = src + ".gz"
             try:
                 with open(src, "rb") as fin, gzip.open(
-                    dst, "wb", compresslevel=9
+                    dst, "wb", compresslevel=6
                 ) as fout:
                     shutil.copyfileobj(fin, fout)
                 os.remove(src)

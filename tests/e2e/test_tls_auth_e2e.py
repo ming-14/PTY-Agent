@@ -351,20 +351,36 @@ def tls_env(tmp_path, config_reloader):
         任一台启用监听器 TCP 可达即就绪（TLS 监听器也经 TCP 探测）；
         不依赖单实例锁（SINGLE_INSTANCE=false 多实例场景下锁不存在）。
 
+        先 reload 进程内 config：多实例测试会直接改写 toml 端口，若不 reload，
+        start_daemon 的 _daemon_ready 与下方探测用的还是旧端口值，会误判
+        已就绪（探测到上一实例）导致新实例未起就继续。
+
         Raises:
             RuntimeError: daemon 6 秒内未就绪
         """
-        from src.client.daemonctl import start_daemon
+        # 写入测试 config 后重载进程内 config（见 conftest.reload_config）
+        config_reloader()
+
+        # 清理残留 daemon：持有单实例互斥锁会导致新 daemon 启动即退出。
+        # 经互斥锁定位 PID 强杀（不依赖 CONNECT_MODE 路由，兼容任意残留模式）。
+        from src.client.daemonctl import start_daemon, is_running, _stop_daemon_force
+        if is_running():
+            _stop_daemon_force()
         start_daemon()
 
         import socket as _socket
+        from src.config.client import (
+            BASIC_PORT as _BASIC_PORT,
+            TOKEN_PORT as _TOKEN_PORT,
+            TLS_PORT as _TLS_PORT,
+        )
         probe_ports = []
         if listener_flags["basic"]:
-            probe_ports.append(10521)
+            probe_ports.append(_BASIC_PORT)
         if listener_flags["token"]:
-            probe_ports.append(10520)
+            probe_ports.append(_TOKEN_PORT)
         if listener_flags["tls"]:
-            probe_ports.append(_TEST_TLS_PORT)
+            probe_ports.append(_TLS_PORT)
         for _ in range(60):
             for port in probe_ports:
                 try:
@@ -380,16 +396,22 @@ def tls_env(tmp_path, config_reloader):
         raise RuntimeError("daemon 启动超时（6 秒内未就绪）")
 
     def stop():
-        """停止 daemon — 直接 force-kill 确保 teardown 可靠
+        """停止 daemon — 经 PID 定位 force-kill，兼容 SINGLE_INSTANCE=true/false
 
-        不依赖 stop_daemon() 的 TLS 路由（TOFU mismatch 时 TLS stop 会失败）。
-        通过互斥锁定位 PID 并 force-kill，兼容所有模式。
+        _stop_daemon_force 仅通过互斥锁找 PID，SINGLE_INSTANCE=false 时无锁，
+        is_running 恒 False，会导致 daemon 残留。改用 _find_daemon_pid()（Linux
+        端口回退可定位无锁 daemon）+ _force_kill_pid() 兜底，跨平台通用。
         """
-        from src.client.daemonctl import is_running, _stop_daemon_force, _cleanup_credentials
-        if is_running():
-            _stop_daemon_force()
+        if not daemon_running[0]:
+            return
+        from src.client.daemonctl import _find_daemon_pid, _force_kill_pid, _cleanup_credentials
+        from src.common.process import pid_exists
+
+        pid = _find_daemon_pid()
+        if pid is not None:
+            _force_kill_pid(pid)
             for _ in range(30):
-                if not is_running():
+                if not pid_exists(pid):
                     break
                 time.sleep(0.1)
         _cleanup_credentials()
@@ -445,6 +467,8 @@ def tls_env(tmp_path, config_reloader):
             _cfg_path("common.toml").write_bytes(backup_common)
             _cfg_path("daemon", "daemon.toml").write_bytes(backup_daemon)
             _cfg_path("client", "client.toml").write_bytes(backup_client)
+            # 恢复文件后重载进程内 config，使后续测试读到正确的配置
+            config_reloader()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -695,7 +719,9 @@ class TestNoSingleInstance:
             stop1 = tls_env.run_cli("stop")
             assert stop1.returncode == 0, f"第一实例 stop 失败: {stop1.stderr}"
 
-            # 两端口均应已释放
+            # 两端口均应已释放（stop 响应后 OS 端口释放异步，稍候再查）
+            import time as _time
+            _time.sleep(0.5)
             import socket as _socket
             for port in (_TEST_TLS_PORT, second_port):
                 try:

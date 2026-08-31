@@ -6,6 +6,7 @@
 """
 
 import os
+import threading
 import time
 
 from ..config.common import IS_WINDOWS
@@ -17,7 +18,7 @@ _logger = get_logger("pty-session")
 # 控制序列分段写入的停顿时间。一次性写入的连续字节流会被目标程序
 # 按终端转义序列解析（如 vim 将 `\x1b` + `:` 合并为 Meta 组合键），
 # 段间停顿让程序能判定独立按键（对齐真实按键的间隔节奏）。
-_CONTROL_SEQUENCE_PAUSE_S = 0.05
+_CONTROL_SEQUENCE_PAUSE_S = 0.2
 
 
 class InputMixin:
@@ -30,8 +31,8 @@ class InputMixin:
         子进程模式无终端拦截，直接写入 stdin。
 
         pause_offsets: 可选，字符偏移列表。数据按偏移切分为多段依次写入，
-            段间停顿 _CONTROL_SEQUENCE_PAUSE_S，用于展开控制序列后与后续
-            字节分隔，避免被终端误解析为组合键序列。
+            每段前后停顿 _CONTROL_SEQUENCE_PAUSE_S，用于展开控制序列后与
+            相邻字节分隔，避免被终端误解析为组合键序列。
 
         Args:
             data: 要写入的数据（str 或 bytes）。
@@ -56,27 +57,49 @@ class InputMixin:
         )
 
         if isinstance(data, str) and pause_offsets:
-            # 分段写入：控制序列与后续字节间停顿，模拟按键间隔
+            # 分段写入：每个段经独立线程写入并 join（保持顺序），段间停顿。
+            # ConPTY/wezterm-py 会把同一线程内连续 _pty.write 合并为一个
+            # 批次送达子进程（chunk 边界丢失），导致控制序列与相邻字节被
+            # TUI 程序当作粘贴文本而非独立按键；独立线程的执行上下文让
+            # 每个段形成独立 chunk，停顿才能被目标程序感知。
             segments = self._split_by_offsets(data, pause_offsets)
+            segments = [seg for seg in segments if seg]
             for idx, seg in enumerate(segments):
                 if idx > 0:
                     time.sleep(_CONTROL_SEQUENCE_PAUSE_S)
-                self._write_segment(seg)
+                t = threading.Thread(
+                    target=self._write_segment, args=(seg,), daemon=True
+                )
+                t.start()
+                t.join()
             return
         self._write_segment(data)
 
     def _split_by_offsets(self, data: str, pause_offsets) -> list:
-        """按字符偏移把输入切分为多个段（偏移越界/乱序自动规整）"""
+        """按字符偏移把输入切分为多个段，行尾字符独立成段（偏移越界/乱序自动规整）
+
+        pause_offsets 是控制序列 token 的结束偏移（如 {enter} 在 \r 之后），
+        切分后行尾 \r/\n 单独成段，确保 TUI 程序能通过 chunk 边界识别 Enter。
+        """
         offsets = sorted(int(o) for o in pause_offsets if isinstance(o, (int, float)))
         segments = []
         prev = 0
         for off in offsets:
-            if off <= prev or off >= len(data):
+            if off <= prev or off > len(data):
                 continue
             segments.append(data[prev:off])
             prev = off
-        segments.append(data[prev:])
-        return segments
+        if prev < len(data):
+            segments.append(data[prev:])
+        # 行尾字符独立成段（TUI 程序按 chunk 边界识别 Enter 提交）
+        result = []
+        for seg in segments:
+            if seg.endswith(("\r", "\n")):
+                result.append(seg[:-1])
+                result.append(seg[-1])
+            else:
+                result.append(seg)
+        return [s for s in result if s]
 
     def _write_segment(self, data):
         """写入单个输入段（拦截器编码 + 插件链分发）"""
@@ -84,6 +107,12 @@ class InputMixin:
             data = self._input_interceptor.intercept(
                 data, self._child_encoding, self.encoding, self.id
             )
+        # 子进程模式无终端：输入按会话探测编码写入 stdin，
+        # 与子进程（如 cmd，GBK 代码页）期望的字节一致。
+        # 若用 UTF-8 编码写入，cmd 会把 UTF-8 字节误读为 GBK
+        # 后按 GBK 输出，后端再按探测编码解码即产生乱码。
+        if getattr(self, "mode", "pty") == "subprocess" and isinstance(data, str):
+            data = data.encode(self.encoding or "utf-8")
         if not self._dispatch_input(data):
             _logger.info("write_input: sid=%r 输入被插件拦截", self.id)
 
@@ -268,3 +297,7 @@ class InputMixin:
             self.running,
             write_fn=self.write_input,
         )
+
+
+
+

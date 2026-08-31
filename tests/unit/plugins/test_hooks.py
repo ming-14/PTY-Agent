@@ -140,62 +140,6 @@ class TestProvide:
         assert engine.dispatch_provide("inspect_state", _factory) == {"ok": 1}
 
 
-class TestIntercept:
-    def test_false_rejects(self):
-        engine = HookEngine()
-        deny = _Probe("deny")
-        allow = _Probe("allow")
-
-        def on_input_deny(ctx, data):
-            return False
-
-        def on_input_allow(ctx, data):
-            return True
-
-        deny.on_input = on_input_deny
-        allow.on_input = on_input_allow
-        engine.register(deny)
-        engine.register(allow)
-        assert engine.dispatch_intercept("on_input", _factory, b"x") is False
-
-    def test_true_allows_short_circuit(self):
-        engine = HookEngine()
-        allow = _Probe("allow")
-        deny = _Probe("deny")
-
-        def on_input_allow(ctx, data):
-            return True
-
-        def on_input_deny(ctx, data):
-            return False
-
-        allow.on_input = on_input_allow
-        deny.on_input = on_input_deny
-        engine.register(allow)
-        engine.register(deny)
-        assert engine.dispatch_intercept("on_input", _factory, b"x") is True
-
-    def test_all_abstain_returns_none(self):
-        engine = HookEngine()
-        p = _Probe("p")
-        p.on_input = lambda ctx, data: None
-        engine.register(p)
-        assert engine.dispatch_intercept("on_input", _factory, b"x") is None
-
-
-class TestAggregate:
-    def test_collects_all(self):
-        engine = HookEngine()
-        a, b = _Probe("a"), _Probe("b")
-        a.handle_command = lambda ctx, msg: {"a": 1}
-        b.handle_command = lambda ctx, msg: {"b": 2}
-        engine.register(a)
-        engine.register(b)
-        results = engine.dispatch_aggregate("handle_command", _factory, {})
-        assert {"a": 1} in results
-        assert {"b": 2} in results
-
-
 class TestUnregister:
     def test_unregister_removes_hooks(self):
         engine = HookEngine()

@@ -20,6 +20,7 @@ class CommandContext:
         client: 已构建的 Client 实例；本地命令（needs_client=False）为 None
         cli_plugins: CLI 插件宿主；本地命令或初始化失败为 None
         config_overrides: --default 产生的配置覆盖
+        plugin_options: 本次调用显式提供的插件选项 {插件 id: {选项名: 值}}
     """
 
     def __init__(
@@ -28,11 +29,13 @@ class CommandContext:
         client: Optional[Client] = None,
         cli_plugins: Optional[CliPluginHost] = None,
         config_overrides: Optional[dict] = None,
+        plugin_options: Optional[dict] = None,
     ) -> None:
         self.parser = parser
         self.client = client
         self.cli_plugins = cli_plugins
         self.config_overrides = config_overrides
+        self.plugin_options = plugin_options or {}
 
 
 class Command:

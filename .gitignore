@@ -27,6 +27,9 @@ build/
 *.egg-info/
 *.egg
 .eggs/
+# C++ 沙箱编译残留（sandbox/src 下非 build/ 目录的产物）
+sandbox/src/*.obj
+sandbox/src/*.exe
 
 # ===================== 虚拟环境 =====================
 venv/
@@ -63,6 +66,7 @@ ehthumbs.db
 
 # ===================== PTY-Agent 构建产物 =====================
 pty-agent/
+pty-agent-*.zip
 
 # ===================== PyInstaller =====================
 *.spec
@@ -80,22 +84,13 @@ bin/ultravnc/
 bin/terminal_injector/
 bin/fastscreencore/fastscreen.dll
 bin/cursorlocator/cursorlocator_config.json
-# ai 插件（aichat）仅忽略运行时产物（下载的 exe / 生成的 config.yaml / 个人备注），
-# 桥接脚本（common.py/talk.py/config_manager.py/_finderror.py）与配置模板须入库
-config/plugins/ai/bin/
-config/plugins/ai/config/config.yaml
-config/plugins/ai/*.txt
-# 插件运行时生成的用户配置（按默认值自愈重建，不入库）
-config/plugins/*/config.yaml
 bin/rg/
 bin/win_sandbox/
 bin/openconsole/
 bin/pywezterm/
 
-# ===================== 参考 / 外部代码 =====================
-reference/
-
 # ===================== 测试临时文件 =====================
+node_modules/
 tests/live-environment/
 tests/e2e/_repro_keys/
 
@@ -104,3 +99,9 @@ tests/e2e/_repro_keys/
 *.tmp
 *.bak
 *.orig
+
+# ===================== 字体（构建时下载） =====================
+src/assets/fonts/
+
+# 运行时临时数据
+_tmp_pty_data/

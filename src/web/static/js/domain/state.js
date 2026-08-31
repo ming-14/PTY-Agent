@@ -149,6 +149,8 @@ export const state = {
       return {};
     }
   })(),
+  // 守护进程工作目录（shell_list 响应带 cwd 字段；新建会话对话框工作目录默认值）
+  daemonCwd: localStorage.getItem('pty_daemon_cwd') || '',
   // 按 uid 存储的尺寸配置 Map：{ [uid]: { mode, fixedCols, fixedRows, customCols, customRows, daemonCols, daemonRows, lastUsed } }
   sessionSizeConfigs: loadSessionSizeConfigs(),
   // 尺寸选择器下拉是否可见（UI 状态，不持久化）

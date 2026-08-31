@@ -28,6 +28,7 @@ import {
 import { debug, info, warn } from '../../domain/logger.js';
 import { formatRelativeTime, formatAbsoluteTime } from '../../domain/formatters.js';
 import { onTabSwitch as rimeOnTabSwitch } from '../../infrastructure/rimeManager.js';
+import { isSubprocessSession } from '../../infrastructure/terminal/shared.js';
 import { getSizeStatusText, toggleSizeDropdown } from './sizeSelector.js';
 // 通过 import 副作用触发 fastscreen/vnc/settings handler 注册（注册在模块底部立即执行）
 import './fastscreen.js';
@@ -46,29 +47,28 @@ export function updateStatusInfo(uid) {
   if (state.activeTab !== uid) return;
   ptyEl.style.display = 'flex';
   ptyEl.textContent = formatPtyLabel(s);
-  // 子进程模式无终端尺寸/重绘概念，隐藏尺寸状态，disable 重设尺寸
-  if (s.mode === 'subprocess') {
-    sizeEl.style.display = 'none';
-  } else {
-    sizeEl.style.display = 'flex';
-    sizeEl.textContent = getSizeStatusText(s);
-    // 仅自适应模式高亮（蓝色 + "(自适应)" 标签提示正在自适应）；
-    // 退出自适应后（fixed/custom/default）不高亮，避免蓝色文字干扰
-    const cfg = getSessionSizeConfigByUid(uid);
-    sizeEl.classList.toggle('size-active', !s.history && cfg.mode === 'adaptive');
-  }
+  // 尺寸状态：PTY 与子进程模式均显示。
+  // 子进程模式无后端 PTY，尺寸调整仅前端本地生效（term.resize 调整显示）。
+  sizeEl.style.display = 'flex';
+  sizeEl.textContent = getSizeStatusText(s);
+  // 仅自适应模式高亮（蓝色 + "(自适应)" 标签提示正在自适应）；
+  // 退出自适应后（fixed/custom/default）不高亮，避免蓝色文字干扰
+  const cfg = getSessionSizeConfigByUid(uid);
+  sizeEl.classList.toggle('size-active', !s.history && cfg.mode === 'adaptive');
 }
 
 export function formatPtyLabel(s) {
   let label = '';
-  if (s.ptyType && s.ptyType !== 'none') label = 'PTY';
+  // 显示 PTY 标签：所有真实 PTY 后端（wezterm/conpty/win-sandbox 等）；
+  // 子进程模式（subprocess）无终端、none（无后端）不显示
+  if (s.ptyType && s.ptyType !== 'none' && s.ptyType !== 'subprocess') label = 'PTY';
   if (!s.running) label += t('session.endedBadge');
   return label;
 }
 
 /** 会话运行模式徽标：仅子进程模式展示，PTY（默认）不占用空间 */
 export function modeBadge(s) {
-  if (s.mode === 'subprocess') {
+  if (isSubprocessSession(s)) {
     return '<span class="mode-badge sub">' + t('session.subprocess') + '</span>';
   }
   return '';
@@ -205,7 +205,7 @@ export function shouldShowMouseButton(sid) {
   const s = state.sessions[sid];
   if (!s) return false;
   if (s.history) return false;
-  if (s.mode === 'subprocess') return false;
+  if (isSubprocessSession(s)) return false;
   return true;
 }
 
@@ -213,7 +213,7 @@ export function updateMouseModeButton(sid) {
   const btn = $('btn-mouse-mode');
   if (!btn) return;
   const s = state.sessions[sid];
-  if (!s || s.history || s.mode === 'subprocess') {
+  if (!s || s.history || isSubprocessSession(s)) {
     btn.style.display = 'none';
     return;
   }
@@ -669,41 +669,54 @@ export function showNewSessionDialog() {
   $('form-id').value = '';
   const cmdEl = $('form-command');
   cmdEl.value = '';
-  $('form-cwd').value = '';
-  const modeEl = $('form-mode');
-  if (modeEl) modeEl.value = 'pty';
+  // 工作目录默认填入守护进程工作目录
+  const cwdEl = $('form-cwd');
+  if (cwdEl) cwdEl.value = state.daemonCwd || '';
+  // 重置 shell 选择：清除选择、按钮显示回默认文案
+  const picker = $('btn-shell-picker');
+  if (picker) {
+    delete picker.dataset.shell;
+    const label = $('shell-picker-label');
+    if (label) label.textContent = t('session.shellNone');
+  }
+  const dd = $('shell-dropdown');
+  if (dd) dd.style.display = 'none';
+  const dirDd = $('dir-dropdown');
+  if (dirDd) dirDd.style.display = 'none';
   setTimeout(() => cmdEl.focus(), 0);
 }
 
 export function submitNewSession() {
   const cmdEl = $('form-command');
   const command = (cmdEl.value || '').trim();
-  if (!command) {
+  const shell = getSelectedShell();
+  // 未选 shell 时命令必填；选了 shell 时命令为空则启动该 shell 本身
+  if (!command && !shell) {
     cmdEl.focus();
     return;
   }
   let sid = $('form-id').value.trim();
   if (!sid) sid = 's' + Date.now().toString(36);
-  const modeEl = $('form-mode');
-  const mode = (modeEl && modeEl.value) || 'pty';
   const msg = {
     type: 'create',
     session_id: sid,
-    command: command,
-    mode: mode,
+    command: command || shell,
   };
+  // 有 shell 选择且命令非空：daemon 用 wrap_command 包装（选 shell 但命令空 = 启动交互式 shell 本身，不传 shell）
+  if (shell && command) {
+    msg.shell = shell;
+  }
   if ($('form-cwd').value.trim()) msg.cwd = $('form-cwd').value.trim();
 
-  info('session', 'create sid=%s mode=%s cmd=%r', sid, mode, command);
+  info('session', 'create sid=%s cmd=%s shell=%s', sid, msg.command, shell || '(none)');
   state.pendingCreates.add(sid);
   state.sessions[sid] = {
     id: sid,
-    command: command,
+    command: msg.command,
     running: true,
     subscribed: false,
     history: false,
-    ptyType: mode === 'subprocess' ? 'subprocess' : 'conpty',
-    mode: mode,
+    ptyType: 'conpty',
     pendingOutput: [],
     pendingSnapshot: null,
     startTime: Date.now() / 1000,
@@ -717,8 +730,157 @@ export function submitNewSession() {
   $('dialog-overlay').style.display = 'none';
 }
 
-export function updateCommandEmptyState() {
-  // 真实 <input> 元素使用原生 placeholder，无需手动维护 empty 状态
+// ── Shell 选择器（新建会话对话框）──
+// 数据源：state.availableShells（守护进程 detect_available_shells 探测，
+// 经 shell_list 消息 + localStorage 缓存注入），{ 名称: 路径 } 字典。
+// 选中 shell 后把 shell 名填入命令输入框（daemon 会 which 解析路径）。
+
+export function toggleShellDropdown() {
+  const dd = $('shell-dropdown');
+  if (!dd) return;
+  if (dd.style.display === 'block') {
+    dd.style.display = 'none';
+    return;
+  }
+  const shells = state.availableShells || {};
+  const names = Object.keys(shells).filter(n => shells[n]);
+  if (names.length === 0) {
+    dd.style.display = 'none';
+    return;
+  }
+  dd.innerHTML = names.map(name =>
+    '<div class="shell-dropdown-item" data-shell="' + escAttr(name) + '">' +
+      '<span class="shell-item-name">' + escHtml(name) + '</span>' +
+      '<span class="shell-item-path">' + escHtml(shells[name] || '') + '</span>' +
+    '</div>'
+  ).join('');
+  dd.style.display = 'block';
+  debug('ui', 'shell dropdown shown: %d shells', names.length);
+}
+
+export function hideShellDropdown() {
+  const dd = $('shell-dropdown');
+  if (dd) dd.style.display = 'none';
+}
+
+/** 选中 shell：记录选择并更新按钮显示（不填命令框，创建时经 shell 字段由 daemon wrap） */
+export function selectShell(name) {
+  const picker = $('btn-shell-picker');
+  if (picker) {
+    picker.dataset.shell = name;
+    const label = $('shell-picker-label');
+    if (label) label.textContent = name;
+  }
+  hideShellDropdown();
+  debug('ui', 'shell selected: %s', name);
+}
+
+/** 读取当前新建会话对话框选中的 shell（未选返回空串） */
+export function getSelectedShell() {
+  const picker = $('btn-shell-picker');
+  return picker && picker.dataset.shell ? picker.dataset.shell : '';
+}
+
+// ── 工作目录自动补全（新建会话对话框）──
+// 数据源：GET /api/listdir?path=<父目录>（守护进程列目录），
+// 前端按输入前缀过滤，选中后填入路径并继续列出该目录。
+
+let _dirListSeq = 0; // 请求序号：防抖期间旧响应晚到丢弃
+
+/**
+ * 从输入值拆出父目录与输入前缀：
+ * - "C:/Users/ri" → { dir: "C:/Users", prefix: "ri" }
+ * - "C:/Users/"   → { dir: "C:/Users/", prefix: "" }
+ * - "/opt/"       → { dir: "/opt/", prefix: "" }
+ * - "C:/"         → { dir: "C:/", prefix: "" }（保留尾分隔符：Windows 下
+ *   裸盘符 "C:" 解析为 C 盘当前目录而非根目录，必须带斜杠才列根）
+ * - "/"           → { dir: "/", prefix: "" }
+ */
+function splitDirInput(value) {
+  let v = (value || '').trim();
+  if (!v) return null;
+  const sepIdx = Math.max(v.lastIndexOf('/'), v.lastIndexOf('\\'));
+  if (sepIdx < 0) return { dir: '', prefix: v };
+  // 以分隔符结尾：整个输入都是父目录（前缀为空），尾分隔符保留
+  if (sepIdx === v.length - 1) {
+    return { dir: v, prefix: '' };
+  }
+  const dir = v.slice(0, sepIdx) || v.slice(0, 1); // 根 "/" 时 dir 保持
+  const prefix = v.slice(sepIdx + 1);
+  return { dir, prefix };
+}
+
+/** 定位目录下拉到工作目录输入框下方（body 级浮层） */
+function positionDirDropdown() {
+  const dd = $('dir-dropdown');
+  const cwdEl = $('form-cwd');
+  if (!dd || !cwdEl) return;
+  const rect = cwdEl.getBoundingClientRect();
+  const maxLeft = window.innerWidth - dd.offsetWidth - 4;
+  dd.style.left = Math.max(4, Math.min(rect.left, maxLeft)) + 'px';
+  dd.style.top = (rect.bottom + 4) + 'px';
+}
+
+/**
+ * 根据当前输入触发目录列出（输入防抖 / 按钮点击共用）。
+ * 无前缀时列出父目录全部子目录；有前缀时列出父目录并按前缀过滤。
+ */
+export function refreshDirDropdown() {
+  const cwdEl = $('form-cwd');
+  const dd = $('dir-dropdown');
+  if (!cwdEl || !dd) return;
+  const value = cwdEl.value || '';
+  const parts = splitDirInput(value);
+  if (!parts || !parts.dir) {
+    dd.style.display = 'none';
+    return;
+  }
+  const seq = ++_dirListSeq;
+  const url = '/api/listdir?path=' + encodeURIComponent(parts.dir);
+  fetch(url, { headers: { 'Accept': 'application/json' }, credentials: 'include' })
+    .then(r => r.json())
+    .then(data => {
+      if (seq !== _dirListSeq) return; // 过期响应丢弃
+      const dirs = (data && Array.isArray(data.directories)) ? data.directories : [];
+      // 前缀过滤（大小写不敏感；空前缀 = 全列）
+      const prefix = parts.prefix.toLowerCase();
+      const filtered = prefix ? dirs.filter(d => d.toLowerCase().startsWith(prefix)) : dirs;
+      if (filtered.length === 0) {
+        dd.style.display = 'none';
+        return;
+      }
+      dd.innerHTML = filtered.map(name =>
+        '<div class="shell-dropdown-item" data-dir="' + escAttr(name) + '">' +
+          '<span class="shell-item-name">' + escHtml(name) + '</span>' +
+        '</div>'
+      ).join('');
+      dd.style.display = 'block';
+      positionDirDropdown();
+      debug('ui', 'dir dropdown: dir=%s prefix=%s shown=%d', parts.dir, parts.prefix, filtered.length);
+    })
+    .catch(() => {
+      if (seq === _dirListSeq) dd.style.display = 'none';
+    });
+}
+
+export function hideDirDropdown() {
+  const dd = $('dir-dropdown');
+  if (dd) dd.style.display = 'none';
+}
+
+/** 选中目录：替换输入前缀为选中目录名（带尾分隔符），并继续列出该目录 */
+export function selectDir(name) {
+  const cwdEl = $('form-cwd');
+  if (!cwdEl) return;
+  const value = cwdEl.value || '';
+  // 提取父目录（最后一个分隔符之前的部分，含分隔符）
+  const sepIdx = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
+  const base = sepIdx >= 0 ? value.slice(0, sepIdx + 1) : '';
+  // 尾分隔符：refreshDirDropdown 据此列出选中目录内部（而非把目录名当输入前缀）
+  const sep = base.includes('/') ? '/' : '\\';
+  cwdEl.value = base + name + sep;
+  debug('ui', 'dir selected: %s', cwdEl.value);
+  refreshDirDropdown(); // 继续列出选中目录的子目录
 }
 
 export function showContextMenu(e, sid, context) {
@@ -841,7 +1003,7 @@ export function submitRestartSession() {
     session_id: sid,
     command: h.command,
   };
-  info('session', 'restart origUid=%s newSid=%s cmd=%r', origUid, sid, h.command);
+  info('session', 'restart origUid=%s newSid=%s cmd=%s', origUid, sid, h.command);
   state.pendingCreates.add(sid);
   state.sessions[sid] = {
     id: sid,

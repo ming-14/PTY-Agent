@@ -164,6 +164,22 @@ def test_handle_key_f9_switches_focus():
     assert focus == 0 and mux.focus == 0 and not exit_
 
 
+def test_handle_key_f8_toggles_recording():
+    mux = _FakeMux()
+    toggled = []
+    def toggle():
+        toggled.append(1)
+    focus, exit_ = handle_key(mux, 0, KeyEvent("F8", 0, True), toggle_recording=toggle)
+    assert len(toggled) == 1
+    assert not exit_ and mux.key_calls == []  # F8 不下发给 pane
+
+
+def test_handle_key_f8_forwards_without_callback():
+    mux = _FakeMux()
+    focus, exit_ = handle_key(mux, 0, KeyEvent("F8", 0, True))
+    assert not exit_ and ("down", "F8", 0) in mux.key_calls
+
+
 def test_handle_key_f10_exits():
     focus, exit_ = handle_key(_FakeMux(), 0, KeyEvent("F10", 0, True))
     assert exit_ is True

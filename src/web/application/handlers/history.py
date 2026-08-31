@@ -29,6 +29,7 @@ class ListHistoryHandler(MessageHandler):
                         "exitCode": s.exit_code,
                         "errorMessage": s.error_message,
                         "running": False,
+                        "tag": list(s.tag),
                     }
                     for s in sessions
                 ]

@@ -137,11 +137,22 @@ class WeztermPseudoTerminal(PseudoTerminal):
                 and isinstance(command[2], str)
             ):
                 # 完整命令行原样传给 CreateProcess，绕过 argv 引号序列化
-                raw_cmdline = " ".join(command)
+                # raw_cmdline 首 token 被底层作为 lpApplicationName 直接传给
+                # CreateProcessW（不做 PATH 搜索），裸命令名（如 "cmd"）会失败；
+                # 用 which 解析为绝对路径
+                exe = shutil.which(command[0]) or command[0]
+                if " " in exe:
+                    exe = f'"{exe}"'
+                raw_cmdline = " ".join([exe] + command[1:])
             # 命令可执行性预检：可执行文件不存在时（如 PATH 中找不到），
             # 在 Python 侧抛出 FileNotFoundError 给出准确错误，避免底层
             # CreateProcess 失败被误报为"PTY 后端创建失败"
             _check_command_exists(command)
+            # cwd 缺省统一为守护进程当前目录：显式传入避免后端默认行为
+            # 差异（wezterm 底层 cwd 缺失时回退 USERPROFILE，与子进程模式
+            # 继承 daemon cwd 不一致）
+            if cwd is None:
+                cwd = os.getcwd()
             pid, handle = self._pty.spawn(
                 command, cwd=cwd, env=env_dict, raw_cmdline=raw_cmdline
             )

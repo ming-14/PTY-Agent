@@ -417,7 +417,9 @@ impl PyTerminal {
         let crow_screen = (c.y.max(0) as usize).saturating_add(offset);
         let visible = matches!(c.visibility, wezterm_surface::CursorVisibility::Visible)
             && crow_screen < rows;
-        (crow_screen, c.x, visible)
+        // 列号 clamp 到物理列宽：写满整行后光标在边界外
+        let col = c.x.min(screen.physical_cols.saturating_sub(1));
+        (crow_screen, col, visible)
     }
 
     /// 终端当前序列号（每次 feed 递增），供调用方记录渲染基线做脏行差分
@@ -576,16 +578,25 @@ impl PyTerminal {
             if li > last_non_empty {
                 break;
             }
-            out.push_str(&format!("\x1b[{};1H", li + 1));
+            // 定位行首后先清行尾：短内容覆盖长内容时旧字符残留
+            out.push_str(&format!("\x1b[{};1H\x1b[K", li + 1));
             out.push_str(&rendered);
         }
         if include_cursor {
             let c = term.cursor_pos();
-            out.push_str(&crate::cursor_seq(
-                c.y.max(0) as usize,
-                c.x,
-                matches!(c.visibility, wezterm_surface::CursorVisibility::Visible),
-            ));
+            // 光标坐标用视口行（c.y + offset）；滚出可见区时不定位只隐藏
+            let crow = c.y.max(0) as usize + offset;
+            let visible = matches!(c.visibility, wezterm_surface::CursorVisibility::Visible)
+                && crow < rows;
+            if visible {
+                // 列号 clamp 到 [0, cols)：整行写满后光标停在本列边界外
+                // （如 100 列宽写满 100 字符 → c.x=100），超界定位会被宿主
+                // clamp 到最末列，表现为光标跳到行尾。
+                let col = c.x.min(screen.physical_cols.saturating_sub(1));
+                out.push_str(&crate::cursor_seq(crow, col, true));
+            } else {
+                out.push_str("\x1b[?25l");
+            }
         }
         out
     }
@@ -955,6 +966,39 @@ impl PyTerminal {
     /// 强制全量失效（选区渲染 v2 用：选区变化后令全部行标记脏）
     fn make_all_lines_dirty(&self) {
         self.terminal.lock().unwrap().make_all_lines_dirty();
+    }
+
+    /// 可见屏幕 SVG 渲染（run 合并 + 压缩）
+    ///
+    /// compression_level: 0=原样；>=1 压缩（去空 text + 标签间空白折叠）
+    /// 渲染与 snapshot() 同视角（计入视图滚动偏移），消费终端模型直接生成。
+    fn render_svg(&self, compression_level: u8) -> String {
+        let term = self.terminal.lock().unwrap();
+        let screen = term.screen();
+        let total = screen.scrollback_rows();
+        let rows = screen.physical_rows;
+        let cols = screen.physical_cols;
+        let offset = self._view_size(total, rows);
+        let lines = crate::render::visible_lines(screen, offset, rows);
+        let svg = crate::render::svg::render_svg_string(&lines, cols, rows);
+        crate::render::svg::compress_svg(&svg, compression_level)
+    }
+
+    /// 可见屏幕图片渲染（png/jpg/jpeg/bmp）
+    ///
+    /// scale: 缩放倍数（1.0=CELL_W/CELL_H 像素格，2.0=高清）
+    /// fmt: 图片格式（png/jpg/jpeg/bmp）
+    /// 渲染与 snapshot() 同视角。
+    fn render_image(&self, scale: f64, fmt: &str) -> PyResult<Vec<u8>> {
+        let term = self.terminal.lock().unwrap();
+        let screen = term.screen();
+        let total = screen.scrollback_rows();
+        let rows = screen.physical_rows;
+        let cols = screen.physical_cols;
+        let offset = self._view_size(total, rows);
+        let lines = crate::render::visible_lines(screen, offset, rows);
+        let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+        Ok(crate::render::pixmap::render_image_bytes(&lines, cols, rows, scale, fmt))
     }
 }
 

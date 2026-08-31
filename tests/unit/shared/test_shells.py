@@ -6,6 +6,12 @@ from src.common.shells import _SHELL_WRAP, detect_available_shells, wrap_command
 from src.daemon.handlers.exec_handler import _wrap_with_shell
 
 
+def _skip_if_shell_missing(shell: str):
+    """当前平台 PATH 中无该 shell 时跳过（cmd/pwsh/node 等平台专属可执行文件）"""
+    if not detect_available_shells().get(shell):
+        pytest.skip(f"shell {shell!r} 在当前平台 PATH 中不可用")
+
+
 class TestWrapCommand:
     def test_str_command_kept_verbatim(self):
         """str 命令原样传给 shell：操作符/引号保真"""
@@ -15,6 +21,7 @@ class TestWrapCommand:
         assert result[2] == "echo a && echo b"
 
     def test_str_command_cmd(self):
+        _skip_if_shell_missing("cmd")
         result = wrap_command("echo x && echo y", "cmd")
         assert result[1] == "/c"
         assert result[2] == "echo x && echo y"
@@ -36,15 +43,18 @@ class TestWrapCommand:
 
     def test_cmd_shell(self):
         """cmd：/c + Windows 命令行规则"""
+        _skip_if_shell_missing("cmd")
         result = wrap_command(["echo", "hello world"], "cmd")
         assert result[1] == "/c"
         assert result[2] == 'echo "hello world"'
 
     def test_pwsh_shell(self):
+        _skip_if_shell_missing("pwsh")
         result = wrap_command(["Write-Output", "hello"], "pwsh")
         assert result[1] == "-Command"
 
     def test_node_interpreter(self):
+        _skip_if_shell_missing("node")
         result = wrap_command(["console.log('hi')"], "node")
         assert result[1] == "-e"
 
@@ -72,6 +82,7 @@ class TestWrapWithShell:
 
     def test_str_wrapped_verbatim(self):
         """str 命令原样传给 shell（操作符保真）"""
+        _skip_if_shell_missing("cmd")
         result = _wrap_with_shell("echo hi", "cmd")
         assert result[0].endswith(("cmd", "cmd.exe"))
         assert result[1] == "/c"

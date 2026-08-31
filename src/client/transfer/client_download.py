@@ -1,6 +1,6 @@
 """CLI 侧 download 驱动 —— 握手 → 收清单 → 回本地状态 → 计划 → 逐文件接收
 
-流程（与 config/plugins/files 插件侧 daemon_download 对称）：
+流程（与 src/files/transfer 侧 daemon_download 对称）：
 1. 握手 file_download_start（JSON）→ 收 ok（含 kind）
 2. 收 MANIFEST 帧（远端 entries，size/mtime）
 3. 对每个远端 entry 检查本地对应文件 → 回本地清单（exists/size/mtime）

@@ -16,7 +16,7 @@ class StatusHandler(DaemonHandler):
         sessions = ctx.manager.list_sessions()
         active = len(sessions)
         ended = 0
-        hs = ctx.manager._history_store
+        hs = ctx.manager.history_store
         if hs:
             ended = len(hs.list_ended_sessions())
         uptime = (

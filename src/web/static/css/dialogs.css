@@ -209,6 +209,123 @@ body[data-theme="dark"] .form-select {
   opacity: 0.8;
 }
 
+/* ── 工作目录浏览按钮（新建会话对话框）── */
+.cwd-wrap {
+  position: relative;
+  display: flex;
+  height: 34px;
+}
+.cwd-wrap .form-input {
+  flex: 1;
+  min-width: 0;
+  padding-right: 34px;
+}
+.cwd-btn {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--wt-tab-text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  outline: none;
+  padding: 0;
+  transition: background 0.15s;
+}
+.cwd-btn:hover {
+  background: var(--wt-btn-hover);
+}
+.cwd-btn:active {
+  background: var(--wt-btn-bg);
+}
+
+/* ── Shell 选择器（新建会话对话框）── */
+.shell-select-wrap {
+  display: flex;
+  align-items: flex-end;
+  height: 34px;
+}
+/* 按钮样式对齐工作目录输入框（.form-input）：深色背景 + 同款边框圆角 */
+.shell-picker-btn {
+  flex: 1;
+  height: 34px;
+  background: var(--wt-input-bg);
+  border: 1px solid var(--wt-input-border);
+  border-radius: 4px;
+  color: var(--wt-term-fg);
+  font-size: 13px;
+  font-family: var(--wt-font-ui);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  outline: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+body[data-theme="dark"] .shell-picker-btn {
+  background: #121212;
+}
+.shell-picker-btn:hover {
+  border-color: var(--wt-input-focus-border);
+  background: var(--wt-btn-hover);
+}
+.shell-picker-btn:active {
+  background: var(--wt-btn-bg);
+}
+.shell-picker-btn:focus-visible {
+  border-color: var(--wt-input-focus-border);
+  box-shadow: 0 0 0 2px rgba(0,120,212,0.25);
+}
+
+/* body 级 Shell 下拉浮层 */
+.shell-dropdown {
+  position: fixed;
+  z-index: 3000;
+  min-width: 180px;
+  max-width: 320px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--wt-dropdown-bg);
+  border: 1px solid var(--wt-dropdown-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+  padding: 4px;
+}
+.shell-dropdown-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.shell-dropdown-item:hover {
+  background: var(--wt-dropdown-hover);
+}
+.shell-item-name {
+  font-size: 13px;
+  color: var(--wt-term-fg);
+  font-weight: 500;
+}
+.shell-item-path {
+  font-size: 11px;
+  color: var(--wt-tab-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .dialog-actions {
   display: flex;
   justify-content: flex-end;

@@ -17,11 +17,16 @@ plugin.json 清单声明（见 manifest.py），本类只定义钩子签名与�
 - CLI（before_request/transform_response/render_response）：客户端侧三阶段
 """
 
+from types import MappingProxyType
 from typing import Optional
 
 from ..logging import get_logger
 
 _logger = get_logger("pty-plugins")
+
+# 空选项共享常量：只读映射，插件对 ctx.options 只能读；
+# 误写会立即抛 TypeError（而非静默污染共享空 dict）
+_EMPTY_OPTIONS: MappingProxyType = MappingProxyType({})
 
 # handle_message 返回值哨兵：插件已自行完成多帧响应，调度器不再发送
 HANDLED = object()
@@ -32,8 +37,9 @@ VALID_HOOKS = (
     "on_attach", "on_detach",
     "on_input", "on_output", "on_snapshot",
     "on_event", "on_poll", "on_bus_event",
-    "handle_command", "handle_message", "inspect_state",
-    "before_request", "transform_response", "render_response",
+    "handle_command", "handle_message", "inspect_state", "decorate_response",
+    "check_request", "before_request", "transform_response", "render_response",
+    "on_session_created",
 )
 
 
@@ -69,6 +75,13 @@ class Plugin:
 
     def on_detach(self, ctx, exit_code) -> None:
         """从会话卸载时调用（用户 detach、自我卸载或会话结束）"""
+
+    def on_session_created(self, ctx, session, msg) -> None:
+        """ExecHandler 创建会话成功后回调（进程级插件；会话附加标记/启动监控）
+
+        在通用 exec 流程（check_ended_session → create_session）之后调用，
+        插件在此标记会话归属、启动会话级监控等，不接管 exec 处理。
+        """
 
     # ── 变换链（modify，链式，返回 None 的输入拦截）────────
 
@@ -110,7 +123,16 @@ class Plugin:
     def inspect_state(self, ctx):
         """命令返回时的一次性状态检查；返回 dict 附加为 terminalState"""
 
+    def decorate_response(self, ctx, resp: dict):
+        """装饰内置命令的响应（按 manifest.decorateTypes 匹配 commandType）
+        
+        返回修改后的 resp dict，或 None 表示不修改。
+        """
+
     # ── CLI 三阶段（kind=cli）─────────────────────────────
+
+    def check_request(self, ctx, msg: dict) -> Optional[str]:
+        """请求发送前拦截检查；返回 None 放行，返回 str 拒绝（该字符串作为错误消息）"""
 
     def before_request(self, ctx, msg: dict):
         """请求发送前调用；返回 dict 替换 msg，None 放行"""
@@ -123,19 +145,21 @@ class Plugin:
 
 
 class _EnvContext:
-    """上下文公共能力 — 事件总线/配置/存储/权限/日志（daemon 全局共享）"""
+    """上下文公共能力 — 事件总线/配置/存储/权限/日志/通知（daemon 全局共享）"""
 
-    __slots__ = ("events", "config", "storage", "permission", "logger")
+    __slots__ = ("events", "notify_manager", "config", "storage", "permission", "logger")
 
     def __init__(self, environment, plugin):
         if environment is not None:
             self.events = environment.events
+            self.notify_manager = getattr(environment, "notify_manager", None)
             self.config = environment.config_for(plugin.name)
             self.storage = environment.storage_for(plugin.name)
             self.permission = environment.permission_for(plugin.name)
             self.logger = environment.logger_for(plugin.name)
         else:
             self.events = None
+            self.notify_manager = None
             self.config = None
             self.storage = None
             self.permission = None
@@ -143,16 +167,23 @@ class _EnvContext:
 
 
 class PluginContext(_EnvContext):
-    """会话级插件运行时上下文（每个钩子调用由宿主构造）"""
+    """会话级插件运行时上下文（每个钩子调用由宿主构造）
 
-    __slots__ = ("_host", "plugin", "session")
+    options: 本插件的会话选项（cliOptions 声明，exec 时注入、send/read/mouse
+    更新）；会话生命周期内所有钩子可读，未设置时为空 dict。
+    """
 
-    def __init__(self, session, plugin, host=None, environment=None):
+    __slots__ = ("_host", "plugin", "session", "options")
+
+    def __init__(self, session, plugin, host=None, environment=None, options=None):
         env = host.environment if host is not None else environment
         super().__init__(env, plugin)
         self.session = session
         self.plugin = plugin
         self._host = host
+        # None 时用空 dict 常量（插件只读 options，共享空 dict 安全）；
+        # 非 None 原样引用（宿主已按值拷贝或传入共享空常量）
+        self.options = options if options is not None else _EMPTY_OPTIONS
 
     def request_return(self, reason: str) -> bool:
         """请求当前等待命令（exec/send 的 trigger/snapshot 等待）立即返回

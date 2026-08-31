@@ -1,4 +1,4 @@
-"""插件配置单测 — 分层合并、schema 校验、config.yaml 自愈、set 持久化"""
+"""插件配置单测 — 内存态：默认值、set 内存覆盖、schema 校验"""
 
 import os
 import sys
@@ -8,49 +8,51 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from src.plugins.config import ConfigError, PluginConfig  # noqa: E402
-from tests.helpers import write_config_yaml  # noqa: E402
 
 
-def _make(plugin_dir, defaults=None, schema=None, plugin_id="demo"):
-    return PluginConfig(plugin_id, plugin_dir, defaults or {}, schema)
+def _make(defaults=None, schema=None):
+    return PluginConfig(defaults or {}, schema)
 
 
-class TestLayering:
-    def test_defaults_only(self, tmp_path):
-        cfg = _make(str(tmp_path), {"a": 1, "b": "x"})
+class TestDefaults:
+    def test_defaults_only(self):
+        cfg = _make({"a": 1, "b": "x"})
         assert cfg.get("a") == 1
         assert cfg.get("b") == "x"
         assert cfg.get("missing", 42) == 42
 
-    def test_yaml_overrides_defaults(self, tmp_path):
-        write_config_yaml(str(tmp_path), {"a": 2})
-        cfg = _make(str(tmp_path), {"a": 1, "b": "x"})
-        assert cfg.get("a") == 2
-        assert cfg.get("b") == "x"
+    def test_as_dict(self):
+        cfg = _make({"a": 1, "b": 2})
+        assert cfg.as_dict() == {"a": 1, "b": 2}
 
-    def test_missing_yaml_generated(self, tmp_path):
-        cfg = _make(str(tmp_path), {"a": 1})
-        assert os.path.isfile(os.path.join(str(tmp_path), "config.yaml"))
-        # 生成文件内容即默认值
-        cfg2 = _make(str(tmp_path), {"a": 1})
-        assert cfg2.get("a") == 1
 
-    def test_env_overrides(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("PTY_PLUGIN_DEMO_A", "9")
-        cfg = _make(str(tmp_path), {"a": 1})
-        assert cfg.get("a") == 9
+class TestSet:
+    def test_set_updates_memory(self):
+        cfg = _make({"size": 1})
+        cfg.set("size", 5)
+        assert cfg.get("size") == 5
+        # 重启后应恢复默认（模拟新实例）
+        cfg2 = _make({"size": 1})
+        assert cfg2.get("size") == 1
 
-    def test_env_coerce_bool_and_int(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("PTY_PLUGIN_DEMO_FLAG", "true")
-        monkeypatch.setenv("PTY_PLUGIN_DEMO_SIZE", "2048")
-        cfg = _make(str(tmp_path), {"flag": False, "size": 100})
-        assert cfg.get("flag") is True
-        assert cfg.get("size") == 2048
+    def test_set_adds_new_key(self):
+        cfg = _make({"a": 1})
+        cfg.set("b", 2)
+        assert cfg.get("b") == 2
 
-    def test_env_prefix_normalized(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("PTY_PLUGIN_MY_PLUGIN_X", "1")
-        cfg = PluginConfig("my-plugin", str(tmp_path), {"x": 0}, None)
-        assert cfg.get("x") == 1
+    def test_set_invalid_rejected(self):
+        schema = {"type": "object", "properties": {"size": {"type": "integer"}}}
+        cfg = _make({"size": 1}, schema)
+        with pytest.raises(ConfigError):
+            cfg.set("size", "nope")
+        assert cfg.get("size") == 1
+
+    def test_set_validates_schema(self):
+        schema = {"type": "object", "properties": {"mode": {"type": "string", "enum": ["fast", "safe"]}}}
+        cfg = _make({"mode": "fast"}, schema)
+        with pytest.raises(ConfigError):
+            cfg.set("mode", "turbo")
+        assert cfg.get("mode") == "fast"
 
 
 class TestSchemaValidation:
@@ -67,53 +69,41 @@ class TestSchemaValidation:
         "required": ["size"],
     }
 
-    def test_valid_passes(self, tmp_path):
-        cfg = _make(str(tmp_path), {"size": 5, "name": "ok", "tags": ["a"]}, self.SCHEMA)
+    def test_valid_passes(self):
+        cfg = _make({"size": 5, "name": "ok", "tags": ["a"]}, self.SCHEMA)
         assert cfg.get("size") == 5
 
-    def test_invalid_type_fails(self, tmp_path):
+    def test_invalid_type_fails(self):
         with pytest.raises(ConfigError):
-            _make(str(tmp_path), {"size": "big"}, self.SCHEMA)
+            _make({"size": "big"}, self.SCHEMA)
 
-    def test_below_minimum_fails(self, tmp_path):
+    def test_below_minimum_fails(self):
         with pytest.raises(ConfigError):
-            _make(str(tmp_path), {"size": 0}, self.SCHEMA)
+            _make({"size": 0}, self.SCHEMA)
 
-    def test_enum_fails(self, tmp_path):
+    def test_enum_fails(self):
         with pytest.raises(ConfigError):
-            _make(str(tmp_path), {"size": 1, "mode": "turbo"}, self.SCHEMA)
+            _make({"size": 1, "mode": "turbo"}, self.SCHEMA)
 
-    def test_nullable_type(self, tmp_path):
-        cfg = _make(str(tmp_path), {"size": 1, "rg": None}, self.SCHEMA)
+    def test_nullable_type(self):
+        cfg = _make({"size": 1, "rg": None}, self.SCHEMA)
         assert cfg.get("rg") is None
 
-    def test_additional_properties_false(self, tmp_path):
+    def test_additional_properties_false(self):
         with pytest.raises(ConfigError):
-            _make(str(tmp_path), {"size": 1, "extra": {"unknown": 1}}, self.SCHEMA)
+            _make({"size": 1, "extra": {"unknown": 1}}, self.SCHEMA)
 
-    def test_missing_required_fails(self, tmp_path):
+    def test_missing_required_fails(self):
         with pytest.raises(ConfigError):
-            _make(str(tmp_path), {}, self.SCHEMA)
-
-    def test_bad_yaml_fails(self, tmp_path):
-        with open(os.path.join(str(tmp_path), "config.yaml"), "w", encoding="utf-8") as f:
-            f.write("a: [unclosed\n")
-        with pytest.raises(ConfigError):
-            _make(str(tmp_path), {"size": 1}, self.SCHEMA)
+            _make({}, self.SCHEMA)
 
 
-class TestSet:
-    def test_set_persists_and_validates(self, tmp_path):
-        schema = {"type": "object", "properties": {"size": {"type": "integer"}}}
-        cfg = _make(str(tmp_path), {"size": 1}, schema)
-        cfg.set("size", 5)
-        # 重新加载：值已持久化
-        cfg2 = _make(str(tmp_path), {"size": 1}, schema)
-        assert cfg2.get("size") == 5
-
-    def test_set_invalid_rejected(self, tmp_path):
-        schema = {"type": "object", "properties": {"size": {"type": "integer"}}}
-        cfg = _make(str(tmp_path), {"size": 1}, schema)
-        with pytest.raises(ConfigError):
-            cfg.set("size", "nope")
-        assert cfg.get("size") == 1
+class TestReset:
+    def test_reset_restores_defaults(self):
+        cfg = _make({"a": 1, "b": 2})
+        cfg.set("a", 99)
+        cfg.set("c", 3)
+        cfg.reset()
+        assert cfg.get("a") == 1
+        assert cfg.get("b") == 2
+        assert cfg.get("c") is None

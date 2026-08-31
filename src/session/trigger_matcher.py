@@ -10,12 +10,12 @@ OutputBuffer / Session 协作。
   避免引入编码探测的循环依赖。
 - 滚动解码缓存：等待窗口内的已解码文本跨 check 复用，每块只增量
   解码新增字节并 append，避免对整段窗口重复解码+重扫（O(窗口)→O(块长)）。
-- ReDoS 防护: safe_regex_search 对无风险模式在调用线程直接搜索，
-  仅存在 ReDoS 风险的模式提交独立 daemon 线程限时执行，超时降级返回 False。
+- ReDoS 防护: CPython 中正则搜索持 GIL 不放，无法用线程池/超时安全中断
+  运行中的灾难性回溯（实测验证），因此安全边界在预检：_check_regex_complexity
+  判为安全的模式（确定性线性结构）在调用线程直接搜索，其余一律降级为
+  O(n) 线性子串匹配，任何输入都不会持锁阻塞。
 """
 
-import atexit
-import concurrent.futures
 import functools
 import re
 import threading
@@ -27,8 +27,6 @@ from ..logging import get_logger
 
 _logger = get_logger("pty-session")
 
-_RE_SEARCH_TIMEOUT = 2.0
-
 # 跨块匹配尾部重叠字符数：搜索只覆盖新增文本 + 此前最近一段尾部，
 # 旧文本在之前的 check 中已全量搜索无命中（重叠区仅供跨块模式命中）。
 _SCAN_TAIL_OVERLAP = 4096
@@ -37,63 +35,517 @@ _SCAN_TAIL_OVERLAP = 4096
 # 持续无法解码的异常字节流，封顶防止尾部无限累积导致逐块 O(n)。
 _MAX_TAIL_BYTES = 16
 
-_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
-    max_workers=4,
-    thread_name_prefix="safe-regex",
-)
-atexit.register(_EXECUTOR.shutdown, False)
-
 
 @functools.lru_cache(maxsize=256)
 def _check_regex_complexity(pattern: str) -> bool:
-    """检查正则表达式是否存在 ReDoS 风险
+    """保守判定正则是否存在灾难性回溯风险（True=安全=内联，False=风险=子串匹配）
 
-    拒绝嵌套量词超过 2 层的正则（如 (a+)+b）。
-    返回 True 表示安全，False 表示可能存在 ReDoS 风险。
-    按 pattern 缓存判定结果（safe_regex_search 每块输出调用）。
+    在 CPython 中正则搜索持 GIL 不放，线程池限时无法中断运行中的回溯
+    （实测验证），故存在风险的模式必须拒绝正则执行，降级为 O(n) 线性
+    子串匹配；仅判定为安全的模式才在调用线程直接搜索。
+
+    风险规则（任一命中即返回 False）：
+    - 量化词作用于分组（含命名/非捕获/环视）：(a+)+b、(a|a)*b、(a*)*b
+      分组量化在失败时组合数指数增长。
+    - 分组内同时出现交替与量化词：(a+|b) 无锚定输入时 O(n²)。
+    - 相邻分组的内部歧义交替（分支字符集重叠）：(a|a)(a|a) 指数组合。
+    - 环视与反向引用：回溯行为难以静态分析。
+    - 安全集限定：每个量化词须满足（终位 || （非首消费元且前驱字符集不交）），
+      且非终位量化词至多一个；否则量化词的失败回溯可被起点重复触发
+      （如 a+X 在 aⁿ 上 O(n²)，实测 4 倍耗时随规模翻倍）。
+    字符类内与转义字符内的括号/竖线/量化词按字面处理，不参与分组计数。
     """
-    depth = 0
-    max_depth = 0
+    # ── 辅助常量/函数 ──
+    _DIGITS = frozenset("0123456789")
+    _WORD = frozenset(
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+    )
+    _SPACE = frozenset(" \t\n\r\f\v")
+    _HEX = "0123456789abcdefABCDEF"
+
+    def _overlap(s1, s2):
+        """两个字符集是否可能匹配同一字符（None 视为任意，即与一切重叠）"""
+        return s1 is None or s2 is None or bool(s1 & s2)
+
+    def _branches_overlap(branches):
+        for i in range(len(branches)):
+            si = branches[i]
+            for j in range(i + 1, len(branches)):
+                if _overlap(si, branches[j]):
+                    return True
+        return False
+
+    def _brace_quant_end(pat, i):
+        """尝试解析 {m} / {m,} / {m,n} 量化词；成功返回 } 后下标，否则 None"""
+        n = len(pat)
+        j = i + 1
+        while j < n and "0" <= pat[j] <= "9":
+            j += 1
+        if j < n and pat[j] == "}":
+            return j + 1
+        if j < n and pat[j] == ",":
+            j += 1
+            while j < n and "0" <= pat[j] <= "9":
+                j += 1
+            if j < n and pat[j] == "}":
+                return j + 1
+        return None
+
+    def _is_hex4(s):
+        return len(s) == 4 and all(ch in _HEX for ch in s)
+
+    # ── 扫描状态 ──
+    n = len(pattern)
     i = 0
-    while i < len(pattern):
+    # 分组栈: [has_alt, has_quant, gset, branch_sets, cur_branch, last_amb]
+    #   gset / cur_branch: 字符集（None = 任意）；branch_sets: 已完成分支字符集
+    #   last_amb: 该层级上一个原子是否为内部歧义交替组（R3b 相邻检测用）
+    stack = []
+    top_last_amb = False
+    # 当前原子（待量化）与上一个已提交原子
+    cur_set = None
+    cur_kind = None  # None | 'atom' | 'group'
+    cur_amb = False
+    prev_set = None
+    # 消费元计数 / 首个消费元序号
+    atom_idx = 0
+    first_atom_idx = -1
+    # 风险标志
+    r_quant_group = False  # 量化词作用于分组
+    r_alt_quant = False    # 分组内交替+量化词
+    r_amb_group = False    # 相邻歧义交替组
+    r_lookbackref = False  # 环视/反向引用
+    # 量化词信息: (作用原子序号, 是否首消费元, 前驱字符集, 自身字符集)
+    q_infos = []
+
+    def _set_last_amb(amb):
+        nonlocal top_last_amb
+        if stack:
+            stack[-1][5] = amb
+        else:
+            top_last_amb = amb
+
+    def _get_last_amb():
+        if stack:
+            return stack[-1][5]
+        return top_last_amb
+
+    def _add_to_group(s):
+        """将原子字符集 s 并入当前栈顶分组的 gset 与 cur_branch（None 即任意）"""
+        if not stack:
+            return
+        g = stack[-1]
+        if s is None:
+            g[2] = None
+            g[4] = None
+        else:
+            if g[2] is not None:
+                g[2] = g[2] | s
+            if g[4] is not None:
+                g[4] = g[4] | s
+
+    def _commit():
+        """将当前未量化原子 cur 提交为前驱（prev_set）"""
+        nonlocal prev_set, cur_set, cur_kind, cur_amb
+        if cur_kind is not None:
+            prev_set = cur_set
+            cur_set = None
+            cur_kind = None
+            cur_amb = False
+
+    def _complete_atom(s, amb=False):
+        """完成一个原子（字面量/字符类/转义）：登记序号并并入所在分组"""
+        nonlocal atom_idx, first_atom_idx, cur_set, cur_kind, cur_amb
+        _commit()
+        cur_set = s
+        cur_kind = "atom"
+        cur_amb = amb
+        atom_idx += 1
+        if first_atom_idx < 0:
+            first_atom_idx = atom_idx
+        _add_to_group(s)
+        _set_last_amb(amb)
+
+    def _set_cur_group(s, amb):
+        """分组闭合后成为当前原子"""
+        nonlocal cur_set, cur_kind, cur_amb
+        _commit()
+        cur_set = s
+        cur_kind = "group"
+        cur_amb = amb
+        _add_to_group(s)
+        _set_last_amb(amb)
+
+    def _apply_quantifier():
+        """量化词处理：R1 检查 + 记录量化词信息"""
+        nonlocal r_quant_group, prev_set, cur_set, cur_kind, cur_amb
+        if stack:
+            stack[-1][1] = True
+        if cur_kind == "group":
+            r_quant_group = True
+            return
+        q_infos.append((atom_idx, first_atom_idx == atom_idx, prev_set, cur_set))
+        prev_set = cur_set
+        cur_set = None
+        cur_kind = None
+        cur_amb = False
+
+    # ── 主扫描循环 ──
+    while i < n:
         c = pattern[i]
-        if c == "(":
-            depth += 1
-            max_depth = max(max_depth, depth)
-        elif c == ")":
-            depth = max(0, depth - 1)
-        elif c in ("+", "*", "?", "{"):
-            if i + 1 < len(pattern) and pattern[i + 1] == "?":
+
+        # ── 转义序列 ──
+        if c == "\\":
+            if i + 1 >= n:
+                _complete_atom(frozenset(("\\",)))
                 i += 1
-            if depth >= 2:
-                _logger.warning(
-                    "正则复杂度预检: 嵌套量词深度 %d 可能导致 ReDoS: %r",
-                    depth,
-                    pattern[:200],
+                continue
+            e = pattern[i + 1]
+            if e in ("d", "w", "s"):
+                _complete_atom(_DIGITS if e == "d" else (_WORD if e == "w" else _SPACE))
+                i += 2
+                continue
+            if e in ("D", "W", "S"):
+                _complete_atom(None)
+                i += 2
+                continue
+            if e in ("b", "B", "A", "Z", "z"):
+                i += 2  # 零宽断言：不构成原子
+                continue
+            if e == "x":
+                if i + 3 < n and _is_hex4(pattern[i + 2 : i + 4]):
+                    _complete_atom(frozenset((chr(int(pattern[i + 2 : i + 4], 16)),)))
+                    i += 4
+                else:
+                    _complete_atom(None)
+                    i += 2
+                continue
+            if e == "u":
+                if i + 5 < n and _is_hex4(pattern[i + 2 : i + 6]):
+                    _complete_atom(frozenset((chr(int(pattern[i + 2 : i + 6], 16)),)))
+                    i += 6
+                else:
+                    _complete_atom(None)
+                    i += 2
+                continue
+            if e == "U":
+                if i + 9 < n and all(ch in _HEX for ch in pattern[i + 2 : i + 10]):
+                    _complete_atom(frozenset((chr(int(pattern[i + 2 : i + 10], 16)),)))
+                    i += 10
+                else:
+                    _complete_atom(None)
+                    i += 2
+                continue
+            if e == "N":
+                clos = pattern.find("}", i + 3)
+                if clos < 0:
+                    _complete_atom(None)
+                    i += 2
+                else:
+                    _complete_atom(None)  # \N{name} 字符集未知
+                    i = clos + 1
+                continue
+            if "1" <= e <= "9":
+                r_lookbackref = True
+                return False  # \1..\9 反向引用
+            if "0" <= e <= "7":
+                # 八进制 \0..\377（仅剩 \0 前缀：\1..\7 已按反向引用处理）
+                j = i + 2
+                while j < n and j < i + 5 and "0" <= pattern[j] <= "7":
+                    j += 1
+                _complete_atom(frozenset((chr(int(pattern[i + 1 : j], 8)),)))
+                i = j
+                continue
+            # 其余转义：字面量单字符
+            _complete_atom(frozenset((e,)))
+            i += 2
+            continue
+
+        # ── 字符类 ──
+        if c == "[":
+            j = i + 1
+            negated = False
+            if j < n and pattern[j] == "^":
+                negated = True
+                j += 1
+            chars = set()
+            unknown = False
+            first = True
+            last = None
+            while j < n:
+                ch = pattern[j]
+                if ch == "]":
+                    if first:
+                        chars.add("]")
+                        j += 1
+                        first = False
+                        continue
+                    break
+                if ch == "\\":
+                    if j + 1 >= n:
+                        unknown = True
+                        j += 1
+                        break
+                    e = pattern[j + 1]
+                    if e in ("d", "w", "s"):
+                        chars.update(
+                            _DIGITS if e == "d" else (_WORD if e == "w" else _SPACE)
+                        )
+                        last = None
+                        j += 2
+                        first = False
+                        continue
+                    if e in ("D", "W", "S"):
+                        unknown = True
+                        j += 2
+                        first = False
+                        continue
+                    if e == "x":
+                        if j + 3 < n and _is_hex4(pattern[j + 2 : j + 4]):
+                            chars.add(chr(int(pattern[j + 2 : j + 4], 16)))
+                            last = None
+                            j += 4
+                        else:
+                            unknown = True
+                            j += 2
+                        first = False
+                        continue
+                    if e == "u":
+                        if j + 5 < n and _is_hex4(pattern[j + 2 : j + 6]):
+                            chars.add(chr(int(pattern[j + 2 : j + 6], 16)))
+                            last = None
+                            j += 6
+                        else:
+                            unknown = True
+                            j += 2
+                        first = False
+                        continue
+                    if "0" <= e <= "7":
+                        k = j + 2
+                        while k < n and k < j + 5 and "0" <= pattern[k] <= "7":
+                            k += 1
+                        chars.add(chr(int(pattern[j + 1 : k], 8)))
+                        last = None
+                        j = k
+                        first = False
+                        continue
+                    # 类内其他转义：字面量
+                    chars.add(e)
+                    last = e
+                    j += 2
+                    first = False
+                    continue
+                if (
+                    ch == "-"
+                    and not first
+                    and last is not None
+                    and j + 1 < n
+                    and pattern[j + 1] != "]"
+                ):
+                    # 范围 a-z
+                    j += 1
+                    nxt = pattern[j]
+                    if nxt == "\\":
+                        unknown = True
+                        j += 2
+                        first = False
+                        last = None
+                        continue
+                    if last <= nxt:
+                        lo, hi = ord(last), ord(nxt)
+                        if hi - lo <= 512:
+                            chars.update(chr(x) for x in range(lo, hi + 1))
+                        else:
+                            unknown = True
+                    else:
+                        unknown = True
+                    j += 1
+                    first = False
+                    last = None
+                    continue
+                chars.add(ch)
+                last = ch
+                j += 1
+                first = False
+                continue
+            if j >= n:
+                i = n  # 未闭合字符类：非法正则（编译错误），扫描结果无关
+                continue
+            cs = None if (negated or unknown or len(chars) > 512) else frozenset(chars)
+            _complete_atom(cs)
+            i = j + 1
+            continue
+
+        # ── 分组 ──
+        if c == "(":
+            if i + 1 >= n:
+                stack.append([False, False, frozenset(), [], frozenset(), False])
+                i += 1
+                continue
+            if pattern[i + 1] == "?":
+                q = pattern[i + 2] if i + 2 < n else ""
+                if q == "P":
+                    if i + 3 < n and pattern[i + 3] == "<":
+                        gt = pattern.find(">", i + 4)
+                        if gt < 0:
+                            stack.append(
+                                [False, False, frozenset(), [], frozenset(), False]
+                            )
+                            i += 3
+                        else:
+                            stack.append(  # 命名捕获组 (?P<name>...)
+                                [False, False, frozenset(), [], frozenset(), False]
+                            )
+                            i = gt + 1
+                        continue
+                    r_lookbackref = True
+                    return False  # (?P=name) 反向引用
+                if q == "#":
+                    close = pattern.find(")", i + 3)  # (?# 注释
+                    i = n if close < 0 else close + 1
+                    continue
+                if q in ("=", "!"):
+                    r_lookbackref = True
+                    return False  # 环视 (?= (?! 
+                if q == "<":
+                    if i + 3 < n and pattern[i + 3] in ("=", "!"):
+                        r_lookbackref = True
+                        return False  # 后行环视 (?<= (?<!
+                    stack.append(  # 旧语法 (?<name>) → 按分组处理
+                        [False, False, frozenset(), [], frozenset(), False]
+                    )
+                    i += 2
+                    continue
+                if q == ":":
+                    stack.append(  # (?: 非捕获组
+                        [False, False, frozenset(), [], frozenset(), False]
+                    )
+                    i += 3
+                    continue
+                # (?flags) / (?flags:...) / 未知
+                j = i + 2
+                while j < n and pattern[j] in "aiLmsux-":
+                    j += 1
+                if j < n and pattern[j] == ")":
+                    i = j + 1  # 仅标志组，零宽
+                    continue
+                if j < n and pattern[j] == ":":
+                    stack.append(  # (?flags:...)
+                        [False, False, frozenset(), [], frozenset(), False]
+                    )
+                    i = j + 1
+                    continue
+                stack.append(  # 未知 (? 结构 → 保守按分组
+                    [False, False, frozenset(), [], frozenset(), False]
                 )
-                return False
+                i += 2
+                continue
+            stack.append([False, False, frozenset(), [], frozenset(), False])
+            i += 1
+            continue
+
+        # ── 分组关闭 ──
+        if c == ")":
+            if not stack:
+                i += 1  # 多余的 )：编译错误，忽略
+                continue
+            alt, quant, gset, branches, cb, _ = stack.pop()
+            branches.append(cb)
+            if stack:  # 标志传播到父组
+                p = stack[-1]
+                if alt:
+                    p[0] = True
+                if quant:
+                    p[1] = True
+            if alt and quant:
+                r_alt_quant = True
+                return False  # R2
+            amb = _branches_overlap(branches)  # 内部歧义：分支字符集重叠
+            prev_amb = _get_last_amb()  # 当前层级上一个原子的歧义
+            if amb and prev_amb:
+                r_amb_group = True
+                return False  # R3b
+            _set_cur_group(gset, amb)
+            i += 1
+            continue
+
+        # ── 量化词 ──
+        if c in ("+", "*", "?"):
+            _apply_quantifier()
+            if i + 1 < n and pattern[i + 1] == "?":
+                i += 1  # 惰性后缀
+            i += 1
+            continue
+        if c == "{":
+            end = _brace_quant_end(pattern, i)
+            if end is not None:
+                _apply_quantifier()
+                i = end
+                if i < n and pattern[i] == "?":
+                    i += 1
+                continue
+            _complete_atom(frozenset(("{",)))  # 字面 {
+            i += 1
+            continue
+
+        # ── 交替 ──
+        if c == "|":
+            _commit()
+            if stack:
+                g = stack[-1]
+                g[0] = True
+                g[3].append(g[4])
+                g[4] = frozenset()
+            _set_last_amb(False)  # 分支边界：不构成相邻
+            i += 1
+            continue
+
+        # ── 零宽断言 ──
+        if c in ("^", "$"):
+            _commit()
+            i += 1
+            continue
+
+        # ── 字面量字符 ──
+        _complete_atom(frozenset((c,)))
         i += 1
+        continue
+
+    # ── 扫描结束，综合判定 ──
+    if r_quant_group or r_alt_quant or r_amb_group or r_lookbackref:
+        return False
+    if not q_infos:
+        return True
+    # 每个量化词：终位，或（非首消费元 + 前驱字符集不交）；非终位至多一个
+    non_terminal = 0
+    for q_atom, q_first, q_prev, q_set in q_infos:
+        if q_atom == atom_idx:
+            continue  # 终位量化词：贪心匹配成功即结束，线性
+        non_terminal += 1
+        if non_terminal > 1:
+            return False
+        if q_first or _overlap(q_prev, q_set):
+            return False
     return True
 
 
 def safe_regex_search(
     pattern: re.Pattern,
     text: str,
-    timeout: float = _RE_SEARCH_TIMEOUT,
+    timeout: float = 2.0,
     pos: int = 0,
 ) -> bool:
-    """执行正则搜索，超时安全降级返回 False
+    """执行正则搜索（timeout 参数保留兼容调用方，语义上不再需要）
 
-    无 ReDoS 风险的模式（_check_regex_complexity 通过）在调用线程直接
-    pattern.search，避免每块输出都做一次线程池队列往返（future 提交 +
-    同步阻塞）；仅存在风险的模式才提交共享线程池限时执行，
-    超时后 future.cancel() 提示中断（实际正则运行无法立即停止，
-    但线程数被 max_workers 限制，不会无限增长）。
+    安全模式（_check_regex_complexity 通过）在调用线程直接 pattern.search；
+    风险模式（含量化词等可能灾难性回溯的结构）不执行正则——CPython 中正则
+    搜索持 GIL 不放，线程池限时无法中断（实测验证），一律降级为 O(n) 线性
+    子串匹配（匹配的是模式字面量，等价于旧设计的子串降级语义）。
 
     Args:
         pattern: 预编译正则。
         text:    待搜索文本。
-        timeout: 线程池路径超时（秒）。
+        timeout: 已废弃（保留以兼容既有调用），不再使用。
         pos:     搜索起始偏移（匹配必须从 pos 起；旧文本已搜索时可跳过）。
     """
     if _check_regex_complexity(pattern.pattern):
@@ -101,17 +553,7 @@ def safe_regex_search(
             return pattern.search(text, pos) is not None
         except re.error:
             return False
-    future = _EXECUTOR.submit(pattern.search, text, pos)
-    try:
-        return future.result(timeout=timeout) is not None
-    except concurrent.futures.TimeoutError:
-        _logger.warning(
-            "正则搜索超时: pattern=%r, text_len=%d", pattern.pattern[:200], len(text)
-        )
-        future.cancel()
-        return False
-    except re.error:
-        return False
+    return text.find(pattern.pattern, pos) >= 0
 
 
 class TriggerMatcher:
@@ -196,11 +638,11 @@ class TriggerMatcher:
             try:
                 self._regex = re.compile(pattern, re.MULTILINE)
                 if not _check_regex_complexity(pattern):
-                    _logger.warning(
-                        "TriggerMatcher.set: 正则可能存在 ReDoS 风险，已降级为子串匹配: %r",
+                    _logger.debug(
+                        "TriggerMatcher.set: pattern=%r 存在回溯风险，"
+                        "将降级为子串匹配（匹配模式字面量）",
                         pattern[:200],
                     )
-                    self._regex = None
             except re.error:
                 self._regex = None
             self._matched = False
@@ -245,6 +687,9 @@ class TriggerMatcher:
         if fresh:
             self._fresh = True
             self._fresh_cycle = 0  # 由调用者设置实际值
+            # 换行状态与普通路径同步重置，避免 clear() 后残留旧值
+            self._newline_first_ok = newline
+            self._newline_count = 0
             return
 
         self._newline_first_ok = newline
@@ -342,6 +787,15 @@ class TriggerMatcher:
             if len(scan_tail) > _MAX_TAIL_BYTES:
                 scan_tail = scan_tail[-_MAX_TAIL_BYTES:]
             scan_end = end
+            # 裁剪 scan_text 头部：仅保留尾部重叠区 + 本块解码文本。
+            # 旧文本在之前 check 已全量搜索无命中，重叠区仅供跨块模式命中，
+            # 避免窗口（MAX_TRIGGER_SCAN 1MB）内每块 O(窗口) 字符串追加拷贝。
+            keep = _SCAN_TAIL_OVERLAP + len(joined_text)
+            if len(scan_text) > keep:
+                scan_text = scan_text[-keep:]
+                # prev_len 同步为裁剪后"旧文本"长度，pos 计算仍覆盖
+                # 尾部重叠区 + 新增文本
+                prev_len = len(scan_text) - len(joined_text)
 
         if regex:
             # 新增文本 + 尾部重叠区；旧文本在之前 check 已全量搜索无命中
@@ -426,6 +880,9 @@ class TriggerMatcher:
             self._idle_after_first = False
             self._idle_had_output = False
             self._idle_last_activity = 0.0
+            # 换行计数状态一并清除，避免残留旧值影响下一次 set
+            self._newline_first_ok = False
+            self._newline_count = 0
             self._reset_scan_cache_locked()
         self._event.clear()
 
@@ -451,11 +908,11 @@ class TriggerMatcher:
                 try:
                     self._regex = re.compile(pattern, re.MULTILINE)
                     if not _check_regex_complexity(pattern):
-                        _logger.warning(
-                            "set_snapshot_trigger: ReDoS 风险，降级为子串匹配: %r",
+                        _logger.debug(
+                            "set_snapshot_trigger: pattern=%r 存在回溯风险，"
+                            "将降级为子串匹配（匹配模式字面量）",
                             pattern[:200],
                         )
-                        self._regex = None
                 except re.error:
                     self._regex = None
             self._matched = False

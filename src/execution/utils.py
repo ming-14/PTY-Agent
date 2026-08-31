@@ -104,10 +104,11 @@ def _apply_resize_default(session, client_defaults: dict) -> None:
 
 
 def check_ended_session(manager: SessionManager, session_id: str) -> Optional[str]:
-    hs = manager._history_store
+    hs = manager.history_store
     if not hs:
         return None
     tag = hs.get_session_tag(session_id)
+    # 仅自然结束（ended）的 sid 拒绝复用；被 kill（history）的会话允许重新 exec 同名
     return tag if tag == "ended" else None
 
 
@@ -122,7 +123,8 @@ def validate_trigger_regex(trigger, conn) -> bool:
     """校验触发正则在提交前可编译；非法正则拒绝并返回 False
 
     仅拦截 re.compile 抛出的语法错误（用户输入错误），
-    合法但存在 ReDoS 风险的正则由 TriggerMatcher 降级为子串匹配，不在此拒绝。
+    合法但存在回溯风险的正则由 TriggerMatcher 提交限时线程池匹配
+    （超时视为不匹配），不在此拒绝。
     """
     if trigger is None:
         return True
@@ -158,16 +160,16 @@ def prepare_input(
 ) -> tuple:
     """按会话模式统一准备输入文本（转义展开的 daemon 侧权威落点）
     单一事实来源在守护进程：CLI/workflow 只传原始 input + 转义开关 + 显式 eol，
-    不再本地展开；本函数依据会话模式决定 {enter}/默认行尾符：
-    - 终端(pty) 模式：{enter}→\\r，默认行尾→\\r（模拟终端 Enter）
-    - 子进程(subprocess) 模式：{enter}→\\n，默认行尾→\\n
+    不再本地展开；行尾追加统一在此完成——默认追加 {enter} token，
+    由展开器按会话模式决定（pty→\\r，subprocess→\\n）；显式 send_eol
+    （--send-eol / workflow eol）映射为字符后透传。
 
     Args:
         mode:           会话模式 "pty" | "subprocess"。
         input_text:     原始输入文本（含未展开的 {enter} 等转义字面量）。
         json_escaping:  是否启用 JSON + 控制字符转义解码（advsend/workflow json）。
         send_eol:       显式行尾符名称（"cr"/"lf"/"crlf"/"none"）或字面字符；
-                        None 时按模式默认（pty=\\r，subprocess=\\n）。
+                        None 时默认追加 {enter} token（按模式展开）。
 
     Returns:
         (展开后文本, 停顿偏移列表)，供 session.write_input(pause_offsets=...) 使用。
@@ -176,10 +178,9 @@ def prepare_input(
 
     is_sub = mode == "subprocess"
     enter_eol = "\n" if is_sub else "\r"
+    send_eol_char = None
     if send_eol:
         send_eol_char = SEND_EOL_MAP.get(send_eol, send_eol)
-    else:
-        send_eol_char = "\n" if is_sub else "\r"
     return process_input(
         input_text,
         json_escaping=json_escaping,

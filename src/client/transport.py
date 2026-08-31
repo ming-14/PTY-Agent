@@ -47,15 +47,19 @@ class Client(
         self,
         config_overrides: Optional[dict] = None,
         cli_plugins: Optional[CliPluginHost] = None,
+        plugin_options: Optional[dict] = None,
     ):
         """初始化客户端
 
         Args:
             config_overrides: 配置覆盖字典。
             cli_plugins: CLI 插件宿主（CliPluginHost）；None 表示不启用。
+            plugin_options: 本次调用显式提供的插件选项 {插件 id: {选项名: 值}}；
+                非空时注入 exec/send/read/mouse 消息（msg.pluginOptions）。
         """
         self._config = ConfigManager(overrides=config_overrides)
         # 凭证提供者懒加载：首次 _connect 时由 _load_signer_and_providers() 装配
         # providers 只有 0 或 1 个：单 provider / None（basic 无认证）
         self._credential_provider = None
         self._cli_plugins = cli_plugins
+        self.plugin_options = plugin_options or {}

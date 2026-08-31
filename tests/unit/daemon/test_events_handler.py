@@ -41,7 +41,7 @@ class _EndedManager:
     """模拟 manager：会话均已移除（走 history_store 分支），暴露 _history_store"""
 
     def __init__(self, events, known=True):
-        self._history_store = _EndedHistoryStore(events, known=known)
+        self.history_store = _EndedHistoryStore(events, known=known)
         self._sessions = {}
 
     def get_session(self, sid):
@@ -62,7 +62,7 @@ class TestEventTimeToTs:
         # 本地时区无偏移 ISO 字符串 → 本地时间戳
         from datetime import datetime
 
-        t = "2026-01-01T10:00:02.00"
+        t = "2026-01-01T10:00:02.000000"
         expected = datetime.fromisoformat(t).timestamp()
         assert _event_time_to_ts({"time": t}) == expected
 
@@ -75,7 +75,7 @@ class TestEventTimeToTs:
         assert _event_time_to_ts({"time": t}) == expected
 
     def test_parse_with_offset(self):
-        assert _event_time_to_ts({"time": "1970-01-01T00:00:02.00+00:00"}) == 2.0
+        assert _event_time_to_ts({"time": "1970-01-01T00:00:02.000000+00:00"}) == 2.0
 
     def test_missing_or_invalid(self):
         assert _event_time_to_ts({}) is None
@@ -85,78 +85,78 @@ class TestEventTimeToTs:
 
 class TestFilterEventDicts:
     def test_no_filter_returns_all(self):
-        events = [_ev("2026-01-01T10:00:00.00"), _ev("2026-01-01T11:00:00.00")]
+        events = [_ev("2026-01-01T10:00:00.000000"), _ev("2026-01-01T11:00:00.000000")]
         assert _filter_event_dicts(events) == events
 
     def test_since(self):
         events = [
-            _ev("2026-01-01T10:00:00.00"),
-            _ev("2026-01-01T11:00:00.00"),
+            _ev("2026-01-01T10:00:00.000000"),
+            _ev("2026-01-01T11:00:00.000000"),
         ]
-        result = _filter_event_dicts(events, since=_ts("2026-01-01T10:30:00.00"))
-        assert [e["time"] for e in result] == ["2026-01-01T11:00:00.00"]
+        result = _filter_event_dicts(events, since=_ts("2026-01-01T10:30:00.000000"))
+        assert [e["time"] for e in result] == ["2026-01-01T11:00:00.000000"]
 
     def test_since_boundary_inclusive(self):
-        events = [_ev("2026-01-01T10:00:00.00")]
+        events = [_ev("2026-01-01T10:00:00.000000")]
         assert _filter_event_dicts(events, since=_ts(events[0]["time"])) == events
 
     def test_until(self):
         events = [
-            _ev("2026-01-01T10:00:00.00"),
-            _ev("2026-01-01T11:00:00.00"),
+            _ev("2026-01-01T10:00:00.000000"),
+            _ev("2026-01-01T11:00:00.000000"),
         ]
-        result = _filter_event_dicts(events, until=_ts("2026-01-01T10:30:00.00"))
-        assert [e["time"] for e in result] == ["2026-01-01T10:00:00.00"]
+        result = _filter_event_dicts(events, until=_ts("2026-01-01T10:30:00.000000"))
+        assert [e["time"] for e in result] == ["2026-01-01T10:00:00.000000"]
 
     def test_until_boundary_inclusive(self):
-        events = [_ev("2026-01-01T10:00:00.00")]
+        events = [_ev("2026-01-01T10:00:00.000000")]
         assert _filter_event_dicts(events, until=_ts(events[0]["time"])) == events
 
     def test_since_until_combined(self):
         events = [
-            _ev("2026-01-01T10:00:00.00"),
-            _ev("2026-01-01T11:00:00.00"),
-            _ev("2026-01-01T12:00:00.00"),
+            _ev("2026-01-01T10:00:00.000000"),
+            _ev("2026-01-01T11:00:00.000000"),
+            _ev("2026-01-01T12:00:00.000000"),
         ]
         result = _filter_event_dicts(
             events,
-            since=_ts("2026-01-01T10:30:00.00"),
-            until=_ts("2026-01-01T11:30:00.00"),
+            since=_ts("2026-01-01T10:30:00.000000"),
+            until=_ts("2026-01-01T11:30:00.000000"),
         )
-        assert [e["time"] for e in result] == ["2026-01-01T11:00:00.00"]
+        assert [e["time"] for e in result] == ["2026-01-01T11:00:00.000000"]
 
     def test_last(self):
         events = [
-            _ev("2026-01-01T10:00:00.00"),
-            _ev("2026-01-01T11:00:00.00"),
-            _ev("2026-01-01T12:00:00.00"),
+            _ev("2026-01-01T10:00:00.000000"),
+            _ev("2026-01-01T11:00:00.000000"),
+            _ev("2026-01-01T12:00:00.000000"),
         ]
         result = _filter_event_dicts(events, last=2)
         assert [e["time"] for e in result] == [
-            "2026-01-01T11:00:00.00",
-            "2026-01-01T12:00:00.00",
+            "2026-01-01T11:00:00.000000",
+            "2026-01-01T12:00:00.000000",
         ]
 
     def test_last_zero_or_none(self):
-        events = [_ev("2026-01-01T10:00:00.00"), _ev("2026-01-01T11:00:00.00")]
+        events = [_ev("2026-01-01T10:00:00.000000"), _ev("2026-01-01T11:00:00.000000")]
         assert _filter_event_dicts(events, last=0) == events
         assert _filter_event_dicts(events, last=None) == events
 
     def test_since_plus_last(self):
         events = [
-            _ev("2026-01-01T10:00:00.00"),
-            _ev("2026-01-01T11:00:00.00"),
-            _ev("2026-01-01T12:00:00.00"),
+            _ev("2026-01-01T10:00:00.000000"),
+            _ev("2026-01-01T11:00:00.000000"),
+            _ev("2026-01-01T12:00:00.000000"),
         ]
         result = _filter_event_dicts(
-            events, since=_ts("2026-01-01T10:30:00.00"), last=1
+            events, since=_ts("2026-01-01T10:30:00.000000"), last=1
         )
-        assert [e["time"] for e in result] == ["2026-01-01T12:00:00.00"]
+        assert [e["time"] for e in result] == ["2026-01-01T12:00:00.000000"]
 
     def test_unparsable_time_kept(self):
         # time 解析失败的事件保留（不因过滤丢事件）
-        events = [_ev("bad-time"), _ev("2026-01-01T11:00:00.00")]
-        result = _filter_event_dicts(events, since=_ts("2026-01-01T12:00:00.00"))
+        events = [_ev("bad-time"), _ev("2026-01-01T11:00:00.000000")]
+        result = _filter_event_dicts(events, since=_ts("2026-01-01T12:00:00.000000"))
         assert [e["time"] for e in result] == ["bad-time"]
 
 
@@ -201,8 +201,8 @@ class TestEndedEventsHandler:
 
     def test_no_filter_returns_all(self):
         events = [
-            _ev("2026-01-01T10:00:00.00", "process_spawn", 1),
-            _ev("2026-01-01T11:00:00.00", "process_exit", 1),
+            _ev("2026-01-01T10:00:00.000000", "process_spawn", 1),
+            _ev("2026-01-01T11:00:00.000000", "process_exit", 1),
         ]
         handler = self._mk_handler(events)
         resp = self._handle_events(handler, {"type": "events", "id": "ended-sess"})
@@ -210,14 +210,14 @@ class TestEndedEventsHandler:
         assert resp["commandType"] == "events"
         assert resp["count"] == 2
         assert [e["time"] for e in resp["pendingEvents"]] == [
-            "2026-01-01T10:00:00.00",
-            "2026-01-01T11:00:00.00",
+            "2026-01-01T10:00:00.000000",
+            "2026-01-01T11:00:00.000000",
         ]
 
     def test_since_filters(self):
         events = [
-            _ev("2026-01-01T10:00:00.00", "process_spawn", 1),
-            _ev("2026-01-01T11:00:00.00", "process_exit", 1),
+            _ev("2026-01-01T10:00:00.000000", "process_spawn", 1),
+            _ev("2026-01-01T11:00:00.000000", "process_exit", 1),
         ]
         handler = self._mk_handler(events)
         resp = self._handle_events(
@@ -225,19 +225,19 @@ class TestEndedEventsHandler:
             {
                 "type": "events",
                 "id": "ended-sess",
-                "since": _ts("2026-01-01T10:30:00.00"),
+                "since": _ts("2026-01-01T10:30:00.000000"),
             },
         )
         assert resp is not None
         assert resp["count"] == 1
         assert [e["time"] for e in resp["pendingEvents"]] == [
-            "2026-01-01T11:00:00.00"
+            "2026-01-01T11:00:00.000000"
         ]
 
     def test_until_filters(self):
         events = [
-            _ev("2026-01-01T10:00:00.00", "process_spawn", 1),
-            _ev("2026-01-01T11:00:00.00", "process_exit", 1),
+            _ev("2026-01-01T10:00:00.000000", "process_spawn", 1),
+            _ev("2026-01-01T11:00:00.000000", "process_exit", 1),
         ]
         handler = self._mk_handler(events)
         resp = self._handle_events(
@@ -245,19 +245,19 @@ class TestEndedEventsHandler:
             {
                 "type": "events",
                 "id": "ended-sess",
-                "until": _ts("2026-01-01T10:30:00.00"),
+                "until": _ts("2026-01-01T10:30:00.000000"),
             },
         )
         assert resp is not None
         assert resp["count"] == 1
         assert [e["time"] for e in resp["pendingEvents"]] == [
-            "2026-01-01T10:00:00.00"
+            "2026-01-01T10:00:00.000000"
         ]
 
     def test_since_future_returns_empty(self):
         events = [
-            _ev("2026-01-01T10:00:00.00", "process_spawn", 1),
-            _ev("2026-01-01T11:00:00.00", "process_exit", 1),
+            _ev("2026-01-01T10:00:00.000000", "process_spawn", 1),
+            _ev("2026-01-01T11:00:00.000000", "process_exit", 1),
         ]
         handler = self._mk_handler(events)
         resp = self._handle_events(
@@ -265,7 +265,7 @@ class TestEndedEventsHandler:
             {
                 "type": "events",
                 "id": "ended-sess",
-                "since": _ts("2026-01-01T12:00:00.00"),
+                "since": _ts("2026-01-01T12:00:00.000000"),
             },
         )
         assert resp is not None
@@ -274,8 +274,8 @@ class TestEndedEventsHandler:
 
     def test_last_filters(self):
         events = [
-            _ev("2026-01-01T10:00:00.00", "process_spawn", 1),
-            _ev("2026-01-01T11:00:00.00", "process_exit", 1),
+            _ev("2026-01-01T10:00:00.000000", "process_spawn", 1),
+            _ev("2026-01-01T11:00:00.000000", "process_exit", 1),
         ]
         handler = self._mk_handler(events)
         resp = self._handle_events(
@@ -284,13 +284,13 @@ class TestEndedEventsHandler:
         assert resp is not None
         assert resp["count"] == 1
         assert [e["time"] for e in resp["pendingEvents"]] == [
-            "2026-01-01T11:00:00.00"
+            "2026-01-01T11:00:00.000000"
         ]
 
     def test_since_and_last_combined(self):
         events = [
-            _ev("2026-01-01T10:00:00.00", "process_spawn", 1),
-            _ev("2026-01-01T11:00:00.00", "process_exit", 1),
+            _ev("2026-01-01T10:00:00.000000", "process_spawn", 1),
+            _ev("2026-01-01T11:00:00.000000", "process_exit", 1),
         ]
         handler = self._mk_handler(events)
         resp = self._handle_events(
@@ -298,18 +298,18 @@ class TestEndedEventsHandler:
             {
                 "type": "events",
                 "id": "ended-sess",
-                "since": _ts("2026-01-01T10:30:00.00"),
+                "since": _ts("2026-01-01T10:30:00.000000"),
                 "last": 1,
             },
         )
         assert resp is not None
         assert resp["count"] == 1
         assert [e["time"] for e in resp["pendingEvents"]] == [
-            "2026-01-01T11:00:00.00"
+            "2026-01-01T11:00:00.000000"
         ]
 
     def test_ended_hint_present(self):
-        events = [_ev("2026-01-01T10:00:00.00", "process_spawn", 1)]
+        events = [_ev("2026-01-01T10:00:00.000000", "process_spawn", 1)]
         handler = self._mk_handler(events)
         resp = self._handle_events(handler, {"type": "events", "id": "ended-sess"})
         assert resp is not None

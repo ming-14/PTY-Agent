@@ -180,21 +180,33 @@ class PluginResult(Result):
 
 @dataclass
 class FileResult(Result):
-    """file_* 命令：内容/匹配项/结果文本 + 摘要"""
+    """file_* 命令：内容/匹配项/结果文本 + 摘要
+
+    upload/download 逐文件失败（error/failed 非空）标记为失败，其余 file_* 恒成功。
+    """
     command_type: str = "file_read"
     body: str = ""
     summary: str = ""
+    error: str = ""
+    failed: list = field(default_factory=list)
 
     @property
     def kind(self) -> str:
         return "file"
 
+    @property
+    def ok(self) -> bool:
+        # 逐文件传输失败（error 或 failed 非空）→ 非 0 退出；file_read/write/edit/grep/glob
+        # 的错误响应走 ErrorResult，不会携带 error/failed，此处不受影响
+        return not (self.error or self.failed)
+
 
 @dataclass
 class WaitResult(Result):
-    """wait 命令：请求等待秒数 + 实际耗时"""
+    """wait 命令：请求等待秒数 + 实际耗时 + 待消费通知摘要"""
     timeout: float = 0.0
     elapsed: float = 0.0
+    notifications: list = field(default_factory=list)  # [{nid, sessionId, triggerReturnReason, createdAt}]
 
     @property
     def kind(self) -> str:
@@ -277,6 +289,7 @@ def from_response(resp) -> Result:
         return WaitResult(
             timeout=resp.get("timeout", 0.0),
             elapsed=resp.get("elapsed", 0.0),
+            notifications=resp.get("notifications", []),
             raw=resp,
         )
     if rtype == "svg":
@@ -349,7 +362,14 @@ def from_response(resp) -> Result:
                 body = _format_grep_matches(resp.get("matches", []))
             elif ct == "file_glob":
                 body = "\n".join(resp.get("files", []))
-        return FileResult(command_type=ct, body=body, summary=_file_summary(ct, resp), raw=resp)
+        return FileResult(
+            command_type=ct,
+            body=body,
+            summary=_file_summary(ct, resp),
+            error=resp.get("error") or "",
+            failed=list(resp.get("failed") or []),
+            raw=resp,
+        )
     if ct == "workflow":
         return WorkflowResult(action=resp.get("action", ""), data=resp.get("result", resp), raw=resp)
     # 兜底：未知/其他 → 展示原始 JSON 的关键信息，不原样 dump
@@ -372,7 +392,30 @@ def _file_summary(ct: str, resp: dict) -> str:
     if ct in ("file_grep", "file_glob"):
         n = len(resp.get("matches", []) or resp.get("files", []))
         return f"{n} match(es)" if n else ""
+    if ct in ("file_upload", "file_download"):
+        return _transfer_summary(ct, resp)
     return resp.get("result", "") or resp.get("message", "") or ""
+
+
+def _transfer_summary(ct: str, resp: dict) -> str:
+    """upload/download 汇总摘要：失败含错误详情与未传输计数，成功含传输/跳过统计"""
+    label = "上传" if ct == "file_upload" else "下载"
+    failed = resp.get("failed") or []
+    error = resp.get("error") or ""
+    if error:
+        text = f"{label}失败: {error}"
+        if failed:
+            text += f"（{len(failed)} 个文件未传输）"
+        return text
+    if failed:
+        names = "、".join(str(x) for x in failed)
+        return f"{label}失败: {len(failed)} 个文件未传输: {names}"
+    transferred = len(resp.get("transferred") or [])
+    skipped = len(resp.get("skipped") or [])
+    parts = [f"{transferred} 个文件已传输"]
+    if skipped:
+        parts.append(f"{skipped} 个跳过")
+    return f"{label}完成: {', '.join(parts)}"
 
 
 def _format_grep_matches(matches: list) -> str:

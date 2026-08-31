@@ -63,11 +63,30 @@ def format_iso_ms(timestamp: float) -> str:
 
 
 def attach_screen_buffer(result: dict, session, msg: dict):
+    """响应附加终端屏幕数据：服务端渲染（render_format）或原始网格（include_screen_buffer）
+
+    - render_format（svg/png）：daemon 用 pywezterm 渲染，替代客户端 Python 渲染
+    - include_screen_buffer：返回压缩稀疏网格 JSON（历史/诊断场景）
+    """
+    if not (msg.get("render_format") or msg.get("include_screen_buffer")):
+        return
+    screen = getattr(session, "_screen", None)
+
+    # 服务端渲染：客户端请求 render_format 时，daemon 直接用 pywezterm 渲染
+    # SVG/PNG，替代客户端 Python 渲染（Pillow/GDI）。
+    render_format = msg.get("render_format")
+    if render_format and screen and screen.available:
+        try:
+            _attach_render(result, screen, render_format, msg)
+        except Exception as e:
+            _logger.warning("服务端渲染失败: %s", e)
+        # render_format 请求不额外携带原始网格（避免 MB 级冗余传输）
+        return
+
     if not msg.get("include_screen_buffer"):
         return
     # 屏幕内容仅随 feed/resize 变化：按 (feed_count, cols, rows) 缓存压缩结果，
     # 避免高频命令重复 export + json.dumps + gzip + base64
-    screen = getattr(session, "_screen", None)
     key = (screen.feed_count, screen.cols, screen.rows) if screen else None
     cached = getattr(session, "_screen_buffer_cache", None)
     if cached is not None and cached[0] == key:
@@ -86,6 +105,28 @@ def attach_screen_buffer(result: dict, session, msg: dict):
         session._screen_buffer_cache = (key, compressed, meta)
     result["screenBufferZ"] = compressed
     result["screenBufferMeta"] = meta
+
+
+def _attach_render(result: dict, screen, fmt: str, msg: dict = None):
+    """调用 pywezterm Terminal 的 render_svg/render_image，结果写入 result"""
+    term = screen.emulator
+    if term is None:
+        return
+    if fmt == "svg":
+        # compression_level 0=原样，>=1 压缩（去空 text + 标签间空白折叠）；
+        # 客户端 --svg-compression-level 透传（默认 1）
+        level = 1
+        if msg:
+            lv = msg.get("svg_compression_level")
+            if isinstance(lv, int) and 0 <= lv <= 2:
+                level = lv
+        svg = term.render_svg(level)
+        result["svgContent"] = svg
+    elif fmt in ("png", "jpg", "jpeg", "bmp"):
+        # 像素图按请求格式编码（pywezterm render_image）
+        img_bytes = term.render_image(1.0, fmt)
+        result["imageZ"] = base64.b64encode(img_bytes).decode("ascii")
+        result["imageType"] = fmt  # 告知客户端实际格式
 
 
 def build_result(

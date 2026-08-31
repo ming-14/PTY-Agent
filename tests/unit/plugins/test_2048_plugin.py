@@ -21,7 +21,7 @@ def plugin_cls():
     assert os.path.exists(_PLUGIN_PATH), "2048 目录不在 config/plugins/ 中"
     loaded = load_plugin_dir(_PLUGIN_PATH)
     assert loaded is not None
-    assert loaded.manifest.kind == "cli"
+    assert loaded.manifest.kind == ["cli"]
     assert loaded.manifest.id == "2048"
     return loaded.cls
 

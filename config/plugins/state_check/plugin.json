@@ -1,12 +1,14 @@
 {
   "id": "state_check",
   "version": "2.0.0",
-  "kind": "session",
-  "description": "通用状态检查（纯启发式）：命令返回时检测终端状态并附加到返回信息",
+  "kind": ["process", "cli"],
+  "description": "状态检查（纯启发式）：装饰 list 响应并在 CLI 显示 HEUR 状态标记",
   "hooks": {
-    "inspect_state": {},
-    "handle_command": {}
+    "decorate_response": {},
+    "render_response": {}
   },
+  "decorateTypes": ["list"],
+  "autoMount": ["list"],
   "permissions": {
     "required": [
       "session.read"

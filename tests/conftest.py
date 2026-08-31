@@ -16,6 +16,9 @@ _bin_dir = os.path.join(_project_root, "bin")
 if _bin_dir not in sys.path:
     sys.path.insert(0, _bin_dir)
 
+# 需在 sys.path 设置之后导入（依赖项目根路径解析 src 包）
+from src.protocol.message import Message
+
 
 # 进程内 config 重载链：e2e 测试改 config 文件后，进程内已 import 的模块仍持有
 # 旧 config 引用（from ..config.client import X 绑定值，reload config 不更新 X）。
@@ -29,8 +32,6 @@ _RELOAD_CHAIN = (
     "src.config.daemon",
     "src.ipc.single_instance",
     "src.ipc.shm",
-    "src.protocol.message",
-    "src.protocol.envelope",
     "src.common.shells",
     "src.auth.token",
     "src.auth.password",
@@ -89,6 +90,18 @@ def _isolate_logging():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _clear_message_signers():
+    """teardown 时清除 Message 线程局部签名器，防止跨测试污染（e2e 测试的 stop_daemon 可能设置主线程签名器）"""
+    yield
+    Message.set_outbound_signer(None)
+    Message.set_inbound_verifier(None)
+    try:
+        del Message._tls.response_wrapper
+    except AttributeError:
+        pass
+
+
 @pytest.fixture(scope="session", autouse=True)
 def iso_config(tmp_path_factory):
     """e2e 配置隔离：把 config/ 完整复制到临时目录，经 PTY_AGENT_CONFIG_DIR
@@ -107,3 +120,54 @@ def iso_config(tmp_path_factory):
         yield iso_dir
     finally:
         os.environ.pop("PTY_AGENT_CONFIG_DIR", None)
+
+
+@pytest.fixture(scope="module")
+def web_daemon():
+    """web e2e 守护进程 fixture：未运行时自动启动，测试后停止自启实例
+
+    web e2e（test_web_*、test_resize_cursor_sync）直接连
+    ws://127.0.0.1:18766（daemon 内嵌 Web 服务器），与其他 e2e
+    （basic/pubkey/tls/workflow）自启 daemon 的模式对齐，不再要求外部
+    手动 `python -m src start`（CI/无人值守环境没有常驻 daemon）。
+
+    - daemon 未运行 → start_daemon() 启动，等待 web 端口就绪，teardown 停止
+    - daemon 已在运行（用户手动启动）→ 复用，不停止
+    - wezterm-py 未编译 / daemon 启动失败 → 跳过（环境不具备，不误报失败）
+    """
+    import socket as _socket
+    import time as _time
+
+    from src.client.daemonctl import is_running, start_daemon, stop_daemon
+    from src.pty.wezterm_pty import _HAS_WEZTERM
+
+    if not _HAS_WEZTERM:
+        pytest.skip("wezterm-py 不可用（未编译），跳过 web e2e")
+
+    started = False
+    if not is_running():
+        start_daemon()
+        started = True
+    # 等待 web 端口就绪（token 单实例锁先于 web 服务器，须探测 18766）
+    deadline = _time.monotonic() + 15
+    while _time.monotonic() < deadline:
+        try:
+            with _socket.create_connection(("127.0.0.1", 18766), timeout=0.5):
+                break
+        except OSError:
+            _time.sleep(0.2)
+    else:
+        if started:
+            try:
+                stop_daemon(force=True)
+            except Exception:
+                pass
+        pytest.skip("daemon web 端口未就绪，跳过 web e2e")
+    try:
+        yield
+    finally:
+        if started:
+            try:
+                stop_daemon(force=True)
+            except Exception:
+                pass

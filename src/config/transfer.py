@@ -2,7 +2,7 @@
 
 来源: transfer.toml
 消费方: src/protocol/transfer.py（帧协议）、src/transfer/（CLI 驱动）、
-src/client/transport.py（CLI 超时）、files 插件 daemon 侧。
+src/client/transport.py（CLI 超时）、src/files/transfer/（daemon 侧传输业务）。
 """
 
 from ._loader import apply_env_overrides, flatten, load_toml

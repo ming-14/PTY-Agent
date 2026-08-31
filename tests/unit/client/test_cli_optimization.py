@@ -129,16 +129,6 @@ class TestConfigManager:
 class TestConfigParserIntegration:
     """配置解析集成测试（测试 cli.common_args 的 _parse_default_key）"""
 
-    def test_key_conversion(self):
-        """测试 CLI 键名到内部键名的转换"""
-        from src.cli.common_args import _parse_default_key, _format_config_key
-
-        assert _parse_default_key("output-by-natural-language") == "output_by_natural_language"
-        assert _format_config_key("output_by_natural_language") == "output-by-natural-language"
-        assert _parse_default_key("keep-ansi") == "keep_ansi"
-        assert _format_config_key("keep_ansi") == "keep-ansi"
-        assert _parse_default_key("timeout") == "timeout"
-
 
 class TestUnescapeJsonString:
     """JSON 风格转义解码测试"""

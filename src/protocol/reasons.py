@@ -25,6 +25,7 @@ class Reason(str, Enum):
     CRASHED = "crashed"
     GUI_DETECTED = "gui_detected"
     CANCELLED = "cancelled"
+    NOTIFY_WAITING = "notify_waiting"
 
     # 对外原因（经 map_reason 权威判定后的对外值）
     TRIGGER_MATCHED = "trigger_matched"
@@ -43,4 +44,5 @@ OUTWARD_REASON = {
     Reason.CRASHED: Reason.PROGRAM_CRASHED,
     Reason.GUI_DETECTED: Reason.GUI_DETECTED,
     Reason.CANCELLED: Reason.CANCELLED,
+    Reason.NOTIFY_WAITING: Reason.NOTIFY_WAITING,
 }

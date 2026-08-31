@@ -161,8 +161,7 @@ class TestCmdFileRead:
             "src.client.presenter.print_response",
             lambda r: responses.append(r))
         monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
-            lambda self, msg: (sent.append(msg), {"type": "result"})[1])
+            Client, "_send_recv", lambda self, msg: (sent.append(msg), {"type": "result"})[1])
         client = Client()
         client.cmd_file_read("~/x/a.txt", cwd_session="sid", offset=2, limit=3)
         msg = sent[0]
@@ -178,7 +177,7 @@ class TestCmdFileRead:
         monkeypatch.setattr(
             "src.client.presenter.print_response", lambda r: None)
         monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
+            Client, "_send_recv",
             lambda self, msg: (sent.append(msg), {})[1])
         client = Client()
         client.cmd_file_read("a.txt", cwd_session="sid")
@@ -193,8 +192,7 @@ class TestCmdFileWrite:
         monkeypatch.setattr(
             "src.client.presenter.print_response", lambda r: None)
         monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
-            lambda self, msg: (sent.append(msg), {"type": "result"})[1])
+            Client, "_send_recv", lambda self, msg: (sent.append(msg), {"type": "result"})[1])
         client = Client()
         client.cmd_file_write("~/x/b.txt", cwd_session="sid", content="payload")
         msg = sent[0]
@@ -210,8 +208,7 @@ class TestCmdFileEdit:
         monkeypatch.setattr(
             "src.client.presenter.print_response", lambda r: None)
         monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
-            lambda self, msg: (sent.append(msg), {"type": "result"})[1])
+            Client, "_send_recv", lambda self, msg: (sent.append(msg), {"type": "result"})[1])
         client = Client()
         client.cmd_file_edit("a.txt", cwd_session="sid", old=None, new="x")
         msg = sent[0]
@@ -229,8 +226,7 @@ class TestCmdFileGrepGlob:
         monkeypatch.setattr(
             "src.client.presenter.print_response", lambda r: None)
         monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
-            lambda self, msg: (sent.append(msg), {"type": "result"})[1])
+            Client, "_send_recv", lambda self, msg: (sent.append(msg), {"type": "result"})[1])
         client = Client()
         client.cmd_file_grep("foo", cwd_session="sid")
         msg = sent[0]
@@ -244,8 +240,7 @@ class TestCmdFileGrepGlob:
         monkeypatch.setattr(
             "src.client.presenter.print_response", lambda r: None)
         monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
-            lambda self, msg: (sent.append(msg), {"type": "result"})[1])
+            Client, "_send_recv", lambda self, msg: (sent.append(msg), {"type": "result"})[1])
         client = Client()
         client.cmd_file_grep("foo", cwd_session="sid", path="src",
                              include="*.py", literal_text=True)
@@ -259,8 +254,7 @@ class TestCmdFileGrepGlob:
         monkeypatch.setattr(
             "src.client.presenter.print_response", lambda r: None)
         monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
-            lambda self, msg: (sent.append(msg), {"type": "result"})[1])
+            Client, "_send_recv", lambda self, msg: (sent.append(msg), {"type": "result"})[1])
         client = Client()
         client.cmd_file_glob("**/*.py", cwd_session="sid")
         msg = sent[0]

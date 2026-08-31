@@ -23,6 +23,12 @@ def ensure_engine() -> None:
     this_dir = os.path.dirname(os.path.abspath(__file__))
     parent = this_dir
     while True:
+        # 检查 <parent>/bin/pywezterm（与 leaf 同级目录的 bin）
+        candidate = os.path.join(parent, "bin", "pywezterm")
+        if os.path.isdir(candidate):
+            candidates.append(candidate)
+            break
+        # 检查 <parent>/PTY-Agent/bin/pywezterm（旧嵌套布局）
         candidate = os.path.join(parent, "PTY-Agent", "bin", "pywezterm")
         if os.path.isdir(candidate):
             candidates.append(candidate)
@@ -31,7 +37,8 @@ def ensure_engine() -> None:
         if up == parent:
             break
         parent = up
-    for d in candidates:
+    # 逆序插入：第一个候选（env_dir）优先级最高（最后插入 = 最前搜到）
+    for d in reversed(candidates):
         if os.path.isdir(d) and d not in sys.path:
             sys.path.insert(0, d)
     _loaded = True

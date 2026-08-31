@@ -47,7 +47,7 @@ class TestLoadPluginDir:
         assert loaded is not None
         assert loaded.manifest.id == "demo"
         assert loaded.cls.name == "demo"
-        assert loaded.cls.kind == "session"
+        assert loaded.cls.kind == ["session"]
 
     def test_loads_process_plugin(self, tmp_path):
         pdir = write_plugin_dir(

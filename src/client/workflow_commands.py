@@ -57,13 +57,13 @@ class ClientWorkflowCommandsMixin:
             msg["vars_override"] = vars_overrides
         if max_parallel is not None:
             msg["max_parallel"] = max_parallel
-        resp = self._send_recv(msg, autostart=True)
+        resp = self._send_recv(msg)
         presenter.print_response(resp)
 
     def cmd_workflow_list(self):
         """列出所有 workflow 运行（含已结束）"""
         _logger.info("cmd_workflow_list")
-        resp = self._send_recv({"type": "workflow", "action": "list"}, autostart=True)
+        resp = self._send_recv({"type": "workflow", "action": "list"})
         presenter.print_response(resp)
 
     def cmd_workflow_show(self, run_id: str):
@@ -73,7 +73,7 @@ class ClientWorkflowCommandsMixin:
             presenter.print_response(Response.error("runId is required"))
             return
         resp = self._send_recv(
-            {"type": "workflow", "action": "show", "runId": run_id}, autostart=True
+            {"type": "workflow", "action": "show", "runId": run_id}
         )
         presenter.print_response(resp)
 
@@ -84,6 +84,6 @@ class ClientWorkflowCommandsMixin:
             presenter.print_response(Response.error("runId is required"))
             return
         resp = self._send_recv(
-            {"type": "workflow", "action": "cancel", "runId": run_id}, autostart=True
+            {"type": "workflow", "action": "cancel", "runId": run_id}
         )
         presenter.print_response(resp)

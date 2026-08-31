@@ -2,7 +2,7 @@
 
 import pytest
 
-from config.plugins.files.history import FileHistoryStore
+from src.files.history import FileHistoryStore
 
 
 @pytest.fixture

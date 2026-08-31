@@ -16,7 +16,7 @@ import struct
 from typing import Optional, Tuple
 
 from ..config.transfer import TRANSFER_CHUNK_SIZE, TRANSFER_MAX_CONTROL
-from .message import Message as _Msg
+from . import message as _message_mod
 
 # 帧类型
 FT_DATA = 0x01  # 文件数据块（原始字节）
@@ -68,7 +68,7 @@ def decode_frame(header: bytes) -> Tuple[int, int]:
 
 def _buffered_bytes(sock) -> bytes:
     """连接级接收缓冲中的残留字节（Message.recv 预读的二进制帧前缀）"""
-    return _Msg._recv_buffers.pop(sock, b"")
+    return _message_mod.Message._recv_buffers.pop(sock, b"")
 
 
 def recv_frame(sock, timeout: Optional[float] = None) -> Optional[Tuple[int, bytes]]:
@@ -116,9 +116,9 @@ def recv_frame(sock, timeout: Optional[float] = None) -> Optional[Tuple[int, byt
     # 帧 payload 之后的字节留给下一帧（同一连接连读多帧场景）
     compact()
     if pos < len(buf):
-        _Msg._recv_buffers[sock] = bytes(buf[pos:])
+        _message_mod.Message._recv_buffers[sock] = bytes(buf[pos:])
     else:
-        _Msg._recv_buffers.pop(sock, None)
+        _message_mod.Message._recv_buffers.pop(sock, None)
     return frame_type, payload
 
 

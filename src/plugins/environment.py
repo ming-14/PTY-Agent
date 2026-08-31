@@ -1,6 +1,6 @@
 """插件运行环境 — daemon 全局共享的插件能力集合
 
-每个插件一份：配置视图（PluginConfig）、存储入口（PluginStorage）、权限检查器
+每个插件一份：配置视图（PluginConfig，内存态）、存储入口（PluginStorage）、权限检查器
 （PermissionChecker）、清单引用；另持 daemon 级事件总线。环境由注册表在加载时
 构建，会话宿主与调度器经环境向插件暴露能力（插件不直接接触内核）。
 """
@@ -26,6 +26,7 @@ class PluginEnvironment:
 
     def __init__(self, policy: Optional[dict] = None):
         self.events = EventBus()
+        self.notify_manager = None  # 由 daemon server 注入 NotificationManager 引用
         self._policy = policy if isinstance(policy, dict) else {}
         self._manifests: dict = {}
         self._configs: Dict[str, PluginConfig] = {}
@@ -40,7 +41,7 @@ class PluginEnvironment:
         plugin_id = manifest.id
         self._manifests[plugin_id] = manifest
         self._configs[plugin_id] = PluginConfig(
-            plugin_id, manifest.path, manifest.config_defaults, manifest.config_schema
+            manifest.config_defaults, manifest.config_schema
         )
         self._storages[plugin_id] = PluginStorage(
             os.path.join(DATA_ROOT, plugin_id)

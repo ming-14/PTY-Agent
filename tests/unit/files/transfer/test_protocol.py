@@ -7,6 +7,7 @@ import time
 import pytest
 
 from src.config.transfer import TRANSFER_CHUNK_SIZE, TRANSFER_MAX_CONTROL
+from src.protocol import message as _message_mod
 from src.protocol.message import Message
 from src.protocol import transfer as tf
 
@@ -170,11 +171,13 @@ class TestFrameIO:
         a.sendall(json_line + frame)
         # 模拟 daemon：Message.recv 读 JSON 时把二进制帧前缀一并预读进缓冲
         assert Message.recv(b) == {"type": "file_upload_start"}
-        assert b in tf._Msg._recv_buffers
+        # Message.recv 内经模块全局解析 Message，须按模块属性校验（e2e 重载后
+        # 类对象可能更新，模块属性才是 recv 实际写入缓冲的类）
+        assert b in _message_mod.Message._recv_buffers
         ftype, payload = tf.recv_frame(b)
         assert (ftype, payload) == (tf.FT_DATA, b"abc")
         # 残留缓冲已消费
-        assert tf._Msg._recv_buffers.get(b, b"") == b""
+        assert _message_mod.Message._recv_buffers.get(b, b"") == b""
 
     def test_recv_control_json(self):
         a, b = _pair()

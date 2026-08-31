@@ -32,15 +32,15 @@ _logger = get_logger("pty-plugins")
 # 上下文文件上限（超出截断并追加提示）
 CONTEXT_MAX_SIZE = 64 * 1024
 
-# 插件文档发送状态文件（每 daemon 周期重置）
+# 插件文档发送状态文件（每 daemon 周期重置；gethelp 标记也在此，内存态）
 STATE_FILE = os.path.join(DATA_DIR, "plugin-context-state.json")
 
 
 # ── 目录扫描 ──────────────────────────────────────────────
 
 
-def scan_plugin_dirs(plugin_dirs: List[str]) -> List[Tuple[str, str, str]]:
-    """扫描插件目录清单，返回 [(id, kind, path)]（读取 plugin.json 的 id/kind）"""
+def scan_plugin_dirs(plugin_dirs: List[str]) -> List[Tuple[str, List[str], str]]:
+    """扫描插件目录清单，返回 [(id, kinds, path)]（读取 plugin.json 的 id/kind，kind 归一为列表）"""
     result = []
     for plugin_dir in plugin_dirs:
         manifest_file = os.path.join(plugin_dir, "plugin.json")
@@ -50,7 +50,9 @@ def scan_plugin_dirs(plugin_dirs: List[str]) -> List[Tuple[str, str, str]]:
             with open(manifest_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict) and data.get("id"):
-                result.append((data["id"], data.get("kind", ""), plugin_dir))
+                kind_raw = data.get("kind", "")
+                kinds = [kind_raw] if isinstance(kind_raw, str) else list(kind_raw)
+                result.append((data["id"], kinds, plugin_dir))
         except (OSError, ValueError):
             continue
     return result
@@ -119,7 +121,10 @@ def save_context_state(state: dict, state_file: str = None) -> None:
 
 
 def reset_context_state(state_file: str = None) -> None:
-    """重置文档发送状态（daemon 启动时调用：新周期重新发送）"""
+    """重置文档发送状态（daemon 启动时调用：新周期重新发送）
+
+    gethelp 标记与自动注入状态同文件（内存态），一起重置。
+    """
     path = state_file or STATE_FILE
     try:
         os.remove(path)
@@ -177,16 +182,30 @@ def output_process_contexts(
     """输出已启用进程级插件的上下文（守护进程启动时调用）；返回输出数量
 
     disabled: 显式禁用的插件名集合（缺省从 registry.json 读取）。
+    contextHidden 声明的插件跳过自动输出（plugin gethelp 按需查看）。
     """
     stream = stream or sys.stderr
     if disabled is None:
         disabled = disabled_plugin_names()
     count = 0
     for plugin_id, kind, path in scan_plugin_dirs(plugin_dirs):
-        if kind != "process":
-            continue
         if plugin_id in disabled:
+            continue
+        if "process" not in kind:
+            continue  # 仅进程级插件（kind 含 process）守护进程启动时输出
+        if _is_context_hidden(path):
             continue
         if output_context(stream, plugin_id, path, state_file=state_file):
             count += 1
     return count
+
+
+def _is_context_hidden(plugin_dir: str) -> bool:
+    """读取插件清单 contextHidden 声明（读取失败视为未隐藏）"""
+    try:
+        manifest_file = os.path.join(plugin_dir, "plugin.json")
+        with open(manifest_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return bool(data.get("contextHidden", False))
+    except (OSError, ValueError):
+        return False

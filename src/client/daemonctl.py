@@ -118,14 +118,58 @@ def _find_daemon_port() -> Optional[int]:
 def _find_daemon_pid() -> Optional[int]:
     """查找正在运行的守护进程 PID
 
-    经单实例锁的持有者查询（SingleInstanceLock.find_owner_pid）。
+    优先经单实例锁的持有者查询（SingleInstanceLock.find_owner_pid）；
+    Linux 上锁不存在或查询失败时回退端口级扫描（/proc/net/tcp 匹配监听
+    进程，覆盖无锁场景如 basic/tls 多实例、测试残留）。
 
     Returns:
         守护进程 PID，未找到返回 None。
     """
-    if not is_running():
+    pid = SingleInstanceLock.find_owner_pid()
+    if pid is not None:
+        return pid
+    if IS_WINDOWS:
         return None
-    return SingleInstanceLock.find_owner_pid()
+    # 无锁回退：通过端口查找 daemon 进程（basic/tls 多实例 / 测试残留）
+    port = _find_daemon_port()
+    if port is not None:
+        return _find_pid_by_port_unix(port)
+    return None
+
+
+def _find_pid_by_port_unix(port: int) -> Optional[int]:
+    """Linux 上通过 /proc/net/tcp 找到监听端口的进程 PID（无锁回退）"""
+    try:
+        with open("/proc/net/tcp") as f:
+            tcp_entries = [line.strip() for line in f if line.strip()]
+        with open("/proc/net/tcp6") as f:
+            tcp6_entries = [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
+        return None
+    hex_port = f"{port:04x}"
+    inodes = set()
+    for entries in (tcp_entries, tcp6_entries):
+        for line in entries[1:]:  # 跳过 header
+            parts = line.split()
+            if len(parts) >= 10 and parts[3] == "0A" and parts[1].endswith(":" + hex_port):
+                inodes.add(parts[9])
+    if not inodes:
+        return None
+    for pid_dir in os.listdir("/proc"):
+        if not pid_dir.isdigit():
+            continue
+        try:
+            fd_dir = f"/proc/{pid_dir}/fd"
+            for fd in os.listdir(fd_dir):
+                try:
+                    link = os.readlink(f"{fd_dir}/{fd}")
+                    if link.startswith("socket:[") and link[8:-1] in inodes:
+                        return int(pid_dir)
+                except (OSError, ValueError):
+                    pass
+        except OSError:
+            pass
+    return None
 
 
 def is_running() -> bool:
@@ -142,14 +186,31 @@ def is_running() -> bool:
 def _daemon_ready() -> bool:
     """daemon 就绪判定
 
-    token 模式经单实例锁判断（同机唯一实例）；
-    basic/tls 模式直接探测配置目标端口 ping（跨机/无锁多实例场景）。
+    token 模式：单实例锁 + token 端口 TCP 可达（锁先于监听器就绪，
+    仅等锁会让客户端连上时端口未监听——Linux 慢文件系统上尤为明显）。
+    basic/tls 模式直接探测配置目标端口（TCP 可达即就绪）。
+    注意：tls 监听器需要 TLS 握手，明文 ping 必然失败，不可用 _ping_daemon。
     """
     if CONNECT_MODE == "token":
-        return is_running()
-    host = {"basic": BASIC_HOST, "tls": TLS_HOST}[CONNECT_MODE]
+        return is_running() and _port_listening(TOKEN_PORT)
     port = {"basic": BASIC_PORT, "tls": TLS_PORT}[CONNECT_MODE]
-    return _ping_daemon(port)  # 实连探测（ping 走 dispatcher 豁免认证）
+    return _port_listening(port)
+
+
+def _port_listening(port: int) -> bool:
+    """TCP 端口可达探测（不发送任何数据，仅检测监听是否就绪）"""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except Exception:
+        return False
+
+
+def _probe_port() -> str:
+    """返回当前连接模式对应的探测端口描述（供失败提示使用），避免硬编码 token 端口"""
+    return {"token": str(TOKEN_PORT), "basic": str(BASIC_PORT), "tls": str(TLS_PORT)}.get(
+        CONNECT_MODE, "unknown"
+    )
 
 
 def start_daemon():
@@ -203,7 +264,20 @@ def start_daemon():
         pid = os.fork()
         if pid > 0:
             os.waitpid(pid, 0)
-            return
+            # 父进程 waitpid 后进入与 Windows 相同的就绪轮询：此时 daemon 尚在
+            # 启动路径（fork → setsid → 二次 fork → exec），端口/锁可能未就绪，
+            # 必须轮询确认后才返回 True（此前直接 return None 导致 start 恒报失败）
+            for _ in range(int(DAEMON_START_TIMEOUT / DAEMON_START_POLL_INTERVAL) + 1):
+                if _daemon_ready():
+                    _safe_print("[pty-agent] Daemon started")
+                    _print_shell_info()
+                    return True
+                time.sleep(DAEMON_START_POLL_INTERVAL)
+            _safe_print(
+                f"[pty-agent] Daemon start failed (timeout), "
+                f"端口 {_probe_port()} may be occupied",
+            )
+            return False
         os.setsid()
         pid2 = os.fork()
         if pid2 > 0:
@@ -230,7 +304,7 @@ def start_daemon():
 
     _safe_print(
         f"[pty-agent] Daemon start failed (timeout), "
-        f"端口 {TOKEN_PORT} may be occupied",
+        f"端口 {_probe_port()} may be occupied",
     )
     return False
 
@@ -338,10 +412,7 @@ def _stop_via_tls(force: bool):
         )
         return
     _safe_print("[pty-agent] TLS stop 失败，尝试强制清理...")
-    if SingleInstanceLock().is_locked():
-        _stop_daemon_force()
-    else:
-        _safe_print("[pty-agent] Daemon not running")
+    _force_stop_local_daemon()
 
 
 def _try_stop_via_basic(host: str, port: int, use_shm_credentials: bool) -> bool:
@@ -410,7 +481,7 @@ def _try_stop_via_tls() -> bool:
     from ..auth.keys import PrivateKey
     from ..auth.pubkey import Ed25519MessageSigner, PubkeyCredentialProvider
     from ..auth.tls.known_hosts import KnownHosts
-    from .tls import TLSClient
+    from .tls_client import TLSClient
 
     tls_host, tls_port = TLS_HOST, TLS_PORT
 
@@ -479,9 +550,19 @@ def _force_kill_pid(pid) -> bool:
         return False
 
 
-def _stop_daemon_force():
-    """强制清理：互斥锁被占用但端口丢失时，通过互斥锁找到 PID 并终止"""
+def _force_stop_local_daemon():
+    """本地强制终止 daemon：互斥锁定位优先，端口级 PID 定位兜底
+
+    SINGLE_INSTANCE=false（basic/tls 多实例）时 daemon 不持有互斥锁，
+    find_owner_pid 定位不到；此时回退端口扫描（Linux /proc/net/tcp），
+    保证无锁场景的残留 daemon 也能被清理。
+    """
     owner_pid = SingleInstanceLock.find_owner_pid()
+    if owner_pid is None and not IS_WINDOWS:
+        # 无锁回退：经端口找监听进程（与 _find_daemon_pid 一致）
+        port = _find_daemon_port()
+        if port is not None:
+            owner_pid = _find_pid_by_port_unix(port)
     if owner_pid is None:
         _safe_print("[pty-agent] 无法定位守护进程 PID，互斥锁可能已释放")
         return
@@ -494,3 +575,8 @@ def _stop_daemon_force():
                 break
             time.sleep(PROCESS_EXIT_WAIT_INTERVAL)
         _safe_print("[pty-agent] Daemon stopped (force)")
+
+
+def _stop_daemon_force():
+    """强制清理：互斥锁被占用但端口丢失时，通过互斥锁找到 PID 并终止"""
+    _force_stop_local_daemon()

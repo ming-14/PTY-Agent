@@ -98,19 +98,29 @@ class DaemonServer:
 
     负责：
     - 编排多个 Listener（basic / token / tls，按 [listener] 段独立启停）
-    - 信号注册与处理
+    - 正常模式信号注册（SIGTERM/SIGHUP → 优雅退出；生存模式由
+      lifecycle 入口统一忽略，见 _install_survive_signal_guards）
     - 资源清理（会话停止、共享内存释放、Listener 停止）
     - 认证令牌定时轮换（仅 token 监听器启用时）
 
     Attributes:
         listeners_config: [listener] 段三段配置（enabled/host/port）
+        survive: 生存模式标记（忽略结束信号与 stop 消息，供 handler 判断）
     """
 
-    def __init__(self):
+    def __init__(self, survive: bool = False):
+        """创建守护进程服务器
+
+        Args:
+            survive: 生存模式。信号忽略在 lifecycle 入口注册；此处仅保留
+                标记供 stop_handler 判断是否拒绝停止消息。
+        """
         # lazy import：server 装配 workflow manager，而 workflow 引擎依赖
         # daemon.handlers 工具函数；模块级导入会与 daemon 包初始化成环
         from ..workflow.manager import WorkflowManager
         from ..optional import get_history_store_cls
+
+        self.survive = survive
 
         # 监听器配置快照：三段各自独立（enabled/host/port），同开或只开一个
         self.listeners_config = {
@@ -130,6 +140,15 @@ class DaemonServer:
             history_store=history_store,
         )
         self.workflow_manager = WorkflowManager(self.manager)
+        # 通知管理器：--notify 订阅的通知队列（wait 查询 / notice 查看），
+        # 与 workflow_manager 并列的 daemon 单例，handler 经 ctx.server 访问
+        from .notifications import NotificationManager
+
+        self.notify_manager = NotificationManager()
+        # 注入到插件环境：进程级插件可经 ctx.environment.notify_manager 发布跨进程通知
+        reg = getattr(self.manager, "plugin_registry", None)
+        if reg is not None and getattr(reg, "environment", None) is not None:
+            reg.environment.notify_manager = self.notify_manager
         self._listeners: list = []
         self._shutdown_event = threading.Event()
         self._running = False
@@ -192,7 +211,7 @@ class DaemonServer:
                 _logger.exception("令牌轮换异常")
 
     def _rotate_token(self):
-        """生成新令牌并推送到共享内存和 TokenAuthenticator
+        """生成新令牌并推送到 TokenAuthenticator 与共享内存
 
         仅 token 监听器启用时由轮换线程触发。
         防御性检查 _token_authenticator 与 _running：运行时被清空/停止后跳过轮换。
@@ -201,17 +220,76 @@ class DaemonServer:
             _logger.debug("_rotate_token: token 监听器未启用或已停止，跳过轮换")
             return
         old_token = self._auth_token
-        self._auth_token = generate_auth_token()
+        new_token = generate_auth_token()
+        # 先注册内存认证器、后发布 SHM：客户端经 SHM 读到新 token 时认证器必已
+        # 就绪，消除"读到新 token 却被瞬时拒绝"的窗口期；旧 token 仍在宽限期内，
+        # 并发读 SHM 的客户端不会失联
+        self._token_authenticator.rotate_token(new_token, old_token)
         try:
             if self._auth_shm is not None:
                 # 令牌定长，原地覆写已创建的 SHM（免 close/重建）
-                update_auth_token(self._auth_shm, self._auth_token)
+                update_auth_token(self._auth_shm, new_token)
             else:
-                self._auth_shm = write_auth_token(self._auth_token)
+                self._auth_shm = write_auth_token(new_token)
         except Exception as e:
-            _logger.error("写入新认证令牌失败: %s", e)
-        self._token_authenticator.rotate_token(self._auth_token, old_token)
+            # 发布失败：中止轮换并回滚。回滚调用 rotate_token(old, new) 把旧 token
+            # 恢复为无限期、新 token 置入宽限期（从未发布，客户端不可得，到期自动
+            # 失效）；否则 SHM 仍是旧 token 而认证器已切新 token，宽限期一过
+            # 客户端每请求重读 SHM 得到的旧 token 将全部认证失败
+            self._token_authenticator.rotate_token(old_token, new_token)
+            _logger.error("写入新认证令牌失败，轮换已中止: %s", e)
+            return
+        self._auth_token = new_token
         _logger.info("认证令牌已轮换")
+
+    @staticmethod
+    def _resolve_optional_features(cfg) -> bool:
+        """可选功能依赖预检：缺失 → 提示 + 自动禁用（统一入口）。
+
+        Web 依赖（fastapi/uvicorn/starlette/websockets）与屏幕捕获依赖（numpy/av）
+        缺失时，守护进程启动即提示并自动禁用对应功能；Web 被禁用时 VNC / FastScreen
+        无访问入口，一并禁用。依赖清单统一登记在 src/optional._FEATURE_DEPS。
+
+        Args:
+            cfg: src.config.daemon 模块对象（运行时修改其开关实现自动禁用）。
+
+        Returns:
+            Web 是否最终启用（True 才继续启动 WebServer）。
+        """
+        from ..optional import missing_deps
+
+        # Web 依赖预检：缺失 → 提示 + 自动禁用
+        if cfg.ENABLE_WEB:
+            missing = missing_deps("web")
+            if missing:
+                _logger.warning(
+                    "ENABLE_WEB=True 但 Web 依赖未安装（缺少 %s），"
+                    "Web 服务器已自动禁用",
+                    ", ".join(missing),
+                )
+                cfg.ENABLE_WEB = False
+
+        # 屏幕捕获依赖预检：缺失 → 提示 + 自动禁用（web 可用时才有意义）
+        if cfg.ENABLE_FASTSCREEN:
+            missing = missing_deps("screenshare")
+            if missing:
+                _logger.warning(
+                    "ENABLE_FASTSCREEN=True 但屏幕捕获依赖未安装（缺少 %s），"
+                    "屏幕捕获已自动禁用",
+                    ", ".join(missing),
+                )
+                cfg.ENABLE_FASTSCREEN = False
+
+        # Web 关闭（配置关闭或依赖缺失）：VNC 和 FastScreen 无访问入口，一并禁用
+        if not cfg.ENABLE_WEB:
+            if cfg.ENABLE_VNC:
+                cfg.ENABLE_VNC = False
+                _logger.info("Web 已自动禁用，同步禁用 VNC")
+            if cfg.ENABLE_FASTSCREEN:
+                cfg.ENABLE_FASTSCREEN = False
+                _logger.info("Web 已自动禁用，同步禁用 FastScreen")
+
+        return cfg.ENABLE_WEB
 
     def _build_basic_auth_context(self) -> AuthContext:
         """构建 basic 认证上下文（basic Listener 使用）
@@ -409,37 +487,39 @@ class DaemonServer:
         self._web_server = None
         if ENABLE_WEB:
             # 惰性获取 WebServer：web.toml 缺失或 src/web 不可导入时返回 None（web 禁用）
+            from ..config import daemon as _daemon_cfg
             from ..optional import get_web_server_cls
 
-            web_server_cls = get_web_server_cls()
-            if web_server_cls is None:
-                _logger.warning("ENABLE_WEB=True 但 web 模块不可用，跳过 Web 服务器")
+            # 可选功能依赖预检（统一入口）：缺失 → 提示 + 自动禁用
+            if not self._resolve_optional_features(_daemon_cfg):
+                _logger.info("Web 服务器已禁用（依赖缺失）")
             else:
-                self._web_server = web_server_cls(
-                    self.manager,
-                    host=WEB_HOST,
-                    port=WEB_PORT,
-                    password_hash=WEB_PASSWORD_HASH,
-                )
-                self._web_server.start_background()
-                web_url = f"http://{WEB_HOST}:{WEB_PORT}/"
-                _logger.info("Web 服务器已启动，可通过 %s 访问", web_url)
+                web_server_cls = get_web_server_cls()
+                if web_server_cls is None:
+                    _logger.warning(
+                        "ENABLE_WEB=True 但 web 模块不可用，跳过 Web 服务器"
+                    )
+                else:
+                    self._web_server = web_server_cls(
+                        self.manager,
+                        host=WEB_HOST,
+                        port=WEB_PORT,
+                        password_hash=WEB_PASSWORD_HASH,
+                    )
+                    self._web_server.start_background()
+                    web_url = f"http://{WEB_HOST}:{WEB_PORT}/"
+                    _logger.info("Web 服务器已启动，可通过 %s 访问", web_url)
         else:
             # Web 关闭时 VNC 和 FastScreen 无访问入口，强制禁用
             from ..config import daemon as _daemon_cfg
 
-            if _daemon_cfg.ENABLE_VNC:
-                _daemon_cfg.ENABLE_VNC = False
-                _logger.info("ENABLE_WEB=False，自动禁用 VNC")
-            if _daemon_cfg.ENABLE_FASTSCREEN:
-                _daemon_cfg.ENABLE_FASTSCREEN = False
-                _logger.info("ENABLE_WEB=False，自动禁用 FastScreen")
+            self._resolve_optional_features(_daemon_cfg)
             _logger.info("Web 服务器已禁用 (ENABLE_WEB=False)")
 
         # 标记 ended 会话为 history
-        if self.manager._history_store:
+        if self.manager.history_store:
             try:
-                n = self.manager._history_store.mark_all_ended_as_history()
+                n = self.manager.history_store.mark_all_ended_as_history()
                 if n > 0:
                     _logger.info("启动时将 %d 个 ended 会话标记为 history", n)
             except Exception:
@@ -449,14 +529,17 @@ class DaemonServer:
         if self.listeners_config["token"][0]:
             self._start_token_rotator()
 
-        # 信号处理
-        def _signal_handler(signum, frame):
-            _logger.info("收到信号 %s，关闭守护进程...", signum)
-            self._shutdown_event.set()
+        # 信号处理：正常模式注册优雅退出处理器（SIGTERM→shutdown）。
+        # 生存模式（self.survive）的信号忽略已在 lifecycle 入口安装
+        #（_install_survive_signal_guards），此处不再重复注册。
+        if not self.survive:
+            def _signal_handler(signum, frame):
+                _logger.info("收到信号 %s，关闭守护进程...", signum)
+                self._shutdown_event.set()
 
-        signal.signal(signal.SIGTERM, _signal_handler)
-        if not IS_WINDOWS:
-            signal.signal(signal.SIGHUP, _signal_handler)
+            signal.signal(signal.SIGTERM, _signal_handler)
+            if not IS_WINDOWS:
+                signal.signal(signal.SIGHUP, _signal_handler)
 
         # 5. 主线程阻塞等待关闭信号（每 30s 执行一次内存维护，
         #    使长时运行下 RSS 可见回落而非随会话历史单调累积）
@@ -495,6 +578,12 @@ class DaemonServer:
             except Exception:
                 pass
         self.manager.stop_all()
+        # 关闭通知管理器（唤醒通道 + 丢弃队列，daemon 重启即清空）
+        if hasattr(self, "notify_manager") and self.notify_manager is not None:
+            try:
+                self.notify_manager.close()
+            except Exception:
+                pass
         try:
             if self._auth_shm:
                 self._auth_shm.close()

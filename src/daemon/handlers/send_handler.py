@@ -12,9 +12,12 @@ from ...execution.context import HandlerContext
 from ...execution.utils import (
     apply_client_defaults,
     check_ended_session,
+    prepare_input,
     validate_request,
     validate_trigger_regex,
 )
+from ..notifications import build_notify_waiting_response, spawn_notify_worker
+from ...plugins.cli_options import validate_plugin_options
 from ...logging import get_logger
 
 _logger = get_logger("pty-daemon")
@@ -62,11 +65,81 @@ class SendHandler(DaemonHandler):
                 )
             return
 
+        # 插件选项校验与合并
+        plugin_options = msg.get("pluginOptions")
+        if plugin_options is not None:
+            err = validate_plugin_options(plugin_options)
+            if err:
+                Message.send(conn, Response.error(err))
+                return
+            session.plugin_host.update_options(plugin_options)
+
+        # --notify 分支：写入输入后立即返回 notify_waiting，后台线程继续等待
+        if msg.get("notify"):
+            return self._handle_send_notify(ctx, conn, session, msg)
+
         # 处理期间持有会话：会话可能在本 handler 等待输出期间自然结束，
         # 管理器会触发 release_components 释放大缓冲；hold 确保缓冲在
         # 响应构造完成前不被提前释放（最后一个 hold 退出时才实际释放）
         with session.hold():
             return self._handle_send_flow(ctx, conn, session, msg)
+
+    def _handle_send_notify(self, ctx, conn, session, msg):
+        """send --notify：写入输入 + 立即返回 + 后台通知线程
+
+        与 _handle_send_flow 的写入逻辑一致（转义展开/行尾/写入失败报错），
+        仅不进入等待：立即返回 reason=notify_waiting，后台线程带原条件等待。
+        """
+        from ...execution.conditions import RequestContext
+
+        if not apply_client_defaults(
+            session, msg, conn, global_defaults=ctx.manager.get_global_defaults()
+        ):
+            return
+
+        req = RequestContext.from_msg(msg)
+        input_text = req.input
+        if not session.running:
+            Message.send(
+                conn,
+                Response.error(
+                    "Session has ended. Use 'read' to view remaining output, or 'events' to check pending events."
+                ),
+            )
+            return
+
+        if getattr(session, "mode", "pty") == "subprocess" and req.cond.snapshot_diff:
+            Message.send(
+                conn,
+                Response.error(
+                    "子进程模式不支持 --snapshot-diff（无终端快照），请用增量输出"
+                ),
+            )
+            return
+
+        # 转义展开与写入（与 _handle_send_flow 同一逻辑）
+        try:
+            input_text, pause_offsets = prepare_input(
+                session.mode,
+                input_text,
+                json_escaping=req.json_escaping,
+                send_eol=req.send_eol,
+            )
+        except ValueError as e:
+            Message.send(conn, Response.error(str(e)))
+            return
+
+        try:
+            session.write_input(input_text, pause_offsets=pause_offsets)
+            _logger.info("会话 '%s' 输入: %s", session.id, repr(input_text[:100]))
+        except Exception:
+            _logger.exception("会话 '%s' 写入失败", session.id)
+            Message.send(conn, Response.error("Failed to write input"))
+            return
+
+        resp = build_notify_waiting_response(ctx, session, msg, result_type="send")
+        Message.send(conn, resp)
+        spawn_notify_worker(ctx, session, msg, result_type="send")
 
     def _handle_send_flow(self, ctx, conn, session, msg):
         """send 会话处理主体（已持有 session.hold）"""
@@ -145,6 +218,7 @@ class SendHandler(DaemonHandler):
                     cond.fresh,
                     cond.timeout,
                     result_type="send",
+                    apply_filter=True,
                 )
             else:
                 _run_subprocess_no_trigger_flow(
@@ -154,8 +228,9 @@ class SendHandler(DaemonHandler):
                     msg,
                     result_type="send",
                     from_offset=session.read_base(cond.full),
+                    apply_filter=True,
                 )
             return
 
         # pty 模式恒为屏幕快照，trigger/idle-timeout 由快照流程内部处理
-        _run_snapshot_flow(ctx, conn, session, msg, result_type="send")
+        _run_snapshot_flow(ctx, conn, session, msg, result_type="send", apply_filter=True)

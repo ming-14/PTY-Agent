@@ -23,7 +23,7 @@ class TestSandboxConfigDefaults:
 
 
 class TestSandboxConfigIsolation:
-    """Phase 16 schema：仅 net_policy / net_allowlist / clipboard_isolate 三键"""
+    """Isolation schema：仅 net_policy / net_allowlist / clipboard_isolate 三键"""
 
     def test_keys_exact(self):
         # 键集合精确对齐：不允许旧 schema 字段（fs_mode/capabilities/path_rules）残留

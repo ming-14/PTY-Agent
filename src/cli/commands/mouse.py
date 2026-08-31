@@ -74,6 +74,12 @@ class MouseCommand(Command):
             help="用正则匹配终端屏幕内容获取坐标（多匹配时不执行动作）",
         )
         add_session_io_args(parser)
+        parser.add_argument(
+            "--lines",
+            "-l",
+            default=None,
+            help="行数过滤: N=最后N行, start:end=范围",
+        )
         add_output_args(parser)
 
     def validate(self, args, parser: argparse.ArgumentParser) -> None:
@@ -163,10 +169,12 @@ class MouseCommand(Command):
             timeout=args.timeout,
             encoding=args.encoding,
             keep_ansi=args.keep_ansi,
+            lines=args.lines,
             idle_timeout=args.idle_timeout,
             idle_after_first_output=args.idle_after_first_output,
             output_path=args.output_path,
             response_format=args.response_format,
             svg_compression_level=args.svg_compression_level,
             snapshot_diff=args.snapshot_diff,
+            notify=args.notify,
         )

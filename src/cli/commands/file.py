@@ -56,6 +56,8 @@ class FileCommand(Command):
 
     name = "file"
     help = "文件工具（read/write/edit/grep/glob/upload/download）"
+    # 公共参数已在各子子命令解析器手动注册（add_common_args），避免两级重复
+    use_common_args = False
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         file_sub = parser.add_subparsers(

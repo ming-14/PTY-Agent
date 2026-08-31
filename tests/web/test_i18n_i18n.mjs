@@ -16,6 +16,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Node <21 无全局 navigator（浏览器 API）；i18n.js 语言检测依赖它，
+// 测试环境补一个最小 shim（Node 21+ 自带 navigator.language="en-US"）
+if (typeof globalThis.navigator === 'undefined') {
+  globalThis.navigator = { language: 'en-US', userLanguage: undefined };
+}
+
 const i18nUrl = pathToFileURL(join(__dirname, '../../src/web/static/js/domain/i18n.js')).href;
 const schemaUrl = pathToFileURL(join(__dirname, '../../src/web/static/js/domain/settingsSchema.js')).href;
 

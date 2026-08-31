@@ -3,8 +3,7 @@
  */
 
 import { state, getSessionFontSize, clearSessionFontSize, isSizeUILocked } from '../../domain/state.js';
-import { debug } from '../../domain/logger.js';
-import { t } from '../../domain/i18n.js';
+import { debug, error } from '../../domain/logger.js';
 import { $ } from '../domUtils.js';
 import { sendToSession } from '../wsClient.js';
 import { DEFAULT_FONT_SIZE, DEFAULT_COLS, DEFAULT_ROWS } from '../../domain/constants.js';
@@ -18,6 +17,7 @@ import { applyTerminalFrameSize } from './scale.js';
 import { isTermAtBottom, scrollTermToBottom, scrollTermToTop } from './scroll.js';
 import { bindTerminalEvents } from './events.js';
 import { getTerminalFontFamily } from '../fontLoader.js';
+import { isSubprocessSession } from './shared.js';
 
 export function ensureTerminal(uid) {
   if (state.termInstances[uid]) return;
@@ -68,6 +68,8 @@ export function ensureTerminal(uid) {
     // （xterm 渲染链挂死）。applyReadonlyState 仅处理运行时转变。
     disableStdin: !!(s && s.history),
     scrollback: 10000,
+    // 6.0.0 默认显示自定义滚动条（.xterm-scrollbar），隐藏以保持既有视觉
+    scrollbar: { showScrollbar: false },
     allowProposedApi: true,
     allowTransparency: true,
     screenReaderMode: false,
@@ -198,6 +200,21 @@ export function ensureTerminal(uid) {
       return;
     }
 
+    // ── 子进程模式：无后端 PTY，尺寸由前端本地决定 ──
+    // 不发送 resize（后端拒绝）、不做 AUTO-REVERT（无后端权威尺寸），
+    // 更新 s.cols/s.rows 使状态栏/尺寸选择器显示实际值。
+    // 清除 _pendingDaemonResize（fit/applySessionFrameRatio 可能设置），
+    // 避免标志残留导致后续容器自动 resize 被误判为有意。
+    if (isSubprocessSession(s2)) {
+      inst._pendingDaemonResize = false;
+      s2.cols = cols;
+      s2.rows = rows;
+      requestAnimationFrame(() => {
+        try { applyTerminalFrameSize(uid); } catch (_) {}
+      });
+      return;
+    }
+
     // ── 有意 resize（applyTerminalSize / fit 等显式调用）→ 正常同步后端 ──
     if (inst._pendingDaemonResize) {
       inst._pendingDaemonResize = false;
@@ -207,11 +224,6 @@ export function ensureTerminal(uid) {
       });
       if (!s2 || !s2.running || s2.history || s2.closing) {
         debug('resize', 'onResize deliberate: session not active, skip');
-        return;
-      }
-      if (s2.mode === 'subprocess' || s2.ptyType === 'subprocess') {
-        // 子进程模式无终端：不发送 resize（后端拒绝）
-        debug('resize', 'onResize deliberate: subprocess, skip');
         return;
       }
       if (isSizeUILocked(uid)) {
@@ -436,7 +448,7 @@ export function replayPending(sid) {
     s.pendingSnapshot = null;
   }
 
-  // 子进程模式：首次订阅时后端返回 stderr 全文，以 ERR > 前缀写入
+  // 子进程模式：首次订阅时后端返回 stderr 全文，以红色写入
   if (s.pendingStderrReplay) {
     inst.term.write(formatStderrText(s.pendingStderrReplay));
     s.pendingStderrReplay = null;
@@ -446,7 +458,7 @@ export function replayPending(sid) {
     for (const text of s.pendingOutput) inst.term.write(text);
     s.pendingOutput = [];
     if (!isHistory) scrollTermToBottom(inst.term);
-    setTimeout(() => updateTerminalSnapshot(sid), 50);
+    scheduleTerminalSnapshot(sid);
   }
 }
 
@@ -457,11 +469,11 @@ export function queuePendingOutput(uid, text) {
   s.pendingOutput.push(text);
 }
 
-/** 子进程 stderr 文本：逐行加红色 ERR > 前缀（空行保留） */
+/** 子进程 stderr 文本：逐行包红色（空行保留），不加前缀 */
 export function formatStderrText(text) {
   return text
     .split('\n')
-    .map(l => (l.trim() ? '\x1b[31m' + t('term.stderrPrefix') + l + '\x1b[0m' : l))
+    .map(l => (l.trim() ? '\x1b[31m' + l + '\x1b[0m' : l))
     .join('\n');
 }
 
@@ -470,7 +482,7 @@ export function handleOutput(msg) {
   const uid = msg._uid || msg.sessionUid || msg.sessionId;
   const inst = state.termInstances[uid];
   let text = String(msg.data || '');
-  // 子进程模式 stderr：以红色 ERR > 前缀逐行展示
+  // 子进程模式 stderr：逐行包红色展示（不加前缀）
   if (msg.stream === 'stderr') {
     text = formatStderrText(text);
   }
@@ -518,7 +530,7 @@ export function handleOutput(msg) {
     inst.term.write(text);
     if (isHistory) scrollTermToTop(inst.term);
     else if (wasAtBottom && state.activeTab === uid) scrollTermToBottom(inst.term);
-    setTimeout(() => updateTerminalSnapshot(uid), 50);
+    scheduleTerminalSnapshot(uid);
   } else {
     queuePendingOutput(uid, text);
   }
@@ -540,6 +552,18 @@ export function updateTerminalSnapshot(sid) {
     const snap = document.getElementById('terminal-snapshot');
     if (snap) snap.textContent = lines.join('\n');
   } catch (e) {}
+}
+
+// 快照更新节流：高频输出时合并为一次更新（#terminal-snapshot 供外部
+// 代理/自动化读取终端文本状态，每条输出都调度定时器会造成无谓开销）
+const _snapshotTimers = {};
+
+function scheduleTerminalSnapshot(sid) {
+  if (_snapshotTimers[sid]) return;
+  _snapshotTimers[sid] = setTimeout(() => {
+    _snapshotTimers[sid] = null;
+    updateTerminalSnapshot(sid);
+  }, 100);
 }
 
 export function applyTheme() {

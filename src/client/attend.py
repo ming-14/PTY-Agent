@@ -532,7 +532,7 @@ class _AttendClient:
         self._mouse_tracking = False
 
     def run(self) -> int:
-        self._sock = self._client._connect(autostart=True)
+        self._sock = self._client._connect()
         self._sock.settimeout(None)
         self._out_signer = Message.get_outbound_signer()
         try:

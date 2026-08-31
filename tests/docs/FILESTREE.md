@@ -35,7 +35,6 @@ tests/
 │   │   ├── test_keygen.py
 │   │   ├── test_main.py
 │   │   ├── test_presenter.py
-│   │   ├── test_renderer.py
 │   │   ├── test_terminal_size.py
 │   │   └── test_transport.py
 │   ├── daemon/              # 守护进程层测试
@@ -175,8 +174,6 @@ tests/
 
 ├── e2e/                     # ═══ 端到端测试 ═══
 │   ├── __init__.py
-│   ├── _repro_authorized_keys
-│   ├── _repro_pubkey_e2e.py  # pubkey e2e 复现脚本
 │   ├── test_keygen_e2e.py
 │   ├── test_basic_password_e2e.py  # basic 密码认证 e2e
 │   ├── test_plugins_e2e.py

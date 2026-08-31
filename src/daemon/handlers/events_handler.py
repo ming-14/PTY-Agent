@@ -66,7 +66,7 @@ class EventsHandler(DaemonHandler):
 
         session = ctx.manager.get_session(session_id)
         if not session:
-            hs = ctx.manager._history_store
+            hs = ctx.manager.history_store
             if hs:
                 ended_events = hs.get_ended_events(session_id)
                 if ended_events is not None:

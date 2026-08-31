@@ -1,7 +1,7 @@
 """沙箱进程树追踪器 —— SandboxProcessTreeTracker（ProcessTreeTracker 端口实现）
 
-win-sandbox 委派实现：进程由原生 SandboxInstance 启动（天然在 Job +
-Low IL 隔离内），本实现把 ProcessTreeTracker 端口全部委托给
+win_sandbox_native 委派实现：进程由 C++ 核心启动（天然在 WRITE_RESTRICTED
+受限令牌 + Job 隔离内），本实现把 ProcessTreeTracker 端口全部委托给
 SandboxSessionManager 的原生能力：
 
 | 端口方法                | win_sandbox_native 能力                 |
@@ -13,7 +13,7 @@ SandboxSessionManager 的原生能力：
 | kill_tree               | Process.terminate（KILL_ON_JOB 全灭）   |
 | drain_notifications     | on_job_process_started/exited 回调队列  |
 | GUI 三件套              | 空实现（沙箱隔离下本地 EnumWindows 不适用）|
-| close                   | SandboxInstance.shutdown                |
+| close                   | SandboxInstance.shutdown（C++ 清理 grants/temp）|
 
 生命周期归属 Session（与 JobProcessTreeTracker 一致）：kill_tree → pty.close → tracker.close。
 """
@@ -28,7 +28,7 @@ _logger = get_logger("sandbox-tracker")
 
 
 class SandboxProcessTreeTracker(ProcessTreeTracker):
-    """win-sandbox 沙箱进程树追踪器（Windows 专属）"""
+    """win_sandbox_native 沙箱进程树追踪器（Windows 专属）"""
 
     def __init__(self, manager: SandboxSessionManager):
         self._manager = manager

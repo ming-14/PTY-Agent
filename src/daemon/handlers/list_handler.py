@@ -20,7 +20,7 @@ class ListHandler(DaemonHandler):
                 s["rawStartCommand"] = s.pop("command")
             if session and session.uid:
                 s["uid"] = session.uid
-        hs = ctx.manager._history_store
+        hs = ctx.manager.history_store
         if hs:
             ended = hs.list_ended_sessions()
             for s in ended:

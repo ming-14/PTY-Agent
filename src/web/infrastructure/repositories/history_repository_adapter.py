@@ -1,4 +1,5 @@
 """HistoryStore 的 HistoryRepository 适配器。"""
+from __future__ import annotations
 
 from typing import Optional
 
@@ -26,6 +27,7 @@ class HistoryRepositoryAdapter(HistoryRepository):
                 exit_code=r["exitCode"],
                 error_message=r["errorMessage"],
                 uid=r.get("uid", ""),
+                tag=list(r.get("tag", []) or []),
             )
             for r in rows
         ]

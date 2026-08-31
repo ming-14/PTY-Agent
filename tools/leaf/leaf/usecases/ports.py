@@ -2,10 +2,11 @@
 
 pywezterm 的 Pty/Terminal 与 PtyPort/TerminalPort 结构匹配，无需再包
 wrapper 类；Mux 门面（MuxPanel）即驱动层实现，用例层（frame/input）
-只依赖 MuxPanelPort/ConsolePort/ClipboardPort/OutputSink。
+只依赖 MuxPanelPort/ConsolePort/ClipboardPort/OutputSink/RecorderPort。
 """
 
-from typing import List, Protocol, Tuple, Union
+import threading
+from typing import List, Optional, Protocol, Tuple, Union
 
 from leaf.domain.events import KeyEvent, MouseEvent, ResizeEvent
 
@@ -57,6 +58,11 @@ class MuxPanelPort(Protocol):
     def pane_selection_clear(self, pane_id: int) -> None: ...
     def set_focus_selection_callback(self, callback) -> None: ...
     def send_paste(self, text: str) -> None: ...
+    # ---- 录制（原始输出缓冲） ----
+    def pane_take_output(self, pane_id: int) -> bytes: ...
+    def pane_output_len(self, pane_id: int) -> int: ...
+    def pane_exit_code(self, pane_id: int) -> int: ...
+    def force_repaint(self) -> None: ...
 
 
 class ClipboardPort(Protocol):
@@ -71,3 +77,30 @@ class OutputSink(Protocol):
 
     def write(self, s: str) -> None: ...
     def flush(self) -> None: ...
+
+
+class RecorderPort(Protocol):
+    """录制端口：接收输出/输入/尺寸/标记/退出事件（asciicast 语义）"""
+
+    def output(self, data: bytes) -> None: ...
+    def input(self, data: bytes) -> None: ...
+    def resize(self, cols: int, rows: int) -> None: ...
+    def marker(self, label: str = "") -> None: ...
+    def exit(self, status: int = 0) -> None: ...
+    def finish(self) -> None: ...
+    def toggle_pause(self) -> bool: ...
+
+
+class RecorderSlot:
+    """线程安全的录制器容器，render_loop 每帧取用，支持 F8 动态切换。"""
+
+    def __init__(self):
+        self._recorder: Optional[RecorderPort] = None
+        self._lock = threading.Lock()
+
+    def get(self) -> Optional[RecorderPort]:
+        return self._recorder
+
+    def set(self, recorder: Optional[RecorderPort]) -> None:
+        with self._lock:
+            self._recorder = recorder

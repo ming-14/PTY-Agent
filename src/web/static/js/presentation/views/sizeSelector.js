@@ -31,6 +31,7 @@ import {
   reapplyAllTerminalSizes,
   applySessionFrameRatio,
 } from '../../infrastructure/terminalAdapter.js';
+import { isSubprocessSession } from '../../infrastructure/terminal/shared.js';
 
 /**
  * 渲染尺寸选择器下拉内容。
@@ -268,8 +269,12 @@ function selectMode(mode) {
   const prevCfg = getSessionSizeConfigByUid(sid);
   info('size', 'selectMode → %s (was %s) sid=%s', mode, prevCfg.mode, sid);
 
-  // 先发 set_size_mode，后端 acquire/release 锁后再发 resize
-  sendSetSizeMode(sid, mode);
+  // 子进程模式无后端 PTY：尺寸调整仅前端本地生效，不发送 set_size_mode
+  // （无自适应锁/后端 resize 语义），其余逻辑与 PTY 一致（reapply 本地 term.resize）。
+  if (!isSubprocessSession(state.sessions[sid])) {
+    // 先发 set_size_mode，后端 acquire/release 锁后再发 resize
+    sendSetSizeMode(sid, mode);
+  }
 
   setSizeMode(mode);
 
@@ -301,8 +306,11 @@ function selectMode(mode) {
  */
 function selectFixedPreset(cols, rows) {
   info('size', 'selectFixedPreset → %dx%d sid=%s', cols, rows, state.activeTab);
-  // 先发 set_size_mode(fixed, cols, rows)，后端释放锁并 resize
-  sendSetSizeMode(state.activeTab, 'fixed', cols, rows);
+  // 子进程模式无后端 PTY：尺寸调整仅前端本地生效，不发送 set_size_mode
+  if (!isSubprocessSession(state.sessions[state.activeTab])) {
+    // 先发 set_size_mode(fixed, cols, rows)，后端释放锁并 resize
+    sendSetSizeMode(state.activeTab, 'fixed', cols, rows);
+  }
 
   setFixedSize(cols, rows);
   setSizeMode('fixed');
@@ -325,8 +333,11 @@ function selectFixedPreset(cols, rows) {
  */
 function selectCustomSize(cols, rows) {
   info('size', 'selectCustomSize → %dx%d sid=%s', cols, rows, state.activeTab);
-  // 先发 set_size_mode(custom, cols, rows)，后端释放锁并 resize
-  sendSetSizeMode(state.activeTab, 'custom', cols, rows);
+  // 子进程模式无后端 PTY：尺寸调整仅前端本地生效，不发送 set_size_mode
+  if (!isSubprocessSession(state.sessions[state.activeTab])) {
+    // 先发 set_size_mode(custom, cols, rows)，后端释放锁并 resize
+    sendSetSizeMode(state.activeTab, 'custom', cols, rows);
+  }
 
   setCustomSize(cols, rows);
   setSizeMode('custom');

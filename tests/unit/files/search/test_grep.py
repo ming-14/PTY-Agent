@@ -1,41 +1,21 @@
 """grep 用例单元测试 —— rg 引擎（mock）与降级引擎（真实文件）"""
 
+import json
 import os
 
 import pytest
 
-from config.plugins.files.search import grep
-from config.plugins.files.search.grep import (
+from src.files.search import grep
+from src.files.search.grep import (
     GrepMatch,
-    _parse_match,
     grep_files,
 )
-
-
-class TestParseMatch:
-    def test_windows_path_with_colons(self):
-        # Windows 盘符冒号从右侧解析不会干扰
-        m = _parse_match("C:\\proj\\a.txt:42:hello world")
-        assert m is not None
-        assert m.path == "C:\\proj\\a.txt"
-        assert m.line_number == 42
-        assert m.content == "hello world"
-
-    def test_unix_path(self):
-        m = _parse_match("/x/y/b.py:3:def f")
-        assert m.path == "/x/y/b.py"
-        assert m.line_number == 3
-        assert m.content == "def f"
-
-    def test_malformed_lines_skipped(self):
-        assert _parse_match("no-colon-here") is None
-        assert _parse_match("path:not-a-number:content") is None
 
 
 class TestGrepFallbackEngine:
     @pytest.fixture(autouse=True)
     def force_fallback(self, monkeypatch):
-        import config.plugins.files.settings as _s
+        import src.files.settings as _s
         monkeypatch.setattr(_s.settings, "rg_exe", None)
 
     def test_basic_matches(self, tmp_path):
@@ -101,13 +81,26 @@ class TestGrepFallbackEngine:
 class TestGrepRgEngine:
     @pytest.fixture
     def mock_rg(self, monkeypatch):
-        import config.plugins.files.settings as _s
+        import src.files.settings as _s
         monkeypatch.setattr(_s.settings, "rg_exe", "rg.exe")
 
         def _run(cmd, capture_output=None, encoding=None, errors=None):
             class _P:
                 returncode = 0
-                stdout = "C:\\a\\x.txt:2:needle\nC:\\a\\x.txt:5:needle again\n"
+                stdout = "\n".join([
+                    json.dumps({"type": "begin", "data": {"path": {"text": "C:\\a\\x.txt"}}}),
+                    json.dumps({"type": "match", "data": {
+                        "path": {"text": "C:\\a\\x.txt"},
+                        "line_number": 2,
+                        "lines": {"text": "needle\n"},
+                    }}),
+                    json.dumps({"type": "match", "data": {
+                        "path": {"text": "C:\\a\\x.txt"},
+                        "line_number": 5,
+                        "lines": {"text": "needle again\n"},
+                    }}),
+                    json.dumps({"type": "end", "data": {"path": {"text": "C:\\a\\x.txt"}}}),
+                ])
                 stderr = ""
             return _P()
         monkeypatch.setattr(grep.subprocess, "run", _run)
@@ -121,8 +114,28 @@ class TestGrepRgEngine:
         assert result.matches[0].path == "C:\\a\\x.txt"
         assert result.matches[0].line_number == 2
 
+    def test_rg_engine_content_with_colon_not_dropped(self, tmp_path, monkeypatch):
+        """回归：匹配行内容含冒号（如 def f(): pass）不得被丢弃"""
+        import src.files.settings as _s
+        monkeypatch.setattr(_s.settings, "rg_exe", "rg.exe")
+
+        def _run(cmd, capture_output=None, encoding=None, errors=None):
+            class _P:
+                returncode = 0
+                stdout = json.dumps({"type": "match", "data": {
+                    "path": {"text": "C:\\a\\mod.py"},
+                    "line_number": 2,
+                    "lines": {"text": "def helper(): pass\n"},
+                }})
+                stderr = ""
+            return _P()
+        monkeypatch.setattr(grep.subprocess, "run", _run)
+        result = grep_files("def", str(tmp_path))
+        assert len(result.matches) == 1
+        assert result.matches[0].content == "def helper(): pass"
+
     def test_rg_command_contains_glob_and_escape(self, tmp_path, monkeypatch):
-        import config.plugins.files.settings as _s
+        import src.files.settings as _s
         monkeypatch.setattr(_s.settings, "rg_exe", "rg.exe")
         captured = {}
 
@@ -135,12 +148,32 @@ class TestGrepRgEngine:
             return _P()
         monkeypatch.setattr(grep.subprocess, "run", _run)
         grep_files("a.b", str(tmp_path), include="*.py", literal_text=True)
+        assert "--json" in captured["cmd"]
         assert "--glob" in captured["cmd"]
         assert "*.py" in captured["cmd"]
         assert "a\\.b" in captured["cmd"]  # literal 转义
 
+    def test_rg_command_applies_ignored_dirs_globs(self, tmp_path, monkeypatch):
+        """回归：rg 引擎必须以排除 glob 应用忽略清单（对齐降级引擎）"""
+        import src.files.settings as _s
+        monkeypatch.setattr(_s.settings, "rg_exe", "rg.exe")
+        captured = {}
+
+        def _run(cmd, capture_output=None, encoding=None, errors=None):
+            captured["cmd"] = cmd
+            class _P:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+            return _P()
+        monkeypatch.setattr(grep.subprocess, "run", _run)
+        grep_files("needle", str(tmp_path))
+        ignore_globs = [c for c in captured["cmd"] if c.startswith("!**/")]
+        assert "!**/node_modules/**" in ignore_globs
+        assert "!**/vendor/**" in ignore_globs
+
     def test_rg_error_falls_back(self, tmp_path, monkeypatch):
-        import config.plugins.files.settings as _s
+        import src.files.settings as _s
         monkeypatch.setattr(_s.settings, "rg_exe", "rg.exe")
 
         def _run(cmd, capture_output=None, encoding=None, errors=None):
@@ -156,7 +189,7 @@ class TestGrepRgEngine:
         assert len(result.matches) == 1
 
     def test_rg_missing_falls_back(self, tmp_path, monkeypatch):
-        import config.plugins.files.settings as _s
+        import src.files.settings as _s
         monkeypatch.setattr(_s.settings, "rg_exe", None)
         (tmp_path / "a.txt").write_text("needle\n", encoding="utf-8")
         result = grep_files("needle", str(tmp_path))

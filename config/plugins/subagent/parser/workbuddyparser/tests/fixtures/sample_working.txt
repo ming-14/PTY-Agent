@@ -1,0 +1,17 @@
+> hi
+  hi
+
+ The user just said "hi" twice. Let me respond briefly
+
+● Hi alice. What can I help you with today?
+
+> run ls in current dir
+
+● Bash(ls -la)
+
+✷ Waking… (3s · streaming · ↓ 193 tokens · esc to interrupt)
+
+────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────
+? for shortcuts  ← 1 agent    Thinking on (AltT to toggle)

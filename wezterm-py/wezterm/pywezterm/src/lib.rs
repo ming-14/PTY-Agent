@@ -9,6 +9,7 @@ mod clipboard;
 mod console_input;
 mod mux;
 mod pty;
+mod render;
 mod surface_render;
 mod term;
 

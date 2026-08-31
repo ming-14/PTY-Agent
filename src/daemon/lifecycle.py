@@ -5,6 +5,7 @@
 属客户端控制能力，位于 src/client/daemonctl。
 """
 
+import argparse
 import os
 import sys
 
@@ -14,6 +15,43 @@ from ..ipc.single_instance import SingleInstanceLock
 from ..logging import get_logger, setup_daemon_logging, shutdown
 
 _logger = get_logger("pty-daemon")
+
+
+def _parse_args(argv):
+    """解析 daemon 入口参数
+
+    --foreground / PTY_AGENT_FOREGROUND=1：前台运行，不脱离终端，日志同时
+    输出到 stderr。供 s6/systemd 等服务监督器以 longrun 方式管理：监督器
+    持有前台进程，SIGTERM 优雅退出，异常退出由监督器重启（容器内 daemon
+    被监督器误杀的根本原因是双 fork 守护化后进程脱离监督，故需前台模式）。
+
+    --survive / PTY_AGENT_SURVIVE=1：生存模式，运行期间拦截忽略所有结束
+    进程的信号（SIGTERM/SIGHUP/SIGINT/SIGQUIT）与 stop 协议消息，仅
+    SIGKILL 可终止（stop --force 仍可用）。与 foreground 可组合。
+
+    Returns:
+        (foreground, survive) 布尔元组。
+    """
+
+    def _env_flag(name: str) -> bool:
+        return os.environ.get(name, "").lower() in ("1", "true", "yes")
+
+    parser = argparse.ArgumentParser(prog="pty-agent-daemon", add_help=True)
+    parser.add_argument(
+        "--foreground",
+        action="store_true",
+        help="前台运行（供 s6/systemd 等服务监督器管理，日志输出到 stderr）",
+    )
+    parser.add_argument(
+        "--survive",
+        action="store_true",
+        help="生存模式：忽略所有结束进程的信号与 stop 消息，仅 SIGKILL 可终止",
+    )
+    args, _ = parser.parse_known_args(argv)
+    return (
+        args.foreground or _env_flag("PTY_AGENT_FOREGROUND"),
+        args.survive or _env_flag("PTY_AGENT_SURVIVE"),
+    )
 
 
 def _safe_print(text: str):
@@ -71,12 +109,15 @@ def _ignore_console_ctrl():
         pass
 
 
-def _setup_logging():
+def _setup_logging(console: bool = False):
     """配置日志系统：按模块分组写独立日志文件 + 异步队列 + 归档线程
+
+    Args:
+        console: 同时向 stderr 输出（前台运行 / 服务监督器场景）。
 
     委托给 src/logging 子包的 setup_daemon_logging()。
     """
-    files = setup_daemon_logging()
+    files = setup_daemon_logging(console=console)
     for group, path in files.items():
         _safe_print(f"[pty-agent] {group} log: {path}")
 
@@ -86,12 +127,43 @@ def _setup_logging():
 # ============================================================
 
 
-def main():
+def _install_survive_signal_guards():
+    """生存模式：入口即注册信号忽略处理器（仅 SIGKILL 可终止）
+
+    必须在 server.run() 之前安装——daemon 启动（插件/web 初始化）耗时可达
+    数秒，期间到达的 SIGTERM 会走默认处理器直接杀死进程。此处入口即注册，
+    覆盖整个启动窗口；server.run() 在生存模式下不再注册任何信号（见
+    DaemonServer.run），避免与入口处理器重复。
+    """
+    if sys.platform == "win32":
+        return
+    import signal as _signal
+
+    def _ignore(signum, frame):
+        _logger.warning(
+            "生存模式忽略信号 %s (%s)", signum, _signal.Signals(signum).name
+        )
+
+    for sig in (_signal.SIGTERM, _signal.SIGHUP, _signal.SIGINT, _signal.SIGQUIT):
+        try:
+            _signal.signal(sig, _ignore)
+        except (OSError, ValueError):
+            pass
+    _logger.warning("生存模式：已忽略 SIGTERM/SIGHUP/SIGINT/SIGQUIT，仅 SIGKILL 可终止")
+
+
+def main(argv=None):
     """守护进程入口
 
     监听位置完全由 daemon.toml [listener] 段控制。
     入口处获取 Windows 命名互斥 / Unix flock 单实例锁，失败则直接退出。
+
+    支持前台运行模式（--foreground / PTY_AGENT_FOREGROUND=1）：
+    供 s6/systemd 等服务监督器以 longrun 方式管理，日志同时输出到 stderr。
+    支持生存模式（--survive / PTY_AGENT_SURVIVE=1）：忽略所有结束进程的
+    信号与 stop 消息，仅 SIGKILL 可终止。
     """
+    foreground, survive = _parse_args(argv)
     # 终端颜色语义：PTY 会话经 ConPTY + 前端 xterm 渲染 ANSI 颜色——剥离
     # NO_COLOR（尊重该变量的程序会禁用颜色输出）。须在入口剥离：PTY 后端
     #（Rust 侧）的环境块 = 进程环境 + env 覆盖，Python 侧无法删除基础
@@ -99,8 +171,19 @@ def main():
     # 须用 os.unsetenv 真正删除（Rust std::env 才能看到）。
     os.unsetenv("NO_COLOR")
     _hide_console_window()
-    _setup_logging()
+    _setup_logging(console=foreground)
     _ignore_console_ctrl()
+    if survive:
+        # 入口即注册信号防护：覆盖 server.run() 之前的整个启动窗口
+        # （插件/web 初始化期间到达的 SIGTERM 会被忽略而非杀死进程）
+        _install_survive_signal_guards()
+    if foreground:
+        _logger.info("守护进程前台模式启动（PID=%d），日志输出到 stderr+文件", os.getpid())
+    if survive:
+        _logger.warning(
+            "守护进程生存模式启动（PID=%d）：忽略 SIGTERM/SIGHUP/SIGINT/SIGQUIT "
+            "与 stop 协议消息，仅 SIGKILL 可终止", os.getpid()
+        )
     _logger.info("=== 守护进程启动 ===")
     _logger.info(
         "PID=%s, Python=%s, platform=%s",
@@ -143,7 +226,7 @@ def main():
 
     from .server import DaemonServer
 
-    server = DaemonServer()
+    server = DaemonServer(survive=survive)
     _logger.info("DaemonServer 实例已创建，准备运行")
     try:
         server.run()

@@ -50,6 +50,7 @@ _REASON_TAG = {
     "ended": "ended",
     "crashed": "crashed",
     "cancelled": "cancelled",
+    "notify_waiting": "notify",
 }
 
 
@@ -100,10 +101,25 @@ def present(result: Result, out=None, err=None) -> bool:
             text = None
         if text is not None:
             safe_print(text, file=out, end="")
+            # render_hook 覆盖后 presenter 通用提示不执行，这里补发通知提示
+            if result.ok:
+                count = (result.raw or {}).get("pendingNotifCount")
+                if count:
+                    from .msg import fmt_message
+                    _write(err, fmt_message("%d 个通知完成，用 wait 查看" % count))
             return result.ok
     if _render_message(result, out, err):
-        return result.ok
-    return _render_typed(result, out, err)
+        ok = result.ok
+    else:
+        ok = _render_typed(result, out, err)
+    # 全局通知计数提示（--notify 订阅，只提示不消费）：
+    # wait 已展示通知列表时不重复提示；错误响应不提示
+    if ok and not (isinstance(result, WaitResult) and result.notifications):
+        count = (result.raw or {}).get("pendingNotifCount")
+        if count:
+            from .msg import fmt_message
+            _write(err, fmt_message("%d 个通知完成，用 wait 查看" % count))
+    return ok
 
 
 def _render_message(result: Result, out, err) -> bool:
@@ -128,7 +144,7 @@ def _render_typed(result: Result, out, err) -> bool:
     elif isinstance(result, StatusResult):
         _render_status(result, out)
     elif isinstance(result, WaitResult):
-        _render_wait(result, out)
+        _render_wait(result, out, err)
     elif isinstance(result, EventsResult):
         _render_events(result, out, err)
     elif isinstance(result, (KillResult, StopResult, CloseWinResult)):
@@ -430,12 +446,12 @@ def _render_list(r: ListResult, out, err) -> None:
         _write(err, fmt_message(r.hint or "No active session."))
         return
     _write(out, _table(
-        ("ID", "COMMAND", "UID", "STATE"),
+        ("ID", "COMMAND", "TIME", "STATE"),
         [
             (
                 s.get("id", ""),
                 _trunc(s.get("rawStartCommand") or s.get("command") or "", 24),
-                _trunc(s.get("uid", "") or "", 12),
+                _fmt_session_duration(s),
                 ("running" if s.get("running") else "ended"),
             )
             for s in r.sessions
@@ -443,6 +459,24 @@ def _render_list(r: ListResult, out, err) -> None:
     ))
 
     _append_hit(out, r.hint)
+
+
+def _fmt_session_duration(s: dict) -> str:
+    """会话运行时长：运行中=startTime→now；ended=startTime→endTime"""
+    import time
+    start = s.get("startTime")
+    if not start:
+        return ""
+    end = s.get("endTime") if not s.get("running") else time.time()
+    try:
+        secs = max(0, float(end) - float(start))
+    except (TypeError, ValueError):
+        return ""
+    if secs < 60:
+        return f"{secs:.0f}s"
+    if secs < 3600:
+        return f"{secs / 60:.0f}m"
+    return f"{secs / 3600:.1f}h"
 
 
 def _render_status(r: StatusResult, out) -> None:
@@ -461,8 +495,34 @@ def _render_status(r: StatusResult, out) -> None:
     _write(out, _table(("key", "value"), rows))
 
 
-def _render_wait(r: WaitResult, out) -> None:
-    """wait 结果：``[wait · ok · <耗时>] waited``（状态行风格）"""
+def _render_wait(r: WaitResult, out, err) -> None:
+    """wait 结果：待消费通知列表 + 状态行
+
+    有待消费通知时渲染 nid/sessionId/detail/reason/time 表格（摘要，完整内容走 notice）；
+    无通知时提示"无通知"，随后输出状态行 ``[wait · ok · <耗时>] waited``。
+    """
+    if r.notifications:
+        _write(
+            out,
+            _table(
+                ("NID", "SESSION", "DETAIL", "REASON", "TIME"),
+                [
+                    (
+                        n.get("nid", ""),
+                        n.get("sessionId", ""),
+                        n.get("detail", ""),
+                        _REASON_TAG.get(
+                            n.get("triggerReturnReason", ""),
+                            n.get("triggerReturnReason", ""),
+                        ),
+                        n.get("createdAt", ""),
+                    )
+                    for n in r.notifications
+                ],
+            ),
+        )
+    else:
+        _write(err, fmt_message("无通知"))
     _write(out, f"[wait · ok · {r.elapsed:.2f}s] waited")
 
 

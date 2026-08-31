@@ -1,4 +1,6 @@
 model: openai:deepseek-v4-flash-free
+prompt: 全面分析该内容，只按内容说话，不给出下一步，不提建议
+timeout: 120
 clients:
   - type: openai
     name: openai

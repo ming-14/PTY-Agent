@@ -13,7 +13,7 @@
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,8 +24,10 @@ use wezterm_surface::{Change, CursorVisibility, Position, Surface};
 use wezterm_term::input::{KeyModifiers, MouseEvent};
 use wezterm_term::{CellAttributes, Clipboard, Intensity, Terminal, TerminalSize, Underline};
 
+use crate::pty::ensure_conpty_dir;
+#[cfg(windows)]
 use crate::pty::{
-    cancel_reader_thread, close_thread_handle, duplicate_current_thread_handle, ensure_conpty_dir,
+    cancel_reader_thread, close_thread_handle, duplicate_current_thread_handle,
 };
 use crate::surface_render::{parse_color, render_changes_bytes};
 use crate::term::{
@@ -33,6 +35,19 @@ use crate::term::{
     CellTuple, EmbeddedConfig, PyClipboard, SelectionState,
 };
 use wezterm_char_props::widechar_width::WcLookupTable;
+
+/// 通知"某 pane 有新输出"（reader 线程 feed 数据后调用）。
+/// 回调只应做轻量操作（如 set event），不得反查终端状态——否则与
+/// reader 线程持 terminal 锁互等死锁。
+fn notify_output(cb: &Option<Py<PyAny>>) {
+    if let Some(cb) = cb {
+        Python::attach(|py| {
+            if let Err(e) = cb.bind(py).call0() {
+                log::error!("output callback 异常: {e}");
+            }
+        });
+    }
+}
 
 // ---- 矩形与布局树（左右/上下二分）---------------------------------------
 #[derive(Clone, Copy)]
@@ -115,6 +130,8 @@ struct PaneInner {
     child: Mutex<Option<Box<dyn Child + Send + Sync>>>,
     terminal: Arc<Mutex<Terminal>>,
     capture: Arc<Mutex<Vec<u8>>>,
+    /// 子进程原始输出缓冲（reader 线程写入，Python 侧 drain 用于录制 asciicast）
+    output_buf: Arc<Mutex<VecDeque<u8>>>,
     /// 视图滚动偏移（scrollback 行）；滚动查看历史时 snapshot/text/render 反映
     view_offset: Arc<Mutex<usize>>,
     /// 合成渲染基线：上次 compose 时终端 seqno / 视图偏移（判定脏行与视图平移）
@@ -393,6 +410,7 @@ fn build_pane(
     env: Option<HashMap<String, String>>,
     cols: u16,
     rows: u16,
+    output_cb: Option<Py<PyAny>>,
 ) -> PyResult<Pane> {
     ensure_conpty_dir(py);
     let pty_system = native_pty_system();
@@ -439,6 +457,7 @@ fn build_pane(
     let repaint_pending = Arc::new(AtomicBool::new(false));
     let reader_thread: Arc<Mutex<Option<usize>>> = Arc::new(Mutex::new(None));
     let view_offset = Arc::new(Mutex::new(0));
+    let output_buf: Arc<Mutex<VecDeque<u8>>> = Arc::new(Mutex::new(VecDeque::with_capacity(8192)));
     let inner = Arc::new(PaneInner {
         master: Mutex::new(Some(pair.master)),
         _slave: Mutex::new(Some(pair.slave)),
@@ -446,6 +465,7 @@ fn build_pane(
         child: Mutex::new(Some(child)),
         terminal: terminal.clone(),
         capture: capture.clone(),
+        output_buf: output_buf.clone(),
         view_offset: view_offset.clone(),
         last_seqno: Mutex::new(None),
         last_view: Mutex::new(0),
@@ -463,6 +483,7 @@ fn build_pane(
     let writer_c = writer.clone();
     let reader_thread_h = reader_thread.clone();
     let repaint_pending_c = repaint_pending.clone();
+    let output_buf_c = output_buf.clone();
     std::thread::spawn(move || {
         #[cfg(windows)]
         {
@@ -493,6 +514,7 @@ fn build_pane(
             match reader.read(&mut tmp) {
                 Ok(0) => {
                     eof.store(true, Ordering::SeqCst);
+                    notify_output(&output_cb); // EOF 也通知一次，宿主据此做最终渲染
                     break;
                 }
                 Ok(n) => {
@@ -506,17 +528,28 @@ fn build_pane(
                         }
                         repaint_pending_c.store(false, Ordering::SeqCst);
                     }
-                    let mut t = terminal_c.lock().unwrap();
-                    t.advance_bytes(&tmp[..n]);
-                    // 应答（DSR/键盘序列集合）自动回写 pty，避免子进程等应答卡死
-                    let resp = take_capture(&capture_c);
-                    if !resp.is_empty() {
-                        let _ = write_to_writer(&writer_c, &resp);
+                    // 子进程原始输出 → 录制缓冲（供 Python 侧 drain 写 asciicast）
+                    let mut ob = output_buf_c.lock().unwrap();
+                    if ob.len() < 16 * 1024 * 1024 {
+                        ob.extend(&tmp[..n]);
                     }
+                    drop(ob);
+                    {
+                        let mut t = terminal_c.lock().unwrap();
+                        t.advance_bytes(&tmp[..n]);
+                        // 应答（DSR/键盘序列集合）自动回写 pty，避免子进程等应答卡死
+                        let resp = take_capture(&capture_c);
+                        if !resp.is_empty() {
+                            let _ = write_to_writer(&writer_c, &resp);
+                        }
+                    }
+                    // 新输出通知：必须在 terminal 锁释放后调用（回调若反查终端会死锁）
+                    notify_output(&output_cb);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => {
                     eof.store(true, Ordering::SeqCst);
+                    notify_output(&output_cb);
                     break;
                 }
             }
@@ -559,6 +592,8 @@ struct MuxState {
 #[pyclass(name = "Mux")]
 pub struct PyMux {
     inner: Mutex<MuxState>,
+    /// 新输出通知回调（任一 pane 有新输出时调用，None=不通知）
+    output_cb: Mutex<Option<Py<PyAny>>>,
 }
 
 /// pty writer 写字节；对 closed 的 pane 静默忽略
@@ -621,6 +656,7 @@ impl PyMux {
                 last_status: String::new(),
                 last_status_rows: 0,
             }),
+            output_cb: Mutex::new(None),
         }
     }
 
@@ -675,9 +711,20 @@ impl PyMux {
             rows = st.rects.get(id).map(|r| r.h).unwrap_or(st.rows).max(1);
             st.focused = id;
         }
-        let pane = build_pane(py, argv, cwd, env, cols as u16, rows as u16)?;
+        let pane = build_pane(
+            py, argv, cwd, env, cols as u16, rows as u16,
+            self.output_cb.lock().unwrap().as_ref().map(|cb| cb.clone_ref(py)),
+        )?;
         self.inner.lock().unwrap().panes.push(pane);
         Ok(id)
+    }
+
+    /// 设置"新输出"回调：任一 pane 的 reader 线程读到新数据并喂入终端后
+    /// 调用（无参数）。供宿主事件驱动渲染（替代定时轮询）。None 清除。
+    #[pyo3(signature = (callback=None))]
+    fn set_output_callback(&self, py: Python, callback: Option<Py<PyAny>>) -> PyResult<()> {
+        *self.output_cb.lock().unwrap() = callback.map(|c| c.clone_ref(py));
+        Ok(())
     }
 
     /// 各 pane 布局矩形 (x, y, w, h)
@@ -771,6 +818,27 @@ impl PyMux {
         Ok(bytes)
     }
 
+    /// 取走指定 pane 的原始输出缓冲（drain，供录制 asciicast）；未启用录制时
+    /// 缓冲为空（Python 侧应定时 drain 防增长）
+    fn pane_take_output(&self, pane_id: usize) -> PyResult<Vec<u8>> {
+        let pane = {
+            let st = self.inner.lock().unwrap();
+            Self::get_pane(&st, pane_id)?
+        };
+        let mut buf = pane.output_buf.lock().unwrap();
+        Ok(buf.drain(..).collect())
+    }
+
+    /// 指定 pane 原始输出缓冲当前字节数（非阻塞查询用）
+    fn pane_output_len(&self, pane_id: usize) -> PyResult<usize> {
+        let pane = {
+            let st = self.inner.lock().unwrap();
+            Self::get_pane(&st, pane_id)?
+        };
+        let len = pane.output_buf.lock().unwrap().len();
+        Ok(len)
+    }
+
     /// 当前可见屏幕纯文本（去尾空白，去掉末尾空行；计入视图滚动偏移）
     fn pane_text(&self, pane_id: usize) -> PyResult<String> {
         let pane = {
@@ -816,7 +884,9 @@ impl PyMux {
         let crow_screen = (c.y.max(0) as usize).saturating_add(offset);
         let vis = matches!(c.visibility, wezterm_surface::CursorVisibility::Visible)
             && crow_screen < rows;
-        Ok((crow_screen, c.x, vis))
+        // 列号 clamp 到物理列宽：光标写满整行后 c.x = 列宽（边界外）
+        let col = c.x.min(screen.physical_cols.saturating_sub(1));
+        Ok((crow_screen, col, vis))
     }
 
     /// 应用是否接管该 pane 的鼠标（DECSET 1000/1002/1003）
@@ -971,7 +1041,7 @@ impl PyMux {
             let offset = *st.panes[id].view_offset.lock().unwrap();
             let prev_top_phys = prev_total.saturating_sub(offset).saturating_sub(prev_rows);
             let prev_top_stable = screen.phys_to_stable_row_index(prev_top_phys);
-            drop(screen);
+            let _ = screen;
             if let Some(m) = st.panes[id].master.lock().unwrap().as_ref() {
                 m.resize(PtySize {
                     rows: h as u16,
@@ -1073,7 +1143,7 @@ impl PyMux {
         // Cow 借用了 surface；先转 owned，断开借用再更新 seqno/flush
         let changes = changes.into_owned();
         st.seqno = newseq;
-        let bytes = render_changes_bytes(&changes)?;
+        let bytes = render_changes_bytes(&changes, st.cols, st.rows)?;
         st.surface.flush_changes_older_than(newseq);
         // 焦点 pane 光标 → 整屏坐标（计入视图滚动偏移：滚动查看历史时
         // 可见区上移 offset 行，光标随内容平移；滚出可见区则隐藏）
@@ -1088,7 +1158,12 @@ impl PyMux {
         let crow_screen = (c.y.max(0) as usize).saturating_add(offset);
         let vis = matches!(c.visibility, CursorVisibility::Visible) && crow_screen < rows;
         let crow = rect.y.saturating_add(crow_screen);
-        let ccol = rect.x.saturating_add(c.x as usize);
+        // 列号 clamp 到 pane 矩形内：光标写满整行后 c.x = pane 宽（边界外），
+        // 直接定位会超界被宿主 clamp 到行尾（表现为光标跳到最末列）
+        let ccol = rect
+            .x
+            .saturating_add(c.x as usize)
+            .min(rect.x.saturating_add(rect.w).saturating_sub(1));
         Ok((bytes, crow, ccol, vis))
     }
 
@@ -1270,6 +1345,19 @@ impl PyMux {
     fn send_paste(&self, text: &str) -> PyResult<()> {
         let pane_id = self.inner.lock().unwrap().focused;
         self.pane_send_paste(pane_id, text)
+    }
+
+    /// 强制下一帧全量重绘（录制暂停恢复/收敛帧用）：重置各 pane 渲染基线
+    fn force_repaint(&self) -> PyResult<()> {
+        let mut st = self.inner.lock().unwrap();
+        st.seqno = 0;
+        st.last_sep = None;
+        st.last_status = String::new();
+        for p in &st.panes {
+            *p.last_seqno.lock().unwrap() = None;
+            *p.last_view.lock().unwrap() = 0;
+        }
+        Ok(())
     }
 
     /// 关闭单个 pane：终止子进程 + 释放 HPCON，并从布局中移除（重算

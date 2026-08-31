@@ -1,7 +1,8 @@
 """输入文本处理 — JSON 转义解码、控制字符展开与行尾追加
 
 供 CLI send（client）与 workflow send 步骤（daemon）共用同一输入语义：
-默认追加 \\r 模拟终端 Enter，-j/{enter} 等转义在 json 展开模式下可用。
+默认追加 {enter} token（由守护进程按会话模式展开为行尾符），
+JSON/控制字符转义在 json 展开模式下可用。
 """
 
 from ..logging import get_logger
@@ -240,10 +241,10 @@ def expand_control_characters_full(text: str, *, enter_eol: str = "\r") -> tuple
 def process_input(
     text: str,
     json_escaping: bool = False,
-    send_eol: str = "\r",
+    send_eol: Optional[str] = None,
     enter_eol: str = "\r",
 ) -> tuple:
-    """处理输入文本：可选 JSON/控制字符转义解码 + 自动追加行尾符
+    """处理输入文本：可选 JSON/控制字符转义解码 + 行尾追加
 
      默认 raw 模式（json_escaping=False）：原样发送，不做任何转义处理。
      Windows 路径中的反斜杠不会被误转换。
@@ -252,11 +253,17 @@ def process_input(
     （\\n、\\t、\\r、\\uXXXX、\\"、\\\\ 等），再展开控制字符转义
      （{ctrl+a}、{enter}、{up}、{f1} 等），适用于需要发送多行代码或按键场景。
 
+     行尾追加统一在此完成（由守护进程调用）：
+     - send_eol=None（默认）：末尾追加 {enter} token 并展开为 enter_eol
+       （pty=\\r / subprocess=\\n），并产生停顿偏移；raw 模式下用户内容原样，
+       仅追加的 {enter} 被展开。
+     - send_eol 为字符（--send-eol 映射结果）：按字符直接追加（"" 表示不追加）。
+     输入已以 \\n 或 \\r 结尾时不重复追加。
+
      Args:
          text: 原始输入文本。
          json_escaping: 是否启用 JSON/控制字符转义解码（默认 False，raw 模式）。
-         send_eol: 末尾追加的行尾符。默认 "\\r"（模拟终端 Enter）。可选 "\\n"、"\\r\\n"、"\\r"、""（不追加）。
-                   当输入已以 \\n 或 \\r 结尾时不重复追加。
+         send_eol: 显式行尾字符（None=默认追加 {enter} token；""=不追加）。
          enter_eol: {enter}/{return} 展开的行尾符（"\r" 终端 CR / "\n" 子进程 LF）。
 
      Returns:
@@ -268,8 +275,15 @@ def process_input(
     if json_escaping:
         text = unescape_json_string(text)
         text, pauses = expand_control_characters_full(text, enter_eol=enter_eol)
-    if send_eol:
-        if not text.endswith("\n") and not text.endswith("\r"):
+    if not text.endswith("\n") and not text.endswith("\r"):
+        if send_eol is None:
+            # 默认行尾：追加 {enter} token（展开为 enter_eol），并产生停顿偏移，
+            # 写入端与前面内容分段停顿（模拟真实"输入后按 Enter"的按键间隔）
+            tail, _ = expand_control_characters_full("{enter}", enter_eol=enter_eol)
+            text += tail
+            pauses.append(len(text))
+        elif send_eol:
+            # 显式行尾字符（--send-eol 映射结果）：直接追加，不产生停顿
             text += send_eol
     _logger.debug(
         "process_input: len=%d json_escaping=%s send_eol=%r ends_with_newline=%s pauses=%r",

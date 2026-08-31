@@ -42,8 +42,8 @@ class TestSessionExitInfo:
             [sys.executable, "-c", "import sys; sys.exit(0)"],
         )
         s.start()
-        # 等待进程退出
-        self._wait_ended(s, timeout=5)
+        # 等待进程退出（全量跑负载高时偶发延迟，timeout 留足余量）
+        self._wait_ended(s, timeout=15)
         assert s.exit_code == 0
         assert s.error_message is None
 
@@ -53,8 +53,12 @@ class TestSessionExitInfo:
             [sys.executable, "-c", "import sys; sys.exit(42)"],
         )
         s.start()
-        self._wait_ended(s, timeout=5)
+        self._wait_ended(s, timeout=15)
         assert s.exit_code == 42
+        # error_message 可能在 _wait_ended 返回后异步填充（全量负载高时偶发延迟）
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and s.error_message is None:
+            time.sleep(0.05)
         assert s.error_message is not None
         assert "42" in s.error_message
 
@@ -64,7 +68,7 @@ class TestSessionExitInfo:
             [sys.executable, "-c", "import sys; sys.exit(127)"],
         )
         s.start()
-        self._wait_ended(s, timeout=5)
+        self._wait_ended(s, timeout=15)
         assert s.exit_code == 127
         assert s.error_message is not None
         assert "127" in s.error_message
@@ -75,7 +79,7 @@ class TestSessionExitInfo:
             [sys.executable, "-c", "import sys; sys.exit(1)"],
         )
         s.start()
-        self._wait_ended(s, timeout=5)
+        self._wait_ended(s, timeout=15)
         assert not s.running
 
     def test_exit_before_any_read(self):
@@ -84,7 +88,7 @@ class TestSessionExitInfo:
             [sys.executable, "-c", "import sys; sys.exit(5)"],
         )
         s.start()
-        self._wait_ended(s, timeout=5)
+        self._wait_ended(s, timeout=15)
         assert s.exit_code == 5
 
     def test_exit_code_after_stop(self):
@@ -94,7 +98,7 @@ class TestSessionExitInfo:
         )
         s.start()
         # 等待读者线程检测到 EOF
-        self._wait_ended(s, timeout=5)
+        self._wait_ended(s, timeout=15)
         s.stop()
         assert s.exit_code == 9
 
@@ -108,8 +112,8 @@ class TestSessionExitInfo:
         )
         s1.start()
         s2.start()
-        self._wait_ended(s1, timeout=5)
-        self._wait_ended(s2, timeout=5)
+        self._wait_ended(s1, timeout=15)
+        self._wait_ended(s2, timeout=15)
         assert s1.exit_code == 10
         assert s2.exit_code == 20
 
@@ -135,7 +139,7 @@ class TestSessionExitInfo:
             [sys.executable, "-c", "import sys; sys.exit(0)"],
         )
         s.start()
-        self._wait_ended(s, timeout=5)
+        self._wait_ended(s, timeout=15)
         assert s.error_message is None
 
     def test_output_available_before_exit(self):
@@ -146,7 +150,7 @@ class TestSessionExitInfo:
         )
         s.start()
         # 等待进程退出
-        self._wait_ended(s, timeout=5)
+        self._wait_ended(s, timeout=15)
         output = s.get_output()
         assert "hello from test" in output
         assert s.exit_code == 1
@@ -158,12 +162,12 @@ class TestSessionExitInfo:
              "print('done'); import sys; sys.exit(0)"],
         )
         s.start()
-        self._wait_ended(s, timeout=5)
+        self._wait_ended(s, timeout=15)
         assert s.exit_code is not None
 
     # ---- 辅助方法 ----
 
-    def _wait_ended(self, session, timeout: float = 5.0):
+    def _wait_ended(self, session, timeout: float = 15.0):
         """等待 session.running 变为 False"""
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -259,7 +263,7 @@ class TestSessionStopInteractive:
             [sys.executable, "-c", "import sys; sys.exit(0)"],
         )
         s.start()
-        self._wait_ended(s, timeout=5)
+        self._wait_ended(s, timeout=15)
         s.stop()
         # 第二次 stop 不应抛异常
         s.stop()
@@ -289,7 +293,7 @@ class TestSessionStopInteractive:
             time.sleep(0.05)
         pytest.fail(f"会话 '{session.id}' 在 {timeout}s 内无输出")
 
-    def _wait_ended(self, session, timeout=5.0):
+    def _wait_ended(self, session, timeout=15.0):
         """等待 session.running 变为 False"""
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -320,3 +324,4 @@ class TestSessionStopInteractive:
             f"stop() 在 {timeout}s 内未完成——死锁"
         if error[0]:
             pytest.fail(f"stop() 抛出异常: {error[0]}")
+

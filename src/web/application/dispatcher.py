@@ -1,4 +1,5 @@
 """WebSocket 消息分发器。"""
+from __future__ import annotations
 
 from typing import Optional
 

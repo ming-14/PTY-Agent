@@ -1,43 +1,172 @@
-"""config/plugins/state_check 插件单测 — 启发式状态检测（返回钩子 + 命令钩子）"""
+"""config/plugins/state_check 插件单测 — 响应装饰 + CLI 渲染 + _detect 检测逻辑"""
 
 import os
 import sys
 
-import pytest
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+
+from src.plugins.loader import load_plugin_dir
+from src.client.cli_plugins import CliPluginHost
+from src.plugins.host import PluginHost
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-sys.path.insert(0, _PROJECT_ROOT)
-
-from src.plugins.base import Plugin  # noqa: E402
-from src.plugins.loader import load_plugin_dir  # noqa: E402
-from src.plugins.host import PluginHost  # noqa: E402
-
 _PLUGIN_PATH = os.path.join(_PROJECT_ROOT, "config", "plugins", "state_check")
 
 
-@pytest.fixture(scope="module")
-def plugin_cls():
-    assert os.path.exists(_PLUGIN_PATH), "state_check 目录不在 config/plugins/ 中"
-    loaded = load_plugin_dir(_PLUGIN_PATH)
-    assert loaded is not None
-    assert loaded.manifest.kind == "session"
-    return loaded.cls
+# ═══════════════════════════════════════════════════════════
+# 插件声明
+# ═══════════════════════════════════════════════════════════
+
+class TestPluginDecl:
+    """插件声明：kind / manifest 正确加载"""
+
+    def test_manifest_loads(self):
+        loaded = load_plugin_dir(_PLUGIN_PATH)
+        assert loaded is not None
+        m = loaded.manifest
+        assert m.id == "state_check"
+        assert m.kind == ["process", "cli"]
+        assert m.decorate_types == ["list"]
+        assert m.auto_mount == ["list"]
+
+    def test_hooks_declared(self):
+        loaded = load_plugin_dir(_PLUGIN_PATH)
+        cls = loaded.cls
+        from src.plugins.base import Plugin
+        has_decorate = getattr(cls, "decorate_response") is not getattr(Plugin, "decorate_response")
+        has_render = getattr(cls, "render_response") is not getattr(Plugin, "render_response")
+        assert has_decorate
+        assert has_render
+
+    def test_no_trigger_declaration(self):
+        loaded = load_plugin_dir(_PLUGIN_PATH)
+        assert loaded.manifest.triggers == []
+
+    def test_two_hooks_only(self):
+        loaded = load_plugin_dir(_PLUGIN_PATH)
+        hooks = dict(loaded.manifest.hooks)
+        assert set(hooks) == {"decorate_response", "render_response"}
 
 
-@pytest.fixture
-def detector(plugin_cls):
-    return plugin_cls()
+# ═══════════════════════════════════════════════════════════
+# _detect 检测逻辑
+# ═══════════════════════════════════════════════════════════
+
+class TestDetect:
+    """_detect 各优先级检测"""
+
+    def _make(self):
+        from config.plugins.state_check import StateCheckPlugin
+        return StateCheckPlugin()
+
+    def test_empty_screen(self):
+        p = self._make()
+        assert p._detect("", None, False, None) == (None, "empty screen")
+
+    def test_no_match(self):
+        p = self._make()
+        assert p._detect("hello world", 1, False, None) == (None, "no match")
+
+    def test_alt_screen(self):
+        p = self._make()
+        assert p._detect("banner\n>>>", 4, True, None) == ("Alt-Screen", "alt screen active")
+
+    def test_shell_prompt_dollar(self):
+        p = self._make()
+        assert p._detect("banner\n$ ", 2, False, None) == ("WaitingForInput", "shell prompt")
+
+    def test_shell_prompt_hash(self):
+        p = self._make()
+        assert p._detect("banner\nroot#", 5, False, None) == ("WaitingForInput", "shell prompt")
+
+    def test_shell_prompt_cursor_col0(self):
+        """光标在行首（col=0）不触发 shell prompt 检测"""
+        p = self._make()
+        assert p._detect("banner\n$ ", 0, False, None) == ("Running", "cursor at column 0")
+
+    def test_foreground_shell_process(self):
+        p = self._make()
+        assert p._detect("some\noutput", 1, False, "bash") == ("WaitingForInput", "shell process (bash)")
+
+    def test_editor_indicator(self):
+        p = self._make()
+        assert p._detect("some text\n-- insert --", 0, False, None) == ("Editor", "editor mode indicator")
+
+    def test_pager_indicator(self):
+        p = self._make()
+        assert p._detect("manual page content\n(end)", 0, False, None) == ("Pager", "pager indicator")
+
+    # 注意上面故意写错了几个字用于测试
+
+    def test_password_prompt(self):
+        p = self._make()
+        assert p._detect("banner\npassword:", 2, False, None) == ("Password", "password prompt")
+
+    def test_confirm_prompt(self):
+        p = self._make()
+        assert p._detect("banner\nare you sure [y/n]", 3, False, None) == ("Confirm", "confirm prompt")
+
+    def test_error_recent_lines(self):
+        p = self._make()
+        assert p._detect("line1\nerror: something failed\nline3", 1, False, None) == ("Error", "error indicator")
+
+    def test_error_wins_over_running_at_col0(self):
+        """光标在行首（col 0）时错误指示词优先 → Error（不被 Running 遮蔽）"""
+        p = self._make()
+        assert p._detect("error: something failed", 0, False, None) == ("Error", "error indicator")
+
+    def test_error_recent_lines_cursor_col0(self):
+        """错误行在最近 3 行且光标在行首 → Error 优先于 Running"""
+        p = self._make()
+        assert p._detect("ok line\nwarning: none\nerror: boom", 0, False, None) == ("Error", "error indicator")
+
+    def test_running_no_error_at_col0(self):
+        """无错误指示词 + 光标行首 → Running"""
+        p = self._make()
+        assert p._detect("some\noutput", 0, False, None) == ("Running", "cursor at column 0")
+
+    def test_command_output_line_not_prompt(self):
+        """命令输出行（以 $/#/%/> 开头）不应触发 shell prompt 检测"""
+        p = self._make()
+        assert p._detect("banner\n$ ls -la", 4, False, None) != ("WaitingForInput", "shell prompt")
 
 
-class FakeSession:
-    def __init__(self, text="", cursor=(None, None, None), alt=False, pids=()):
-        self.id = "sc"
+# ═══════════════════════════════════════════════════════════
+# decorate_response（list 装饰）
+# ═══════════════════════════════════════════════════════════
+
+class _FakeManager:
+    def __init__(self, sessions):
+        self._sessions = {s.id: s for s in sessions}
+
+    def get_session(self, sid):
+        return self._sessions.get(sid)
+
+
+class _FakeSession:
+    def __init__(self, sid="s1", running=True, mode="pty", text="hello\n$ ", cursor=(2, 1, True),
+                 alt=False, pids=(), common_marks=("normal",)):
+        self.id = sid
+        self._running = running
+        self._mode = mode
         self._text = text
         self._cursor = cursor
         self._alt = alt
         self._pids = list(pids)
+        self._common_marks = list(common_marks)
 
-    def get_snapshot(self):
+    @property
+    def running(self):
+        return self._running
+
+    @property
+    def mode(self):
+        return self._mode
+
+    def has_common_mark(self, mark):
+        return mark in self._common_marks
+
+    def get_snapshot(self, keep_ansi=False):
         return self._text
 
     def cursor_position(self):
@@ -46,185 +175,89 @@ class FakeSession:
     def is_alt_screen(self):
         return self._alt
 
-    def get_pty_process_list(self):
-        return self._pids
+    def get_type(self):
+        return self._mode
 
 
-def _detect(p, screen, cursor_x, alt=False, process=None):
-    """调用插件内部检测链（不经过 ctx）"""
-    return p._detect(screen, cursor_x, alt, process)
+class _FakePluginHost:
+    def __init__(self, session):
+        self._session = session
+
+    def get_session(self, sid):
+        return self._session if self._session.id == sid else None
 
 
-class TestPriorityChain:
-    def test_alt_screen_editor(self, detector):
-        state, _ = _detect(detector, "some text", 3, alt=True)
-        assert state == "Editor"
+class TestDecorateList:
+    """decorate_response 装饰 list 响应"""
 
-    def test_repl_prompt(self, detector):
-        state, _ = _detect(detector, "banner\n>>> ", 4)
-        assert state == "Repl"
+    def test_not_list_returns_none(self):
+        from config.plugins.state_check import StateCheckPlugin
+        p = StateCheckPlugin()
+        resp = {"commandType": "exec"}
+        assert p.decorate_response(None, resp) is None
 
-    def test_repl_variants(self, detector):
-        for prompt in (">>> ", "... ", "In [1]: ", "(Pdb) ", "mysql> ", "node> ",
-                       "psql> ", "julia> ", "ghci> "):
-            state, _ = _detect(detector, prompt, 4)
-            assert state == "Repl", prompt
+    def test_list_empty_returns_none(self):
+        from config.plugins.state_check import StateCheckPlugin
+        p = StateCheckPlugin()
+        ctx = type("ctx", (), {"manager": _FakeManager([])})()
+        assert p.decorate_response(ctx, {"commandType": "list", "sessions": []}) is None
 
-    def test_repl_cursor_at_col0_falls_through(self, detector):
-        # cursor_x == 0 不判 Repl，落到 Running 级
-        state, _ = _detect(detector, ">>> ", 0)
-        assert state == "Running"
+    def test_skips_subagent_sessions(self):
+        from config.plugins.state_check import StateCheckPlugin
+        p = StateCheckPlugin()
+        s = _FakeSession(common_marks=("subagent",))
+        ctx = type("ctx", (), {"manager": _FakeManager([s])})()
+        resp = {"commandType": "list", "sessions": [{"id": "s1", "running": True}]}
+        result = p.decorate_response(ctx, resp)
+        assert result is None
 
-    def test_shell_prompt(self, detector):
-        state, _ = _detect(detector, "whoami\nC:\\Users\\me> ", 4)
-        assert state == "WaitingForInput"
+    def test_skips_non_pty_sessions(self):
+        from config.plugins.state_check import StateCheckPlugin
+        p = StateCheckPlugin()
+        s = _FakeSession(mode="subprocess")
+        ctx = type("ctx", (), {"manager": _FakeManager([s])})()
+        resp = {"commandType": "list", "sessions": [{"id": "s1", "running": True}]}
+        result = p.decorate_response(ctx, resp)
+        assert result is None
 
-    def test_shell_prompt_dollar(self, detector):
-        state, _ = _detect(detector, "ls\n$ ", 4)
-        assert state == "WaitingForInput"
+    def test_skips_ended_sessions(self):
+        from config.plugins.state_check import StateCheckPlugin
+        p = StateCheckPlugin()
+        s = _FakeSession(running=False)
+        ctx = type("ctx", (), {"manager": _FakeManager([s])})()
+        resp = {"commandType": "list", "sessions": [{"id": "s1", "running": False}]}
+        result = p.decorate_response(ctx, resp)
+        assert result is None
 
-    def test_shell_prompt_cursor_col0_falls_to_running(self, detector):
-        state, _ = _detect(detector, "$ ", 0)
-        assert state == "Running"
-
-    def test_foreground_shell_process(self, detector):
-        state, _ = _detect(detector, "loading...", 5, process="pwsh.exe")
-        assert state == "WaitingForInput"
-
-    def test_editor_indicator(self, detector):
-        state, _ = _detect(detector, "buffer.txt\n-- INSERT --", 6)
-        assert state == "Editor"
-
-    def test_pager_indicator(self, detector):
-        state, _ = _detect(detector, "man ls\n(END)", 2)
-        assert state == "Pager"
-
-    def test_agent_permission_whole_screen(self, detector):
-        state, _ = _detect(detector, "buf: do you want to continue\n...\nyes or no", 5)
-        assert state == "Confirm"
-
-    def test_password_recent_lines(self, detector):
-        state, _ = _detect(detector, "enter\n[sudo] password for rikka:", 8)
-        assert state == "Password"
-
-    def test_password_not_suppress_confirm_when_not_last_line(self, detector):
-        # 密码提示在倒数第二行（已输入），当前最后一行是确认提示 → Confirm
-        # 修复前：Password 看最近 3 行会命中密码行而压制 Confirm
-        state, _ = _detect(detector, "[sudo] password for rikka:\nOverwrite? [y/n]", 6)
-        assert state == "Confirm"
-
-    def test_password_rolled_out_repl_takes_over(self, detector):
-        # 密码行在倒数第二行，最后一行是 REPL 提示符 → Repl（不被 Password 压制）
-        state, _ = _detect(detector, "[sudo] password for x:\n>>> ", 4)
-        assert state == "Repl"
-
-    def test_confirm_recent_lines(self, detector):
-        state, _ = _detect(detector, "The file exists.\nOverwrite? [y/n]", 6)
-        assert state == "Confirm"
-
-    def test_running_cursor_col0(self, detector):
-        state, _ = _detect(detector, "compiling...\n", 0)
-        assert state == "Running"
-
-    def test_error_recent_lines(self, detector):
-        state, _ = _detect(detector, "make\nTraceback (most recent call last):\nValueError: bad", 5)
-        assert state == "Error"
-
-    def test_error_priority_below_running(self, detector):
-        # 错误指示词但光标在行首 → Running
-        state, _ = _detect(detector, "error: boom", 0)
-        assert state == "Running"
-
-    def test_empty_screen(self, detector):
-        state, reason = _detect(detector, "", 0)
-        assert state is None
-
-    def test_no_match(self, detector):
-        state, _ = _detect(detector, "compiling", 5)
-        assert state is None
-
-    # ── 防误匹配：命令输出行（$ / # / > / % 开头）不作为提示符判定 ──
-
-    def test_command_output_line_not_prompt(self, detector):
-        # 命令回显行以 "$ " 开头（如 $ ls）→ 不判 WaitingForInput
-        state, _ = _detect(detector, "config\n$ ls -la", 4)
-        assert state not in ("WaitingForInput", "Repl")
-
-    def test_command_output_line_dollar_echo(self, detector):
-        # $ echo ">>>" 的整行输出以 "$ " 开头 → 不判 Repl / WaitingForInput
-        state, _ = _detect(detector, "$ echo \">>> \"", 2)
-        assert state not in ("Repl", "WaitingForInput")
-
-    def test_command_output_line_hash(self, detector):
-        # 输出行以 "# " 开头（如注释回显）→ 不判提示符
-        state, _ = _detect(detector, "config\n# comment here", 4)
-        assert state not in ("WaitingForInput", "Repl")
-
-    def test_normal_shell_prompt_still_detected(self, detector):
-        # 常规提示符（非以 $ / # / > / % 开头）不受防误匹配影响
-        state, _ = _detect(detector, "whoami\nuser@host:~/code$ ", 4)
-        assert state == "WaitingForInput"
-
-    def test_bare_dollar_prompt_still_detected(self, detector):
-        # 纯 "$ " 提示符（rstrip 后为 "$"）不命中命令输出前缀，正常判定
-        state, _ = _detect(detector, "ls\n$ ", 4)
-        assert state == "WaitingForInput"
-
-    def test_repl_unaffected(self, detector):
-        # ">>> " 不以命令输出前缀开头，仍判 Repl
-        state, _ = _detect(detector, "banner\n>>> ", 4)
-        assert state == "Repl"
+    def test_adds_state_check_mark(self):
+        from config.plugins.state_check import StateCheckPlugin
+        p = StateCheckPlugin()
+        s = _FakeSession(common_marks=("normal",))
+        ctx = type("ctx", (), {"manager": _FakeManager([s])})()
+        resp = {"commandType": "list", "sessions": [{"id": "s1", "running": True}]}
+        result = p.decorate_response(ctx, resp)
+        assert result is not None
+        assert "HEUR" in result["sessions"][0]["status"]
 
 
-class TestReturnHook:
-    """返回钩子：命令返回时触发一次并携带状态"""
+# ═══════════════════════════════════════════════════════════
+# render_response（CLI 渲染）
+# ═══════════════════════════════════════════════════════════
 
-    def test_inspect_state_dict(self, detector):
-        session = FakeSession(text="banner\n>>> ", cursor=(4, 2, True))
-        host = PluginHost(session, plugins=[detector])
-        result = host.inspect_state()
-        assert result == {"state": "Repl", "reason": "repl prompt", "altScreen": False}
+class TestRenderResponse:
+    """render_response 渲染 list"""
 
-    def test_inspect_state_alt_screen(self, detector):
-        session = FakeSession(text="vim screen", cursor=(5, 3, True), alt=True)
-        host = PluginHost(session, plugins=[detector])
-        result = host.inspect_state()
-        assert result["state"] == "Editor"
-        assert result["altScreen"] is True
+    def test_not_list_returns_none(self):
+        from config.plugins.state_check import StateCheckPlugin
+        p = StateCheckPlugin()
+        assert p.render_response(type("ctx", (), {"command": "exec"})(), {"commandType": "exec"}) is None
 
-    def test_inspect_state_uses_live_session(self, detector):
-        # 返回钩子读会话实时状态，不依赖任何缓存
-        session = FakeSession(text="", cursor=(None, None, None))
-        host = PluginHost(session, plugins=[detector])
-        result = host.inspect_state()
-        assert result["state"] is None
-
-    def test_empty_chain_returns_none(self):
-        host = PluginHost(FakeSession(), plugins=[])
-        assert host.inspect_state() is None
-
-
-class TestCommandHook:
-    """命令钩子：plugin cmd 查询状态"""
-
-    def test_status_command(self, detector):
-        session = FakeSession(text="banner\n>>> ", cursor=(4, 2, True))
-        host = PluginHost(session, plugins=[detector])
-        result = host.handle_command("state_check", {"command": "status"})
-        assert result["state"] == "Repl"
-        assert result["altScreen"] is False
-
-    def test_unknown_command(self, detector):
-        host = PluginHost(FakeSession(), plugins=[detector])
-        assert host.handle_command("state_check", {"command": "nope"}) is None
-
-
-class TestPluginContract:
-    def test_no_trigger_declaration(self, plugin_cls):
-        # 纯钩子插件：无事件/轮询触发声明
-        assert plugin_cls.manifest.triggers == []
-
-    def test_two_hooks_only(self, plugin_cls):
-        # 插件仅实现返回钩子与命令钩子
-        assert plugin_cls.inspect_state is not Plugin.inspect_state
-        assert plugin_cls.handle_command is not Plugin.handle_command
+    def test_renders_list_with_status(self):
+        from config.plugins.state_check import StateCheckPlugin
+        p = StateCheckPlugin()
+        ctx = type("ctx", (), {"command": "list"})()
+        resp = {"commandType": "list", "sessions": [{"id": "s1", "status": "running - HEUR:Shell"}]}
+        text = p.render_response(ctx, resp)
+        assert text is not None
+        assert "s1" in text
+        assert "HEUR" in text

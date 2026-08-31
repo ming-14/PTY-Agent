@@ -36,6 +36,11 @@ except Exception:  # pragma: no cover - 环境缺失时跳过
 pytestmark = pytest.mark.skipif(not _HAS_WEZTERM, reason="wezterm-py 不可用")
 
 SID = "attend_e2e"
+_IS_WIN = sys.platform == "win32"
+_SHELL = "cmd" if _IS_WIN else "bash"
+# Linux 提示符因用户而异：普通用户 $、root #（CI/WSL 常以 root 跑），两者都匹配
+_PROMPT = ">" if _IS_WIN else r"[\$#]"   # trigger 正则
+_PROMPT_CHAR = ">" if _IS_WIN else "$"  # 屏幕文本断言用字面量
 
 
 def _strip_ansi(s: str) -> str:
@@ -77,9 +82,9 @@ def _send(sock, client, frame):
 
 
 def test_attend_full_flow(daemon, client):
-    # 1. 创建真实 cmd 会话
+    # 1. 创建真实 shell 会话（Windows: cmd，Linux: bash）
     resp = client._send_recv(
-        {"type": "exec", "id": SID, "command": "cmd", "trigger": r">", "timeout": 10}
+        {"type": "exec", "id": SID, "command": _SHELL, "trigger": _PROMPT, "timeout": 10}
     )
     assert resp.get("triggerReturnReason") in ("trigger_matched", "matched", "timeout")
     assert resp.get("program", {}).get("running") is True
@@ -99,8 +104,8 @@ def test_attend_full_flow(daemon, client):
                     replay_text = b.get("text", "")
                     break
             assert "attend_ready" in seen and "attend_replay" in seen
-            # replay 应含 cmd 提示符（当前屏幕真相）
-            assert ">" in _strip_ansi(replay_text)
+            # replay 应含 shell 提示符（当前屏幕真相；Linux root 用 #、普通用户用 $）
+            assert _PROMPT_CHAR in _strip_ansi(replay_text) or "#" in _strip_ansi(replay_text)
 
             # 3. 输入回显
             _send(sock, client, {"type": "attend_input", "data": "echo HELLO_ATTEND\r"})
@@ -126,6 +131,6 @@ def test_attend_full_flow(daemon, client):
 
         # 5. 会话仍存活可读（attend 不影响其他消费者）
         r = client._send_recv({"type": "read", "id": SID, "timeout": 3}, autostart=False)
-        assert ">" in r.get("outputStream", "")
+        assert _PROMPT_CHAR in r.get("outputStream", "") or "#" in r.get("outputStream", "")
     finally:
         client._send_recv({"type": "kill", "id": SID}, autostart=False)

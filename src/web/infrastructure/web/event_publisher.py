@@ -1,4 +1,5 @@
 """基于连接管理器的事件发布者实现。"""
+from __future__ import annotations
 
 import asyncio
 from typing import Any, Callable, Optional

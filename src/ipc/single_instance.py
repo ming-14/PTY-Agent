@@ -350,11 +350,15 @@ class SingleInstanceLock:
     def _find_owner_pid_unix() -> Optional[int]:
         lock_path = _unix_lock_path()
         try:
+            st = os.stat(lock_path)
+            # /proc/locks 的 inode 字段格式: {major:02x}:{minor:02x}:{inode}
+            # 必须零补齐 major/minor（如"08:10:103536"），否则匹配失败
+            lock_dev_ino = f"{os.major(st.st_dev):02x}:{os.minor(st.st_dev):02x}:{st.st_ino}"
             with open("/proc/locks", "r") as f:
                 for line in f:
                     parts = line.split()
-                    if len(parts) >= 8 and lock_path in parts[-1]:
+                    if len(parts) >= 6 and parts[5] == lock_dev_ino:
                         return int(parts[4])
-        except (FileNotFoundError, ValueError, IndexError):
+        except (FileNotFoundError, ValueError, IndexError, OSError):
             pass
         return None

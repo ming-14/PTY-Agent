@@ -1,7 +1,0 @@
-- cl，cmake位置自己找，可能不在系统变量
-- 文档：
-	- `FILESTREE.md`是项目索引，`Lessons-Learned.md`是经验教训，开始开发时请先阅读这两个文件
-	- 可复用的经验教训写在`docs/Lessons-Learned.md`
-	- 代码变更时及时更新文档`win-sandbox\docs`
-- 遵守C++语言规范，**遵守项目架构**
-- 构建请使用`BUILD.ps1`

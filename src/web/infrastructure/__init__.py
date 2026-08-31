@@ -14,7 +14,10 @@ from .system.stats_provider import SystemStatsProviderImpl
 from .thread_executor import ThreadExecutorImpl
 from .web.connection_context import WebSocketConnectionContext
 from .web.event_publisher import EventPublisherImpl
-from .web.fastapi_transport import FastAPIWebSocketTransport
+
+# 注意：FastAPIWebSocketTransport 不在此导出（fastapi_transport 顶层引入 starlette，
+# 而本包会被 daemon 核心的 history_store 探测链（get_history_store_cls）连带导入，
+# 会导致 web 关闭时也加载 web 依赖）。由使用方（presentation/server.py）按需导入。
 
 # 注意：VncAdapter / ScreenshareAdapter 属于可选模块（src/vnc、src/screenshare），
 # 不在此模块级导入（避免目录缺失时整个 infrastructure 包导入失败）。
@@ -23,7 +26,6 @@ from .web.fastapi_transport import FastAPIWebSocketTransport
 __all__ = [
     "CursorLocatorAdapter",
     "EventPublisherImpl",
-    "FastAPIWebSocketTransport",
     "HistoryRepositoryAdapter",
     "SessionRepositoryAdapter",
     "SessionStore",

@@ -1,41 +1,26 @@
 """通用状态检查插件 — 纯启发式终端状态检测
 
-插件仅提供两个钩子：
-1. 返回钩子（inspect_state）：命令返回时（exec/send/read/mouse 响应构造）触发一次，
-   检查当前终端状态，检测结果作为 terminalState 附加到返回信息。
-2. 命令钩子（handle_command）：plugin cmd <id> state_check status 查询当前状态。
-
-无轮询、无事件订阅、不干预命令执行。按优先级顺序检查屏幕快照/光标位置/
-备用屏幕/前台进程，匹配即返回状态（Editor/Repl/WaitingForInput/Pager/
-Confirm/Password/Running/Error）。
+插件仅保留两个钩子：
+1. 响应装饰（decorate_response）：装饰 list 响应，给普通 PTY 会话的 status 追加
+   HEUR 状态标记（格式：running - HEUR:Repl）。
+2. CLI 渲染（render_response）：list 响应打印前接管 STATE 列渲染，直接显示
+   status 字段（autoMount 声明，list 命令无需 --plugin 激活）。
 
 数据源:
-- 屏幕快照:  ctx.session.get_snapshot()（纯文本）
-- 光标位置:  ctx.session.cursor_position()（0-based 列/行）
-- 备用屏幕:  ctx.session.is_alt_screen()（终端层跟踪）
+- 屏幕快照:  session.get_snapshot()（纯文本）
+- 光标位置:  session.cursor_position()（0-based 列/行）
+- 备用屏幕:  session.is_alt_screen()（终端层跟踪）
 - 前台进程:  会话进程树进程名（psutil 解析，缺依赖时该级跳过）
 
-未启用级别：1（进程退出）、6（自定义 shell 正则）。
+未启用级别：1（进程退出）、3（REPL 提示符）、6（自定义 shell 正则）。
 """
 
-import logging
 import re
 
 from src.plugins.base import Plugin
 
-_logger = logging.getLogger("pty-plugins")
-
 # 前台进程 shell 名单（优先级 5）
 SHELL_NAMES = ("bash", "zsh", "sh", "fish", "dash", "tcsh", "csh", "pwsh", "powershell")
-
-# 优先级 3：REPL 提示符正则（19 种，仅最后一行）
-REPL_PROMPTS = (
-    r"^>>>\s?$", r"^\.\.\.\s?$", r"^In \[\d+\]:\s?$", r"^Out\[\d+\]:\s?$",
-    r"^\(Pdb\)\s?$", r"^ipdb>\s?$", r"^irb>\s?$", r"^pry>\s?$",
-    r"^mysql>\s?$", r"^mariadb>\s?$", r"^psql>\s?$", r"^postgres=#\s?$",
-    r"^postgres=>\s?$", r"^sqlite>\s?$", r"^lua>\s?$", r"^node>\s?$",
-    r"^julia>\s?$", r"^sage>\s?$", r"^ghci>\s?$",
-)
 
 # 优先级 4：Shell 提示符正则（8 种，仅最后一行）
 SHELL_PROMPTS = (
@@ -44,9 +29,10 @@ SHELL_PROMPTS = (
     r"\$\s?$", r"#\s?$", r">\s?$", r"%\s?$",
 )
 
-# 优先级 7：编辑器模式指示词（6 种，仅最后一行）
+# 优先级 7：编辑器模式指示词（10 种，仅最后一行）
 EDITOR_INDICATORS = (
     "-- insert --", "-- normal --", "-- visual --", "-- replace --",
+    "-- 插入 --", "-- 普通 --", "-- 可视 --", "-- 替换 --",
     "gnu nano", "^g get help",
 )
 
@@ -75,7 +61,7 @@ CONFIRM_INDICATORS = (
     "do you want", "shall i", "would you like",
 )
 
-# 优先级 13：错误指示词（17 种，最近 3 行）
+# 优先级 12：错误指示词（17 种，最近 3 行）
 ERROR_INDICATORS = (
     "error:", "failed:", "fatal:", "exception:", "traceback",
     "indexerror", "keyerror", "nameerror", "typeerror", "valueerror",
@@ -85,11 +71,7 @@ ERROR_INDICATORS = (
 
 
 def _is_command_output_line(line: str) -> bool:
-    """判断一行是否为命令输出行（以 $ / # / > / % 开头）
-
-    防误匹配：命令输出（如文件内容、帮助文本）里可能恰好以提示符字样结尾，
-    这类行不作为提示符判定（REPL/Shell 提示符检测的先行条件）。
-    """
+    """判断一行是否为命令输出行（以 $ / # / > / % 开头）"""
     line = line.strip()
     if not line:
         return False
@@ -105,56 +87,156 @@ def _process_name(pid: int):
         return None
 
 
-class StateCheckPlugin(Plugin):
-    """通用状态检查（纯启发式）：命令返回时检测终端状态并附加到返回信息
+# ── CLI 侧渲染辅助（render_response 用） ──────────────────
 
-    元信息（id/kind/hooks/权限）见同目录 plugin.json；无事件/定时触发。
+def _trunc(text, n: int) -> str:
+    """截断文本到 n 字符，超长补 ..."""
+    text = text or ""
+    return text if len(text) <= n else text[: n - 3] + "..."
+
+
+def _fmt_duration(s: dict) -> str:
+    """会话运行时长"""
+    import time
+    start = s.get("startTime")
+    if not start:
+        return ""
+    end = s.get("endTime") if not s.get("running") else time.time()
+    try:
+        secs = max(0, float(end) - float(start))
+    except (TypeError, ValueError):
+        return ""
+    if secs < 60:
+        return f"{secs:.0f}s"
+    if secs < 3600:
+        return f"{secs / 60:.0f}m"
+    return f"{secs / 3600:.1f}h"
+
+
+def _render_table(headers, rows) -> str:
+    """渲染对齐表格（两空格分隔）"""
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i in range(min(len(headers), len(row))):
+            widths[i] = max(widths[i], len(str(row[i])))
+    lines = [
+        "  ".join(h.ljust(widths[i]) for i, h in enumerate(headers)).rstrip(),
+        "  ".join("-" * widths[i] for i in range(len(headers))),
+    ]
+    for row in rows:
+        lines.append(
+            "  ".join(
+                str(row[i]).ljust(widths[i])
+                for i in range(min(len(headers), len(row)))
+            ).rstrip()
+        )
+    return "\n".join(lines)
+
+
+def _render_list_with_state_check(resp: dict) -> str | None:
+    """渲染 list 响应：STATE 列优先显示 status 字段（含 HEUR 标记）
+
+    仅当响应含 status 字段的会话时接管渲染（返回表格文本）；
+    否则返回 None 走默认渲染。
     """
+    sessions = resp.get("sessions") or []
+    if not any(s.get("status") for s in sessions):
+        return None
+    headers = ("ID", "COMMAND", "TIME", "STATE")
+    rows = []
+    for s in sessions:
+        state = s.get("status") or ("running" if s.get("running") else "ended")
+        rows.append(
+            (
+                s.get("id", ""),
+                _trunc(s.get("rawStartCommand") or s.get("command") or "", 24),
+                _fmt_duration(s),
+                state,
+            )
+        )
+    return _render_table(headers, rows)
 
-    # ── 返回钩子：命令返回时触发一次 ───────────────────────
 
-    def inspect_state(self, ctx):
-        """命令返回时检测终端状态，随响应返回 terminalState"""
-        try:
-            text = ctx.session.get_snapshot() or ""
-            cursor = ctx.session.cursor_position()
-            cursor_x = cursor[0] if cursor else None
-            alt = ctx.session.is_alt_screen()
-        except Exception:
-            text, cursor_x, alt = "", None, False
-        process = self._foreground_process_name(ctx)
-        state, reason = self._detect(text, cursor_x, alt, process)
-        return {
-            "state": state,
-            "reason": reason,
-            "altScreen": alt,
-        }
+class StateCheckPlugin(Plugin):
+    """状态检查（纯启发式）：装饰 list 响应 + CLI 显示 HEUR 标记"""
 
-    # ── 命令钩子：外部查询当前状态 ─────────────────────────
+    # ── 响应装饰：list ─────────────────────────────────────
 
-    def handle_command(self, ctx, msg):
-        if msg.get("command") == "status":
-            return self.inspect_state(ctx)
+    def decorate_response(self, ctx, resp: dict) -> dict | None:
+        """装饰 list 响应，给普通 PTY 会话的 status 追加 HEUR 标记"""
+        ctype = resp.get("commandType")
+        if ctype == "list":
+            return self._decorate_list(ctx, resp)
         return None
 
-    # ── 内部实现 ───────────────────────────────────────────
-
-    def _foreground_process_name(self, ctx):
-        """返回进程树中首个 shell 进程名；无 shell 进程或解析失败返回 None"""
-        try:
-            pids = ctx.session.get_pty_process_list() or []
-        except Exception:
+    def _decorate_list(self, ctx, resp: dict) -> dict | None:
+        """list：给普通 PTY 会话补 status 标记（格式：running - HEUR:状态）"""
+        sessions = resp.get("sessions")
+        if not sessions:
             return None
+        manager = ctx.manager
+        if manager is None:
+            return None
+        modified = False
+        for s in sessions:
+            if not s.get("running"):
+                continue
+            sid = s.get("id")
+            if not sid:
+                continue
+            session = manager.get_session(sid)
+            if session is None:
+                continue
+            # 条件 1：普通 exec 创建（来源标记含 "normal"）
+            if not session.has_common_mark("normal"):
+                continue
+            # 条件 2：PTY 模式
+            if getattr(session, "mode", "") != "pty":
+                continue
+            state, _ = self._detect_session(session)
+            if state is None:
+                continue
+            existing = s.get("status") or ("running" if s.get("running") else "ended")
+            s["status"] = "{} - HEUR:{}".format(existing, state)
+            modified = True
+        return resp if modified else None
+
+    def _detect_session(self, session):
+        """对会话对象运行状态检测，返回 (state, reason)"""
+        try:
+            text = session.get_snapshot() or ""
+            cursor = session.cursor_position()
+            cursor_x = cursor[0] if cursor else None
+            alt = session.is_alt_screen()
+        except Exception:
+            text, cursor_x, alt = "", None, False
+        process = None
+        try:
+            pids = session.get_pty_process_list() or []
+        except Exception:
+            pids = []
         for pid in pids:
             name = _process_name(pid)
             if name and any(s in name.lower() for s in SHELL_NAMES):
-                return name
+                process = name
+                break
+        return self._detect(text, cursor_x, alt, process)
+
+    # ── CLI 渲染：list 响应打印前 ──────────────────────────
+
+    def render_response(self, ctx, resp: dict) -> str | None:
+        """CLI 侧渲染：list 响应 STATE 列显示 status（含 HEUR 标记）"""
+        ctype = resp.get("commandType")
+        if getattr(ctx, "command", "") == "list" and ctype == "list":
+            return _render_list_with_state_check(resp)
         return None
+
+    # ── 检测逻辑 ───────────────────────────────────────────
 
     def _detect(self, screen_text: str, cursor_x, is_alt_screen: bool, process_name):
         """按优先级表顺序检测，匹配即返回 (状态, 描述)
 
-        输入 screen_text 为纯文本快照；未启用级别: 1（进程退出）、6（自定义 shell 正则）。
+        未启用级别: 1（进程退出）、3（REPL 提示符）、6（自定义 shell 正则）。
         """
         lines = screen_text.split("\n")
         non_empty = [ln.rstrip() for ln in lines if ln.strip()]
@@ -165,18 +247,12 @@ class StateCheckPlugin(Plugin):
         recent = "\n".join(ln.lower() for ln in non_empty[-3:])
         whole_lower = screen_text.lower()
 
-        # 2. 备用屏幕激活 → Editor（vim/htop/less 等 TUI）
+        # 2. 备用屏幕激活 → Alt-Screen
         if is_alt_screen:
-            return "Editor", "alt screen active"
+            return "Alt-Screen", "alt screen active"
 
-        # 防误匹配：命令输出行（$ / # / > / % 开头）不作为提示符判定
+        # 防误匹配：命令输出行不作为提示符判定
         is_prompt_line = not _is_command_output_line(tail_last)
-
-        # 3. 最后一行 REPL 提示符且光标不在行首 → Repl
-        if is_prompt_line and cursor_x != 0:
-            for pattern in REPL_PROMPTS:
-                if re.search(pattern, tail_last):
-                    return "Repl", "repl prompt"
 
         # 4. 最后一行 Shell 提示符且光标不在行首 → WaitingForInput
         if is_prompt_line and cursor_x != 0:
@@ -208,13 +284,14 @@ class StateCheckPlugin(Plugin):
         if any(i in tail_last_lower for i in CONFIRM_INDICATORS):
             return "Confirm", "confirm prompt"
 
-        # 12. 光标在行首 → Running（命令执行中）
-        if cursor_x == 0:
-            return "Running", "cursor at column 0"
-
-        # 13. 最近 3 行错误指示词 → Error
+        # 12. 最近 3 行错误指示词 → Error（优先于 Running：错误输出以换行结尾时
+        #     光标常回到行首 col 0，若 Running 在前则 Error 永不命中）
         if any(i in recent for i in ERROR_INDICATORS):
             return "Error", "error indicator"
+
+        # 13. 光标在行首 → Running（命令执行中）
+        if cursor_x == 0:
+            return "Running", "cursor at column 0"
 
         return None, "no match"
 

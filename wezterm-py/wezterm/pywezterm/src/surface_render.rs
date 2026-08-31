@@ -158,7 +158,8 @@ impl PySurface {
             self.surface.flush_changes_older_than(seq);
             return Ok((seq, vec![]));
         }
-        let buf = render_changes_bytes(&changes)?;
+        let (cols, rows) = self.surface.dimensions();
+        let buf = render_changes_bytes(&changes, cols, rows)?;
         self.surface.flush_changes_older_than(seq);
         Ok((seq, buf))
     }
@@ -174,7 +175,12 @@ impl PySurface {
 
 /// 把 Change 流渲染为 ANSI 字节（terminfo renderer），供 Surface.py 与 Mux 合成复用。
 /// 用 ANSI SGR 渲染（不依赖真实 TERM 环境）：TrueColor 能力 + 强制 ANSI SGR。
-pub(crate) fn render_changes_bytes(changes: &[Change]) -> PyResult<Vec<u8>> {
+///
+/// cols/rows 为表面尺寸：Text 写满整行后 Surface 内部光标会推进到行尾边界外
+/// （如 100 列写满 → 光标 x=100），全量重绘会把该越界位置输出为 CUP 定位，
+/// 宿主终端收到后 clamp 到行尾（表现为光标跳到最末列）。渲染前把越界坐标
+/// clamp 回合法范围。
+pub(crate) fn render_changes_bytes(changes: &[Change], cols: usize, rows: usize) -> PyResult<Vec<u8>> {
     if changes.is_empty() {
         return Ok(vec![]);
     }
@@ -191,6 +197,8 @@ pub(crate) fn render_changes_bytes(changes: &[Change]) -> PyResult<Vec<u8>> {
     // 相反。在渲染前把 Absolute 坐标的 x/y 互换，使输出回到终端标准语义；
     // Relative/EndRelative 在渲染器里走独立的行/列相对移动分支（语义正确），
     // 不参与互换。
+    let max_col = cols.saturating_sub(1);
+    let max_row = rows.saturating_sub(1);
     let fixed: Vec<Change> = changes
         .iter()
         .map(|c| match c {
@@ -198,8 +206,9 @@ pub(crate) fn render_changes_bytes(changes: &[Change]) -> PyResult<Vec<u8>> {
                 x: Position::Absolute(x),
                 y: Position::Absolute(y),
             } => Change::CursorPosition {
-                x: Position::Absolute(*y),
-                y: Position::Absolute(*x),
+                // 先 clamp（列 < cols、行 < rows），再互换
+                x: Position::Absolute((*y).min(max_row)),
+                y: Position::Absolute((*x).min(max_col)),
             },
             other => other.clone(),
         })

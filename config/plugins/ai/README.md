@@ -39,7 +39,7 @@ python app.py read myid -s
 | 模式 | 触发 | 行为 |
 |------|------|------|
 | `responseOutput` | 无 `-o` | 把 outputStream 拼进 prompt 写临时文件，`aichat -f` 喂 AI（避免 Windows 命令行编码问题） |
-| `fileOutput` | 有 `-o` | 先经 `src.client.renderer` 渲染 `-o` 文件（txt/svg/图），`aichat -f` 读该文件，并置 `resp["aiFileWritten"]` 让主程序跳过重复写入，保持"-o 文件=原始渲染、stdout=AI 输出"语义 |
+| `fileOutput` | 有 `-o` | 从 daemon 渲染结果（svgContent/imageZ）写 `-o` 文件，`aichat -f` 读该文件，并置 `resp["aiFileWritten"]` 让主程序跳过重复写入，保持"-o 文件=原始渲染、stdout=AI 输出"语义 |
 
 ## 会话续聊
 
@@ -48,17 +48,18 @@ python app.py read myid -s
 
 ## 配置
 
-### 插件配置（plugin.json config.defaults + config.yaml）
+单一来源：`config/config.yaml`（aichat 模型/密钥 + 插件 prompt/timeout），
+**不使用插件系统的 plugin.json config 通道**。
 
 | 键 | 默认 | 说明 |
 |------|------|------|
-| `prompt`（环境变量 `PTY_PLUGIN_AI_PROMPT` 覆盖） | `全面分析该内容，只按内容说话，不给出下一步，不提建议` | 分析提示词 |
-| `timeout`（环境变量 `PTY_PLUGIN_AI_TIMEOUT` 覆盖） | `120` | aichat 调用超时（秒） |
-
-### config.yaml（aichat 模型/密钥）
+| `model` | `openai:deepseek-v4-flash-free` | aichat 模型 |
+| `prompt` | `全面分析该内容，只按内容说话，不给出下一步，不提建议` | 分析提示词 |
+| `timeout` | `120` | aichat 调用超时（秒） |
+| `clients[].type/name/api_base/api_key` | — | aichat 客户端（API 端点/密钥） |
 
 - 位置：`config/config.yaml`（含 api_key，**被 gitignore 忽略，不入库**）
-- 模板：`config/config.yaml.example`（入库）
+- 模板：`config/config.yaml.example`（入库，含全部默认值）
 - **自愈**：`common._ensure_config()` 在 config.yaml 缺失但 example 存在时自动复制 example 生成 config.yaml
 - 两者都缺失时：aichat 加载配置失败（stderr 报错），AI 分析回退原始响应，不阻断主流程
 - 可用 `config_manager.py` 管理：
@@ -67,6 +68,8 @@ python app.py read myid -s
 python config/plugins/ai/config_manager.py --show-config                 # 查看
 python config/plugins/ai/config_manager.py --init                        # 从模板初始化
 python config/plugins/ai/config_manager.py --set-config model openai:deepseek-v4-flash-free
+python config/plugins/ai/config_manager.py --set-config prompt "分析提示词"
+python config/plugins/ai/config_manager.py --set-config timeout 60
 ```
 
 ## 失败处理
@@ -93,7 +96,7 @@ config/plugins/ai/
 内置于 `config/plugins/` 含 `plugin.json` 清单：
 
 ```json
-{ "enabled": true, "plugins": ["config/plugins/state_check", "config/plugins/files", "config/plugins/ai", "config/plugins/simple"] }
+{ "enabled": true, "plugins": { "ai": { "enabled": true } } }
 ```
 
 CLI 插件由 `src/client/cli_plugins.py`（CliPluginHost）在客户端进程启动时加载，

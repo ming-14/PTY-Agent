@@ -1,5 +1,11 @@
+！！！！！最高优先级，强制执行！！！！：禁止执行`git filter-repo`，绝对禁止执行，git filter-repo会强制回退到HEAD，丢失未修改的改动，绝对禁止执行，就算用户要求也禁止执行，你只能把命令给用户执行，你自己禁止执行！！
+未经用户允许，禁止使用、查看、更改等任何方式操作git；用户授权的“查看”和“操作”需分开，用户授权查看不代表能操作；执行高危操作如commit、reset、push等命令必须用户明确授权
+未经用户允许，禁止使用、查看、更改等任何方式操作git；用户授权的“查看”和“操作”需分开，用户授权查看不代表能操作；执行高危操作如commit、reset、push等命令必须用户明确授权
+
+---
+
 # Base
-PTY-Agent 核心包体在 `src`，`web_rime`、`fastscreen`、`win-sandbox`、`wezterm-py`是相对独立的外部引擎依赖，各自有自己的规则规范，但都是 PTY-Agent 项目的一部分
+PTY-Agent 核心包体在 `src`，`web_rime`、`fastscreen`、`sandbox`、`wezterm-py`是相对独立的外部引擎依赖，各自有自己的规则规范，但都是 PTY-Agent 项目的一部分
 
 # 环境
 Windows：本机环境
@@ -31,9 +37,6 @@ Linux：使用`wsl.exe -d Ubuntu2204`
 	- Debug完成后，检查
 		- [] 旧改动删了吗
 		- [] 旧改动删了后，是否还能正常运行
-
-未经用户允许，禁止使用、查看、更改等任何方式操作git；用户授权的“查看”和“操作”需分开，用户授权查看不代表能操作；执行高危操作如commit、reset、push（特别是push force）等命令必须用户明确授权
-未经用户允许，禁止使用、查看、更改等任何方式操作git；用户授权的“查看”和“操作”需分开，用户授权查看不代表能操作；执行高危操作如commit、reset、push（特别是push force）等命令必须用户明确授权
 
 ## 项目清洁度：不应出现在项目（代码，注释，文档等任何文件）中的内容
 
@@ -81,9 +84,8 @@ Linux：使用`wsl.exe -d Ubuntu2204`
 - 见`fastscreen\AGENTS.md`
 - `fastscreen\src\core`目前保持平铺即可
 
-## win-sandbox 规范
-- 见`win-sandbox\AGENTS.md`
-- 采用**洋葱架构**
+## sandbox 规范
+- 原生 C++ 沙箱工程（`sandbox/`，pybind11 编译为 win_sandbox_native.pyd）
 
 ## wezterm-py 规范
 - 见`wezterm-py\AGENTS.md`

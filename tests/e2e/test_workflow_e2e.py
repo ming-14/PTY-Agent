@@ -180,7 +180,7 @@ def workflow_env(tmp_path, config_reloader):
     避免测试临时配置泄漏到工作区。
     """
     # import 提前：若配置/环境本身有问题，在覆写任何文件之前就失败
-    from src.client.daemonctl import is_running, start_daemon, stop_daemon
+    from src.client.daemonctl import is_running, start_daemon, stop_daemon, _stop_daemon_force
 
     backup_common = _cfg_path("common.toml").read_bytes()
     backup_daemon = _cfg_path("daemon", "daemon.toml").read_bytes()
@@ -199,6 +199,10 @@ def workflow_env(tmp_path, config_reloader):
         # 模块级 globals，不重载则进程内仍用上一个测试的 config（如 tls 模式）
         config_reloader()
 
+        # 清理残留 daemon：持有单实例互斥锁会导致新 daemon 启动即退出。
+        # 经互斥锁定位 PID 强杀（不依赖 CONNECT_MODE 路由，兼容任意残留模式）。
+        if is_running():
+            _stop_daemon_force()
         start_daemon()
         try:
             # 等待 daemon 就绪：单实例锁 + token 端口 TCP 可达（锁先于 SHM 写入，
@@ -228,6 +232,8 @@ def workflow_env(tmp_path, config_reloader):
                 pass
     finally:
         _restore()
+        # 恢复文件后重载进程内 config，使后续测试读到正确的配置
+        config_reloader()
 
 
 from types import SimpleNamespace  # noqa: E402

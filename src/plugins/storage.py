@@ -9,7 +9,7 @@ import json
 import os
 import shutil
 import threading
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from ..logging import get_logger
 
@@ -38,8 +38,12 @@ class KvStore:
     def _flush(self) -> None:
         # 首次写入时创建父目录（存储根目录惰性创建）
         os.makedirs(os.path.dirname(self._path), exist_ok=True)
-        with open(self._path, "w", encoding="utf-8") as f:
-            json.dump(self._data, f, ensure_ascii=False, indent=2)
+        # 紧凑分隔符 + 原子替换：tmp 写完后 os.replace 落盘，
+        # 避免半写文件被读到（并发读/崩溃场景）
+        tmp = self._path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(self._data, f, ensure_ascii=False, separators=(",", ":"))
+        os.replace(tmp, self._path)
 
     def get(self, key: str, default=None):
         with self._lock:

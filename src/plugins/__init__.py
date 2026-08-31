@@ -8,7 +8,7 @@
 - host:      会话级插件宿主（HookEngine 驱动 + 挂载链 + 返回控制）
 - hooks:     钩子链引擎（优先级排序 + 五类调度语义）
 - events:    daemon 事件总线（pub/sub + 主题通配）
-- config:    插件配置（清单默认 + config.yaml + 环境变量覆盖 + schema 校验）
+- config:    插件配置（清单默认 + 内存覆盖 + schema 校验）
 - storage:   插件存储（kv/文件/sqlite 三种视图）
 - permissions: 能力检查 + 审计
 - environment: 运行环境（daemon 全局共享能力集合）
@@ -17,7 +17,7 @@
 """
 
 from .base import HANDLED, Plugin, PluginContext, ProcessPluginContext, VALID_HOOKS
-from .manifest import PluginManifest, load_manifest
+from .manifest import PluginManifest, PluginCliOption, load_manifest
 from .loader import LoadedPlugin, load_plugin_dir, load_plugins
 from .registry import PluginRegistry
 from .host import PluginHost
@@ -27,6 +27,15 @@ from .config import PluginConfig, ConfigError
 from .storage import PluginStorage, KvStore, FileStore
 from .permissions import PermissionChecker, PermissionDenied
 from .environment import PluginEnvironment
+from .cli_options import (
+    CLI_OPTION_COMMANDS,
+    RESERVED_OPTIONS,
+    OptionRegistration,
+    build_option_registrations,
+    check_cli_option_conflicts,
+    collect_option_values,
+    validate_plugin_options,
+)
 from .context import (
     context_text,
     find_plugin_dir,
@@ -45,6 +54,7 @@ __all__ = [
     "ProcessPluginContext",
     "VALID_HOOKS",
     "PluginManifest",
+    "PluginCliOption",
     "load_manifest",
     "LoadedPlugin",
     "load_plugin_dir",
@@ -63,6 +73,13 @@ __all__ = [
     "PermissionChecker",
     "PermissionDenied",
     "PluginEnvironment",
+    "CLI_OPTION_COMMANDS",
+    "RESERVED_OPTIONS",
+    "OptionRegistration",
+    "build_option_registrations",
+    "check_cli_option_conflicts",
+    "collect_option_values",
+    "validate_plugin_options",
     "context_text",
     "find_plugin_dir",
     "load_context_state",

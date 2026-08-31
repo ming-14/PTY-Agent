@@ -5,15 +5,15 @@ import time
 
 import pytest
 
-from config.plugins.files.errors import (
+from src.files.errors import (
     FileReadRequiredError,
     FilePermissionDeniedError,
     FileToolError,
 )
-from config.plugins.files.history import FileHistoryStore
-from config.plugins.files.permission import PermissionPolicy
-from config.plugins.files.state import FileRecordStore
-from config.plugins.files.write import edit_file
+from src.files.history import FileHistoryStore
+from src.files.permission import PermissionPolicy
+from src.files.state import FileRecordStore
+from src.files.write import edit_file
 
 
 @pytest.fixture

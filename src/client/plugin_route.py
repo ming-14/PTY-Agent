@@ -37,7 +37,7 @@ class ClientPluginMixin:
             else:
                 daemon_names.append(name)
         if cli_hooks:
-            cli_plugins.activate(cli_hooks)
+            cli_plugins.activate(cli_hooks, self.plugin_options)
             msg["cliPlugins"] = cli_hooks
         if daemon_names:
             msg["plugins"] = daemon_names
@@ -75,7 +75,6 @@ class ClientPluginMixin:
             return []
         resp = self._send_recv(
             {"type": "plugin", "action": "ls", "id": session_id},
-            autostart=False,
         )
         if resp.get("type") == "error":
             return []
@@ -87,4 +86,6 @@ class ClientPluginMixin:
         """挂载会话上记录的 CLI 插件钩子（read/send/mouse 每次调用自动生效）"""
         if self._cli_plugins is None:
             return
-        self._cli_plugins.activate(self._session_cli_plugins(session_id))
+        self._cli_plugins.activate(
+            self._session_cli_plugins(session_id), self.plugin_options
+        )

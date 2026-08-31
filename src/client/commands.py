@@ -7,12 +7,10 @@
 - 实时接管：cmd_attend
 
 模块级共享工具：print_response 经 presenter 模块属性调用（支持测试 monkeypatch）；
-_shell 操作符检测 / ISO 时间解析 / screenBufferZ 解压 / --output 文件写入。
+_shell 操作符检测 / ISO 时间解析 / 渲染格式协商 / --output 文件写入（daemon 渲染结果）。
 """
 
 import base64
-import gzip
-import json
 import os
 import shlex
 import socket
@@ -20,7 +18,6 @@ import sys
 from typing import Optional
 
 from ..config.common import IS_WINDOWS
-from ..config.client import CONNECT_MODE
 from ..config.default_keys import DEFAULT_VALUES as _DEFAULTS_MAP
 from ..protocol.response import Response
 from ..logging import get_logger
@@ -29,16 +26,81 @@ from . import presenter
 _logger = get_logger("pty-client")
 
 
-def _decompress_screen_buffer(resp: dict):
-    if "screenBufferZ" not in resp:
-        return
-    try:
-        compressed = base64.b64decode(resp.pop("screenBufferZ"))
-        raw = gzip.decompress(compressed)
-        resp["screenBuffer"] = json.loads(raw)
-        resp.pop("screenBufferMeta", None)
-    except Exception as e:
-        _logger.warning("解压 screenBufferZ 失败: %s", e)
+def _render_format_for(output_path, response_format) -> Optional[str]:
+    """计算请求的渲染格式：svg / png / jpg / jpeg / bmp / None
+
+    - --response-format svg → "svg"
+    - --output <图片扩展名> → 对应格式（daemon 按格式编码）
+    - 其余 → None（不请求服务端渲染，走默认文本输出）
+    """
+    if response_format == "svg":
+        return "svg"
+    if output_path:
+        _, ext = os.path.splitext(output_path.lower())
+        if ext in (".png", ".jpg", ".jpeg", ".bmp"):
+            return ext.lstrip(".")
+        if ext == ".svg":
+            return "svg"
+    return None
+
+
+def _finalize_response(resp, response_format, output_path) -> None:
+    """响应收尾：svg / output_path 剥离字段 / 文件写入（exec/read/send/mouse 共用）
+
+    渲染由 daemon 侧 pywezterm 完成（render_svg / render_image），客户端
+    直接消费 resp["svgContent"] / resp["imageZ"]，不再本地渲染
+    （Python renderer 已删除）。
+    """
+    if response_format == "svg":
+        if resp.get("type") == "error":
+            presenter.print_response(resp)
+            return
+        svg = resp.get("svgContent") or ""
+        if not svg:
+            # 区分根因：会话已结束（无屏幕缓冲）→ requires a screen buffer；
+            # 否则（daemon 渲染不可用/失败）→ requires daemon-side SVG rendering
+            if not resp.get("program", {}).get("running", True):
+                message = "--response-format svg requires a screen buffer (the session has ended)"
+            else:
+                message = "--response-format svg requires daemon-side SVG rendering"
+            presenter.print_response(Response.error(message))
+            return
+        # 保留会话上下文（sessionId/program/reason/...）供 SessionResult 渲染：
+        # 终端展示带 svg 标签的框 + 状态行，而不是裸 svg 文本
+        svg_resp = {
+            k: v
+            for k, v in resp.items()
+            if k
+            not in (
+                "sessionDefaults",
+                "svgContent",
+                "imageZ",
+                "imageType",
+            )
+        }
+        svg_resp["type"] = "svg"
+        svg_resp["data"] = svg
+        svg_resp["format"] = "svg"
+        presenter.print_response(svg_resp)
+    elif output_path:
+        display = {
+            k: v
+            for k, v in resp.items()
+            if k
+            not in (
+                "sessionDefaults",
+                "aiFileWritten",
+                "svgContent",
+                "imageZ",
+                "imageType",
+            )
+        }
+        presenter.print_response(display)
+    else:
+        presenter.print_response(resp)
+    # fileOutput 插件已自行写文件，跳过重复写入
+    if not resp.get("aiFileWritten"):
+        _handle_output(output_path, resp)
 
 
 _SHELL_OPS = frozenset({"|", "||", "&", "&&", ";", ">", "<", ">>"})
@@ -61,32 +123,61 @@ def _parse_iso_time(s: str) -> float:
     return dt.timestamp()
 
 
-def _handle_output(
-    output_path: Optional[str], resp: dict, svg_compression_level: int = 1
-):
+def _handle_output(output_path: Optional[str], resp: dict):
     if not output_path:
         return
     if resp.get("type") == "error":
         _logger.warning("请求失败，跳过输出到 %s", output_path)
         return
-    from .renderer import is_image_ext, render_to_file
 
-    if is_image_ext(output_path) and not resp.get("screenBuffer"):
+    # 使用 daemon 侧渲染结果（v7：pywezterm 服务端渲染，替代本地 Python 渲染器）
+    svg = resp.get("svgContent")
+    image_b64 = resp.get("imageZ")
+    if svg:
+        # 服务端渲染 SVG
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(svg)
+            _logger.info("SVG written to %s (%d bytes)", output_path, len(svg))
+            presenter.print_response(Response.info(f"Output written to {output_path}"))
+        except OSError as e:
+            presenter.print_response(Response.error(f"Failed to write {output_path}: {e}"))
+        return
+    elif image_b64:
+        # 服务端渲染图片（base64 编码，格式按请求：png/jpg/jpeg/bmp）
+        try:
+            img_bytes = base64.b64decode(image_b64)
+            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+            with open(output_path, "wb") as f:
+                f.write(img_bytes)
+            _logger.info("Image written to %s (%d bytes)", output_path, len(img_bytes))
+            presenter.print_response(Response.info(f"Output written to {output_path}"))
+        except (OSError, ValueError) as e:
+            presenter.print_response(Response.error(f"Failed to write {output_path}: {e}"))
+        return
+
+    # 请求了渲染格式（svg/png/jpg/jpeg/bmp）但无渲染结果：拒绝回退写纯文本
+    # （用户明确要求图片格式，写纯文本到 .svg/.png 文件会误导）
+    if _render_format_for(output_path, None) is not None:
+        if not resp.get("program", {}).get("running", True):
+            msg = "requires a screen buffer (the session has ended)"
+        else:
+            msg = "rendering unavailable (daemon-side rendering failed or not available)"
         presenter.print_response(
-            Response.error(
-                f"Image output requires a screen buffer (got --output {output_path})"
-            )
+            Response.error(f"Failed to write {output_path}: {msg}")
         )
         return
-    err = render_to_file(
-        output_path, resp, svg_compression_level=svg_compression_level
-    )
-    if err:
-        presenter.print_response(Response.error(err))
-    else:
-        presenter.print_response(
-            Response.info(f"Output written to {output_path}")
-        )
+
+    # 回退：无服务端渲染结果时写纯文本输出（原始行为，非图片模式）
+    text = resp.get("outputStream") or resp.get("stdout") or ""
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(text)
+        _logger.info("Output written to %s", output_path)
+    except OSError as e:
+        presenter.print_response(Response.error(f"Failed to write {output_path}: {e}"))
 
 
 class ClientCommandsMixin:
@@ -151,6 +242,7 @@ class ClientCommandsMixin:
         encoding: Optional[str] = None,
         full: bool = False,
         keep_ansi: Optional[bool] = None,
+        lines: Optional[object] = None,
         idle_timeout: Optional[float] = None,
         idle_after_first_output: bool = False,
         force: bool = False,
@@ -164,6 +256,7 @@ class ClientCommandsMixin:
         plugins: Optional[list] = None,
         mode: str = "pty",
         shell: Optional[str] = None,
+        notify: bool = False,
     ):
         _logger.info(
             "cmd_exec: id=%r force=%s env=%s size=%s plugins=%s mode=%s shell=%s",
@@ -251,6 +344,10 @@ class ClientCommandsMixin:
             "explicit_timeout": explicit_timeout,
             "mode": mode,
         }
+        if notify:
+            msg["notify"] = True
+        if lines is not None:
+            msg["lines"] = lines
         if shell:
             msg["shell"] = shell
         if self._config.get("debug"):
@@ -276,16 +373,22 @@ class ClientCommandsMixin:
                 k, v = item.split("=", 1)
                 env_dict[k] = v
             msg["env"] = env_dict
-        if output_path:
-            msg["include_screen_buffer"] = True
-        if response_format == "svg":
-            msg["include_screen_buffer"] = True
+        if output_path or response_format == "svg":
+            rf = _render_format_for(output_path, response_format)
+            if rf:
+                msg["render_format"] = rf
+                if rf == "svg":
+                    msg["svg_compression_level"] = svg_compression_level
         if snapshot_diff:
             msg["snapshot_diff"] = True
         if plugins:
             # --plugin 按插件形态分流：CLI 形态在客户端启用本次调用，
             # 会话/进程形态透传 daemon 按现有逻辑挂载（避免 daemon 对 CLI 插件误报未加载）
             self._route_plugins(msg, plugins)
+        if self.plugin_options:
+            # 插件自定义选项（cliOptions 声明）随消息下发：daemon 形态注入会话，
+            # CLI 形态经激活钩子读取
+            msg["pluginOptions"] = self.plugin_options
 
         # 终端尺寸：--size 优先，否则从 --default terminal-size 读取
         if size:
@@ -319,56 +422,14 @@ class ClientCommandsMixin:
         if client_defaults:
             msg["client_defaults"] = client_defaults
 
-        resp = self._send_recv(msg, output_path=output_path)
-        _decompress_screen_buffer(resp)
+        resp = self._send_recv(msg, output_path=output_path, autostart=True)
         self._merge_session_defaults(resp)
 
-        if response_format == "svg":
-            if resp.get("type") == "error":
-                presenter.print_response(resp)
-                return
-            screen_buffer = resp.get("screenBuffer")
-            if not screen_buffer:
-                presenter.print_response(
-                    Response.error(
-                        "--response-format svg requires a screen buffer"
-                    )
-                )
-                return
-            from .renderer import _compress_svg, render_svg_string
-
-            svg = render_svg_string(screen_buffer)
-            svg = _compress_svg(svg, svg_compression_level)
-            # 保留会话上下文（sessionId/program/reason/...）供 SessionResult 渲染：
-            # 终端展示带 svg 标签的框 + 状态行，而不是裸 svg 文本
-            svg_resp = {
-                k: v
-                for k, v in resp.items()
-                if k not in ("screenBuffer", "screenBufferMeta", "sessionDefaults")
-            }
-            svg_resp["type"] = "svg"
-            svg_resp["data"] = svg
-            svg_resp["format"] = "svg"
-            presenter.print_response(svg_resp)
-        elif output_path:
-            display = {
-                k: v
-                for k, v in resp.items()
-                if k not in (
-                    "screenBuffer",
-                    "screenBufferMeta",
-                    "sessionDefaults",
-                    "aiFileWritten",
-                )
-            }
-            presenter.print_response(display)
-        else:
+        if notify:
+            # --notify 立即返回（无渲染结果），跳过 svg/文件输出处理
             presenter.print_response(resp)
-        # fileOutput 插件已自行写文件，跳过重复写入
-        if not resp.get("aiFileWritten"):
-            _handle_output(
-                output_path, resp, svg_compression_level=svg_compression_level
-            )
+            return
+        _finalize_response(resp, response_format, output_path)
 
     def cmd_read(
         self,
@@ -389,6 +450,7 @@ class ClientCommandsMixin:
         svg_compression_level: Optional[int] = None,
         snapshot_diff: bool = False,
         column: Optional[int] = None,
+        notify: bool = False,
     ):
         """读取会话终端输出，支持触发条件等待"""
         _logger.info(
@@ -447,17 +509,23 @@ class ClientCommandsMixin:
             msg["offset"] = offset
         if encoding is not None:
             msg["encoding"] = encoding
-        if output_path:
-            msg["include_screen_buffer"] = True
-        if response_format == "svg":
-            msg["include_screen_buffer"] = True
+        if output_path or response_format == "svg":
+            rf = _render_format_for(output_path, response_format)
+            if rf:
+                msg["render_format"] = rf
+                if rf == "svg":
+                    msg["svg_compression_level"] = svg_compression_level
         if snapshot_diff:
             msg["snapshot_diff"] = True
         if column is not None:
             msg["column"] = column
+        if notify:
+            msg["notify"] = True
 
         # CLI 插件按会话挂载自动挂钩（exec --plugin 挂载到会话后，此处自动回调）
         self._activate_session_cli(session_id)
+        if self.plugin_options:
+            msg["pluginOptions"] = self.plugin_options
 
         self._maybe_save_encoding(encoding)
         client_defaults = self._get_client_defaults()
@@ -465,55 +533,13 @@ class ClientCommandsMixin:
             msg["client_defaults"] = client_defaults
 
         resp = self._send_recv(msg, output_path=output_path)
-        _decompress_screen_buffer(resp)
         self._merge_session_defaults(resp)
 
-        if response_format == "svg":
-            if resp.get("type") == "error":
-                presenter.print_response(resp)
-                return
-            screen_buffer = resp.get("screenBuffer")
-            if not screen_buffer:
-                presenter.print_response(
-                    Response.error(
-                        "--response-format svg requires a screen buffer"
-                    )
-                )
-                return
-            from .renderer import _compress_svg, render_svg_string
-
-            svg = render_svg_string(screen_buffer)
-            svg = _compress_svg(svg, svg_compression_level)
-            # 保留会话上下文（sessionId/program/reason/...）供 SessionResult 渲染：
-            # 终端展示带 svg 标签的框 + 状态行，而不是裸 svg 文本
-            svg_resp = {
-                k: v
-                for k, v in resp.items()
-                if k not in ("screenBuffer", "screenBufferMeta", "sessionDefaults")
-            }
-            svg_resp["type"] = "svg"
-            svg_resp["data"] = svg
-            svg_resp["format"] = "svg"
-            presenter.print_response(svg_resp)
-        elif output_path:
-            display = {
-                k: v
-                for k, v in resp.items()
-                if k not in (
-                    "screenBuffer",
-                    "screenBufferMeta",
-                    "sessionDefaults",
-                    "aiFileWritten",
-                )
-            }
-            presenter.print_response(display)
-        else:
+        if notify:
+            # --notify 立即返回（无渲染结果），跳过 svg/文件输出处理
             presenter.print_response(resp)
-        # fileOutput 插件已自行写文件，跳过重复写入
-        if not resp.get("aiFileWritten"):
-            _handle_output(
-                output_path, resp, svg_compression_level=svg_compression_level
-            )
+            return
+        _finalize_response(resp, response_format, output_path)
 
     def cmd_send(
         self,
@@ -526,6 +552,7 @@ class ClientCommandsMixin:
         encoding: Optional[str] = None,
         full: bool = False,
         keep_ansi: Optional[bool] = None,
+        lines: Optional[object] = None,
         idle_timeout: Optional[float] = None,
         idle_after_first_output: bool = False,
         json_escaping: bool = False,
@@ -534,6 +561,7 @@ class ClientCommandsMixin:
         response_format: Optional[str] = None,
         svg_compression_level: Optional[int] = None,
         snapshot_diff: bool = False,
+        notify: bool = False,
     ):
         """向会话发送输入文本，支持触发条件等待和屏幕快照
 
@@ -619,15 +647,23 @@ class ClientCommandsMixin:
             msg["idle_after_first_output"] = idle_after_first_output
         if encoding is not None:
             msg["encoding"] = encoding
-        if output_path:
-            msg["include_screen_buffer"] = True
-        if response_format == "svg":
-            msg["include_screen_buffer"] = True
+        if output_path or response_format == "svg":
+            rf = _render_format_for(output_path, response_format)
+            if rf:
+                msg["render_format"] = rf
+                if rf == "svg":
+                    msg["svg_compression_level"] = svg_compression_level
         if snapshot_diff:
             msg["snapshot_diff"] = True
+        if lines is not None:
+            msg["lines"] = lines
+        if notify:
+            msg["notify"] = True
 
         # CLI 插件按会话挂载自动挂钩（exec --plugin 挂载到会话后，此处自动回调）
         self._activate_session_cli(session_id)
+        if self.plugin_options:
+            msg["pluginOptions"] = self.plugin_options
 
         self._maybe_save_encoding(encoding)
         client_defaults = self._get_client_defaults()
@@ -635,55 +671,13 @@ class ClientCommandsMixin:
             msg["client_defaults"] = client_defaults
 
         resp = self._send_recv(msg, output_path=output_path)
-        _decompress_screen_buffer(resp)
         self._merge_session_defaults(resp)
 
-        if response_format == "svg":
-            if resp.get("type") == "error":
-                presenter.print_response(resp)
-                return
-            screen_buffer = resp.get("screenBuffer")
-            if not screen_buffer:
-                presenter.print_response(
-                    Response.error(
-                        "--response-format svg requires a screen buffer"
-                    )
-                )
-                return
-            from .renderer import _compress_svg, render_svg_string
-
-            svg = render_svg_string(screen_buffer)
-            svg = _compress_svg(svg, svg_compression_level)
-            # 保留会话上下文（sessionId/program/reason/...）供 SessionResult 渲染：
-            # 终端展示带 svg 标签的框 + 状态行，而不是裸 svg 文本
-            svg_resp = {
-                k: v
-                for k, v in resp.items()
-                if k not in ("screenBuffer", "screenBufferMeta", "sessionDefaults")
-            }
-            svg_resp["type"] = "svg"
-            svg_resp["data"] = svg
-            svg_resp["format"] = "svg"
-            presenter.print_response(svg_resp)
-        elif output_path:
-            display = {
-                k: v
-                for k, v in resp.items()
-                if k not in (
-                    "screenBuffer",
-                    "screenBufferMeta",
-                    "sessionDefaults",
-                    "aiFileWritten",
-                )
-            }
-            presenter.print_response(display)
-        else:
+        if notify:
+            # --notify 立即返回（无渲染结果），跳过 svg/文件输出处理
             presenter.print_response(resp)
-        # fileOutput 插件已自行写文件，跳过重复写入
-        if not resp.get("aiFileWritten"):
-            _handle_output(
-                output_path, resp, svg_compression_level=svg_compression_level
-            )
+            return
+        _finalize_response(resp, response_format, output_path)
 
     def cmd_list(self):
         """列出所有会话"""
@@ -729,17 +723,23 @@ class ClientCommandsMixin:
             msg["value"] = value
         resp = self._send_recv(msg, autostart=False)
         # list 响应合并 CLI 侧插件（daemon 仅返回 daemon 侧插件，kind=cli 的插件
-        # 只存在于客户端 CliPluginHost 中）
-        if action == "list" and self._cli_plugins is not None:
+        # 只存在于客户端 CliPluginHost 中）；仅在成功响应时合并
+        if (
+            action == "list"
+            and resp.get("type") != "error"
+            and self._cli_plugins is not None
+        ):
             cli_plugins = resp.setdefault("plugins", [])
             existing_names = {p.get("name") for p in cli_plugins}
             for pname in self._cli_plugins.names():
                 if pname not in existing_names:
+                    info = self._cli_plugins.info_for(pname)
                     cli_plugins.append({
                         "name": pname,
-                        "version": "",       # CLI 插件版本通过活跃实例查询
+                        "version": info["version"],
                         "state": "loaded",
                         "kind": "cli",
+                        "cliOptions": info["cliOptions"],
                     })
         presenter.print_response(resp)
 
@@ -767,6 +767,19 @@ class ClientCommandsMixin:
             timeout = self._config.get("timeout")
         _logger.info("cmd_wait: timeout=%s", timeout)
         resp = self._send_recv({"type": "wait", "timeout": timeout})
+        presenter.print_response(resp)
+
+    def cmd_notice(self, nid: str):
+        """查看通知的完整内容（--notify 订阅发布的完整命令响应）
+
+        Args:
+            nid: 通知标识（wait 命令返回的 notifications[].nid）。
+        """
+        _logger.info("cmd_notice: nid=%r", nid)
+        if not nid or not isinstance(nid, str):
+            presenter.print_response(Response.error("invalid notification nid"))
+            return
+        resp = self._send_recv({"type": "notice", "nid": nid})
         presenter.print_response(resp)
 
     def cmd_events(
@@ -853,12 +866,14 @@ class ClientCommandsMixin:
         timeout: Optional[float] = None,
         encoding: Optional[str] = None,
         keep_ansi: Optional[bool] = None,
+        lines: Optional[object] = None,
         idle_timeout: Optional[float] = None,
         idle_after_first_output: bool = False,
         output_path: Optional[str] = None,
         response_format: Optional[str] = None,
         svg_compression_level: Optional[int] = None,
         snapshot_diff: bool = False,
+        notify: bool = False,
     ):
         """发送鼠标动作到会话并等待输出
 
@@ -906,70 +921,36 @@ class ClientCommandsMixin:
         if idle_timeout is not None:
             msg["idle_timeout"] = idle_timeout
             msg["idle_after_first_output"] = idle_after_first_output
-        if output_path:
-            msg["include_screen_buffer"] = True
-        if response_format == "svg":
-            msg["include_screen_buffer"] = True
+        if output_path or response_format == "svg":
+            rf = _render_format_for(output_path, response_format)
+            if rf:
+                msg["render_format"] = rf
+                if rf == "svg":
+                    msg["svg_compression_level"] = svg_compression_level
         if snapshot_diff:
             msg["snapshot_diff"] = True
+        if lines is not None:
+            msg["lines"] = lines
+        if notify:
+            msg["notify"] = True
 
         # CLI 插件按会话挂载自动挂钩（exec --plugin 挂载到会话后，此处自动回调）
         self._activate_session_cli(session_id)
+        if self.plugin_options:
+            msg["pluginOptions"] = self.plugin_options
 
         client_defaults = self._get_client_defaults()
         if client_defaults:
             msg["client_defaults"] = client_defaults
 
         resp = self._send_recv(msg, output_path=output_path)
-        _decompress_screen_buffer(resp)
         self._merge_session_defaults(resp)
 
-        if response_format == "svg":
-            if resp.get("type") == "error":
-                presenter.print_response(resp)
-                return
-            screen_buffer = resp.get("screenBuffer")
-            if not screen_buffer:
-                presenter.print_response(
-                    Response.error(
-                        "--response-format svg requires a screen buffer"
-                    )
-                )
-                return
-            from .renderer import _compress_svg, render_svg_string
-
-            svg = render_svg_string(screen_buffer)
-            svg = _compress_svg(svg, svg_compression_level)
-            # 保留会话上下文（sessionId/program/reason/...）供 SessionResult 渲染：
-            # 终端展示带 svg 标签的框 + 状态行，而不是裸 svg 文本
-            svg_resp = {
-                k: v
-                for k, v in resp.items()
-                if k not in ("screenBuffer", "screenBufferMeta", "sessionDefaults")
-            }
-            svg_resp["type"] = "svg"
-            svg_resp["data"] = svg
-            svg_resp["format"] = "svg"
-            presenter.print_response(svg_resp)
-        elif output_path:
-            display = {
-                k: v
-                for k, v in resp.items()
-                if k not in (
-                    "screenBuffer",
-                    "screenBufferMeta",
-                    "sessionDefaults",
-                    "aiFileWritten",
-                )
-            }
-            presenter.print_response(display)
-        else:
+        if notify:
+            # --notify 立即返回（无渲染结果），跳过 svg/文件输出处理
             presenter.print_response(resp)
-        # fileOutput 插件已自行写文件，跳过重复写入
-        if not resp.get("aiFileWritten"):
-            _handle_output(
-                output_path, resp, svg_compression_level=svg_compression_level
-            )
+            return
+        _finalize_response(resp, response_format, output_path)
 
     def cmd_attend(self, session_id: str) -> int:
         """接管会话为完整实时终端（镜像 + 输入/鼠标/resize，不影响 web 端）

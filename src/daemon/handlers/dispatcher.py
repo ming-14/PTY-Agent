@@ -1,15 +1,19 @@
+from __future__ import annotations
+
 import json
 import time
 import traceback
 
 from ...auth.context import AuthContext
 from ...plugins.base import HANDLED, ProcessPluginContext
+from ...plugins.decorate import decorate_builtin_response
 from ...plugins.io import PluginIO
 from ...protocol.envelope import unwrap as _env_unwrap, wrap_response as _env_wrap_response
 from ...protocol.message import Message
 from ...protocol.response import Response
 from ...session.manager import SessionManager
 from .base import DaemonHandler
+from .file_handler import FileHandler
 from ...execution.context import HandlerContext
 from .attend_handler import AttendHandler
 from .closewin_handler import CloseWinHandler
@@ -18,6 +22,7 @@ from .exec_handler import ExecHandler
 from .kill_handler import KillHandler
 from .list_handler import ListHandler
 from .mouse_handler import MouseHandler
+from .notice_handler import NoticeHandler
 from .plugin_handler import PluginHandler
 from .read_handler import ReadHandler
 from .send_handler import SendHandler
@@ -30,6 +35,12 @@ from .workflow_handler import WorkflowHandler
 from ...logging import get_logger, bind, unbind
 
 _logger = get_logger("pty-daemon")
+
+# 自动消费通知的操作型命令：操作了某会话（exec/send/read/mouse/kill）后
+# 该会话的通知已无意义（用户正在主动操作/查看），自动移入归档。
+# 查询型命令（plugin ls/list/status 等）仅读取状态，不消费通知——
+# 否则客户端 read/send 前自动发的 plugin ls 会误删刚发布的回合完成通知。
+_AUTO_CONSUME_COMMANDS = frozenset(("exec", "send", "read", "mouse", "kill"))
 
 
 class PluginMessageHandler(DaemonHandler):
@@ -98,11 +109,19 @@ class DaemonDispatcher:
             "list": ListHandler(),
             "stop": StopHandler(),
             "wait": WaitHandler(),
+            "notice": NoticeHandler(),
             "plugin": PluginHandler(),
             "workflow": WorkflowHandler(),
             "attend": AttendHandler(),
             "set_default": SetDefaultHandler(),
             "get_defaults": GetDefaultsHandler(),
+            "file_read": FileHandler(),
+            "file_write": FileHandler(),
+            "file_edit": FileHandler(),
+            "file_grep": FileHandler(),
+            "file_glob": FileHandler(),
+            "file_upload_start": FileHandler(),
+            "file_download_start": FileHandler(),
         }
         self._builtin_types = set(registry)
         # 进程级插件路由：插件声明的 message_types 注册到派发表；
@@ -164,6 +183,17 @@ class DaemonDispatcher:
             Message.send(conn, {"type": "pong"}, skip_sign=True)
             return
 
+        # 操作型命令（send/read/mouse/kill/exec）请求到达时立即消费该会话通知，
+        # 而非等 handler 响应时才消费——send 可能等待 40s 输出，这期间通知
+        # 应提前清空，避免用户后续 wait 收到过期通知。
+        if session_id and msg_type in _AUTO_CONSUME_COMMANDS:
+            try:
+                nm = getattr(getattr(self._ctx, "server", None), "notify_manager", None)
+                if nm is not None:
+                    nm.consume_by_session(session_id)
+            except Exception:
+                pass
+
         handler = self._registry.get(msg_type)
         if handler is None:
             handler = self._plugin_handlers.get(msg_type)
@@ -179,21 +209,46 @@ class DaemonDispatcher:
         # 双端口架构下每个 Listener 的连接线程独立设置，互不干扰
         Message.set_outbound_signer(self._auth_context.outbound_signer)
         Message.set_inbound_verifier(self._auth_context.inbound_verifier)
-        # 出站响应包装（线程局部）：把 handler 构建的扁平响应体套响应信封并分组
-        Message.set_outbound_response_wrapper(_env_wrap_response)
+        # 出站响应包装（线程局部）：先经插件装饰链（decorateTypes 匹配），
+        # 再把 handler 构建的扁平响应体套响应信封并分组
+        # 同时注入全局通知待消费计数（pendingNotifCount，供 presenter 提示）
+        def _response_wrapper(body):
+            body = decorate_builtin_response(self._ctx.manager, body)
+            if isinstance(body, dict):
+                nm = getattr(getattr(self._ctx, "server", None), "notify_manager", None)
+                if nm is not None:
+                    # 通知消费已提前到请求到达时（dispatch 中按操作型命令白名单执行），
+                    # 此处只注入全局通知待消费计数（pendingNotifCount，供 presenter 提示）。
+                    # 不再响应时消费：send 可能等待 40s 输出，期间新发布的回合完成通知
+                    # 应保留给用户 wait 消费，而非被本次响应误删。
+                    n = nm.pending_count()
+                    if n > 0 and "pendingNotifCount" not in body:
+                        body["pendingNotifCount"] = n
+            return _env_wrap_response(body)
+
+        Message.set_outbound_response_wrapper(_response_wrapper)
         _ctx_token = bind(connection_id=id(conn))
         try:
             msg = Message.recv(conn)
             if msg is None:
-                # recv 返回 None 可能是连接关闭或签名验证失败
-                # 签名验证失败时客户端仍在等待响应，尝试发送 Authentication failed
-                # 连接已关闭时 send 会抛异常，忽略即可
-                _logger.warning("recv 返回 None，可能签名验证失败或连接关闭")
+                # recv 返回 None 可能是连接关闭、读超时（慢客户端未在
+                # CONNECTION_READ_TIMEOUT 内发完整请求）或签名验证失败。
+                # 签名验证失败时客户端仍在等待响应，尝试发送 Authentication
+                # failed（读超时场景下该消息对慢客户端有误导性，但连接即将
+                # 关闭，可接受；message.py 已在日志区分具体原因）；
+                # 连接已关闭时 send 会抛异常，忽略即可。
+                _logger.warning(
+                    "recv 返回 None（连接关闭/读超时/签名验证失败），关闭连接"
+                )
                 try:
                     Message.send(conn, Response.error("Authentication failed."))
                 except Exception:
                     pass
                 return
+            # 读请求阶段结束：恢复无超时写。读超时仅约束"等请求"阶段；
+            # 响应可能很大（如 screenBufferZ 可达 MB 级），写超时过短会误杀
+            # 正常大响应，故写侧不设超时，写阻塞由 MAX_CONNECTIONS 上限兜底
+            conn.settimeout(None)
             # 拆请求信封 → 扁平 body（分组负载 op/condition/output/io 还原为业务字段）；
             # 认证基于含凭证（token/password/pubkey_fp）的原始信封；非信封消息认证 body
             type_, body, envelope = _env_unwrap(msg)

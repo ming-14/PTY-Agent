@@ -6,6 +6,17 @@ from ..base import Command, CommandContext
 from ..common_args import add_output_args, add_session_io_args, warn_idle_without_idle_timeout
 
 
+class _EnvAppendAction(argparse.Action):
+    """--env 累积动作：多次 --env KEY=VALUE 与单次多个 KEY=VALUE 都生效"""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        items = getattr(namespace, self.dest, None)
+        if items is None:
+            items = []
+        items.extend(values)
+        setattr(namespace, self.dest, items)
+
+
 class ExecCommand(Command):
     """exec 命令"""
 
@@ -33,6 +44,12 @@ class ExecCommand(Command):
             default=False,
             help="返回全部累积输出而非仅新输出",
         )
+        parser.add_argument(
+            "--lines",
+            "-l",
+            default=None,
+            help="行数过滤: N=最后N行, start:end=范围",
+        )
         add_output_args(parser)
         parser.add_argument(
             "--cwd", default=None, help="指定子进程工作目录（默认为守护进程当前目录）"
@@ -40,8 +57,9 @@ class ExecCommand(Command):
         parser.add_argument(
             "--env",
             nargs="*",
+            action=_EnvAppendAction,
             default=None,
-            help="子进程环境变量，格式 KEY=VALUE，可指定多个",
+            help="子进程环境变量，格式 KEY=VALUE，可指定多个（支持多次 --env 与单次多个）",
         )
         parser.add_argument(
             "--subprocess",
@@ -85,6 +103,7 @@ class ExecCommand(Command):
             encoding=args.encoding,
             full=args.full,
             keep_ansi=args.keep_ansi,
+            lines=args.lines,
             idle_timeout=args.idle_timeout,
             idle_after_first_output=args.idle_after_first_output,
             force=args.force_pty_mode,
@@ -98,4 +117,5 @@ class ExecCommand(Command):
             plugins=args.plugins,
             mode="subprocess" if args.subprocess else "pty",
             shell=args.shell,
+            notify=args.notify,
         )

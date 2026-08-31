@@ -1,0 +1,4 @@
+{"type": "ai_message", "text": "帮我检查这个仓库的 README", "ts": 1787000000000, "sessionId": "h-test-1"}
+{"type": "human_message", "text": "好的，我看了一下 README，结构清晰", "ts": 1787000010000, "sessionId": "h-test-1"}
+{"type": "ai_message", "text": "测试覆盖也看看", "ts": 1787000020000, "sessionId": "h-test-1"}
+{"type": "human_message", "text": "测试覆盖 80%，建议补充边界用例", "ts": 1787000030000, "sessionId": "h-test-1"}

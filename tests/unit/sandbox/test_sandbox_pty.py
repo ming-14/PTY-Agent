@@ -125,7 +125,7 @@ class TestSandboxPtyInit:
         assert pty.get_child_pid() == 4242
 
     def test_init_cwd_passed_to_start_process(self, fake_conpty):
-        # cwd 语义（Phase 16 无白名单）：透传 start_process working_dir
+        # cwd 语义：透传 start_process working_dir
         mgr = _FakeManager()
         tracker = _FakeTracker()
         tracker.manager = mgr

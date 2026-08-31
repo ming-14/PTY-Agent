@@ -1,89 +1,143 @@
+<div align="center">
+
 # PTY-Agent
 
-命令行交互式程序交互代理。通过伪终端（PTY）与交互式 CLI 程序双向通信，提供 CLI 接口管理会话。
+**让 AI 像真正用户一样使用终端**
 
-## 快速开始
+让不会用命令行的调用方，可靠地驱动 REPL、调试器、TUI、安装向导、长跑服务、编码 Agent ——
+拿到的是**用户真正看到的那一屏**，而不只是一串 stdout 字节流
 
-```powershell
-# 启动交互式 Python 会话
-python app.py exec py -c "python -u -i" -t ">>>"
+![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)
+![Windows](https://img.shields.io/badge/Windows-10%2B%20%C2%B7%20ConPTY-0078D4?logo=windows&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-Unix%20%C2%B7%20openpty-FCC624?logo=linux&logoColor=black)
+![Architecture](https://img.shields.io/badge/Architecture-CLI%20%C2%B7%20Daemon%20%C2%B7%20PTY-6A1B9A)
+![src](https://img.shields.io/badge/src-284%20files%20%C2%B7%2044.8k%20lines-D97706)
+![Tests](https://img.shields.io/badge/tests-2191%20cases-2EA043)
+![Web](https://img.shields.io/badge/Web-xterm.js%20%C2%B7%20FastAPI-009688)
 
-# 发送命令并等待提示符
-python app.py send py -i "print(100*100)" -t ">>>"
-
-# 读取输出
-python app.py read py --lines 10
-
-# 终止会话
-python app.py kill py
+```
+┌─ PTY-Agent ─────────────────────────────────────────────────────────────────┐
+│ $ app.py exec dbg -c "cdb.exe myapp.exe" -t "0:000" --timeout 5             │
+│                                                                             │
+│ ─────────────────────────────── matched ───────────────────────────────     │
+│ Microsoft (R) Windows Debugger Version 10.0.11451.4                         │
+│ 0:000>                                                                      │
+│ ───────────────────────────────────────────────────────────────────────     │
+│ [exec · matched · 0.42s]  dbg  running  pty                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-也可通过模块方式运行：`python -m src exec myid -c "python -i -u" -t ">>>"`
+</div>
+
+---
+
+## feature
+
+- ✨ 轻松操作**Shell · CUI · TUI** —— 真正像人一样使用终端：起会话、发按键、等提示符、看屏幕 ✨
+- ✨ **Windows / Linux 跨平台** —— 将来还会支持 MacOS ✨
+- ✨ **实时 Web 监控** —— 实时接管每一个终端会话，也可以一起协作 ✨
+- ✨ **沙箱系统** —— 启用后，AI 只在工作区工作，根本上防止删盘 
+- ✨ **强大的插件系统** -- 需要什么功能，随意扩展
+- **AI 二次分析，长上下文一步就好** —— 把长日志、大段输出、甚至渲染后的**终端图片**直接交给另一个 AI，一步返回结论
+- **子 Agent：跨 Harness 启动，统一管理** —— OpenCode / Claude Code / ... 支持扩展
+- **workflow 多会话编排**
+- **跨机访问终端** —— 支持 ssh 般的体验
+
+---
+
+## 为什么需要它
+
+常规 Agent 跑不了 `ssh`、跑不了 `gdb`、跑不了 `cdb`，也跑不了任何会**反问你一句**的程序
+
+| 传统调用 | PTY-Agent |
+| --- | --- |
+| 无 TTY，程序自动降级为非交互模式 | 真实伪终端 |
+| 只能"跑完再看" | 可使用持久化终端 |
+| 无法"等到出现某个提示符" | `-t "<regex>"` 正则触发器，命中即返回 |
+| 卡住 / 崩溃 / 弹窗 → 调用方一起卡死、user白白等待 | 静默超时、GUI 窗口、崩溃、进程退出 —— 全部可感知、可返回 |
+| 拿到原始字节流 | 拿到渲染后的**终端屏幕快照** |
+
+## 能力速览
+
+| | |
+| --- | --- |
+| **运行模式** | `pty`（默认，屏幕快照，适合 TUI/REPL）；`--subprocess`（增量输出 + stderr 分离，适合编译/下载） |
+| **自定义返回条件** | `ok` / `matched` / `timeout` / `idle` / `ended` / `crashed` / `gui` / `cancelled` / `notify` |
+| **结果裁剪** | `-l N`、`-g "<regex>"`、`-s` 增量 diff、`--column N`、`-o` 导出 `.svg/.png/.jpg/.txt` |
+| **输入** | `send` 原样；`advsend` 支持 `{ctrl+c}` `{enter}` `{f1}`~`{f12}` 等控制字符；行尾 `lf/crlf/cr/none`，鼠标`click/drag/scroll/hover/press/grep`，`--grep "<regex>"` 用文本反查坐标，不必数行列 |
+| **异步** | `--notify` 立即返回，条件满足后由 `wait` / `notice <nid>` 取回，不阻塞自己 |
+| **编排** | `workflow` YAML DAG：依赖并行、`if` 条件（AST 白名单安全求值）、`retry`、`on_error` |
+| **Web** | 浏览器终端（xterm.js + Web RIME 中文输入法）、FastScreen 屏幕流、VNC 远程桌面，默认 `127.0.0.1:18766` |
+| **沙箱** | Windows opt-in：Job Object + 受限令牌，仅工作目录可写，内存/CPU/进程数/墙钟配额 |
 
 ## 安装
 
-Python 3.8+，核心依赖：
+该 Skill 需要编译，请下载 Release 的预编译包，或者 clone 之后使用`build.py`编译
 
-| 包 | 用途 |
-|---|------|
-| `cryptography>=41.0` | Ed25519 公私钥认证 |
-| `fastapi>=0.111` | Web 服务器 |
-| `uvicorn[standard]>=0.30` | ASGI 服务器 |
-| `starlette>=0.37` | FastAPI 依赖 |
-| `websockets>=12.0` | WebSocket 支持 |
-| `numpy>=1.24` | H.264 帧数据处理 |
-| `av>=11.0` | PyAV 视频编码/解码 |
-| `tomli` | Python < 3.11 的 TOML 解析（3.11+ 用内置 `tomllib`） |
+推荐使用npx安装预编译包：
 
-可选依赖（缺失时自动降级，按需安装）：`wcwidth`（终端字符显示宽度计算）、`scour`（SVG 压缩，`--svg-compression-level` 1/2）、`Pillow`（PNG/JPG/BMP 位图渲染）、`psutil`（Web 系统 CPU/内存统计）。
+Windows：
 
-**可选功能模块**（`src/optional.py` 集中管理，缺失即功能禁用、主流程正常）：Web 界面（`web.toml` 缺失即关闭）、VNC 远程桌面（`bin/ultravnc` 缺失即禁用）、Screenshare 屏幕串流（`bin/fastscreencore` 缺失即禁用）、沙箱（`sandbox.toml` 缺失即关闭）、插件系统（`registry.json` 缺失即禁用）。这些模块经惰性导入网关按需加载，文件可安全移除。
-
-```powershell
-git clone <repo-url>
-cd pty-agent
-pip install -r requirements.txt
+```bash
+npx skills add ming-14/agent-skills
 ```
 
-## 命令概览
+Linux：
 
-| 命令 | 用途 |
-|------|------|
-| `exec <id> -c "<cmd>"` | 启动会话（执行命令） |
-| `send <id> -i "<input>"` | 发送输入到运行中的会话（`-i` 必填；原样发送） |
-| `advsend <id> -i "<input>"` | 同 send，但恒启用 JSON + 控制字符转义解码（`{enter}`/方向键等） |
-| `read <id>` | 读取会话输出 |
-| `list` | 列出所有会话 |
-| `status` | 查看守护进程运行状态 |
-| `kill <id>` | 终止会话 |
-| `events <id>` | 查看会话事件 |
-| `start` / `stop` | 手动启停守护进程（`stop` 支持 `--force`） |
-| `wait [--timeout <seconds>]` | 恒等待指定秒数 |
-| `closewin <id> <hwnd>` | 关闭 GUI 窗口 |
-| `mouse <id> <action>` | 发送鼠标动作 |
-| `workflow <run\|list\|show\|cancel>` | workflow 脚本编排（YAML 定义，DAG 并行 + 条件/变量/重试，后台执行） |
-| `set-default <key> <value>` | 覆盖默认配置（守护进程内存记忆，daemon 重启即清空） |
-| `plugin <list\|ls\|attach\|detach\|cmd>` | 插件管理 |
-| `file <read\|write\|edit\|grep\|glob\|upload\|download>` | 文件工具（读/写/唯一匹配替换/内容搜索/文件名匹配/上传/下载） |
-| `keygen` | 生成 Ed25519 密钥对 |
+```bash
+npx skills add ming-14/agent-skills
+```
 
-## 连接方式
+## 它是怎么工作的
 
-daemon 支持三种独立监听器（`daemon.toml [listener]` 段），可同开或只开一个；
-客户端用 `client.toml [connection]` 的 `CONNECT_MODE` 选择连接位置。
+```mermaid
+graph LR
+    A["AI Agent"] -->|"PTY-Agent &lt;cmd&gt;"| B["CLI<br/>src/cli · src/client"]
+    B -->|"TCP · NDJSON<br/>Token+HMAC / TLS+Ed25519"| C["守护进程<br/>src/daemon"]
+    C --> D["会话管理<br/>src/session"]
+    D --> E["PTY 后端<br/>src/pty"]
+    E -->|"ConPTY / openpty"| F["真实程序"]
+    F --> G["读者线程 → 输出缓冲"]
+    G --> H["终端模型 wezterm-term<br/>VT 解析 → 快照/diff/SVG"]
+    H --> I["触发检测<br/>正则·静默·崩溃·GUI"]
+    I -->|"响应 JSON"| B
+    C --> J["Web · workflow · 插件"]
+```
 
-| 监听器 | 连接方式 `CONNECT_MODE` | 认证 | 默认位置 |
-|--------|------------------------|------|----------|
-| `basic` | `basic` | 共享密码（密码即 HMAC 密钥；空密码=无认证） | `0.0.0.0:10521`（关闭） |
-| `token` | `token` | Token + HMAC（同机 SHM） | `127.0.0.1:10520`（开启） |
-| `tls` | `tls` | TLS + Ed25519 / authorized_keys | `0.0.0.0:18767`（关闭） |
+## 配置
 
-## 平台要求
+配置集中在 `config/`，可用环境变量 `PTY_AGENT_<KEY>` 覆写，改完需重启进程
 
-- **Windows**: 10+（ConPTY），推荐 PowerShell
-- **Unix**: 支持 `os.openpty()`
-- **Python**: 3.8+
+```
+CLI ──token──▶ 127.0.0.1:10520    (本地开发强验证)
+CLI ──basic──▶ 0.0.0.0  :10521    (本地开发弱验证，没问题开这一个就好)
+CLI ──tls────▶ 0.0.0.0  :18767    (提供跨机访问)
+浏览器 ───────▶ 127.0.0.1:18766    (Web)
+```
+
+| 文件 | 管什么 |
+| --- | --- |
+| `common.toml` / `shared.toml` | 数据目录（`~/.pty-agent`）、默认终端尺寸、协议缓冲 |
+| `daemon/daemon.toml` | 三监听器、缓冲区、默认超时（120s）、认证与密钥 |
+| `daemon/sandbox.toml` | 沙箱开关与配额（默认关闭） |
+| `client/client.toml` | `CONNECT_MODE = basic\|token\|tls`、TOFU 严格模式 |
+
+注意：如果一台设备要开启两个 PTY-Agent，请关闭单实例锁`SINGLE_INSTANCE`
+
+---
 
 ## 文档
 
-详细文档见 `docs/`。
+| 文档 | 说明 |
+| --- | --- |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | `src/` 包模块化架构设计，为代码维护与扩展提供指导 |
+| [CLI.md](docs/CLI.md) | 命令行帮助文档 |
+| [WORKFLOW.md](docs/WORKFLOW.md) | Workflow 脚本编排使用文档（YAML 步骤定义、依赖并行、条件、重试） |
+| [PLUGINS_API.md](docs/PLUGINS_API.md) | 插件开发指南（Plugin API） |
+| [CONFIG.md](docs/CONFIG.md) | 配置说明 |
+
+---
+
+<div align="center">
+
+</div>

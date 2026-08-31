@@ -1,0 +1,30 @@
+> hi
+  hi
+
+ The user just said "hi" twice. Let me respond briefly
+
+● Hi alice. What can I help you with today?
+
+> run ls in current dir
+
+● Bash(ls -la)
+  ⎿ total 89
+    drwxr-xr-x 1 alice 197121 0 Aug 23 04:11 .
+    drwxr-xr-x 1 alice 197121 0 Aug 23 03:26 ..
+    ...+6 line (ctrl+o to expand)
+
+● Current directory contents:
+
+  - SKILL.md (31 KB)
+  - app.py (300 B, executable)
+  - bin/ — directory
+  - config/ — directory
+  - logs/ — directory
+  - src/ — directory
+
+  Let me know if you want to look into any of these.
+
+────────────────────────────────────────────────────────────────────────
+> Suggest a task to accomplish                                ↵ send
+────────────────────────────────────────────────────────────────────────
+? for shortcuts  ← 1 agent

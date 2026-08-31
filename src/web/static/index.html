@@ -208,19 +208,17 @@
           </div>
           <div class="section">
             <div class="section-label" data-i18n="dialog.advanced">高级选项</div>
-            <div class="form-row">
-              <div class="form-group">
-                <label class="form-label" data-i18n="session.workdir">工作目录</label>
+            <div class="form-group">
+              <label class="form-label" data-i18n="session.workdir">工作目录</label>
+              <div class="cwd-wrap">
                 <input id="form-cwd" class="form-input" placeholder="默认" autocomplete="off" data-i18n-placeholder="dialog.cwdPh">
+                <button id="btn-dir-picker" class="cwd-btn" type="button" title="浏览目录">⋯</button>
               </div>
             </div>
-            <div class="form-row">
-              <div class="form-group">
-                <label class="form-label" data-i18n="session.mode">运行模式</label>
-                <select id="form-mode" class="form-input">
-                  <option value="pty" data-i18n="session.modePty">PTY 终端（快照，TUI 程序）</option>
-                  <option value="subprocess" data-i18n="session.modeSubprocess">子进程（增量输出，普通命令）</option>
-                </select>
+            <div class="form-group">
+              <label class="form-label" data-i18n="session.shell">Shell</label>
+              <div class="shell-select-wrap">
+                <button id="btn-shell-picker" class="shell-picker-btn" type="button">▾ <span id="shell-picker-label" data-i18n="session.shellNone">不使用</span></button>
               </div>
             </div>
           </div>
@@ -318,6 +316,12 @@
     <div class="context-menu-item" data-action="close-tab" data-i18n="common.closeTab">关闭标签</div>
     <div class="context-menu-item danger" data-action="close-session" data-i18n="session.closeSession">关闭会话</div>
   </div>
+
+  <!-- Shell 选择下拉（新建会话对话框，body 级浮层，避免被对话框 overflow 裁剪） -->
+  <div id="shell-dropdown" class="shell-dropdown" style="display:none"></div>
+
+  <!-- 工作目录自动补全下拉（body 级浮层） -->
+  <div id="dir-dropdown" class="shell-dropdown" style="display:none"></div>
 
   <!-- Toast Notifications -->
   <div id="toast-container" class="toast-container"></div>

@@ -3,6 +3,7 @@
 import functools
 import json
 import os
+import re
 import warnings
 
 try:
@@ -77,6 +78,19 @@ def merge(*sources: dict) -> dict:
                 raise ValueError(f"配置 key 冲突: {k!r} 在不同 TOML 文件中重复定义")
             merged[k] = v
     return merged
+
+
+def expand_env(value: str) -> str:
+    """跨平台展开 ~、%VAR% 与 $VAR
+
+    os.path.expandvars 在 POSIX 只展开 $VAR/${VAR}，Windows 风格 %VAR%
+    （如 %TEMP%）在 Linux 上原样保留；而配置文档承诺 %VAR% 跨平台可用。
+    此函数统一展开三种形式：先 expanduser 处理 ~，再手动替换 %VAR%，
+    最后交给 expandvars 处理 $VAR/${VAR}。
+    """
+    value = os.path.expanduser(value)
+    value = re.sub(r"%([^%]+)%", lambda m: os.environ.get(m.group(1), m.group(0)), value)
+    return os.path.expandvars(value)
 
 
 # 环境变量覆写前缀：PTY_AGENT_<配置 key>（如 DATA_DIR → PTY_AGENT_DATA_DIR）

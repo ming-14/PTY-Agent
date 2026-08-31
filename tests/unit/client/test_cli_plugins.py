@@ -10,7 +10,7 @@ sys.path.insert(0, _PROJECT_ROOT)
 
 from src.client.cli_plugins import CliPluginHost  # noqa: E402
 from src.plugins.base import Plugin  # noqa: E402
-from tests.helpers import make_manifest  # noqa: E402
+from tests.helpers import make_manifest, write_plugin_dir  # noqa: E402
 
 
 class FakeClient:
@@ -66,7 +66,7 @@ class CrashPlugin(Plugin):
         raise RuntimeError("boom")
 
 
-_TEST_PATHS = [os.path.join(_PROJECT_ROOT, "config", "plugins", "simple")]
+_TEST_PATHS = [os.path.join(_PROJECT_ROOT, "config", "plugins", "2048")]
 
 
 def _set_plugins(host, *plugins):
@@ -84,18 +84,45 @@ def _activate_all(host):
 class TestLoading:
     def test_loads_cli_plugins_from_paths(self):
         host = CliPluginHost(_TEST_PATHS)
-        assert host.names() == ["simple"]
+        assert host.names() == ["2048"]
 
-    def test_load_skips_non_cli_kind(self):
-        paths = [
-            os.path.join(_PROJECT_ROOT, "config", "plugins", "files"),
-            os.path.join(_PROJECT_ROOT, "config", "plugins", "state_check"),
-        ]
-        host = CliPluginHost(paths)
+    def test_load_skips_non_cli_kind(self, tmp_path):
+        # 纯 process 形态插件（不含 cli）应被 CliPluginHost 跳过
+        plugin_dir = tmp_path / "test_process_plugin"
+        plugin_dir.mkdir()
+        (plugin_dir / "plugin.json").write_text(
+            '{"id":"test-proc","version":"1","kind":"process"}', encoding="utf-8")
+        host = CliPluginHost([str(plugin_dir)])
         assert host.is_empty()
 
     def test_empty_paths(self):
         assert CliPluginHost([]).is_empty()
+
+    def test_kinds_of_dual_kind(self, tmp_path):
+        """双形态插件 kinds_of 返回完整形态（reload 分发依据）"""
+        pdir = write_plugin_dir(
+            tmp_path, "dual", ["process", "cli"],
+            "from src.plugins.base import Plugin\n"
+            "class P(Plugin):\n"
+            "    def render_response(self, ctx, resp):\n"
+            "        return None\n"
+            "plugin = P\n",
+        )
+        host = CliPluginHost([pdir])
+        assert host.kinds_of("dual") == ["process", "cli"]
+
+    def test_kinds_of_pure_process_not_loaded(self, tmp_path):
+        """纯 process 插件不进 CLI 宿主，但 kinds_of 仍能查询（daemon 重载分发用）"""
+        pdir = write_plugin_dir(
+            tmp_path, "proc", "process",
+            "from src.plugins.base import Plugin\nclass P(Plugin):\n    pass\nplugin = P\n",
+        )
+        host = CliPluginHost([pdir])
+        assert host.is_empty()
+        assert host.kinds_of("proc") == ["process"]
+
+    def test_kinds_of_unknown(self):
+        assert CliPluginHost([]).kinds_of("nope") is None
 
     def test_activate_gates_hooks(self):
         """未挂载的插件不参与钩子链；activate 后自动派发"""

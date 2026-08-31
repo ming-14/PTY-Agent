@@ -34,7 +34,7 @@ class TestValidManifest:
         assert m is not None
         assert m.id == "demo"
         assert m.version == "1.2.3"
-        assert m.kind == "session"
+        assert m.kind == ["session"]
         assert m.triggers == []
         assert m.entry == "__init__.py"
         assert m.needs_io is False
@@ -84,7 +84,7 @@ class TestValidManifest:
             "hooks": {"render_response": {}},
         })
         assert m is not None
-        assert m.kind == "cli"
+        assert m.kind == ["cli"]
         assert m.commands == ["exec", "send"]
 
     def test_config_schema_loaded(self, tmp_path):
@@ -119,20 +119,17 @@ class TestInvalidManifest:
         {"id": "Bad ID!", "version": "1.0", "kind": "session"},  # id 非法字符
         {"id": "demo", "kind": "session"},                # 缺 version
         {"id": "demo", "version": "1.0", "kind": "nope"},  # kind 非法
-        {"id": "demo", "version": "1.0", "kind": "process",
-         "triggers": ["event"]},                          # triggers 仅 session
+        {"id": "demo", "version": "1.0", "kind": ["bogus"]},  # kind 元素非法
         {"id": "demo", "version": "1.0", "kind": "session",
          "triggers": ["poll"]},                           # poll 缺 pollInterval
         {"id": "demo", "version": "1.0", "kind": "session",
          "triggers": ["poll"], "pollInterval": -1},
         {"id": "demo", "version": "1.0", "kind": "session",
          "autoLoad": {"cmd": "python"}},                  # autoLoad 未知键
-        {"id": "demo", "version": "1.0", "kind": "process",
-         "autoLoad": {"command": "python"}},              # autoLoad 仅 session
+        {"id": "demo", "version": "1.0", "kind": ["session", "session"]},  # kind 重复
         {"id": "demo", "version": "1.0", "kind": "process",
          "messageTypes": ["x"], "needsIO": "yes"},        # needsIO 非布尔
-        {"id": "demo", "version": "1.0", "kind": "session",
-         "messageTypes": ["file_read"]},                  # messageTypes 仅 process
+        {"id": "demo", "version": "1.0", "kind": []},     # kind 空列表
         {"id": "demo", "version": "1.0", "kind": "process",
          "hooks": {"on_input": {"priority": "high"}}},    # priority 非整数
         {"id": "demo", "version": "1.0", "kind": "session",

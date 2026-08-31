@@ -9,7 +9,7 @@
 import { state } from '../../domain/state.js';
 import { t } from '../../domain/i18n.js';
 import { debug } from '../../domain/logger.js';
-import { $, showToast } from '../domUtils.js';
+import { $ } from '../domUtils.js';
 import { sendToSession } from '../wsClient.js';
 import { zoomActiveSession } from './scale.js';
 import { getTerminalCellSize } from './shared.js';
@@ -17,54 +17,9 @@ import { canSendVtMouseInput, shouldSendAlternateScroll } from './mouseMode.js';
 import { shouldTrackFocus } from '../rimeManager.js';
 import { restartCursorBlinkIfNeeded, logCursorState } from './cursorDebug.js';
 import { FRAME_RATIO_STEP } from '../../domain/constants.js';
-import { doPaste } from './input.js';
+import { copySelection, doPaste } from './input.js';
 
 const WHEEL_DELTA = 120;
-const WHEEL_LINES = 3;
-
-/**
- * 监控 terminal-frame 的尺寸/位置变化（诊断 IME/输入导致"框被顶动"）。
- *
- * 三层监控：
- * 1. MutationObserver（style 属性）——applyFrame/resize 主动设置
- * 2. ResizeObserver（尺寸）——父级布局撑动导致 frame 尺寸变
- * 3. rAF 位置轮询（x/y）——父级布局撑动导致 frame 位置变（style 不变）
- * 配合 onResize 日志定位"框被顶动"的来源。
- */
-export function monitorTerminalFrame() {
-  const frame = document.getElementById('terminal-frame');
-  if (!frame) return;
-  const logFrame = (why) => {
-    try {
-      const r = frame.getBoundingClientRect();
-      const inst = state.activeTab ? state.termInstances[state.activeTab] : null;
-      debug('layout', 'frame-changed[%s]: w=%d h=%d x=%d y=%d cols=%s rows=%s',
-            why, Math.round(r.width), Math.round(r.height), Math.round(r.x), Math.round(r.y),
-            inst && inst.term ? inst.term.cols : '?', inst && inst.term ? inst.term.rows : '?');
-    } catch (_) {}
-  };
-  // 1. style 属性变化（applyFrame 等主动设置）
-  const obsStyle = new MutationObserver(() => logFrame('style'));
-  obsStyle.observe(frame, { attributes: true, attributeFilter: ['style'] });
-  // 2. 尺寸变化（父级布局撑动）
-  const obsResize = new ResizeObserver(() => logFrame('resize'));
-  try { obsResize.observe(frame); } catch (_) {}
-  // 3. 位置变化（rAF 轮询 x/y——ResizeObserver 不报位置）
-  let lastX = null;
-  let lastY = null;
-  const tick = () => {
-    try {
-      const r = frame.getBoundingClientRect();
-      if (lastX !== null && (r.x !== lastX || r.y !== lastY)) {
-        logFrame('pos');
-      }
-      lastX = r.x;
-      lastY = r.y;
-    } catch (_) {}
-    requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
-}
 
 /**
  * 检查当前活动会话的框是否已撑满 stage（再增大就会超出）。
@@ -252,7 +207,7 @@ export function bindTerminalEvents(term, inst, uid) {
     }
     const seq = focused ? '\x1b[I' : '\x1b[O';
     sendToSession(uid, { type: 'input', data: seq });
-    debug('focus', 'sendFocusVT: focused=%s seq=%r sid=%s', focused, JSON.stringify(seq), uid);
+    debug('focus', 'sendFocusVT: focused=%s seq=%s sid=%s', focused, JSON.stringify(seq), uid);
   }
 
   div.addEventListener('focusin', () => {
@@ -398,8 +353,11 @@ export function bindTerminalEvents(term, inst, uid) {
       return;
     }
     const s = state.sessions[uid];
+    // 历史（只读）会话：允许右键复制选中文本，但不粘贴（无活动进程）。
     if (s && s.history) {
       e.preventDefault();
+      debug('paste', 'right-click copy (history)');
+      copySelection(term);
       return;
     }
     // 应用鼠标追踪模式下，右键作为 VT 鼠标事件发送，禁止浏览器右键菜单。
@@ -410,14 +368,9 @@ export function bindTerminalEvents(term, inst, uid) {
       return;
     }
     e.preventDefault();
-    const selection = term.getSelection();
-    if (selection) {
+    // 有选中文本 → 复制；无选中 → 粘贴（统一走 copySelection，避免重复实现）
+    if (copySelection(term)) {
       debug('paste', 'right-click copy');
-      navigator.clipboard.writeText(selection).catch(err => {
-        showToast(t('term.copyFailed'), 'error');
-        debug('paste', 'right-click copy failed: %s', err && err.message);
-      });
-      term.clearSelection();
     } else {
       debug('paste', 'right-click paste');
       doPaste(uid);

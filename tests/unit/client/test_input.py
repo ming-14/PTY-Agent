@@ -43,12 +43,14 @@ class TestProcessInput:
     def test_raw_mode_no_escaping(self):
         result, pauses = process_input("C:\\Users", json_escaping=False)
         assert "C:\\Users" in result
-        assert pauses == []
+        # raw 模式也返回追加 EOL 的停顿偏移（默认 send_eol=None -> {enter} -> "\r"）
+        assert pauses == [len("C:\\Users\r")]
 
     def test_json_escaping_mode(self):
         result, pauses = process_input("line1\\nline2", json_escaping=True)
         assert result == "line1\nline2\r"
-        assert pauses == []
+        # 默认 send_eol=None -> 追加 {enter} -> "\r"，返回 EOL 停顿偏移
+        assert pauses == [12]
 
     def test_default_eol_lf(self):
         result, _ = process_input("hello", send_eol="\n")

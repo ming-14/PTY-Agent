@@ -25,8 +25,10 @@ MAX_TRIGGER_SCAN  = 1_048_576      # 1 MB
 DEFAULT_TRIGGER_TIMEOUT = 120.0
 
 [misc]
-SOCKET_LISTEN_BACKLOG  = 5
-PTY_READ_SIZE          = 65536
+SOCKET_LISTEN_BACKLOG   = 128
+PTY_READ_SIZE           = 65536
+MAX_CONNECTIONS         = 100     # 全局并发连接数上限（Slowloris 防护，超限拒绝新连接）
+CONNECTION_READ_TIMEOUT = 30.0    # 连接读请求超时（秒），仅作用于"读请求"阶段
 
 [named_resource]
 # JOB_OBJECT_NAME_PREFIX = "Local\\PTYJob_"
@@ -49,6 +51,7 @@ AUTH_TOKEN_GRACE_PERIOD    = 120
 # 公私钥认证（[listener] TLS_ENABLED=true 时生效）
 # 以下路径字段为空 = 默认位于 <DATA_DIR> 下（DATA_DIR 见 common.toml [paths]），
 # 支持 ~ 与 %VAR%/$VAR 展开；自定义 DATA_DIR 后这些路径自动跟随
+# PUBKEY_ALGORITHM 与 PUBKEY_KEY_DIR 预留，当前未消费
 PUBKEY_ALGORITHM       = "ed25519"
 PUBKEY_AUTHORIZED_KEYS = ""             # 默认 <DATA_DIR>/authorized_keys
 PUBKEY_KEY_DIR         = ""             # 默认 <DATA_DIR>/keys

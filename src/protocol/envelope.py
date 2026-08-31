@@ -39,6 +39,7 @@ _OUTPUT_FIELDS = {
     "column",
     "snapshot_diff",
     "include_screen_buffer",
+    "render_format",
 }
 _IO_FIELDS = {"encoding", "send_eol", "sendEol"}
 
@@ -50,7 +51,7 @@ _TERMINAL_CMDS = {"exec", "send", "read", "mouse"}
 _RESP_SESSION_CMDS = {"exec", "send", "read", "mouse"}
 _RESP_GROUPS = {"data", "state", "meta"}
 _RESP_GROUP_MEMBERS = {
-    "data": {"outputStream", "stderrOutput", "screenBufferZ", "screenBufferMeta", "snapshotDiagnostics"},
+    "data": {"outputStream", "stderrOutput", "screenBufferZ", "screenBufferMeta", "snapshotDiagnostics", "svgContent", "imageZ", "imageType"},
     "state": {"sessionId", "uid", "outputOffset", "triggerReturnReason", "program", "stderrOutputOffset"},
     "meta": {"hint", "terminalState", "sessionDefaults", "debugInformation"},
 }

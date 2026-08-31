@@ -311,8 +311,11 @@ def auth_env(tmp_path, config_reloader):
         ak_path.parent.mkdir(parents=True, exist_ok=True)
         ak_path.write_text(authorized_keys_content, encoding="utf-8")
 
+        # 确保无残留 daemon 占锁（经互斥锁定位 PID 强杀，不依赖 CONNECT_MODE 路由）
+        from src.client.daemonctl import start_daemon, _find_daemon_port, is_running, _stop_daemon_force
+        if is_running():
+            _stop_daemon_force()
         # 启动 daemon（subprocess.Popen 子进程，会读新 common.toml）
-        from src.client.daemonctl import start_daemon, _find_daemon_port, is_running
         start_daemon()
 
         # 轮询等待 daemon 就绪（任一启用监听器 TCP 可达即就绪）
@@ -379,6 +382,8 @@ def auth_env(tmp_path, config_reloader):
             _cfg_path("common.toml").write_bytes(backup_common)
             _cfg_path("daemon", "daemon.toml").write_bytes(backup_daemon)
             _cfg_path("client", "client.toml").write_bytes(backup_client)
+            # 恢复文件后重载进程内 config，使后续测试读到正确的配置
+            config_reloader()
 
 
 def _generate_keypair(tmp_path: Path, key_dir_name: str = "keys") -> tuple:

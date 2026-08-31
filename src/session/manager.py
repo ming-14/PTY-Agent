@@ -40,6 +40,16 @@ class SessionManager:
             Callable[[str, str, Optional[int], Optional[str]], None]
         ] = None
 
+    @property
+    def history_store(self):
+        """历史归档存储（handler 只读访问；注入在装配期完成）"""
+        return self._history_store
+
+    @history_store.setter
+    def history_store(self, value):
+        """装配期注入历史归档存储"""
+        self._history_store = value
+
     # ── set-default 全局默认（daemon 内存记忆） ──────────────
 
     def set_global_default(self, key: str, value) -> None:
@@ -74,13 +84,14 @@ class SessionManager:
         plugins: Optional[list] = None,
         cli_plugins: Optional[list] = None,
         mode: str = "pty",
+        plugin_options: Optional[dict] = None,
     ) -> Session:
         if not session_id or not isinstance(session_id, str):
             raise ValueError("会话 ID 必须为非空字符串")
         _ctx_token = bind(session_id=session_id)
         try:
             _logger.debug(
-                "create_session: sid=%r cmd=%r cwd=%r cols=%s rows=%s plugins=%s cli_plugins=%s mode=%s",
+                "create_session: sid=%r cmd=%r cwd=%r cols=%s rows=%s plugins=%s cli_plugins=%s mode=%s options=%s",
                 session_id,
                 command,
                 cwd,
@@ -89,6 +100,7 @@ class SessionManager:
                 plugins,
                 cli_plugins,
                 mode,
+                plugin_options,
             )
             with self._lock:
                 if session_id in self._sid_index:
@@ -122,7 +134,7 @@ class SessionManager:
                 self._sessions[s.uid] = s
                 self._sid_index[session_id] = s.uid
             if plugins:
-                self._attach_plugins(s, plugins)
+                self._attach_plugins(s, plugins, plugin_options)
             # 会话创建事件发布到 daemon 事件总线（session.created）
             self._publish_session_event(
                 "session.created",
@@ -176,20 +188,24 @@ class SessionManager:
         finally:
             unbind(_ctx_token)
 
-    def _attach_plugins(self, session: Session, plugins: list) -> None:
-        """按名解析并挂载插件到会话（未知插件名跳过并记日志，不影响会话）"""
+    def _attach_plugins(self, session: Session, plugins: list,
+                        plugin_options: Optional[dict] = None) -> None:
+        """按名解析并挂载插件到会话（未知插件名跳过并记日志，不影响会话）
+
+        plugin_options: {插件 id: {选项名: 值}} —— 全部合并进会话选项
+        （含未挂载插件，后续动态 attach 时沿用），再逐个挂载插件。
+        """
         if self.plugin_registry is None:
             _logger.warning("插件系统未启用，忽略插件: %s", plugins)
             return
-        instances = []
+        if plugin_options:
+            session.plugin_host.update_options(plugin_options)
         for name in plugins:
             inst = self.plugin_registry.instantiate(name)
             if inst is None:
                 _logger.warning("插件未加载，跳过: %s", name)
                 continue
-            instances.append(inst)
-        if instances:
-            session.plugin_host.attach_many(instances)
+            session.plugin_host.attach(inst)
 
     def match_auto_load(self, command, cwd, env) -> list:
         """按 exec 请求字段匹配自动加载条件，返回命中插件名列表"""
@@ -244,7 +260,7 @@ class SessionManager:
         """列出所有会话（含已结束但未移除的）
 
         Returns:
-            dict 列表，每项包含 id/uid/command/running/startTime 字段。
+            dict 列表，每项包含 id/uid/command/running/startTime/tag 字段。
         """
         with self._lock:
             return [
@@ -256,6 +272,7 @@ class SessionManager:
                     ),
                     "running": s.running,
                     "startTime": s.start_time,
+                    "tag": list(getattr(s, "tag", []) or []),
                 }
                 for s in self._sessions.values()
             ]
@@ -314,16 +331,6 @@ class SessionManager:
                 if self._sid_index.get(s.id) == s.uid:
                     self._sid_index.pop(s.id, None)
         if s:
-            if self._history_store:
-                try:
-                    self._history_store.archive_session(s, tag="history")
-                    _logger.debug(
-                        "remove_session: archived sid=%r took %.3fs",
-                        s.id,
-                        _time.monotonic() - _t0,
-                    )
-                except Exception as e:
-                    _logger.warning("持久化会话 '%s' 时异常: %s", s.id, e)
             _t1 = _time.monotonic()
             try:
                 s.stop()
@@ -334,6 +341,17 @@ class SessionManager:
                 )
             except Exception as e:
                 _logger.warning("移除会话 '%s' 时异常: %s", s.id, e)
+            # 归档在 stop 之后执行，确保 exit_code 已由 update_exit_info 设置（stop 内）
+            if self._history_store:
+                try:
+                    self._history_store.archive_session(s, tag="history")
+                    _logger.debug(
+                        "remove_session: archived sid=%r took %.3fs",
+                        s.id,
+                        _time.monotonic() - _t1,
+                    )
+                except Exception as e:
+                    _logger.warning("持久化会话 '%s' 时异常: %s", s.id, e)
             _t2 = _time.monotonic()
             if self._on_session_removed:
                 try:

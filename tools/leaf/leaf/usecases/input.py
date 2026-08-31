@@ -7,17 +7,21 @@ mux.mouse（整屏坐标命中路由 + 坐标换算），滚动走 mux.scroll_pa
 - 文本选区（press 起点 → move 更新终点 → release 取文写剪贴板；
   双击选词 / 三击选行）
 - 粘贴（Ctrl+V → 读系统剪贴板 → 模式感知下发）
+- 录制快捷键（F8 开始/结束、F11 加标记、F12 暂停/恢复）
 """
 
 import time
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 from leaf.domain.events import KeyEvent, MOD_CTRL, MouseEvent, ResizeEvent
-from leaf.usecases.ports import ClipboardPort, ConsolePort, MuxPanelPort
+from leaf.usecases.ports import ClipboardPort, ConsolePort, MuxPanelPort, RecorderPort
 
 MOVE_INTERVAL = 0.016  # 鼠标 move 转发节流：≤60Hz，防高频事件刷爆渲染
+KEY_F8 = "F8"      # 开始/结束录制
 KEY_F9 = "F9"
 KEY_F10 = "F10"
+KEY_F11 = "F11"    # 录制时加标记
+KEY_F12 = "F12"    # 录制时暂停/恢复
 WHEEL_LINES = 3  # 宿主代滚步长
 MIN_PANE = 8     # 分割列最小边距
 
@@ -28,12 +32,18 @@ SelDragState = Optional[Tuple[int, int, int]]
 
 
 def handle_key(mux: MuxPanelPort, focus: int, ev: KeyEvent,
-               clipboard: Optional[ClipboardPort] = None) -> Tuple[int, bool]:
-    """路由一次按键：F9/F10 面板快捷键、Ctrl+V 宿主粘贴，其余转发焦点 pane。
+               clipboard: Optional[ClipboardPort] = None,
+               recorder: Optional[RecorderPort] = None,
+               toggle_recording: Optional[Callable[[], None]] = None) -> Tuple[int, bool]:
+    """路由一次按键：F8 录制开关、F9/F10 面板快捷键、F11/F12 录制快捷键、
+    Ctrl+V 宿主粘贴，其余转发焦点 pane。
 
     返回 (focus, exit)。
     """
     if not ev.down:
+        return focus, False
+    if ev.key == KEY_F8 and ev.mods == 0 and toggle_recording is not None:
+        toggle_recording()
         return focus, False
     if ev.key == KEY_F9 and ev.mods == 0:
         focus = 1 - focus
@@ -41,20 +51,35 @@ def handle_key(mux: MuxPanelPort, focus: int, ev: KeyEvent,
         return focus, False
     if ev.key == KEY_F10 and ev.mods == 0:
         return focus, True
+    if recorder is not None:
+        if ev.key == KEY_F11 and ev.mods == 0:
+            recorder.marker()
+            return focus, False
+        if ev.key == KEY_F12 and ev.mods == 0:
+            paused = recorder.toggle_pause()
+            if not paused:
+                # 恢复录制：强制下一帧全量重绘，录制从完整画面继续
+                mux.force_repaint()
+            return focus, False
     if ev.key == "v" and ev.mods == MOD_CTRL and clipboard is not None:
         # 宿主粘贴：读系统剪贴板 → 模式感知下发（bracketed paste 自动包裹）
         text = clipboard.read()
         if text:
             mux.scroll_to_bottom()
             mux.send_paste(text)
+            if recorder is not None:
+                recorder.input(text.encode("utf-8"))
         return focus, False
     mux.scroll_to_bottom()  # 键盘输入即恢复贴底（退出滚动查看历史状态）
-    mux.key_down(ev.key, ev.mods)
-    mux.key_up(ev.key, ev.mods)
+    down = mux.key_down(ev.key, ev.mods)
+    up = mux.key_up(ev.key, ev.mods)
+    if recorder is not None:
+        recorder.input(down + up)
     return focus, False
 
 
-def handle_mouse(mux: MuxPanelPort, focus: int, cols: int, rows: int, ev: MouseEvent) -> int:
+def handle_mouse(mux: MuxPanelPort, focus: int, cols: int, rows: int, ev: MouseEvent,
+                 recorder: Optional[RecorderPort] = None) -> int:
     """路由一次鼠标事件：Mux 按整屏坐标命中 pane 并换算；按击（press 非滚轮）切焦点。
 
     滚轮/移动只转发命中的窗格，不动焦点；程序未启用鼠标模式（编码为空）时的
@@ -68,11 +93,15 @@ def handle_mouse(mux: MuxPanelPort, focus: int, cols: int, rows: int, ev: MouseE
     if ev.button.startswith("wheel"):
         # 应用接管鼠标（DECSET 鼠标追踪）则转发；否则宿主代滚该窗格 scrollback
         if mux.pane_is_mouse_grabbed(hit):
-            mux.mouse(ev.x, ev.y, ev.kind, ev.button, ev.mods)
+            b = mux.mouse(ev.x, ev.y, ev.kind, ev.button, ev.mods)
+            if recorder is not None:
+                recorder.input(b)
         else:
             mux.scroll_pane(hit, WHEEL_LINES if ev.button == "wheel_up" else -WHEEL_LINES)
         return focus
-    mux.mouse(ev.x, ev.y, ev.kind, ev.button, ev.mods)
+    b = mux.mouse(ev.x, ev.y, ev.kind, ev.button, ev.mods)
+    if recorder is not None:
+        recorder.input(b)
     if ev.kind == "press":
         mux.set_focus(hit)
         # 按击只切焦点，不回落底部（滚动查看历史时点击不丢失位置）
@@ -83,13 +112,17 @@ def handle_mouse(mux: MuxPanelPort, focus: int, cols: int, rows: int, ev: MouseE
 def handle_events(mux: MuxPanelPort, console: ConsolePort, focus: int, cols: int, rows: int,
                   split_col: int, drag: DragState, last_move: float,
                   sel_drag: SelDragState = None,
-                  clipboard: Optional[ClipboardPort] = None):
+                  clipboard: Optional[ClipboardPort] = None,
+                  recorder: Optional[RecorderPort] = None,
+                  toggle_recording: Optional[Callable[[], None]] = None):
     """处理全部待处理控制台事件；含分割线拖拽、文本选区、双击/三击、悬停转发。
 
     drag: None 或 (起始鼠标 x, 起始 split_col)，按下分割线时进入拖拽；
     last_move: 上次转发 move 的时间戳（move 事件高频，16ms 节流）；
     sel_drag: None 或 (pane_id, 锚点 x, 锚点 y)，左键按下 pane 时进入选区；
-    clipboard: 可选，Ctrl+V 粘贴与选区复制用。
+    clipboard: 可选，Ctrl+V 粘贴与选区复制用；
+    recorder: 可选，录制时记录输入字节（capture_input）；
+    toggle_recording: 可选，F8 开始/结束录制回调。
     返回 (focus, exit, cols, rows, dirty, split_col, drag, last_move, force_full,
           sel_drag)。
     """
@@ -97,7 +130,8 @@ def handle_events(mux: MuxPanelPort, console: ConsolePort, focus: int, cols: int
     force_full = False
     for ev in console.read_inputs():
         if isinstance(ev, KeyEvent):
-            focus, exit_ = handle_key(mux, focus, ev, clipboard)
+            focus, exit_ = handle_key(mux, focus, ev, clipboard, recorder,
+                                      toggle_recording)
             if exit_:
                 return (focus, True, cols, rows, True, split_col, drag, last_move,
                         force_full, sel_drag)
@@ -122,7 +156,7 @@ def handle_events(mux: MuxPanelPort, console: ConsolePort, focus: int, cols: int
                     # 悬停：转发给命中的窗格（16ms 节流防刷爆），不切焦点
                     if time.monotonic() - last_move >= MOVE_INTERVAL:
                         last_move = time.monotonic()
-                        focus = handle_mouse(mux, focus, cols, rows, ev)
+                        focus = handle_mouse(mux, focus, cols, rows, ev, recorder)
                         dirty = True
                 continue
             if ev.kind == "press" and ev.button == "left" and ev.x == split_col:
@@ -136,7 +170,7 @@ def handle_events(mux: MuxPanelPort, console: ConsolePort, focus: int, cols: int
                     continue
                 if mux.pane_is_mouse_grabbed(hit):
                     # 应用接管鼠标（如 vim）：转发应用 + 切焦点，不选区
-                    focus = handle_mouse(mux, focus, cols, rows, ev)
+                    focus = handle_mouse(mux, focus, cols, rows, ev, recorder)
                     dirty = True
                     continue
                 # 宿主选区：按点击次数分发（双击选词 / 三击选行 / 单击起点）
@@ -150,21 +184,17 @@ def handle_events(mux: MuxPanelPort, console: ConsolePort, focus: int, cols: int
                     mux.pane_selection_set(hit, ev.x, ev.y, ev.x, ev.y)
                     sel_drag = (hit, ev.x, ev.y)
                 mux.set_focus(hit)
-                # 单击只切换焦点/起选区，不回落底部：滚动查看历史时点击
-                # 终端不应丢失滚动位置（与官方终端一致）
                 focus = hit
                 dirty = True
                 continue
             if ev.kind == "release":
                 if drag is not None:
-                    # 分割线拖拽结束：一次 resize 到位 + 收敛帧
                     mux.resize(cols, rows)
                     force_full = True
                     drag = None
                     dirty = True
                     continue
                 if sel_drag is not None:
-                    # 选区拖拽结束：取文 → 写系统剪贴板
                     pane_id, _, _ = sel_drag
                     text = mux.pane_selection_text(pane_id)
                     if clipboard is not None and text:
@@ -172,14 +202,19 @@ def handle_events(mux: MuxPanelPort, console: ConsolePort, focus: int, cols: int
                     sel_drag = None
                     dirty = True
                     continue
-                focus = handle_mouse(mux, focus, cols, rows, ev)
+                focus = handle_mouse(mux, focus, cols, rows, ev, recorder)
                 dirty = True
             else:
-                focus = handle_mouse(mux, focus, cols, rows, ev)
+                focus = handle_mouse(mux, focus, cols, rows, ev, recorder)
                 dirty = True
         elif isinstance(ev, ResizeEvent):
             cols, rows = console.size()
             mux.resize(cols, rows)
+            if recorder is not None:
+                # 记录焦点 pane 的新尺寸
+                sizes = mux.pane_sizes()
+                if focus < len(sizes):
+                    recorder.resize(sizes[focus][0], sizes[focus][1])
             dirty = True
             force_full = True  # 行数变化：旧帧残行须清屏全量重建
     return focus, False, cols, rows, dirty, split_col, drag, last_move, force_full, sel_drag

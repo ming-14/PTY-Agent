@@ -5,15 +5,15 @@ import time
 
 import pytest
 
-from config.plugins.files.errors import (
+from src.files.errors import (
     FileReadRequiredError,
     FilePermissionDeniedError,
     FileToolError,
 )
-from config.plugins.files.history import FileHistoryStore
-from config.plugins.files.permission import PermissionPolicy
-from config.plugins.files.state import FileRecordStore
-from config.plugins.files.write import write_file
+from src.files.history import FileHistoryStore
+from src.files.permission import PermissionPolicy
+from src.files.state import FileRecordStore
+from src.files.write import write_file
 
 
 @pytest.fixture
@@ -133,7 +133,7 @@ class TestPermission:
 
 class TestContentLimit:
     def test_content_too_large(self, tmp_path, record_store, history_store, allowing_policy):
-        from config.plugins.files.settings import settings
+        from src.files.settings import settings
         target = tmp_path / "big.txt"
         with pytest.raises(FileToolError):
             write_file(str(target), "x" * (settings.max_content_len + 1),

@@ -443,14 +443,14 @@ class Threads:
 # ── 模块级工具函数 ──────────────────────────────────────────────
 
 
-def _capture_exit_code_retry(pty, retries: int = 10) -> Optional[int]:
+def _capture_exit_code_retry(pty, retries: int = 5) -> Optional[int]:
     """带重试地获取子进程退出码（模块级工具函数）
 
     某些 PTY 后端在进程刚退出时可能尚未更新退出码，通过短暂重试提高成功率。
 
     Args:
         pty:     PTY 后端实例（提供 get_exit_code 方法）。
-        retries: 最大重试次数（默认 10 次，每次间隔 50ms）。
+        retries: 最大重试次数（默认 5 次，每次间隔 20ms）。
 
     Returns:
         退出码；获取失败时返回 None。
@@ -463,7 +463,7 @@ def _capture_exit_code_retry(pty, retries: int = 10) -> Optional[int]:
         if code is not None:
             return code
         if attempt < retries - 1:
-            time.sleep(0.05)
+            time.sleep(0.02)
     return None
 
 

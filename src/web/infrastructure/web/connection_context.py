@@ -91,6 +91,3 @@ class WebSocketConnectionContext(ConnectionContext):
     def client_uid(self) -> Optional[str]:
         """本连接关联的 web 客户端 uid。"""
         return self._client_uid
-
-    def set_client_uid(self, uid: Optional[str]) -> None:
-        self._client_uid = uid

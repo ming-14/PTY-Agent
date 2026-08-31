@@ -1,0 +1,20 @@
+╭─── CodeBuddy Code v2.137.1 ───────────────────────────────╮
+│                    │ Tips for getting started             │
+│                    │ Run /init to create a CODEBUDDY.md   │
+│                    │ Press / to use commands, @ to mention│
+│                    │ ──────────────────────────────────── │
+│                    │ Recent activity                      │
+│                    │ No recent activity                   │
+│                    │ ──────────────────────────────────── │
+│                    │ http://127.0.0.1:58422               │
+│                    │ Hy3 · internal Usage Billing         │
+│                    │ c:\Users\alice\Desktop\pty-agent     │
+╰───────────────────────────────────────────────────────────╯
+
+√ Hook SessionStart
+  ⚠️ agent-browser 目前不支持 Windows 系统
+
+────────────────────────────────────────────────────────────────────────
+> Suggest a task to accomplish                                ↵ send
+────────────────────────────────────────────────────────────────────────
+? for shortcuts  ← 1 agent

@@ -12,6 +12,7 @@ from .keygen import KeygenCommand
 from .kill import KillCommand
 from .list_ import ListCommand
 from .mouse import MouseCommand
+from .notice import NoticeCommand
 from .plugin import PluginCommand
 from .read import ReadCommand
 from .send import AdvSendCommand, SendCommand
@@ -40,6 +41,7 @@ def register_all(registry) -> None:
     registry.register(AttendCommand())
     registry.register(MouseCommand())
     registry.register(WaitCommand())
+    registry.register(NoticeCommand())
     registry.register(KeygenCommand())
     registry.register(PluginCommand())
     registry.register(WorkflowCommand())

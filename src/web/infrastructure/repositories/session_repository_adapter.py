@@ -1,4 +1,5 @@
 """SessionManager 的 SessionRepository 适配器。"""
+from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
@@ -22,6 +23,7 @@ class SessionRepositoryAdapter(SessionRepository):
                 command=s["command"],
                 running=s["running"],
                 start_time=s["startTime"],
+                tag=list(s.get("tag", []) or []),
             )
             for s in sessions
         ]
@@ -30,10 +32,10 @@ class SessionRepositoryAdapter(SessionRepository):
         return self._manager.get_session(session_id)
 
     def get_by_uid(self, uid: str) -> Optional[Session]:
-        return self._manager.get_by_uid(uid) if hasattr(self._manager, 'get_by_uid') else None
+        return self._manager.get_by_uid(uid)
 
     def resolve_sid(self, sid: str) -> Optional[str]:
-        return self._manager.resolve_sid(sid) if hasattr(self._manager, 'resolve_sid') else None
+        return self._manager.resolve_sid(sid)
 
     def create_session(
         self,

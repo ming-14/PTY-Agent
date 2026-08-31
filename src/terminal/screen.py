@@ -12,6 +12,8 @@
 - wezterm-term: 完整 VT 解析 + 光标/scrollback 语义
 """
 
+import copy
+import logging
 import threading
 
 from ..config.common import DEFAULT_COLS, DEFAULT_ROWS
@@ -145,20 +147,22 @@ class TerminalScreen:
         self._feed_bytes += len(data)
         # 备用屏幕/鼠标追踪/光标/paste 模式状态由 pywezterm 绑定层跟踪
         # （feed 时扫描 DECSET，暴露 mode_restore_seq/get_mouse_encoding 查询）
-        # 诊断日志：记录每次 feed 的摘要（识别 ConPTY repaint vs 用户输出）
-        try:
-            preview = data[:120].decode("utf-8", errors="replace")
-            preview = (
-                preview.replace("\r", "\\r").replace("\n", "\\n").replace("\x1b", "\\e")
-            )
-            _logger.debug(
-                "feed: count=%d bytes=%d preview=%r",
-                self._feed_count,
-                len(data),
-                preview,
-            )
-        except Exception:
-            pass
+        # 诊断日志：记录每次 feed 的摘要（识别 ConPTY repaint vs 用户输出）。
+        # preview 构造在 DEBUG 门控内：热路径上避免每块无条件 decode+replace
+        if _logger.isEnabledFor(logging.DEBUG):
+            try:
+                preview = data[:120].decode("utf-8", errors="replace")
+                preview = (
+                    preview.replace("\r", "\\r").replace("\n", "\\n").replace("\x1b", "\\e")
+                )
+                _logger.debug(
+                    "feed: count=%d bytes=%d preview=%r",
+                    self._feed_count,
+                    len(data),
+                    preview,
+                )
+            except Exception:
+                pass
         with self._lock:
             try:
                 self._backend.feed(data)
@@ -439,7 +443,8 @@ class TerminalScreen:
                 key = (self._feed_count, self._cols, self._rows)
                 cached = self._export_cache
                 if cached is not None and cached[0] == key:
-                    return cached[1]
+                    # 深拷贝返回，避免调用方修改污染缓存
+                    return copy.deepcopy(cached[1])
                 cells_rows = self._backend.cells()
                 sparse_lines = []
                 for cells in cells_rows:
@@ -459,7 +464,7 @@ class TerminalScreen:
                     sparse_lines.append(line_cells)
                 result = {"cols": self._cols, "rows": self._rows, "lines": sparse_lines}
                 self._export_cache = (key, result)
-                return result
+                return copy.deepcopy(result)
             except Exception as e:
                 _logger.warning("export_buffer 失败: %s", e)
                 return {}

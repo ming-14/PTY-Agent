@@ -1,6 +1,6 @@
 ---
 name: pty-agent
-description: "Interactive CLI program proxy via pseudo-terminal (PTY). Use when: (1) must maintain ongoing dialog with interactive programs (REPLs, debuggers, Servers) — send input and wait for specific prompts; (2) process may block, crash, or pop up GUI windows — need real-time state detection; (3) simulating user interaction tests; (4) download large files. DO NOT use for: non-interactive scripts, web/HTTP API calls, GUI interfaces. If a plain script suffices, do not use this tool."
+description: "Interactive CLI program proxy via pseudo-terminal (PTY). Use when: (1) must maintain ongoing dialog with interactive programs (REPLs, debuggers, Servers) — send input and wait for specific prompts; (2) process may block, crash, or pop up GUI windows — need real-time state detection; (3) simulating user interaction tests; (4) download large files."
 ---
 
 [TOC]
@@ -9,35 +9,24 @@ description: "Interactive CLI program proxy via pseudo-terminal (PTY). Use when:
 
 PTY-Agent 是一个**命令行交互式程序交互代理**，通过伪终端（PTY）与交互式 CLI 程序双向通信
 
-原理：程序后台有运行一个守护进程，执行命令时需要再次调用程序，程序会call守护进程对对应CLI进行操作：你 <-> PTY-Agent <-> 守护进程 <-> PTY
+原理：程序后台有运行一个守护进程，执行命令时需要再次调用程序，程序会call守护进程对对应CLI进行操作：你 <-> PTY-AgentCLI <-> PTY-Agent守护进程 <-> PTY
 
 程序位于`app.py`，运行方法：`python app.py <args>`，或者包执行等其他方法
 
 ## 环境要求
 
-一次性检查命令（Python版本+依赖）：
-```bash
-python -c "import sys,importlib.util as u; print('[FAIL] Python >= 3.8 required, current:',sys.version.split()[0]) or sys.exit(1) if sys.version_info<(3,8) else print('[OK] Python',sys.version.split()[0]); deps=['cryptography','fastapi','uvicorn','starlette','websockets','yaml','numpy','av','psutil','wcwidth']+(['tomli'] if sys.version_info<(3,11) else []); missing=[d for d in deps if u.find_spec(d) is None]; print('[FAIL] Missing:',', '.join(missing)) or sys.exit(1) if missing else print('[OK] All dependencies installed')"
-```
-
-1. 最低 Python3.8。如果用户没安装 Python 或者版本或者版本太低，请从 https://winpython.github.io/ 拉取0dot（Windows优先选winpy） 或从 https://github.com/astral-sh/python-build-standalone/releases 拉取兼容版本，未经用户允许不要私自修改系统Path
-
-2. 还要判断环境（Linux or Windows），因为wezterm-py的构建产物需要区分平台
-
-3. 依赖安装了吗，没有就执行`pip install -r requirements.txt`或者创建venv
-
-如果只有发布目录而没有源码，说明项目作者已经把 PTY-Agent 打包好了。发布构建脚本 `python BUILD.py` 产出自包含目录 `pty-agent/`（含 `src/`、`bin/`、`app.py`、`SKILL.md`），直接在该目录内用 `python app.py <args>` 运行；某些部署形态可能额外提供打包好的可执行文件，若存在则按提示直接调用即可（通常需 `.\` 前缀）
+Python>=3.8 requirements.txt
 
 ## 两种运行模式
 
 ### 终端模式
 
-基于ConPTY，有TTY，**输出始终为终端屏幕快照**，等效于实际用户使用时真正看到的部分
+基于伪终端，有TTY，**输出始终为终端屏幕快照**，等效于实际用户使用时真正看到的部分
 
 - 适用：TUI 程序（vim/htop）、需要回显/行编辑的交互式程序
 - 快照返回条件：trigger 匹配快照文本 / idle-timeout / timeout / 进程结束 / GUI 检测
 
-注意：pty 模式默认没有Shell包装，直接执行`echo xxx`必定失败。若要使用Shell，请先使用`exec`新建pwsh/bash等，之后使用`send`发送命令
+注意：pty 模式默认没有Shell包装，若要使用Shell，请使用`--shell <shell>`
 
 ### 子进程模式（需显式--subprocess）
 
@@ -58,7 +47,7 @@ python -c "import sys,importlib.util as u; print('[FAIL] Python >= 3.8 required,
 
 | 命令 | 用途 | 典型选项 | 示例 |
 |------|------|----------|------|
-| `start/stop [options]` | 手动启动/停止守护进程；启动守护进程`exec`可直接启动，一般无需手动。未经用户运行，不要随便结束守护进程 | `stop --force` | |
+| `start/stop [options]` | 手动启动/停止守护进程；启动守护进程`exec`可直接启动，一般无需手动。未经用户运行，不要随便结束守护进程 | `stop --force`；`start --foreground`（前台/s6 监督）；`start --survive`（忽略结束信号与 stop，仅 SIGKILL 可终止） | |
 | `status` | 查看守护进程状态 | | |
 | `exec <new-session-id> <options>` | 执行命令以启动会话 | `-c "<command>"`(-c req), `-t "<regex>"`, `--cwd <path>`, `--env KEY=VALUE`, `--subprocess`, `--shell <shell>` | `exec id_py -c "python -i" -t ">>>"` |
 | `send <session-id> <options>` | 发送输入到运行中的会话（原样，不转义） | `-i "<content>"`(-i req), `-e <lf|crlf|cr|none>`, `-t "<regex>"` | `send id_py -i "print(1)" -t ">>>"` |
@@ -67,14 +56,16 @@ python -c "import sys,importlib.util as u; print('[FAIL] Python >= 3.8 required,
 | `list` | 列出所有会话 | | |
 | `kill <session-id>` | 终止会话；会话结束后会变成`ended`状态，使用`kill`命令彻底去除且移出会话列表 | | |
 | `events <session-id> [options]` | 查看会话运行程序生命周期事件 | `-l <N>`, `--since <iso-datetime\|HH:MM>` | `events myid -l 10` |
-| `closewin <session-id> <window-handle>` | 关闭 GUI 窗口；`<window-handle>`支持十进制或 0x十六进制| | |
+| `closewin <session-id> <window-handle>` | 关闭 GUI 窗口（**仅 Windows**）；`<window-handle>`支持十进制或 0x十六进制| | |
 | `mouse <session-id> <action>` | 发送鼠标动作到 PTY 会话 | `--button`, `--count`, `--ctrl`, `--shift`, `--alt`, `--grep` | `mouse myid click 10,5 --button right` / `mouse myid _get_cursor_location` |
-| `wait [--timeout <seconds>]` | 恒等待指定秒数（守护进程侧等待） | `--timeout <seconds>` | `wait --timeout 5` |
+| `wait [--timeout <seconds>]` | 等待：有待消费通知立即返回摘要，否则等待指定秒数（通知到达即唤醒）。`--timeout` 可选（默认 120） | `--timeout <seconds>` | `wait --timeout 5` |
+| `notice <nid>` | 查看通知的完整内容（`nid` 为 32 位十六进制串，来自 `wait` 返回的摘要） | | `notice 3f9c2a8b...` |
 | `workflow <run\|list\|show\|cancel>` | workflow 脚本编排 | `run <file>`（`--vars K=V`, `--parallel N`） / `list` / `show <run-id>` / `cancel <run-id>` | `workflow run build.yaml`；`workflow show wf-1786777600000-1` |
 | `attend <sid>` | 附加到某个会话（注意：这是给用户使用的不是给你用的）| | |
 | `keygen [-f] [--key-dir <dir>] [-C <comment>]` | 生成 Ed25519 公私钥对（TLS 跨机认证用） | `-f`, `--key-dir <dir>`, `-C "<comment>"` | `keygen -C "user@host"` |
 | `plugin <list\|ls\|attach\|detach\|cmd>` | 插件管理 | `plugin list` / `plugin ls <id>` / `plugin attach <id> <name>` / `plugin detach <id> <name>` / `plugin cmd <id> <name> <command> [args...]` | `plugin list` |
 | `set-default <KEY> <VALUE>` | 覆盖全局默认配置 | | `set-default timeout 30` |
+| `file <read\|write\|edit\|grep\|glob\|upload\|download> ... -s <session-id>` | 文件工具（读/写/编辑/搜索/上传/下载；`-s/--cwd-session` 必填，取该会话 cwd 作路径基准，不操作该会话） | `-s <session-id>`（req） | `file read src/main.py -s myapp` |
 
 ## *返回条件参数
 
@@ -85,11 +76,12 @@ python -c "import sys,importlib.util as u; print('[FAIL] Python >= 3.8 required,
 | 都不带 | | **1s后返回** | **1s后返回** | |
 | 只带 trigger | `-t/--trigger "<regex>"` | 增量输出流匹配到正则，兜底默认超时 | 屏幕变化行匹配到正则，兜底默认超时 | |
 | trigger + newline | `-t "<regex>" --newline` | 换行后开始检查增量输出流匹配正则，兜底默认超时 | 换行后开始检查屏幕变化行匹配正则（输入回显行会先被剔除），兜底默认超时 | 终端有回显，如果你输入的字符会被正则匹配，建议使用`--newline`开启换行后检查 |
-| 只带 idle-timeout | `--idle-timeout <seconds>` | 屏幕静默超时（在一段时间内无变化），兜底默认超时 | 屏幕静默超时（在一段时间内无变化），兜底默认超时 | idle-timeout 从**最后输出到达**时开始计时；若程序 stdout 有块缓冲（如 `python -c` 未加 `-u`），输出可能延迟到达，idle 在缓冲 flush 前触发 → 返回空输出（数据未丢，可后续 read）。如需仅在首次输出后才检测静默，加 `--idle-after-first-output` |
+| 只带 idle-timeout | `--idle-timeout <seconds>` | 输出静默超时（在一段时间内无新输出），兜底默认超时 | 屏幕静默超时（在一段时间内无变化），兜底默认超时 | idle-timeout 从**最后输出到达**时开始计时；若程序 stdout 有块缓冲（如 `python -c` 未加 `-u`），输出可能延迟到达，idle 在缓冲 flush 前触发 → 返回空输出（数据未丢，可后续 read） |
+| idle + 仅首次输出后检测 | `--idle-timeout <seconds> --idle-after-first-output` | 仅在程序首次输出后才开始检测静默 | 同左 | `--idle-after-first-output` 需配合 `--idle-timeout` 使用 |
 | 只带 timeout | `--timeout <seconds>` | 指定时间后返回 | 指定时间后返回 | |
 | 带 timeout + 其他条件 | 比如`-t "<regex>" --idle-timeout <seconds> --timeout <seconds>` |  命中其他条件，兜底超时 | 命中其他条件，兜底超时 | 注意！1.请不要将timeout设置为很大的值，否则若其他条件无法匹配就会卡死 2.建议如果要带其他条件，那就把timeout也带上并且设定合理的值，因为默认超时是120s |
-| GUI 检测 | 检测到 GUI 窗口 | 检测到 GUI 窗口 | GUI窗口通常阻塞程序运行，需要处理 |
-| 进程崩溃（退出码非） | 进程崩溃 | 进程崩溃 | |
+| GUI 检测 | | 检测到 GUI 窗口 | 检测到 GUI 窗口 | GUI窗口通常阻塞程序运行，需要处理。**仅 Windows 原生模式生效**（Unix 不支持）；子进程模式 + trigger 时不触发 GUI 返回 |
+| 进程崩溃（退出码非零） | 进程崩溃 | 进程崩溃 | |
 | 程序退出（退出码0） | 程序退出 | 程序退出 | |
 
 注：**高效利用本程序的条件返回功能，及时根据对应程序的输出结果更新条件（特别是`-t`），灵活使用不同的返回条件**。不建议反复`send`后又`read`，如果可以的话尽量一次性设置最强的返回条件
@@ -108,10 +100,14 @@ python -c "import sys,importlib.util as u; print('[FAIL] Python >= 3.8 required,
 | `--offset <bytes>` | 从指定字节偏移开始增量读取 | 不支持 |
 | `--full` | 返回全部累积输出（数据量大，慎用） | 返回全量输出（数据量大，慎用） |
 | `-s/--snapshot-diff` | 不支持 | 仅返回与上一次可见屏幕相比发生变化的行 |
-| `--column <N>` | 不建议 | 取可见屏幕的第 N 列 |
+| `--column <N>` | 支持（按字符位取第 N 列，短行取空） | 取可见屏幕的第 N 列 |
 | `-o/--output <path>` | 将输出结果写入指定文件 | 同左 |
 | `--response-format <stream\|svg>` | 只支持stream | 选择响应格式 |
-| `--svg-compression-level <0|1|2>` | | 本 SVG 压缩等级 |
+| `--svg-compression-level <0/1/2>` | 不支持 | 本机 SVG 压缩等级 |
+
+> 注：`-l` 的"累积/全量"语义仅对 `read` 成立；`exec`/`send` 的 `-l` 默认作用于增量交付块 / 可见屏幕快照，需再加 `--full` 才取全量输出。
+>
+> 注：`-g`（终端模式）与 `-s` 的输出均为 `行号:内容` 格式（0-based 行号）。
 
 终端模式的全量输出：指包含 scrollback 历史的全量输出
 
@@ -154,19 +150,23 @@ python -c "import sys,importlib.util as u; print('[FAIL] Python >= 3.8 required,
 ## 返回结果示例
 
 ```
-                                   (过滤条件)
+                                   (分隔线内嵌过滤条件标签)
 ────────────────────────────────── lines:0:2 ───────────────────────────────────
 Python 3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (
 AMD64)] on win32
 (输出结果)
 ────────────────────────────────────────────────────────────────────────────────
 [read · ok · 0.00s]  py1  running  pty
-[(命令类型) · (返回原因) · (执行时间)]  (sid)  (当前程序状态)  (运行模式)
+[(命令类型) · (原因短标签) · (执行时间)]  (sid)  (当前程序状态)  (运行模式)
 
 (PTY-Agent message: 系统消息)
 
 (hit: 系统提示)
 ```
+
+- 分隔线内嵌标签由响应格式生成：`-l N` 显示 `tail:N`（如 `tail:10`）；`-l start:end` 显示 `lines:A:B`；另见 `snapshot`/`diff`/`full`/`col:N`/`match:pattern` 等。
+- 状态行中的原因显示为**短标签**：`ok`/`matched`/`timeout`/`idle`/`ended`/`crashed`/`gui`/`cancelled`/`notify`（`trigger_matched` 显示为 `matched`；崩溃时附加 `(exit_code: N)`）。
+- `(PTY-Agent message: ...)` 为系统消息（info/warning/error，写入 stderr）；`(hit: ...)` 为提示信息（追加在输出末尾）。
 
 ## 引号处理规则（**你的**Shell命令行层）
 
@@ -182,13 +182,14 @@ AMD64)] on win32
 选项基本与 send 一致，见上文命令速查典型选项
 特殊选项：
 - `-c "<command>"`(req) 执行的命令，必填
-- `--force-pty-mode` 非 shell 模式下为防止误用 shell 语法，会进行 shell 操作符检查。该命令忽略命令中的 shell 操作符（`|`、`&&`、`>` 等）检测，强制执行
+- `--force-pty-mode` 非 subprocess 模式且未指定 `--shell` 时，默认会检查命令中的 shell 操作符并拒绝执行（提示改用 `--shell`）；该选项忽略该检测，强制执行（操作符作为字面参数传递）
 - `--cwd <path>` 子进程工作目录（默认取调用方 CLI 的当前目录）；如果与期望工作目录不一致，建议指定
 - `--env KEY=VALUE` 子进程额外环境变量，可指定多个，合并到继承的环境中；适用于设置 `TERM`、`COLORTERM` 等终端能力变量
 - `--subprocess` 子进程模式：Popen 捕获 stdout/stderr（非 PTY），增量输出 + stderr 分离，支持写 stdin，无 resize/快照
 - `--size <WxH>` 终端尺寸（如 `120x40`，默认 `80x24`；仅 pty 模式，**仅会话创建时生效**；运行中调整请用 `--default terminal-size NxN`）
-- `--shell <shell>` shell 模式，用指定 shell 包装执行命令（如 `bash`/`cmd`/`pwsh`），显示指定`--shell`优先级大于默认值
-- `-o/--output <path>` 输出到文件（.txt/.log=纯文本; .svg=矢量图; .png/.jpg/.bmp=位图，需 Pillow）
+- `--shell <shell>` shell 模式，用指定 shell 包装执行命令（如 `bash`/`cmd`/`pwsh`），显式指定`--shell`优先级大于默认值
+- `-o/--output <path>` 输出到文件（.txt/.log=纯文本; .svg=矢量图; .png/.jpg/.bmp=位图，daemon 侧渲染，客户端无需 Pillow）
+- `--plugin <name>` 将插件挂载到该会话（可多次指定；按插件形态自动分流：CLI 形态记录到会话、会话/进程形态在 daemon 挂载）
 
 **运行TUI程序建议使用终端模式**
 如果是简单的字符流程序，使用 `--subprocess` 子进程模式，只读取增量输出
@@ -212,6 +213,7 @@ send 通过 `-i`/`--input` 参数（必填）指定要发送的输入文本，�
 - 支持*返回条件参数
 - *返回结果处理参数
 - `-e/--send-eol <lf|crlf|cr|none>` 末尾追加的行尾符（可选 `cr`=`\r`；`lf`=`\n`；`crlf`=`\r\n`；`none`=不追加）
+- `--notify` 注册通知订阅：命令立即返回（reason=notify_waiting），后台等待条件满足时发布通知；之后用 `wait` 查看摘要、`notice <nid>` 查看完整内容
 
 默认情况下，`send` 发送的"<content>"是不转义输入；如果需要输入控制字符、多行（`\r`），必须改用 `advsend`（恒转义）
 
@@ -245,8 +247,8 @@ send 通过 `-i`/`--input` 参数（必填）指定要发送的输入文本，�
 
 注意：
 1. 终端换行、多行请使用`\r`
-2. 大部分语言的行结尾是`\n`，用`\r`就等者被readline吃掉吧！readline嗷呜嗷呜
-0. 你是娇生惯养长大的，因为内核tty在后面帮你把行尾全部处理好了。现在你长大了，需要承担起配置行尾的责任，不能依靠内核tty了！
+2. 大部分语言的行结尾是`\n`，用`\r`不会触发 readline 断行（`\r`作为普通字符保留）
+3. PTY 模式下内核 tty 会自动处理行尾（`\r`→`\n`转换）；子进程模式无此处理，需自行配置行尾符
 
 **需要精细控制输入时，请显式指定或更改默认值**
 
@@ -257,6 +259,15 @@ send 通过 `-i`/`--input` 参数（必填）指定要发送的输入文本，�
 选项：
 - 支持*返回条件参数
 - 支持*返回结果处理参数
+
+### 通知（--notify / wait / notice）
+
+`exec`/`send`/`advsend`/`read`/`mouse` 均可带 `--notify`：命令立即返回（reason=`notify_waiting`），后台线程继续等待返回条件，条件满足时发布一条通知。之后：
+
+- `python app.py wait [--timeout <秒>]` 有待消费通知时**立即返回摘要列表**（无需等待）；无通知时才等待指定秒数（默认 120s，通知到达即唤醒）
+- `python app.py notice <nid>` 查看某条通知的完整响应内容（nid 来自 `wait` 返回的 `notifications[].nid`）
+
+通知存于守护进程内存（不落盘，daemon 重启即清空）。
 
 ### mouse 用法
 
@@ -303,16 +314,18 @@ send 通过 `-i`/`--input` 参数（必填）指定要发送的输入文本，�
 
 ### events 用法
 
-事件只记录进程（包括子进程）启动，进程停止，进程崩溃
+事件记录进程（包括子进程）生命周期：启动（`process_spawn`）、停止（`process_exit`）、崩溃（`process_crash`）、GUI 窗口出现（`gui_window`）
 
 `python app.py events <session-id> [options]`
 
 选项：
 - `-l/--last N` 最后 N 个事件
 - `--since <iso-datetime\|HH:MM>` 只查看指定时间之后的事件
-- `--until <iso-datetime\|HH:MM>` 只查看指定时间之后的事件
+- `--until <iso-datetime\|HH:MM>` 只查看指定时间之前的事件
 
 `--since`和`--until`可以一起用
+
+注意：不传任何选项时只返回**未消费**的事件；查看完整历史请加 `-l`（如 `-l 10`）。
 
 ### workflow 用法
 
@@ -344,9 +357,9 @@ keygen 为本地命令，无需 daemon；Windows 下私钥自动收紧 ACL（仅
 
 ### plugin 用法
 
-插件管理：`list`/`ls`/`attach`/`detach`/`cmd`。插件注册在
-`config/plugins/registry.json`（目录发现 + registry.json）（`enabled` 总开关 + 插件发现（扫描配置目录 + 环境变量）），
-修改后需重启 daemon；也可用 `PTY_PLUGIN_DIRS` 环境变量追加插件位置。
+插件管理。插件注册在 `config/plugins/registry.json`（`enabled` 总开关 + 各插件启用状态；registry.json 缺失则插件系统禁用），
+插件目录发现 = 扫描 `config/plugins/` 下含 `plugin.json` 的目录，可用 `PTY_PLUGIN_DIRS` 环境变量追加位置。
+目录级改动后需重启 daemon（或 `plugin reload <name>` 热重载）。
 
 ```bash
 python app.py plugin list                          # 列出已加载插件（daemon 侧 + CLI 侧）
@@ -354,51 +367,99 @@ python app.py plugin ls <session-id>               # 列出会话挂载的插件
 python app.py plugin attach <session-id> <name>    # 动态挂载插件到运行中的会话
 python app.py plugin detach <session-id> <name>    # 从会话卸载插件
 python app.py plugin cmd <session-id> <name> <command> [args...]   # 调用插件命令钩子
+python app.py plugin install <path>                # 从目录安装插件（须含 plugin.json，不自动启用）
+python app.py plugin uninstall <name>              # 卸载插件（须先 disable）
+python app.py plugin enable <name>                 # 启用插件
+python app.py plugin disable <name>                # 停用插件
+python app.py plugin reload <name>                 # 热重载插件（重新加载代码与清单，保持启用状态）
+python app.py plugin info <name>                   # 插件详情（清单/状态/路径/权限/事件）
+python app.py plugin status <name>                 # 插件运行状态
+python app.py plugin config <name> [key value]     # 查看/修改插件配置（仅内存，重启清空）
 ```
 
-### set-default 用法
+### file 用法
 
-覆盖全局默认配置（只影响**之后**新建的会话的默认值，不影响已经创建的）。
-默认配置存于**守护进程内存**（不写任何文件），daemon 重启即清空；命令返回时会列出当前全部默认值。
-
-- `app.py set-default <KEY> <VALUE>` 通用子命令：覆盖默认配置（需 daemon 运行，自动拉起）
-  - `<KEY>`可用键：`timeout`/`newline`/`keep-ansi`/`encoding`/`debug`/`send-eol`/`response-format`/`svg-compression-level`/`terminal-size`/`shell`，`<VALUE>`是配置值或者`on`/`off`
-
-### 全局/通用选项
-
-- `--keep-ansi` （仅终端模式）通用子命令：保留完整VT序列（默认过滤掉终端颜色/样式码，只保留清屏/光标等控制序列，开启后保留全部）
-- `--encoding <encoding>` 通用子命令：终端编码，乱码时设置`utf-8/gbk/gb2312/gb18030/big5`，指定一次后会自动记忆
-- `--debug-output` 通用子命令：启用后响应中输出 debugInformation（进程树/GUI 窗口/事件）
-- `--show-config [KEY]` 查看当前调用配置
-- 以上命令只在本次调用中生效，如果需要之后不显式设定也可以缩小，需要指定默认值：
-- `--default <KEY> <VALUE>` 通用子命令：调整该会话的配置值
-  - `<KEY>`可用键：`timeout`/`newline`/`keep-ansi`/`encoding`/`debug`/`send-eol`/`response-format`/`svg-compression-level`/`terminal-size`，`<VALUE>`是配置值或者`on`/`off`
-  - 支持多个 `--default`
-  - 默认配置按 session 持久化
-  - `--default terminal-size NxN` 不是配置，是实时调整终端尺寸，对**运行中的会话即刻生效**
-  - `--default`不支持`shell`
-
-## 插件
-
-使用前清先加载
-
-### files
+`file` 是 **PTY-Agent 内置顶层命令**（不依赖插件系统，始终可用），提供文件工具：读、写、唯一匹配替换、内容搜索、文件名匹配、上传、下载。
 
 ```bash
 python app.py file <read|write|edit|grep|glob|upload|download> ... -s <session-id>
 ```
 
-见`config\plugins\files\USAGE.md`
+`-s/--cwd-session` **必填**：指定某个会话，取它的 cwd 作为路径解析基准（不操作该会话）。
+
+| 子命令 | 用法 | 要点 |
+| ------ | ---- | ---- |
+| `file read <path> [--offset N] [--limit N]` | 读文件（带行号，默认 2000 行） | 超过 250KB / 图片拒绝；不存在时提示相似文件名；`--offset` 0-based |
+| `file write <path> --content TEXT \| --content-file FILE` | 覆盖写/新建（自动建父目录） | **已存在文件必须先 `file read`**；外部修改后拒绝；内容相同拒绝；大文件用 `--content-file`（与 `--content` 互斥） |
+| `file edit <path> --old TEXT \| --old-file FILE [--new TEXT \| --new-file FILE]` | 唯一匹配替换 | `--old` 空=新建（文件须不存在）；`--new` 空=删除；`--old` 须唯一匹配（未找到/重复均拒绝） |
+| `file grep <pattern> [path] [--include GLOB] [--literal-text]` | 内容搜索 | rg 引擎优先，缺失自动降级纯 Python；`path` 缺省=会话 cwd |
+| `file glob <pattern> [path]` | 文件名匹配 | rg 引擎优先，缺失自动降级纯 Python；支持 `**` 任意层级；`path` 缺省=会话 cwd |
+| `file upload <local-path> <remote-path> [--force] [--timeout N]` | 上传本地文件/目录到会话侧（scp -r 语义） | `local-path` 为 CLI 本机路径，`remote-path` 由 daemon 按会话 cwd 解析（支持 `~`）；目标已存在且相同→跳过，不同→拒绝并提示 `--force`；`--timeout` 为整个传输总时限（默认 120s），超时中止并清理临时文件 |
+| `file download <remote-path> <local-path> [--force] [--timeout N]` | 下载会话侧文件/目录到本地（scp -r 语义） | 与 upload 反向；`remote-path` 可为文件或目录；覆盖策略与 `--timeout` 同 upload |
+
+**路径规则：** 相对路径基于 `-s` 会话的 cwd 拼接；`~` 按 daemon 用户展开；绝对路径原样使用；cwd 是会话创建时的值，shell 内 `cd` 后不更新；跨机场景（CLI 与 daemon 异机）语义依然正确——路径在 daemon 所在机器上解析。
+
+**写保护状态机（read-before-write）：** `file write` / `file edit` 受读前写保护——文件已存在时必须先 `file read`（成功后记录读时刻）；写/编辑时若文件 mtime 晚于读时刻（期间被外部修改）→ 拒绝并提示；内容与现有内容相同 → 拒绝。状态在守护进程进程内保存，重启守护进程即失效。每次写操作在 `<DATA_DIR>/history.db` 的 `files_history` 表落版本链（initial → v1 → v2）。
+
+**多行/含特殊字符内容：** 输入带换行、`\`、`"`、`'` 等字符的内容时，**必须**先调用本地 write 工具写中转文件，再使用 `--content-file` / `--old-file` / `--new-file` 传入（一次调用两个工具：write + file），避免 Shell 复杂转义与命令行长度上限。
+
+**使用示例：**
+
+```bash
+# 先拉起一个会话作为 cwd 基准
+python app.py exec sid_cwd -c "cmd" --cwd <path>
+
+# 读 / 搜索 / 匹配
+python app.py file read src/main.py -s sid_cwd --limit 50
+python app.py file grep "def " src -s sid_cwd --include *.py
+python app.py file glob "src/**/*.py" -s sid_cwd
+
+# write 两步法（先本地 write 写中转文件，再 --content-file 传入）
+python app.py file write out.txt -s sid_cwd --content-file tempfiles/_write_temp1.txt
+
+# edit 三步法（本地 write 分别写 old/new 中转文件）
+python app.py file edit src/main.py -s sid_cwd --old-file tempfiles/_editold_temp1.txt --new-file tempfiles/_editnew_temp1.txt
+
+# 上传 / 下载
+python app.py file upload ./local.txt remote_dir/ -s sid_cwd
+python app.py file download remote_dir/local.txt ./local.txt --force -s sid_cwd
+```
+
+### set-default 用法
+
+覆盖全局默认配置（影响**后续所有会话请求**的默认值，包括已存在会话的后续请求；仅 `shell` 键真正只对新建会话生效，`terminal-size` 对运行中会话即刻生效）。
+默认配置存于**守护进程内存**（不写任何文件），daemon 重启即清空；命令返回时会列出当前全部默认值。
+
+- `app.py set-default <KEY> <VALUE>` 通用子命令：覆盖默认配置（需 daemon 运行；daemon 未运行时报错，请先 `exec` 启动）
+  - `<KEY>`可用键：`timeout`/`newline`/`keep-ansi`/`encoding`/`debug`/`send-eol`/`response-format`/`svg-compression-level`/`terminal-size`/`shell`，`<VALUE>`是配置值或者`on`/`off`
+
+### 全局/通用选项
+
+- `--keep-ansi` （仅终端模式，exec/send/read/mouse 可用）通用选项：保留完整VT序列（默认过滤掉终端颜色/样式码及 OSC 序列，只保留清屏/光标等控制序列，开启后保留全部）
+- `--encoding <encoding>` 通用选项：终端编码，乱码时设置`utf-8/gbk/gb2312/gb18030/big5`；本次调用进程内会记忆（不写盘、不跨调用持久化），如需跨调用默认请用 `set-default encoding` / `--default encoding`
+- `--debug-output` 通用选项：启用后响应中输出 debugInformation（进程树/GUI 窗口/事件）
+- `--show-config [KEY]` 查看当前调用配置
+- 以上选项（`--keep-ansi`/`--encoding`/`--debug-output`/`--show-config`/`--default`）仅影响本次调用；如需影响后续所有会话的默认值，请使用 `set-default` 命令：
+- `--default <KEY> <VALUE>` 通用选项：调整该会话的配置值
+  - `<KEY>`可用键：`timeout`/`newline`/`keep-ansi`/`encoding`/`debug`/`send-eol`/`response-format`/`svg-compression-level`/`terminal-size`，`<VALUE>`是配置值或者`on`/`off`
+  - 支持多个 `--default`
+  - 默认配置按 session 记在守护进程内存（不写盘，daemon 重启/session 结束即清空）
+  - `--default terminal-size NxN` 不是配置，是实时调整终端尺寸，对**运行中的会话即刻生效**
+  - `--default`不支持`shell`
+
+## 插件
+
+使用前请先挂载（state_check/ai 用 `exec --plugin <name>` 或 `plugin attach <session-id> <name>` 挂载到会话）。
 
 ### state_check
 
-提供基本状态查询，见`config\plugins\state_check\README.md`
+提供基本状态查询（命令返回时检测终端状态并附加到返回信息），见`config/plugins/state_check/state_check.md`
 
 ### ai
 
-对命令输出做二次 AI 分析
+对命令输出做二次 AI 分析（exec/send/read/mouse 响应），见`config/plugins/ai/README.md`
 
-见`config\plugins\ai\README.md`
+（另注：`config/plugins/` 下还有 `2048`（游戏）、`subagent`（子代理管理，注册 codebuddy/devin/opencode/claude/smartagent 命令等插件）
 
 ## 示例场景
 
@@ -434,7 +495,7 @@ app.py events job1 -l 10 # 查看崩溃事件详情（process_crash 类型）
 ### **TUI 程序**交互
 
 ```bash
-app.py exec mimo -c "mimo.exe --trust" --timeout 10 # 启动 TUI 程序，5秒后返回屏幕快照
+app.py exec mimo -c "mimo.exe --trust" --timeout 10 # 启动 TUI 程序，10秒后返回屏幕快照
 app.py send mimo --send-eol cr -i "j" -s # 发送按键，1秒后返回快照
 app.py read mimo -s
 app.py send mimo -i "帮我写一个贪吃蛇游戏" -s --timeout 30 --idle-timeout 5
@@ -458,13 +519,16 @@ app.py kill dbg1
 
 强制性劫持已经运行的控制台程序供PTY-Agent使用：`bin/terminal_injector/terminal_injector.exe`
 
-用法
+用法：
+
 ```bash
 terminal_injector.exe --list-targets --json # 查看可劫持的窗口
-terminal_injector.exe --mediator --target-pid $pid # 劫持
+terminal_injector.exe --inject <pid>        # 注入 DLL
+terminal_injector.exe --mediator --target-pid <pid> # 劫持桥接
 
-# 接入PTY-Agent
-app.py exec sid -c "terminal_injector.exe --mediator --target-pid $pid" --timeout 10
+# 接入 PTY-Agent
+# 不建议执行`terminal_injector.exe --inject <pid>` ，而是直接使用 PTY-Agent 执行`app.py exec sid -c "terminal_injector.exe --mediator --target-pid <pid>" --timeout 10`
+app.py exec sid -c "terminal_injector.exe --mediator --target-pid <pid>" --timeout 10
 ```
 
 ---
@@ -504,17 +568,19 @@ steps:
 
 解析期校验（run 时即报错，不产生运行）：id 非空唯一、type 合法且必填字段齐全、
 `depends_on` 引用存在且无环、`on_error`/`retry`/`max_parallel` 取值合法、定义文件上限 20 MB。
+（注：`trigger` 正则为**运行时编译**，解析期不校验，非法正则在执行时使步骤失败。）
 
 **步骤类型**：
 
 - `exec` — 启动/附加会话（`session`+`command` 必填）
-  - 返回条件：`trigger`（正则，命中返回）/ `timeout`（默认 120）/ `idle_timeout`（输出静默）
-  - 环境：`cwd`、`env`（KEY=VALUE 列表）、`size`（"120x40"）/`cols`/`rows`
+  - 返回条件：`trigger`（正则，命中返回）/ `timeout`（默认 120）/ `idle_timeout`（输出静默）/ `idle_after_first_output`（仅首次输出后才检测静默）
+  - 环境：`cwd`、`env`（**映射**，如 `KEY: VALUE`）、`encoding`、`size`（"120x40"）/`cols`/`rows`（同时给定时 `size` 优先）
   - `mode`：`pty`（默认，屏幕快照）/ `subprocess`（增量输出 + stderr 分离）
-  - 输出：`full` / `keep_ansi` / `snapshot_diff`
+  - 输出：`full` / `keep_ansi`（`snapshot_diff` 仅 `read` 步骤支持）
   - 语义：同名会话仍在运行 → 直接附加；已结束 → 步骤失败
   - 结果：`output` 为返回时终端快照；`reason` 为返回原因（trigger_matched /
-    trigger_timeout / idle_timeout / program_ended / program_crashed / gui_detected / ok）
+    trigger_timeout / idle_timeout / program_ended / program_crashed / gui_detected / ok /
+    cancelled / notify_waiting）
 - `send` — 向会话发送输入（`session`+`input` 必填，会话须已运行）
   - `trigger`/`timeout`/`idle_timeout` 等待返回（同 exec）
   - `eol: lf|crlf|cr|none` 行尾（默认按会话模式：pty=cr、subprocess=lf）；`json: true` 启用 `{enter}`/`{ctrl+a}` 转义展开（与 CLI advsend 语义一致，`{enter}` 按模式展开）
@@ -529,10 +595,11 @@ steps:
 - `depends_on: [a, b]` → 等 a、b 都完成；`depends_on: []` → 无依赖可与前序并行
 - 依赖失败/取消的步骤自动 skipped；依赖环解析期拒绝（返回循环路径）
 - 并行度上限 `max_parallel`（定义，默认 4）或 `--parallel N`（CLI 覆盖，优先级更高）
+- **同一 `session` 的步骤强制串行派发**（防止并发写输入/篡改触发条件互相踩踏）
 
 **变量、插值与条件**：
 
-- 全局变量：`vars` 定义，`--vars KEY=VALUE` 启动时覆盖（优先级更高），以 `vars.<name>` 引用
+- 全局变量：`vars` 定义，`--vars KEY=VALUE` 启动时覆盖（优先级更高，覆盖的值一律为字符串），以 `vars.<name>` 引用
 - 步骤结果：已完成步骤以 id 引用，暴露 `output`/`reason`/`exit_code`/`error` 四字段
 - 插值：任何字符串字段支持 `{{表达式}}`，执行前渲染（可引用已完成的步骤），如
   `"git clone {{vars.repo}}"`、`"print('{{build.output}}')"`
@@ -612,13 +679,13 @@ steps:
     depends_on: [clone]        # deps 与 build 均只依赖 clone → 并行
   - id: test
     type: send
-    session: test
+    session: build          # 复用已创建的 build 会话执行 make test（send 步骤不能引用未创建的会话）
     input: "cd {{vars.repo}} && make test\n"
     trigger: "PASS|FAIL|error"
     depends_on: [build]
   - id: report
     type: read
-    session: test
+    session: build          # 读取 make test 的输出
     grep: "FAIL"
     if: "test.reason == 'trigger_matched' and 'FAIL' in test.output"
     depends_on: [test]

@@ -355,7 +355,7 @@ HTML = f"""<!DOCTYPE html>
   <header>
     <h1>PTY-Agent 代码规模报告</h1>
     <div class="subtitle">各模块文件数、代码行数与体积对比</div>
-    <div class="meta">统计范围：项目主模块（已排除 reference / wezterm 上游 / third_party 等外部目录）· 代码行数仅计入源码文件</div>
+    <div class="meta">统计范围：项目主模块（已排除 wezterm 上游 / third_party 等外部目录）· 代码行数仅计入源码文件</div>
   </header>
 
   <div class="overview">
@@ -423,7 +423,7 @@ HTML = f"""<!DOCTYPE html>
   </section>
 
   <footer>
-    由 _analyze.py + _gen_html.py 自动生成 · 数据文件 _analysis.json
+    由 analyze.py + gen_html.py 自动生成 · 数据文件 _analysis.json
   </footer>
 </div>
 </body>

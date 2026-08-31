@@ -2,7 +2,7 @@
 
 **请注意，你开发的目标工作区不你目前所在的环境，而是在外部；你需要使用PTY-AGENT进行Shell和文件远程访问**，即项目在你的环境编写，执行、调试、交付都需要使用PTY-AGENT连接外部真正的工作区完成
 
-PTY-AGENT的使用方法见`SKILL.md`，文件传输的用法见插件
+PTY-AGENT的使用方法见`SKILL.md`，文件传输的用法见`file`命令（内置功能，见 SKILL.md「file（内置功能，非插件）」）
 
 远程工作区环境：Windows10
 远程工作区工作目录：`‪C:\Users\rikka\Desktop\1`，未经用户允许，不要写工作区之外的文件
@@ -22,4 +22,4 @@ PTY-AGENT的使用方法见`SKILL.md`，文件传输的用法见插件
 
 ## 文件传输
 
-使用PTY-AGENT的files插件
+使用PTY-AGENT的`file`命令（内置文件工具）

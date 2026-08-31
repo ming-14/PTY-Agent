@@ -90,7 +90,7 @@ class TestTimeoutConfig:
         assert DEFAULT_TRIGGER_TIMEOUT == 120.0
 
     def test_daemon_start_timeout(self):
-        assert DAEMON_START_TIMEOUT == 3.0
+        assert DAEMON_START_TIMEOUT == 10.0
 
     def test_ping_timeout(self):
         assert PING_TIMEOUT == 1.0

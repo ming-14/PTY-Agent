@@ -135,7 +135,7 @@ class ClientConnectionMixin:
             return _find_daemon_port()
         return self.connect_addr()[1]
 
-    def _connect(self, autostart: bool = True) -> socket.socket:
+    def _connect(self, autostart: bool = False) -> socket.socket:
         """连接守护进程（按 CONNECT_MODE 三路分流）
 
         - tls:   TLS 连接 + TOFU 验证（_connect_tls），远程跨机
@@ -154,7 +154,7 @@ class ClientConnectionMixin:
             return self._connect_basic()
         return self._connect_token(autostart)
 
-    def _connect_token(self, autostart: bool = True) -> socket.socket:
+    def _connect_token(self, autostart: bool = False) -> socket.socket:
         """连接本机 token 监听器（SHM 发现 + token/HMAC 认证）
 
         通过共享内存发现 daemon 存活与端口，创建明文 socket 连接，
@@ -268,14 +268,18 @@ class ClientConnectionMixin:
         self,
         msg: dict,
         *,
-        autostart: bool = True,
+        autostart: bool = False,
         output_path: Optional[str] = None,
     ) -> dict:
         sock = self._connect(autostart=autostart)
-        # CLI 插件 before_request 链：请求发送前变换
+        # CLI 插件链：check_request 拦截（返回 str 拒绝，不再发送）→ before_request 变换
         if self._cli_plugins is not None:
             if output_path is not None:
                 self._cli_plugins.set_output_path(output_path)
+            reject = self._cli_plugins.check_request(msg.get("type", ""), msg)
+            if reject:
+                _logger.info("请求被插件拒绝: %s (%s)", msg.get("type", ""), reject)
+                return Response.error(reject)
             msg = self._cli_plugins.before_request(msg.get("type", ""), msg)
         # 信封封装：分组负载（op/condition/output/io）+ 信封元数据；
         # 认证凭证（token/password/pubkey_fp）在随后 enrich 时注入到信封顶层，

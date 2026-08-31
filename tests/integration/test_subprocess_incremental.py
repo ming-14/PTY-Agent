@@ -72,6 +72,8 @@ def test_no_trigger_incremental(timed_session):
 
 def test_no_trigger_full_returns_all(timed_session):
     """--full（from_offset=0）在已有会话上仍从 0 读全量"""
+    import time
+
     s = timed_session
     ctx = _Ctx(s)
 
@@ -84,10 +86,13 @@ def test_no_trigger_full_returns_all(timed_session):
         send_response=False,
         from_offset=0,
     )
-    # 等 B 输出后，--full 从 0 读应包含 A 与 B
-    import time
-
-    time.sleep(1.6)
+    # 轮询等待 B 输出到达（B 于 t≈2s 打印；负载高时启动/调度可能延迟，
+    # 固定 sleep 会误判，必须等到 B 出现在缓冲再断言）
+    deadline = time.monotonic() + 8.0
+    while time.monotonic() < deadline:
+        if b"B" in s.output_buffer.get_slice(0):
+            break
+        time.sleep(0.1)
     r2, out2 = _run_subprocess_no_trigger_flow(
         ctx,
         None,

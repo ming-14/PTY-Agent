@@ -20,7 +20,7 @@ from typing import Callable, Dict, List, Optional
 from .base import Plugin, PluginContext, ProcessPluginContext
 from .environment import PluginEnvironment
 from .loader import LoadedPlugin, load_plugin_dir, load_plugins, module_name
-from .permissions import PermissionDenied
+from .cli_options import check_cli_option_conflicts
 from ..logging import get_logger
 
 _logger = get_logger("pty-plugins")
@@ -96,12 +96,14 @@ class PluginRegistry:
     ):
         self.environment = PluginEnvironment(policy)
         self._entries: Dict[str, _Entry] = {}
+        self._all_manifests: Dict[str, object] = {}  # 全部已加载清单（含 cli 形态，交叉冲突检测用）
         self._change_cb: Optional[Callable] = None
         self._state_store = state_store
         self._states = dict(states or {})
         self._enabled_by_default = enabled_by_default
         for item in load_plugins(plugin_dirs):
             self._register_loaded(item)
+        self._refresh_conflicts()
         for name in list(self._entries):
             if self._states.get(name, enabled_by_default):
                 try:
@@ -120,9 +122,8 @@ class PluginRegistry:
                 self._entries[manifest.id].manifest.path,
             )
             return
-        if manifest.kind == "cli":
-            _logger.info("CLI 插件跳过 daemon 登记（客户端进程加载）: %s", manifest.id)
-            return
+        # 全部清单登记
+        self._all_manifests[manifest.id] = manifest
         entry = _Entry(loaded)
         self._entries[manifest.id] = entry
         try:
@@ -136,21 +137,67 @@ class PluginRegistry:
         if not self._states.get(manifest.id, self._enabled_by_default):
             entry.state = STATE_DISABLED
 
+    def _refresh_conflicts(self) -> None:
+        """按当前全部已加载清单重算 CLI 选项冲突
+
+        新冲突插件置 BROKEN 不加载（错误可见，plugin list/info）；
+        冲突已解除（对方卸载/重载修复）的插件恢复登记状态（按 registry.json
+        状态为 LOADED/DISABLED），可在 enable 循环/显式 enable 中恢复。
+        """
+        conflicted = check_cli_option_conflicts(list(self._all_manifests.values()))
+        for name, err in conflicted.items():
+            entry = self._entries.get(name)
+            if entry is None or entry.state == STATE_BROKEN:
+                continue
+            if entry.state == STATE_ENABLED:
+                # 已启用插件遇新冲突：先按 disable 同款逻辑停用运行实例，
+                # 避免 BROKEN 后进程级路由/会话钩子仍在执行
+                self._unsubscribe_events(name, entry)
+                if entry.instance is not None:
+                    try:
+                        pctx = ProcessPluginContext(
+                            None, entry.instance, None, self.environment
+                        )
+                        entry.instance.on_disable(pctx)
+                    except Exception:
+                        _logger.exception("插件 %s on_disable 异常", name)
+                    entry.instance = None
+                self._notify_change()
+            entry.state = STATE_BROKEN
+            entry.error = "CLI 选项冲突: %s" % err
+            _logger.error("插件 %s 因 CLI 选项冲突不加载: %s", name, err)
+        for name, entry in self._entries.items():
+            if entry.state != STATE_BROKEN or name in conflicted:
+                continue
+            if not (entry.error or "").startswith("CLI 选项冲突"):
+                continue
+            entry.error = ""
+            entry.state = (
+                STATE_DISABLED
+                if not self._states.get(name, self._enabled_by_default)
+                else STATE_LOADED
+            )
+            _logger.info("插件 %s CLI 选项冲突已解除，恢复登记", name)
+
     # ── 查询 ──────────────────────────────────────────────
 
     def has(self, name: str) -> bool:
         return name in self._entries
 
-    def get(self, name: str):
+    def describe(self, name: str) -> Optional[dict]:
+        """查询插件元信息（kind/messageTypes）；未登记返回 None"""
         entry = self._entries.get(name)
-        if entry is None or entry.state == STATE_BROKEN:
+        if entry is None:
             return None
-        return entry.cls
+        return {
+            "kind": "/".join(entry.manifest.kind),
+            "messageTypes": list(entry.manifest.message_types),
+        }
 
     def instantiate(self, name: str):
         """按名实例化会话级插件（挂载用）；未加载/BROKEN/进程级/未启用返回 None"""
         entry = self._entries.get(name)
-        if entry is None or entry.state != STATE_ENABLED or entry.manifest.kind != "session":
+        if entry is None or entry.state != STATE_ENABLED or "session" not in entry.manifest.kind:
             return None
         return entry.cls()
 
@@ -161,7 +208,7 @@ class PluginRegistry:
                 "name": m.id,
                 "version": m.version,
                 "description": m.description,
-                "kind": m.kind,
+                "kind": "/".join(m.kind),
                 "state": e.state,
                 "error": e.error or "",
                 "triggers": list(m.triggers),
@@ -172,6 +219,7 @@ class PluginRegistry:
                 "commands": list(m.commands),
                 "hooks": dict(m.hooks),
                 "permissions": list(m.permissions),
+                "cliOptions": [o.to_dict() for o in m.cli_options],
             }
             for name, e in sorted(self._entries.items())
             for m in (e.manifest,)
@@ -187,7 +235,7 @@ class PluginRegistry:
             "name": m.id,
             "version": m.version,
             "description": m.description,
-            "kind": m.kind,
+            "kind": "/".join(m.kind),
             "state": entry.state,
             "error": entry.error or "",
             "path": m.path,
@@ -201,17 +249,19 @@ class PluginRegistry:
             "permissions": list(m.permissions),
             "events": list(m.events),
             "dependencies": dict(m.dependencies),
+            "cliOptions": [o.to_dict() for o in m.cli_options],
         }
 
     def process_instances(self) -> Dict[str, Plugin]:
-        """进程级插件实例（message_type → Plugin），dispatcher 路由用
+        """已启用且实例化的插件实例字典（所有形态，dispatcher 路由用）
 
-        只返回 state=ENABLED 且 kind=process 的实例。
+        按 message_types 注册路由：无 messageTypes 的插件（纯 cli）在循环中
+        因类型不匹配跳过，不会参与消息路由或响应装饰。
         """
         return {
             name: e.instance
             for name, e in self._entries.items()
-            if e.state == STATE_ENABLED and e.manifest.kind == "process" and e.instance is not None
+            if e.state == STATE_ENABLED and e.instance is not None
         }
 
     # ── 生命周期 ──────────────────────────────────────────
@@ -232,6 +282,7 @@ class PluginRegistry:
         entry.state = state
         if error:
             entry.error = error
+        self._states[name] = state == STATE_ENABLED
         if self._state_store is not None:
             self._state_store.set(name, state == STATE_ENABLED)
 
@@ -250,9 +301,6 @@ class PluginRegistry:
             return False
         if entry.state == STATE_ENABLED:
             return True
-        if entry.manifest.kind not in ("process", "session"):
-            _logger.warning("插件 %s kind=%s 不可在 daemon 启用", name, entry.manifest.kind)
-            return False
 
         # 构造规范实例
         try:
@@ -263,10 +311,7 @@ class PluginRegistry:
             entry.error = "实例化失败"
             return False
 
-        if entry.manifest.kind == "process":
-            pctx = ProcessPluginContext(None, inst, None, self.environment)
-        else:
-            pctx = PluginContext(None, inst, environment=self.environment)
+        pctx = ProcessPluginContext(None, inst, None, self.environment)
         try:
             inst.on_init(pctx)
             inst.on_enable(pctx)
@@ -280,7 +325,7 @@ class PluginRegistry:
         self._set_state(name, STATE_ENABLED)
         self._subscribe_events(name, entry)
         self._notify_change()
-        _logger.info("插件已启用: %s (kind=%s)", name, entry.manifest.kind)
+        _logger.info("插件已启用: %s", name)
         return True
 
     def disable(self, name: str) -> bool:
@@ -291,10 +336,7 @@ class PluginRegistry:
         self._unsubscribe_events(name, entry)
         if entry.instance is not None:
             try:
-                if entry.manifest.kind == "process":
-                    pctx = ProcessPluginContext(None, entry.instance, None, self.environment)
-                else:
-                    pctx = PluginContext(None, entry.instance, environment=self.environment)
+                pctx = ProcessPluginContext(None, entry.instance, None, self.environment)
                 entry.instance.on_disable(pctx)
             except Exception:
                 _logger.exception("插件 %s on_disable 异常", name)
@@ -317,6 +359,7 @@ class PluginRegistry:
             return False
         path = entry.manifest.path
         self._entries.pop(name, None)
+        self._all_manifests.pop(name, None)
         self.environment.unregister(name)
         sys.modules.pop(module_name(name), None)
         loaded = load_plugin_dir(path)
@@ -324,10 +367,14 @@ class PluginRegistry:
             _logger.error("插件重载失败: %s", name)
             return False
         self._register_loaded(loaded)
+        # 冲突刷新在状态设置前：重载后仍冲突的插件保持 BROKEN 不被 enable 覆盖
+        self._refresh_conflicts()
         if was_enabled:
             return self.enable(name)
-        # 原禁用状态：置为 DISABLED
-        self._entries[name].state = STATE_DISABLED
+        # 原禁用状态：置为 DISABLED（冲突插件保持 BROKEN）
+        entry = self._entries[name]
+        if entry.state != STATE_BROKEN:
+            entry.state = STATE_DISABLED
         return True
 
     def load_dir(self, plugin_dir: str, dest_root: str) -> Optional[str]:
@@ -353,6 +400,7 @@ class PluginRegistry:
             shutil.rmtree(dest, ignore_errors=True)
             return None
         self._register_loaded(re_loaded)
+        self._refresh_conflicts()
         return re_loaded.manifest.id
 
     def remove(self, name: str) -> bool:
@@ -374,6 +422,8 @@ class PluginRegistry:
             shutil.rmtree(storage_root, ignore_errors=True)
         shutil.rmtree(entry.manifest.path, ignore_errors=True)
         self._entries.pop(name, None)
+        self._all_manifests.pop(name, None)
+        self._refresh_conflicts()
         if self._state_store is not None:
             self._state_store.delete(name)
         _logger.info("插件已卸载: %s", name)
@@ -412,7 +462,7 @@ class PluginRegistry:
         for name, entry in self._entries.items():
             if entry.state != STATE_ENABLED:
                 continue
-            if entry.manifest.kind != "session":
+            if "session" not in entry.manifest.kind:
                 continue
             rule = entry.auto_load
             if rule is None:

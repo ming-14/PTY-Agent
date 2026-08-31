@@ -29,6 +29,8 @@ from ...execution.utils import (
     validate_request,
     validate_trigger_regex,
 )
+from ..notifications import build_notify_waiting_response, spawn_notify_worker
+from ...plugins.cli_options import validate_plugin_options
 from ...logging import get_logger
 
 _logger = get_logger("pty-daemon")
@@ -78,26 +80,54 @@ class ReadHandler(DaemonHandler):
 
         session = ctx.manager.get_session(session_id)
         if not session:
-            hs = ctx.manager._history_store
+            hs = ctx.manager.history_store
             if hs:
                 ended = hs.get_ended_output(session_id)
                 if ended:
+                    # 已结束会话无屏幕缓冲，拒绝渲染请求（与 BUGS.md 文档一致：
+                    # "read --response-format svg 需运行中会话: ended 会话报
+                    # requires a screen buffer"）
+                    if msg.get("render_format"):
+                        Message.send(
+                            conn,
+                            Response.error(
+                                "requires a screen buffer (the session has ended)"
+                            ),
+                        )
+                        return
                     output = ended.get("output", "")
                     snapshot_text = ended.get("snapshot", "")
                     pty_type = ended.get("ptyType", "none")
                     # pty 恒为快照；子进程用增量输出
                     if pty_type == "subprocess":
+                        # 子进程模式统一拒绝 --grep（与运行中会话一致，无快照语义）
+                        if grep is not None:
+                            Message.send(
+                                conn,
+                                Response.error(
+                                    "子进程模式不支持 --grep（grep 仅终端模式可用）"
+                                )
+                            )
+                            return
                         stderr_text = strip_if_needed(
                             ended.get("stderrOutput", ""), msg
                         )
                         output = strip_if_needed(output, msg)
                         output = apply_lines_grep(
-                            output, lines_param, grep, conn,
+                            output, lines_param, None, conn,
                             column_param=msg.get("column"),
                         )
                         if output is None:
                             return
                     else:
+                        if offset is not None:
+                            Message.send(
+                                conn,
+                                Response.error(
+                                    "终端模式不支持 --offset（--offset 仅子进程模式可用，用于增量读取）"
+                                ),
+                            )
+                            return
                         stderr_text = ""
                         output = snapshot_text
                         if not msg.get("keep_ansi"):
@@ -154,6 +184,26 @@ class ReadHandler(DaemonHandler):
             Message.send(conn, Response.error(f"Session '{session_id}' not found"))
             return
 
+        # 插件选项校验与合并（read 消息下发更新会话插件选项）
+        plugin_options = msg.get("pluginOptions")
+        if plugin_options is not None:
+            err = validate_plugin_options(plugin_options)
+            if err:
+                Message.send(conn, Response.error(err))
+                return
+            session.plugin_host.update_options(plugin_options)
+
+        # --notify 分支：立即返回 notify_waiting，后台线程继续等待条件并发布通知
+        if msg.get("notify"):
+            if not apply_client_defaults(
+                session, msg, conn, global_defaults=ctx.manager.get_global_defaults()
+            ):
+                return
+            resp = build_notify_waiting_response(ctx, session, msg, result_type="read")
+            Message.send(conn, resp)
+            spawn_notify_worker(ctx, session, msg, result_type="read")
+            return
+
         # 处理期间持有会话：会话可能在本 handler 等待输出期间自然结束，
         # 管理器会触发 release_components 释放大缓冲；hold 确保缓冲在
         # 响应构造完成前不被提前释放（最后一个 hold 退出时才实际释放）
@@ -190,7 +240,16 @@ class ReadHandler(DaemonHandler):
             self._handle_subprocess_read(ctx, conn, session, msg)
             return
 
-        # pty 模式恒为屏幕快照
+        # pty 模式恒为屏幕快照：--offset 是子进程模式的增量读取语义，终端模式拒绝
+        if offset is not None:
+            Message.send(
+                conn,
+                Response.error(
+                    "终端模式不支持 --offset（--offset 仅子进程模式可用，用于增量读取）"
+                ),
+            )
+            return
+
         if not validate_offset_policy(
             conn,
             offset,
@@ -231,40 +290,10 @@ class ReadHandler(DaemonHandler):
         # 非等待：直接返回快照（--full/--lines 时含 scrollback 历史）
         # 与子进程模式对齐"都不带 → 1s 后返回"语义：无参数快照先等 1s 收集
         # 输出再返回（--default timeout 可调整等待时长）；查询类（--full/-l/
-        # --column/--offset）立即返回不等待
-        # 显式 --offset：与子进程模式语义一致，从原始输出缓冲区增量读取，
-        # 返回"该偏移之后的新增输出"，响应 outputOffset 为缓冲结束偏移。
-        # （offset 未显式给定时保持快照语义，read 默认返回可见屏幕快照）
+        # --column）立即返回不等待（--offset 已在上方被终端模式拒绝）
         is_query = cond.full or lines_param is not None or req.column is not None
-        if offset is None and not is_query:
+        if not is_query:
             time.sleep(min(cond.timeout, 1.0))
-        if offset is not None:
-            output, cur_offset = session.get_output_with_offset(
-                from_offset=offset, encoding=req.encoding
-            )
-            output = strip_if_needed(output, msg)
-            if grep or req.column is not None:
-                filtered = apply_lines_grep(
-                    output, None, grep, conn,
-                    column_param=req.column,
-                )
-                if filtered is None:
-                    return
-                output = filtered
-            assemble_response(
-                ctx,
-                conn,
-                session,
-                msg,
-                output=output,
-                matched=False,
-                reason=Reason.OK if session.running else Reason.ENDED,
-                result_type="read",
-                consume_events=False,
-                output_offset=cur_offset,
-                include_debug=_include_debug(session),
-            )
-            return
 
         output = resolve_output(
             session, cond, force_full=(lines_param is not None)

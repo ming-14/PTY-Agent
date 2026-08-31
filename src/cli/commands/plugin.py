@@ -4,15 +4,20 @@ import argparse
 
 from ..base import Command, CommandContext
 from ..common_args import add_common_args
+from ...client.presenter import emit, emit_error
 
 
 class PluginCommand(Command):
     """plugin 命令"""
 
     name = "plugin"
-    help = "插件管理（list/ls/attach/detach/cmd/install/uninstall/enable/disable/reload/info/status/config）"
+    help = "插件管理（list/ls/attach/detach/cmd/install/uninstall/enable/disable/reload/info/status/config/gethelp）"
+    # 公共参数已在各子子命令解析器手动注册（add_common_args），避免两级重复
+    use_common_args = False
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--gethelp", metavar="NAME", default=None,
+                            help="显示插件帮助文档（<插件名>.md，按需查看，不自动输出）")
         plugin_sub = parser.add_subparsers(dest="plugin_subcmd", help="插件子命令")
 
         p_list = plugin_sub.add_parser("list", help="列出已加载插件")
@@ -76,6 +81,10 @@ class PluginCommand(Command):
         )
 
     def run(self, args, ctx: CommandContext) -> None:
+        # --gethelp 优先于子命令
+        if getattr(args, "gethelp", None):
+            self._show_help(args.gethelp, ctx)
+            return
         sub = args.plugin_subcmd
         if sub == "list":
             ctx.client.cmd_plugin("list")
@@ -102,7 +111,30 @@ class PluginCommand(Command):
         elif sub == "disable":
             ctx.client.cmd_plugin("disable", name=args.name)
         elif sub == "reload":
-            ctx.client.cmd_plugin("reload", name=args.name)
+            # 按 kind 形态分发：纯 cli 形态在客户端进程内加载，本地重载；
+            # 含 process/session 形态的插件须经 daemon 重载（双形态两侧都重载）
+            kinds = (
+                ctx.cli_plugins.kinds_of(args.name)
+                if ctx.cli_plugins is not None
+                else None
+            )
+            if kinds is None:
+                # 客户端未加载（纯 daemon 形态或插件系统未启用）→ daemon
+                ctx.client.cmd_plugin("reload", name=args.name)
+            elif "process" in kinds or "session" in kinds:
+                ctx.client.cmd_plugin("reload", name=args.name)
+                if "cli" in kinds and args.name in ctx.cli_plugins.names():
+                    err = ctx.cli_plugins.reload(args.name)
+                    if err:
+                        emit_error(err)
+                    else:
+                        emit(f"已重载 CLI 插件: {args.name}")
+            else:
+                err = ctx.cli_plugins.reload(args.name)
+                if err:
+                    emit_error(err)
+                else:
+                    emit(f"已重载 CLI 插件: {args.name}")
         elif sub == "info":
             ctx.client.cmd_plugin("info", name=args.name)
         elif sub == "status":
@@ -115,3 +147,38 @@ class PluginCommand(Command):
                 )
             else:
                 ctx.client.cmd_plugin("config", name=args.name)
+        else:
+            ctx.parser.print_help()
+
+    def _show_help(self, name: str, ctx: CommandContext) -> None:
+        """读取并显示插件帮助文档（<插件名>.md），并标记为已注入（内存态）"""
+        import os
+        import time
+        from ...config.plugins import PLUGIN_DIRS
+        from ...plugins.context import (
+            find_plugin_dir, context_text, _content_hash,
+            load_context_state, save_context_state,
+        )
+        from ...client.presenter import emit, emit_error
+
+        plugin_dir = find_plugin_dir(PLUGIN_DIRS, name)
+        if plugin_dir is None:
+            emit_error(f"插件 '{name}' 未找到")
+            return
+        help_file = os.path.join(plugin_dir, name + ".md")
+        if not os.path.isfile(help_file):
+            emit_error(f"插件 '{name}' 无帮助文档（{name}.md）")
+            return
+        try:
+            with open(help_file, "r", encoding="utf-8") as f:
+                content = f.read()
+            emit(content, msg_type="raw")
+            # 标记为已注入（内存态，与自动注入状态同文件）
+            text = context_text(name, plugin_dir)
+            if text:
+                digest = _content_hash(text)
+                state = load_context_state()
+                state[name] = {"sent": True, "sentAt": time.time(), "contentHash": digest}
+                save_context_state(state)
+        except OSError as e:
+            emit_error(f"读取帮助文档失败: {e}")

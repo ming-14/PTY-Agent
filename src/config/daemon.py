@@ -69,5 +69,10 @@ _all = build_config(
 for key, default_sub in _AUTH_PATH_DEFAULTS.items():
     _all[key] = resolve_data_path(_all.get(key, ""), _all["DATA_DIR"], default_sub)
 
+# 连接级防护常量兜底：daemon.toml 未配置时使用默认值（e2e 测试的临时
+# 配置目录不含这些新键，缺失会导致 listener 导入失败）
+_all.setdefault("MAX_CONNECTIONS", 100)
+_all.setdefault("CONNECTION_READ_TIMEOUT", 30.0)
+
 globals().update(_all)
 __all__ = list(_all.keys())

@@ -12,8 +12,8 @@
   3. 满内容shrink 80x24 → 80x18（顶部行推 scrollback，光标随内容上移）
   4. grow 回    80x18 → 80x24（底部补空行，光标不动）
 
-前置条件：守护进程运行中（python app.py daemon 或 python -m src start）。
-守护进程不在时整个模块 skip（不失败）。
+daemon 由 web_daemon fixture 自动启动（未运行则启动、结束后停止），
+不要求外部手动 `python -m src start`。
 
 运行：
   python -m pytest tests/e2e/test_resize_cursor_sync.py -v
@@ -49,9 +49,10 @@ def _daemon_alive() -> bool:
         return False
 
 
-pytestmark = pytest.mark.skipif(
-    not _daemon_alive(),
-    reason="守护进程未运行（python -m src start），跳过 e2e")
+@pytest.fixture(scope="module", autouse=True)
+def _web_daemon(web_daemon):
+    """web e2e 自启 daemon（复用 conftest.web_daemon）：未运行则启动、结束后停止"""
+    yield
 
 
 # ── WS 工具 ─────────────────────────────────────────────────
@@ -103,10 +104,11 @@ def _parse_rows(snapshot: str) -> dict:
 
 # ── 测试体 ──────────────────────────────────────────────────
 
-# 平台化：Windows 用 cmd（> prompt），Unix 用 bash（$ prompt）
+# 平台化：Windows 用 cmd（> prompt），Unix 用 bash（$ 普通用户 / # root 提示符，
+# CI/WSL 常以 root 运行，两者都算提示符）
 _IS_WIN = sys.platform == "win32"
 _SHELL_CMD = "cmd.exe" if _IS_WIN else "bash"
-_PROMPT_CHAR = ">" if _IS_WIN else "$"
+_PROMPT_CHARS = (">",) if _IS_WIN else ("$", "#")
 _FILL_CMD = (
     "for /l %i in (1,1,40) do @echo LINE%i-aaaaaaaaaaaaaaaaaaaa\r"
     if _IS_WIN
@@ -189,7 +191,7 @@ class _Session:
             assert snap_pos == pty_pos, (
                 f"[{tag}] snapshot 光标 {snap_pos} != ConPTY 实测 {pty_pos}，"
                 f"按键会回显在显示内容中间")
-        assert _PROMPT_CHAR in cursor_line, (
+        assert any(c in cursor_line for c in _PROMPT_CHARS), (
             f"[{tag}] 光标行不是 prompt: {cursor_line!r}")
 
 

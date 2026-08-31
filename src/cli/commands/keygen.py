@@ -43,10 +43,12 @@ class KeygenCommand(Command):
         from ...auth.keys import generate_keypair
         from ...client.presenter import emit, emit_error
 
-        # 确定密钥目录（expandvars 展开 %TEMP%/$TEMP 类环境变量，expanduser 展开 ~；
+        # 确定密钥目录（expand_env 统一展开 ~ 与 %VAR%/$VAR；
         # 默认 <DATA_DIR>/keys，DATA_DIR 来自 common.toml [paths]）
         if args.key_dir:
-            key_dir = os.path.expandvars(os.path.expanduser(args.key_dir))
+            from ...config._loader import expand_env
+
+            key_dir = expand_env(args.key_dir)
         else:
             key_dir = os.path.join(DATA_DIR, "keys")
 

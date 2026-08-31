@@ -1,0 +1,23 @@
+> hi
+  hi
+
+ The user just said "hi" twice. Let me respond briefly
+
+● Hi alice. What can I help you with today?
+
+> run ls in current dir
+
+● Bash(ls -la)
+────────────────────────────────────────────────────────────────────────
+ Bash command
+
+   ls -la
+   List files in current directory
+
+────────────────────────────────────────────────────────────────────────
+
+ Do you want to proceed?
+
+ > 1. Yes
+   2. Yes, and don't ask again for session (shift + tab)
+   3. No, and tell CodeBuddy what to do differently (escape)

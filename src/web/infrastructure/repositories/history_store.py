@@ -390,6 +390,7 @@ class HistoryStore:
                     "errorMessage": r[7],
                     "uid": r[8] or "",
                     "running": False,
+                    "tag": [],  # 用户标签占位（暂不持久化，与活跃会话接口一致）
                 }
             )
         return result
@@ -491,7 +492,7 @@ class HistoryStore:
         with self._lock:
             with self._connect() as conn:
                 rows = conn.execute(
-                    "SELECT id,command,pty_type,encoding,start_time,end_time,exit_code,error_message "
+                    "SELECT id,command,pty_type,encoding,start_time,end_time,exit_code,error_message,uid "
                     "FROM sessions WHERE tag = 'ended' ORDER BY end_time DESC"
                 ).fetchall()
         result = []
@@ -506,7 +507,9 @@ class HistoryStore:
                     "endTime": r[5],
                     "exitCode": r[6],
                     "errorMessage": r[7],
+                    "uid": r[8] or "",
                     "running": False,
+                    "tag": [],  # 用户标签占位（暂不持久化，与活跃会话接口一致）
                 }
             )
         return result

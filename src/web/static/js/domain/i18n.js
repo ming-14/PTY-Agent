@@ -38,8 +38,8 @@ const dict = {
     'serverAddr.label': '服务端地址',
     'serverAddr.hint': '设置后页面将刷新并连接到指定服务端，留空则恢复默认',
     // 登录页
-    'login.passwordLabel': '密码（可选）',
-    'login.passwordPh': '留空则免密登录',
+    'login.passwordLabel': '密码',
+    'login.passwordPh': '服务端未配置密码时可留空',
     'login.loginBtn': '登录',
     'login.serverAddrLabel': '服务器地址（可选）',
     'login.serverAddrPh': '例如: 192.168.1.100:18766',
@@ -91,9 +91,8 @@ const dict = {
     'session.sessionId': '会话 ID',
     'session.command': '命令',
     'session.workdir': '工作目录',
-    'session.mode': '运行模式',
-    'session.modePty': 'PTY 终端（快照，TUI 程序）',
-    'session.modeSubprocess': '子进程（增量输出，普通命令）',
+    'session.shell': 'Shell',
+    'session.shellNone': '不使用',
     'session.autoGenerate': '自动生成',
     'session.stream': '给 web 程序流式输出',
     'session.closeSession': '关闭会话',
@@ -239,7 +238,6 @@ const dict = {
     'term.copyFailed': '复制失败：请允许网站的剪贴板权限',
     'term.pasteFailed': '粘贴失败：请允许网站的剪贴板权限',
     'term.copy': '复制',
-    'term.stderrPrefix': 'ERR > ',
 
     // ── 会话状态消息（写入终端/Toast） ──
     'msg.sessionEnded': '[会话已结束]',
@@ -471,8 +469,8 @@ const dict = {
     'serverAddr.label': 'Server address',
     'serverAddr.hint': 'The page will reload and connect to the specified server; leave empty to restore the default',
     // 登录页
-    'login.passwordLabel': 'Password (optional)',
-    'login.passwordPh': 'Leave empty to login without password',
+    'login.passwordLabel': 'Password',
+    'login.passwordPh': 'Leave empty only if the server has no password',
     'login.loginBtn': 'Sign in',
     'login.serverAddrLabel': 'Server address (optional)',
     'login.serverAddrPh': 'e.g. 192.168.1.100:18766',
@@ -524,9 +522,8 @@ const dict = {
     'session.sessionId': 'Session ID',
     'session.command': 'Command',
     'session.workdir': 'Working directory',
-    'session.mode': 'Mode',
-    'session.modePty': 'PTY terminal (snapshot, TUI apps)',
-    'session.modeSubprocess': 'Subprocess (incremental output, regular commands)',
+    'session.shell': 'Shell',
+    'session.shellNone': 'Not used',
     'session.autoGenerate': 'Auto-generated',
     'session.stream': 'Stream',
     'session.closeSession': 'Close Session',
@@ -672,7 +669,6 @@ const dict = {
     'term.copyFailed': 'Copy failed: please allow clipboard access for this site',
     'term.pasteFailed': 'Paste failed: please allow clipboard access for this site',
     'term.copy': 'Copy',
-    'term.stderrPrefix': 'ERR > ',
 
     // ── 会话状态消息（写入终端/Toast） ──
     'msg.sessionEnded': '[Session ended]',

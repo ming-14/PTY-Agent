@@ -16,9 +16,12 @@ try/except ImportError 保护。任何可选模块缺失时，本网关返回 No
 - 本模块是唯一"知道某个可选模块存不存在"的地方；其余代码只从本模块取结果。
 - 探测结果缓存；缺失时返回 None，绝不向调用方抛 ImportError。
 - 配置开关惰性读取，配置加载异常时按默认值（False）处理，保证网关自身可导入。
+- 功能依赖（第三方 pip 包）集中登记在 _FEATURE_DEPS，经 missing_deps() 统一探测；
+  daemon 启动时对开启的功能预检，依赖缺失则提示并自动禁用该功能。
 """
 
 import importlib
+import importlib.util
 from typing import Optional
 
 # 探测结果缓存：key=(module, attr) -> obj | None
@@ -44,6 +47,42 @@ def _flag(name: str, default: bool = False) -> bool:
         return bool(getattr(_cfg, name, default))
     except Exception:
         return default
+
+
+# 依赖探测：缺失时功能自动降级（daemon 启动时提示并禁用对应功能）。
+# 用 find_spec 轻量探测（不真正 import），避免加载 numpy 等重量级包。
+def _missing_deps(packages) -> list:
+    """返回未安装的依赖包名列表（find_spec 探测，不导入）。"""
+    missing = []
+    for pkg in packages:
+        try:
+            if importlib.util.find_spec(pkg) is None:
+                missing.append(pkg)
+        except (ImportError, AttributeError, ValueError):
+            missing.append(pkg)
+    return missing
+
+
+# 功能依赖登记表：功能名 -> 所需第三方包。
+# 统一在此登记；daemon 启动时经 missing_deps() 预检，功能开启但依赖缺失时
+# 提示并自动禁用（见 daemon/server.py 的 _resolve_optional_features）。
+# 新增可选功能时在此登记即可，勿在调用方散落依赖名。
+_FEATURE_DEPS = {
+    "web": ("fastapi", "uvicorn", "starlette", "websockets"),
+    "screenshare": ("numpy", "av"),
+}
+
+
+def missing_deps(feature: str) -> list:
+    """返回指定功能缺失的依赖包名列表（find_spec 轻量探测，不导入包体）。
+
+    Args:
+        feature: 功能名（_FEATURE_DEPS 的 key，如 "web" / "screenshare"）。
+
+    Returns:
+        缺失的包名列表；功能未登记或无缺失时返回空列表。
+    """
+    return _missing_deps(_FEATURE_DEPS.get(feature, ()))
 
 
 # ────────────────────────────── web ──────────────────────────────
@@ -90,12 +129,17 @@ def get_vnc_adapter_cls():
 # ─────────────────────────── screenshare ──────────────────────────
 
 def screenshare_available() -> bool:
-    """screenshare 是否可用（web + ENABLE_FASTSCREEN + src/screenshare 可导入）。"""
+    """screenshare 是否可用（web + ENABLE_FASTSCREEN + src/screenshare + numpy/av 均可用）。"""
     if not web_available():
         return False
     if not _flag("ENABLE_FASTSCREEN"):
         return False
-    return _probe("src.screenshare") is not None
+    if _probe("src.screenshare") is None:
+        return False
+    # H.264 编码依赖 numpy/av：缺失时视为不可用（daemon 启动时提示并自动禁用）
+    if missing_deps("screenshare"):
+        return False
+    return True
 
 
 def get_screenshare_adapter_cls():
@@ -152,6 +196,7 @@ __all__ = [
     "get_screenshare_adapter_cls",
     "get_vnc_adapter_cls",
     "get_web_server_cls",
+    "missing_deps",
     "plugins_available",
     "sandbox_available",
     "screenshare_available",

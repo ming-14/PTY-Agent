@@ -36,7 +36,6 @@ else:
         _sys.path.insert(0, _build_bin)
 
 from win_sandbox_native import SandboxInstance, Process  # noqa: E402
-from win_sandbox_native import contains_access_denied_keyword  # noqa: E402
 from .helpers import (  # noqa: E402
     read_pipe,
     write_pipe,
@@ -46,6 +45,7 @@ from .helpers import (  # noqa: E402
     StatsPoller,
     drain_stdout,
     drain_stderr,
+    contains_access_denied_keyword,
 )
 
 __version__ = "0.2.0"

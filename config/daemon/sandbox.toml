@@ -1,17 +1,23 @@
-# 沙箱会话配置 —— win-sandbox 委托（Windows 专属）
+# 沙箱会话配置 —— win_sandbox_native（pybind11 in-process）委托（Windows 专属）
 # 加载入口：src/config/sandbox.py（ENABLED / QUOTA / ISOLATION 常量）
 # 说明：
 #   - 沙箱会话 = 原生 win_sandbox_native（pybind11 in-process）启动进程
-#     （Job Object + Low IL token，Phase 16 纯用户态隔离），进程 stdio
+#     （WRITE_RESTRICTED 受限令牌 + Job Object 纯用户态隔离），进程 stdio
 #     由外部传入的 ConPTY 驱动
 #   - 完整终端语义：回显/方向键/resize/Ctrl+C 与原生 ConPTY 一致
 #   - 隔离为显式 opt-in 能力；ENABLED=false 时会话走原生 PTY 后端，本文件不生效
+#   - 机制（对齐 dsh-sandbox-windows-acl）：CreateRestrictedToken 以
+#     DISABLE_MAX_PRIVILEGE|LUA_TOKEN|WRITE_RESTRICTED 派生受限令牌，
+#     restricting SIDs = [logon SID, Everyone, workspace SID, temp SID]。
+#     LUA_TOKEN 只移除管理员权限、不降低完整性级别（Medium IL）；
+#     写保护来自 WRITE_RESTRICTED（写访问必须命中 capability SID 的 ACE）。
+#     边界：写受限；读、网络、进程可见性不受限（与参考实现一致）。
 
 [sandbox]
 enabled = false                     # 沙箱会话开关；false = 会话走原生 PTY 后端
 log_level = "info"                    # trace|debug|info|warn|error
 
-# 资源配额（0 = 不限制），键名与 win-sandbox quota payload 对齐
+# 资源配额（0 = 不限制），键名与 win_sandbox_native quota 参数对齐
 [quota]
 memory_mb = 0                         # 进程内存上限（MB）
 cpu_ms = 0                            # CPU 时间上限（ms，硬限制）
@@ -20,7 +26,7 @@ max_processes = 0                     # Job 内最大进程数
 wall_clock_timeout_ms = 0             # 墙钟超时（ms）
 crash_silent = true                   # 崩溃静默：不弹窗不触发 WER
 
-# 隔离策略（键名与 win-sandbox isolation_policy payload 对齐，Phase 16 schema：
+# 隔离策略（兼容接受；新沙箱无网络/剪贴板策略——能力范围裁剪，
 # 无路径白名单/能力集，仅网络策略 + 剪贴板隔离）
 [isolation]
 net_policy = "unrestricted"        # unrestricted = 不限制网络；allowlist = 仅白名单放行（WFP+SOCKS5）

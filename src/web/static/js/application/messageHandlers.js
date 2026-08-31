@@ -110,7 +110,7 @@ export function handleMsg(msg) {
       ports.detail.applyDetailRefresh(msg);
       break;
     case 'shell_list':
-      handleShellList(msg.shells);
+      handleShellList(msg);
       break;
     case 'system_stats':
       updateSystemStats(msg);
@@ -163,17 +163,14 @@ export function handleSessionList(list) {
         startTime: s.startTime,
         subscribed: false,
         history: false,
+        mode: s.mode,
+        ptyType: s.ptyType,
       };
-      if (!state.tabOrder.includes(uid)) {
-        // 恢复阶段（刷新首次加载，restoreState.pending=true）不自动加入：
-        // 用户已关闭的标签（tabOrder 已保存为空/子集）不应被 session_list
-        // 全部重新加回（会话关闭标签后仍运行，刷新会"又冒出来好多标签页"）。
-        // 恢复完成后新出现的会话（其他客户端创建）在后续 list 更新时加入。
-        if (!state.restoreState.pending) {
-          state.tabOrder.push(uid);
-          saveTabState();
-        }
-      }
+      // 不再自动加入 tabOrder：
+      // - 本客户端自己创建的会话在 submitNewSession / submitRestartSession
+      //   时已以乐观 sid 加入 tabOrder（迁移后为 uid），无需在此重复加入。
+      // - 其他客户端创建的会话仅在侧边栏活跃列表显示，用户可手动打开。
+      // - 恢复阶段（刷新）由 loadTabState / restoreTabs 从 localStorage 恢复。
     } else {
       const prev = state.sessions[uid];
       if (prev.running && !s.running) {
@@ -317,7 +314,8 @@ export function initSessionState(key, msg, isHistory) {
   s.mode = msg.mode || (s.ptyType === 'subprocess' ? 'subprocess' : 'pty');
   s.ptyType = msg.ptyType || s.ptyType;
   if (msg.stderrReplay !== undefined) s.pendingStderrReplay = msg.stderrReplay || null;
-  if (msg.uid) s.uid = msg.uid;
+  // 后端消息统一带 sessionUid；uid 字段仅部分消息携带，两者都接受
+  if (msg.uid || msg.sessionUid) s.uid = msg.uid || msg.sessionUid;
   const daemonCols = msg.cols || DEFAULT_COLS;
   const daemonRows = msg.rows || DEFAULT_ROWS;
   if (s.uid) {
@@ -613,12 +611,21 @@ export function handleSessionDetail(msg) {
   ports.detail.showDetailDialog(uid, msg);
 }
 
-export function handleShellList(shells) {
-  if (!shells || Object.keys(shells).length === 0) return;
+export function handleShellList(msg) {
+  // 兼容旧消息形态（纯 shells 字典）：shell_list 现在为 { shells, cwd }
+  const shells = (msg && typeof msg === 'object' && !Array.isArray(msg) && msg.shells) ? msg.shells : msg;
+  if (!shells || typeof shells !== 'object' || Object.keys(shells).length === 0) return;
   state.availableShells = shells;
   try {
     localStorage.setItem('pty_available_shells', JSON.stringify(shells));
   } catch (_) {}
+  // 守护进程工作目录：新建会话对话框工作目录默认值
+  if (msg && msg.cwd) {
+    state.daemonCwd = msg.cwd;
+    try {
+      localStorage.setItem('pty_daemon_cwd', msg.cwd);
+    } catch (_) {}
+  }
 }
 
 export function updateSystemStats(msg) {

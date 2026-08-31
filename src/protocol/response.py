@@ -87,9 +87,19 @@ class Response:
         return result
 
     @staticmethod
-    def wait_result(timeout: float, elapsed: float) -> dict:
-        """Wait 命令响应"""
-        return {"type": "wait", "timeout": timeout, "elapsed": elapsed}
+    def wait_result(timeout: float, elapsed: float, notifications: list = None) -> dict:
+        """Wait 命令响应
+
+        Args:
+            timeout: 请求的等待秒数。
+            elapsed: 实际等待耗时。
+            notifications: 待消费通知摘要列表（{uid, sessionId,
+                triggerReturnReason, createdAt}）；无待消费通知时省略。
+        """
+        result = {"type": "wait", "timeout": timeout, "elapsed": elapsed}
+        if notifications:
+            result["notifications"] = notifications
+        return result
 
     @staticmethod
     def debug_information(
@@ -187,8 +197,8 @@ class Response:
         return {"type": "session_list", "sessions": sessions}
 
     @staticmethod
-    def ws_shell_list(shells: dict) -> dict:
-        return {"type": "shell_list", "shells": shells}
+    def ws_shell_list(shells: dict, cwd: str = "") -> dict:
+        return {"type": "shell_list", "shells": shells, "cwd": cwd}
 
     @staticmethod
     def ws_system_stats(cpu, memory) -> dict:

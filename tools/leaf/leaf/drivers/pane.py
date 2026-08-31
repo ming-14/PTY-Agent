@@ -118,6 +118,15 @@ class MuxPanel:
         """设置状态栏文本（render 时变化才重画，参与增量）"""
         self.mux.set_status(text)
 
+    # ---- 新输出通知 ----
+    def set_output_callback(self, callback) -> None:
+        """设置新输出回调：任一 pane 有新输出时调用（渲染线程事件驱动）。
+
+        回调只做轻量操作（如 set event），不得反查终端状态（否则与
+        reader 线程持 terminal 锁互等死锁）。
+        """
+        self.mux.set_output_callback(callback)
+
     # ---- 选区 ----
     def pane_selection_set(self, pane_id, anchor_x, anchor_y, end_x, end_y) -> None:
         """区域选择（整屏坐标）：anchor → end"""
@@ -159,6 +168,22 @@ class MuxPanel:
 
     def pane_text(self, pane_id: int) -> str:
         return self.mux.pane_text(pane_id)
+
+    def pane_take_output(self, pane_id: int) -> bytes:
+        """取走 pane 的原始输出缓冲（drain，录制用）"""
+        return bytes(self.mux.pane_take_output(pane_id))
+
+    def pane_output_len(self, pane_id: int) -> int:
+        return self.mux.pane_output_len(pane_id)
+
+    def pane_exit_code(self, pane_id: int) -> int:
+        """pane 退出码（仍在运行返回 0）"""
+        code = self.mux.pane_try_wait(pane_id)
+        return int(code) if code is not None else 0
+
+    def force_repaint(self) -> None:
+        """强制下一帧全量重绘（录制暂停恢复/收敛帧用）"""
+        self.mux.force_repaint()
 
     def close(self) -> None:
         """关闭所有 pane（终止子进程 + 释放）"""

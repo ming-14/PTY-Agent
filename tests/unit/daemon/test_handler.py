@@ -64,6 +64,7 @@ class _MockSession:
         self.gui_windows = []
         self.processes = []
         self.client_config = {}
+        self._trig_lock = threading.RLock()
 
     def get_output(self, **kwargs):
         return "test output"
@@ -785,6 +786,19 @@ class TestSnapshotReadLines:
         })
         assert resp is not None
         assert resp["outputStream"] == "line1\nline2\nline3\nline4\nline5"
+
+    def test_pty_read_rejects_offset(self):
+        """终端模式 read 拒绝 --offset（--offset 仅子进程模式可用，用于增量读取）"""
+        session = self._make_multi_line_snapshot_session()
+        mgr = _MockManager({"snap-read": session})
+        handler = DaemonDispatcher(mgr, AuthContext(authenticator=TokenAuthenticator("test-token")))
+        resp = self._handle_read(handler, {
+            "type": "read", "id": "snap-read",
+            "snapshot": True, "offset": 10,
+        })
+        assert resp is not None
+        assert resp["type"] == "error"
+        assert "不支持 --offset" in resp["message"]
 
 
 class _RecordingSession(_MockSession):

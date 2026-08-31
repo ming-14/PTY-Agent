@@ -4,6 +4,8 @@
 - 链式变换钩子：on_input / on_output / on_snapshot（modify，任一返回 None 的输入被拦截）
 - 分发钩子：    on_event（事件订阅）/ poll_tick（定时轮询，按 pollInterval 节流）
 - 生命周期：    attach / detach / detach_all（attach 依次回调 on_init/on_attach）
+- 插件选项：    attach 注入 / update_options 合并，会话生命周期内所有钩子经
+                ctx.options 可读（cliOptions 声明，exec/send/read/mouse 下发）
 - 返回控制：    request_return（中断等待中的命令，原因透传）
 - 自我卸载：    self_unload（标记待卸载，当前钩子链结束后移除并触发 on_detach）
 - 总线发布：    publish_event（会话事件发布到 daemon 事件总线）
@@ -18,7 +20,7 @@ import threading
 import time
 from typing import Dict, List, Optional
 
-from .base import Plugin, PluginContext
+from .base import Plugin, PluginContext, _EMPTY_OPTIONS
 from .hooks import HookEngine
 from ..logging import get_logger
 
@@ -32,8 +34,11 @@ class PluginHost:
         self._session = session
         self.environment = environment
         self._plugins: List[Plugin] = []
+        self._options: Dict[str, dict] = {}   # 插件名 → 会话选项（cliOptions 下发）
         self._lock = threading.Lock()
         self._pending_unload: List[Plugin] = []
+        # 待卸载标记：self_unload 置位，_flush_unload 先查 Event 免每块取锁
+        self._unload_pending = threading.Event()
         self._return_request: Optional[str] = None
         self._wait_active: bool = False
         self._last_poll: Dict[Plugin, float] = {}
@@ -57,15 +62,27 @@ class PluginHost:
         return None
 
     def snapshot_info(self) -> Optional[List[dict]]:
-        """挂载插件信息快照（name/version）；空链返回 None"""
+        """挂载插件信息快照（name/version/options）；空链返回 None"""
         if not self._plugins:
             return None
-        return [{"name": p.name, "version": p.version} for p in self._plugins]
+        with self._lock:
+            return [
+                {
+                    "name": p.name,
+                    "version": p.version,
+                    "options": dict(self._options.get(p.name, {})),
+                }
+                for p in self._plugins
+            ]
 
     # ── 挂载/卸载 ─────────────────────────────────────────
 
-    def attach(self, plugin: Plugin, session=None) -> bool:
-        """挂载插件（同名去重）并回调 on_init/on_attach；重名返回 False"""
+    def attach(self, plugin: Plugin, options=None) -> bool:
+        """挂载插件（同名去重）并回调 on_init/on_attach；重名返回 False
+
+        options: 本次挂载的插件选项（cliOptions 下发）；None 时沿用
+        会话已存选项（动态 attach 场景，exec 时设置的选项继续生效）。
+        """
         with self._lock:
             if any(p.name == plugin.name for p in self._plugins):
                 _logger.warning(
@@ -73,19 +90,36 @@ class PluginHost:
                 )
                 return False
             self._plugins.append(plugin)
+            if options is not None:
+                self._options[plugin.name] = dict(options)
         self._engine.register(plugin)
         _logger.info("插件挂载: %s -> 会话 %s", plugin.name, self._session.id)
-        self._safe_call(plugin, "on_init", PluginContext(self._session, plugin, self))
-        self._safe_call(plugin, "on_attach", PluginContext(self._session, plugin, self))
+        self._safe_call(plugin, "on_init", self._ctx(plugin))
+        self._safe_call(plugin, "on_attach", self._ctx(plugin))
         return True
 
-    def attach_many(self, plugins: List[Plugin]) -> List[str]:
-        """批量挂载，返回实际挂载成功的插件名列表"""
-        mounted = []
-        for plugin in plugins:
-            if self.attach(plugin):
-                mounted.append(plugin.name)
-        return mounted
+    def update_options(self, options: dict) -> None:
+        """合并会话插件选项（send/read/mouse 消息下发；逐插件合并）
+
+        对已挂载与未挂载插件均生效：未挂载插件的选项保留，后续动态
+        attach 时自动沿用。
+        """
+        with self._lock:
+            for name, opts in (options or {}).items():
+                if not isinstance(opts, dict):
+                    continue
+                merged = dict(self._options.get(name, {}))
+                merged.update(opts)
+                self._options[name] = merged
+        if options:
+            _logger.info(
+                "插件选项合并: 会话 %s 插件数=%d", self._session.id, len(options)
+            )
+
+    def options_for(self, name: str) -> dict:
+        """读取插件会话选项（未设置返回空 dict）"""
+        with self._lock:
+            return dict(self._options.get(name, {}))
 
     def detach(self, plugin_name: str, exit_code=None) -> bool:
         """按名卸载插件并回调 on_detach；未挂载返回 False"""
@@ -97,7 +131,7 @@ class PluginHost:
         self._engine.unregister(inst)
         _logger.info("插件卸载: %s <- 会话 %s", plugin_name, self._session.id)
         self._safe_call(
-            inst, "on_detach", PluginContext(self._session, inst, self), exit_code
+            inst, "on_detach", self._ctx(inst), exit_code
         )
         return True
 
@@ -112,7 +146,7 @@ class PluginHost:
             )
             self._engine.unregister(inst)
             self._safe_call(
-                inst, "on_detach", PluginContext(self._session, inst, self), exit_code
+                inst, "on_detach", self._ctx(inst), exit_code
             )
 
     def self_unload(self, plugin: Plugin) -> bool:
@@ -120,11 +154,18 @@ class PluginHost:
         with self._lock:
             if plugin in self._plugins and plugin not in self._pending_unload:
                 self._pending_unload.append(plugin)
+                self._unload_pending.set()
                 return True
             return False
 
     def _flush_unload(self) -> None:
-        """处理待卸载标记：链结束后调用（锁外执行避免重入）"""
+        """处理待卸载标记：链结束后调用（锁外执行避免重入）
+
+        惰性检查 Event：无待卸载标记时直接返回，避免每块输出取锁。
+        """
+        if not self._unload_pending.is_set():
+            return
+        self._unload_pending.clear()
         with self._lock:
             pending = list(self._pending_unload)
             self._pending_unload.clear()
@@ -165,7 +206,11 @@ class PluginHost:
     # ── 钩子调度（HookEngine 驱动） ───────────────────────
 
     def _ctx(self, plugin: Plugin) -> PluginContext:
-        return PluginContext(self._session, plugin, self)
+        opts = self._options.get(plugin.name)
+        return PluginContext(
+            self._session, plugin, self,
+            options=dict(opts) if opts else _EMPTY_OPTIONS,
+        )
 
     def on_input(self, data):
         """PTY 写入前链式变换；任一插件返回 None 表示拦截（返回 None）"""
@@ -174,16 +219,16 @@ class PluginHost:
         return result
 
     def on_output(self, data: bytes) -> bytes:
-        """reader 线程调用：链式变换 PTY 原始输出（None 视为清空）"""
-        result = self._engine.dispatch_modify("on_output", self._ctx, data)
+        """reader 线程调用：链式变换 PTY 原始输出；插件返回 None 视为不修改"""
+        result = self._engine.dispatch_modify("on_output", self._ctx, data, intercept=False)
         self._flush_unload()
-        return b"" if result is None else result
+        return data if result is None else result
 
     def on_snapshot(self, text: str) -> str:
-        """快照文本链式变换（handler 线程；None 视为空文本）"""
-        result = self._engine.dispatch_modify("on_snapshot", self._ctx, text)
+        """快照文本链式变换（handler 线程）；插件返回 None 视为不修改"""
+        result = self._engine.dispatch_modify("on_snapshot", self._ctx, text, intercept=False)
         self._flush_unload()
-        return "" if result is None else result
+        return text if result is None else result
 
     def on_event(self, event: dict) -> None:
         """事件分发：仅通知声明了 "event" 触发的插件（引擎注册时已门控）"""
@@ -208,7 +253,7 @@ class PluginHost:
                 if now - last < interval:
                     continue
                 self._last_poll[plugin] = now
-            self._safe_call(plugin, "on_poll", PluginContext(self._session, plugin, self))
+            self._safe_call(plugin, "on_poll", self._ctx(plugin))
         self._flush_unload()
 
     def handle_command(self, plugin_name: str, msg: dict):
@@ -218,7 +263,7 @@ class PluginHost:
         if inst is None:
             return None
         try:
-            return inst.handle_command(PluginContext(self._session, inst, self), msg)
+            return inst.handle_command(self._ctx(inst), msg)
         except Exception:
             _logger.exception(
                 "插件 %s handle_command 异常 (会话 %s)", plugin_name, self._session.id

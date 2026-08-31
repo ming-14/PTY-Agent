@@ -139,11 +139,15 @@ class Message:
             Message._recv_buffers[sock_key] = buf
         _logger.debug("recv: fd=%d buffered=%d", sock.fileno(), len(buf))
         retries = 0
+        # 换行搜索游标：find 只扫上次搜索点之后的新增区，避免大消息
+        # 每块从 0 全扫（O(n²)）；找到行并截断后重置为 0
+        search_from = 0
         while True:
-            idx = buf.find(b"\n")
+            idx = buf.find(b"\n", search_from)
             if idx >= 0:
                 line = bytes(buf[:idx])
                 del buf[: idx + 1]
+                search_from = 0
                 _logger.debug(
                     "recv: fd=%d complete line len=%d", sock.fileno(), len(line)
                 )
@@ -173,6 +177,8 @@ class Message:
                         )
                         return None
                 return msg
+            # 未找到换行：游标推进到当前缓冲末尾，下次只扫新增区
+            search_from = len(buf)
             try:
                 chunk = sock.recv(SOCKET_RECV_BUFSIZE)
             except socket.timeout:

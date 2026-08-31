@@ -289,7 +289,8 @@
   opacity: 0;
   transform: translateY(-8px);
   transition: opacity 0.2s, transform 0.2s;
-  pointer-events: auto;
+  /* toast 纯展示（无点击交互），不拦截点击，避免遮挡右上角导航按钮 */
+  pointer-events: none;
 }
 .toast.show {
   opacity: 1;

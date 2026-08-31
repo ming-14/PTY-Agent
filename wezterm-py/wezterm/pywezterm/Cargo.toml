@@ -19,4 +19,10 @@ wezterm-char-props.workspace = true
 wezterm-escape-parser.workspace = true
 anyhow.workspace = true
 log.workspace = true
+# 终端渲染 utils：字体发现（fontdb）+ 字形光栅化（fontdue）+ 合成（tiny-skia）
+# + JPG/BMP 编码（image）。均纯 Rust 无 C 库依赖
+fontdb = "0.23"
+fontdue = "0.9"
+tiny-skia.workspace = true
+image.workspace = true
 winapi = { workspace = true, features = ["winbase", "winnt", "ioapiset", "handleapi", "processthreadsapi", "consoleapi", "wincon", "synchapi", "winuser"] }

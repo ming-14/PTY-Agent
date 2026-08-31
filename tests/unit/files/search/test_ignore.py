@@ -1,9 +1,9 @@
-"""config/plugins/files/ignore.py 单元测试 — 搜索忽略过滤"""
+"""src/files/search/ignore.py 单元测试 — 搜索忽略过滤"""
 
 import os
 import pytest
 
-from config.plugins.files.search.ignore import is_ignored
+from src.files.search.ignore import is_ignored
 
 
 class TestIsIgnored:
@@ -40,7 +40,7 @@ class TestIsIgnored:
 
     def test_configured_list_applies(self):
         # 插件 plugin.json 配置的忽略清单应被加载
-        from config.plugins.files.settings import settings
+        from src.files.settings import settings
 
         assert "node_modules" in settings.ignored_dirs
         assert ".git" in settings.ignored_dirs

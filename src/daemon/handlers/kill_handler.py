@@ -18,7 +18,7 @@ class KillHandler(DaemonHandler):
             return
         session = ctx.manager.get_session(session_id)
         if not session:
-            hs = ctx.manager._history_store
+            hs = ctx.manager.history_store
             if hs and hs.get_session_tag(session_id) == "ended":
                 hs.delete_session(session_id)
                 Message.send(conn, Response.kill_result(0, "Ended session removed"))
@@ -28,21 +28,28 @@ class KillHandler(DaemonHandler):
             )
             return
 
-        if ctx.manager._history_store:
-            try:
-                ctx.manager._history_store.archive_session(session, tag="history")
-            except Exception as e:
-                _logger.warning("kill前持久化会话 '%s' 时异常: %s", session_id, e)
-
-        Message.send(conn, Response.kill_result(0, "Process killed successfully"))
-        try:
-            conn.shutdown(socket.SHUT_WR)
-        except OSError:
-            pass
-        conn.close()
-        conn = None
+        # 会话历史归档由 remove_session 内部统一执行（stop 之后，exit_code 已就绪），
+        # 此处不再显式归档，避免同一会话归档两次
+        # 先终止会话（实际 kill 进程树），成功后才向客户端报告，
+        # 避免 remove_session 失败时客户端已收到"成功"造成假成功
         try:
             ctx.manager.remove_session(session_id)
             _logger.info("会话 '%s' 已终止", session_id)
-        except Exception:
+            Message.send(conn, Response.kill_result(0, "Process killed successfully"))
+        except Exception as e:
             _logger.warning("终止会话 '%s' 时发生异常", session_id, exc_info=True)
+            try:
+                Message.send(
+                    conn,
+                    Response.kill_result(
+                        -1, f"Failed to kill session '{session_id}': {e}"
+                    ),
+                )
+            except Exception:
+                _logger.warning("发送 kill 失败响应时发生异常", exc_info=True)
+        finally:
+            try:
+                conn.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+            conn.close()

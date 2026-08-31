@@ -7,8 +7,8 @@
   3. 旧协议（仅 session_id）经 resolve_sid 仍可操作（兼容）
   4. 历史归档保留同名 sid 的多条记录（uid 主键）
 
-前置条件：守护进程运行中（python -m src start）。
-守护进程不在时整个模块 skip（不失败）。
+daemon 由 web_daemon fixture 自动启动（未运行则启动、结束后停止），
+不要求外部手动 `python -m src start`。
 
 运行：
   python -m pytest tests/e2e/test_web_uid_e2e.py -v
@@ -16,7 +16,7 @@
 
 import asyncio
 import json
-import socket
+import sys
 import time
 import uuid
 
@@ -26,18 +26,18 @@ websockets = pytest.importorskip("websockets", reason="需要 websockets 库")
 
 _WS_URL = "ws://localhost:18766/ws"
 
+# 用 python3 -u -i 创建交互式会话（Linux 上 python 可能不存在，用 python3）
+_CREATE_CMD = (
+    "cmd /c chcp 65001 >nul & python -u -i"
+    if sys.platform == "win32" else
+    "python3 -u -i"
+)
 
-def _daemon_alive() -> bool:
-    try:
-        with socket.create_connection(("127.0.0.1", 18766), timeout=1.0):
-            return True
-    except OSError:
-        return False
 
-
-pytestmark = pytest.mark.skipif(
-    not _daemon_alive(),
-    reason="守护进程未运行（python -m src start），跳过 e2e")
+@pytest.fixture(scope="module", autouse=True)
+def _web_daemon(web_daemon):
+    """web e2e 自启 daemon（复用 conftest.web_daemon）：未运行则启动、结束后停止"""
+    yield
 
 
 async def recv_until(ws, pred, timeout=8.0, collect=None):
@@ -75,7 +75,7 @@ async def test_same_sid_reuse_isolated():
         # 会话 A
         await ws.send(json.dumps({
             "type": "create", "session_id": sid,
-            "command": "cmd /c chcp 65001 >nul & python -u -i",
+            "command": _CREATE_CMD,
             "cols": 100, "rows": 24,
         }))
         sub_a = await recv_until(ws, lambda m: m.get("type") == "subscribed" and m.get("sessionId") == sid)
@@ -102,7 +102,7 @@ async def test_same_sid_reuse_isolated():
         # 同名会话 B（复用 sid）
         await ws.send(json.dumps({
             "type": "create", "session_id": sid,
-            "command": "cmd /c chcp 65001 >nul & python -u -i",
+            "command": _CREATE_CMD,
             "cols": 100, "rows": 24,
         }))
         sub_b = await recv_until(ws, lambda m: m.get("type") == "subscribed" and m.get("sessionId") == sid)
@@ -145,7 +145,7 @@ async def test_resize_via_session_uid():
     async with websockets.connect(_WS_URL) as ws:
         await ws.send(json.dumps({
             "type": "create", "session_id": sid,
-            "command": "cmd /c chcp 65001 >nul & python -u -i",
+            "command": _CREATE_CMD,
             "cols": 100, "rows": 24,
         }))
         sub = await recv_until(ws, lambda m: m.get("type") == "subscribed" and m.get("sessionId") == sid)

@@ -29,6 +29,12 @@ class _SendInputCommand(Command):
             help="返回全部累积输出而非仅新输出",
         )
         parser.add_argument(
+            "--lines",
+            "-l",
+            default=None,
+            help="行数过滤: N=最后N行, start:end=范围",
+        )
+        parser.add_argument(
             "--send-eol",
             "-e",
             default=None,
@@ -52,6 +58,7 @@ class _SendInputCommand(Command):
             encoding=args.encoding,
             full=args.full,
             keep_ansi=args.keep_ansi,
+            lines=args.lines,
             idle_timeout=args.idle_timeout,
             idle_after_first_output=args.idle_after_first_output,
             json_escaping=self.json_escaping,
@@ -60,6 +67,7 @@ class _SendInputCommand(Command):
             response_format=args.response_format,
             svg_compression_level=args.svg_compression_level,
             snapshot_diff=args.snapshot_diff,
+            notify=args.notify,
         )
 
 

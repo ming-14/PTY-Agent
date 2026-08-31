@@ -86,7 +86,7 @@ def _strip_trailing_ansi(data: bytes) -> bytes:
 
 
 def _run() -> int:
-    # cwd 不显式设置（Phase 16 Low IL 语义：以宿主 %TEMP% 下目录为工作
+    # cwd 不显式设置（WRITE_RESTRICTED 语义：以宿主 %TEMP% 下目录为工作
     # 目录会被拒——"当前目录无效"；继承父进程项目根即可，可读可遍历）
     mgr = SandboxSessionManager(quota=dict(_QUOTA), isolation=dict(_ISOLATION),
                                 log_level="info")
@@ -130,7 +130,7 @@ def _run() -> int:
         #    目标选 sort（阻塞读 stdin 的常驻进程，无网络依赖）：比 ping 更
         #    稳定（无 ICMP 语义差异），可中断目标语义明确。
         #    中断语义断言用进程树：sort 以 STATUS_CONTROL_C_EXIT 终止后 Job 内
-        #    只剩根进程（^C 文本标记是 conhost 渲染细节，Low IL 下不出现）
+        #    只剩根进程（^C 文本标记是 conhost 渲染细节）
         pty.write(b"sort\r\n")
         time.sleep(1.5)
         pty.write(b"\x03")

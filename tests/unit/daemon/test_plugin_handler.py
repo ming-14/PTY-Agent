@@ -98,7 +98,7 @@ class TestAttachDetach:
                                                 "id": "s1", "name": "echo"})
             assert resp.get("type") != "error"
             assert resp["commandType"] == "plugin"
-            assert resp["plugins"] == [{"name": "echo", "version": "1.0"}]
+            assert resp["plugins"] == [{"name": "echo", "version": "1.0", "options": {}}]
             assert session.plugin_host.names() == ["echo"]
 
             resp = _send(PluginHandler(), ctx, {"type": "plugin", "action": "attach",
@@ -106,7 +106,7 @@ class TestAttachDetach:
             assert resp["type"] == "error"
 
             resp = _send(PluginHandler(), ctx, {"type": "plugin", "action": "ls", "id": "s1"})
-            assert resp["plugins"] == [{"name": "echo", "version": "1.0"}]
+            assert resp["plugins"] == [{"name": "echo", "version": "1.0", "options": {}}]
 
             resp = _send(PluginHandler(), ctx, {"type": "plugin", "action": "detach",
                                                 "id": "s1", "name": "echo"})

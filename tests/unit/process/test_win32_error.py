@@ -4,9 +4,15 @@
 在各类错误码上的输出。
 
 这些测试是跨平台的——所有映射基于静态符号名称表，不依赖 Windows API。
+但 import src.process.windows 会触发包 __init__ 导入链（Windows 专属 ctypes），
+故非 Windows 平台跳过本模块。
 """
 
+import sys
 import pytest
+
+if sys.platform != "win32":
+    pytest.skip("Windows-Only: import chain triggers src.process.windows.__init__", allow_module_level=True)
 
 from src.process.windows.win32_error import (
     translate_windows_error,

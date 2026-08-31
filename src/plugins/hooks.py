@@ -1,20 +1,18 @@
-"""钩子链引擎 — 优先级排序与五类调度语义
+"""钩子链引擎 — 优先级排序与三类调度语义
 
 插件在挂载/启用时向引擎注册已实现的钩子；按优先级（默认 100，高者先）与
 注册顺序编译为链，调用时按钩子类型选择语义：
 
 - modify    链式变换：前一输出为后一输入，任一返回 None 即拦截（输入类）
 - observe   只通知：返回值忽略
-- intercept 可取消：True=放行即停，False=拒绝即停，None=不表态继续
 - provide   提供者：按优先级升序，首个非 None 生效
-- aggregate 收集：所有返回值合并为列表
 
 异常隔离：单个钩子抛异常只记日志，不影响链上其余钩子与主流程。
 链为空时所有调用零开销短路。
 """
 
 import threading
-from typing import Callable, Dict, List, Optional
+from typing import Dict, List
 
 from .base import Plugin, VALID_HOOKS
 from ..logging import get_logger
@@ -89,7 +87,13 @@ class HookEngine:
     # ── 调度 ──────────────────────────────────────────────
 
     def _chain(self, name: str) -> List[_Hook]:
-        """取钩子链快照（modify/observe/intercept 语义：优先级降序 + 注册序）"""
+        """取钩子链快照（modify/observe/intercept 语义：优先级降序 + 注册序）
+
+        空链短路：先无锁查是否有链，避免热路径（每块输出/每次输入）上
+        为常见空链取锁；有链才加锁复制排序。
+        """
+        if name not in self._chains:
+            return []
         with self._lock:
             chain = self._chains.get(name)
             if not chain:
@@ -140,31 +144,3 @@ class HookEngine:
             if result is not None:
                 return result
         return None
-
-    def dispatch_intercept(self, name: str, ctx_factory, *args, predicate=None):
-        """可取消：True=放行即停，False=拒绝即停，None=不表态继续"""
-        for hook in self._chain(name):
-            if predicate is not None and not predicate(hook.plugin):
-                continue
-            try:
-                result = hook.method(ctx_factory(hook.plugin), *args)
-            except Exception:
-                _logger.exception("插件 %s %s 异常", hook.plugin.name, name)
-                continue
-            if result is True:
-                return True
-            if result is False:
-                return False
-        return None
-
-    def dispatch_aggregate(self, name: str, ctx_factory, *args, predicate=None):
-        """收集：所有返回值合并为列表"""
-        results = []
-        for hook in self._chain(name):
-            if predicate is not None and not predicate(hook.plugin):
-                continue
-            try:
-                results.append(hook.method(ctx_factory(hook.plugin), *args))
-            except Exception:
-                _logger.exception("插件 %s %s 异常", hook.plugin.name, name)
-        return results

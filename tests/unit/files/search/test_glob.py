@@ -4,14 +4,14 @@ import os
 
 import pytest
 
-from config.plugins.files.search import glob_
-from config.plugins.files.search.glob_ import glob_files
+from src.files.search import glob_
+from src.files.search.glob_ import glob_files
 
 
 class TestGlobFallbackEngine:
     @pytest.fixture(autouse=True)
     def force_fallback(self, monkeypatch):
-        import config.plugins.files.settings as _s
+        import src.files.settings as _s
         monkeypatch.setattr(_s.settings, "rg_exe", None)
 
     def _make_tree(self, tmp_path):
@@ -75,7 +75,7 @@ class TestGlobFallbackEngine:
 class TestGlobRgEngine:
     @pytest.fixture
     def mock_rg(self, monkeypatch):
-        import config.plugins.files.settings as _s
+        import src.files.settings as _s
         monkeypatch.setattr(_s.settings, "rg_exe", "rg.exe")
 
         def _run(cmd, cwd=None, capture_output=None, encoding=None, errors=None):
@@ -97,7 +97,7 @@ class TestGlobRgEngine:
         }
 
     def test_rg_command_contains_glob(self, tmp_path, monkeypatch):
-        import config.plugins.files.settings as _s
+        import src.files.settings as _s
         monkeypatch.setattr(_s.settings, "rg_exe", "rg.exe")
         captured = {}
 
@@ -111,11 +111,31 @@ class TestGlobRgEngine:
             return _P()
         monkeypatch.setattr(glob_.subprocess, "run", _run)
         glob_files("*.py", str(tmp_path))
-        assert captured["cmd"] == ["rg.exe", "--files", "-L", "--null", "--glob", "*.py"]
+        assert captured["cmd"][:5] == ["rg.exe", "--files", "-L", "--null", "--glob"]
+        assert "*.py" in captured["cmd"]
         assert captured["cwd"] == str(tmp_path)
 
+    def test_rg_command_applies_ignored_dirs_globs(self, tmp_path, monkeypatch):
+        """回归：rg 引擎必须以排除 glob 应用忽略清单（对齐降级引擎）"""
+        import src.files.settings as _s
+        monkeypatch.setattr(_s.settings, "rg_exe", "rg.exe")
+        captured = {}
+
+        def _run(cmd, cwd=None, capture_output=None, encoding=None, errors=None):
+            captured["cmd"] = cmd
+            class _P:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+            return _P()
+        monkeypatch.setattr(glob_.subprocess, "run", _run)
+        glob_files("*.py", str(tmp_path))
+        ignore_globs = [c for c in captured["cmd"] if c.startswith("!**/")]
+        assert "!**/node_modules/**" in ignore_globs
+        assert "!**/vendor/**" in ignore_globs
+
     def test_rg_error_falls_back(self, tmp_path, monkeypatch):
-        import config.plugins.files.settings as _s
+        import src.files.settings as _s
         monkeypatch.setattr(_s.settings, "rg_exe", "rg.exe")
 
         def _run(cmd, cwd=None, capture_output=None, encoding=None, errors=None):
@@ -131,7 +151,7 @@ class TestGlobRgEngine:
         assert result.files == [str(tmp_path / "a.py")]
 
     def test_rg_missing_falls_back(self, tmp_path, monkeypatch):
-        import config.plugins.files.settings as _s
+        import src.files.settings as _s
         monkeypatch.setattr(_s.settings, "rg_exe", None)
         (tmp_path / "a.py").write_text("", encoding="utf-8")
         result = glob_files("*.py", str(tmp_path))

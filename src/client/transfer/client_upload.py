@@ -1,6 +1,6 @@
 """CLI 侧 upload 驱动 —— 扫描 → 握手 → 清单 → 计划 → 逐文件传输（含进度）
 
-流程（与 config/plugins/files 插件侧 daemon_upload 对称）：
+流程（与 src/files/transfer 侧 daemon_upload 对称）：
 1. scan_tree 本地路径 → 清单 entries
 2. 握手 file_upload_start（JSON，沿用签名/认证）→ 收 ok/error
 3. 发 MANIFEST 帧 → 收 PLAN 帧（含 ABORT 拒绝路径）

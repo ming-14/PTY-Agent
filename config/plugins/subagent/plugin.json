@@ -1,0 +1,34 @@
+{
+  "id": "subagent",
+  "version": "0.5.0",
+  "kind": ["cli", "process"],
+  "description": "子代理管理：spawn CodeBuddy (cbc) / Devin / OpenCode 子进程，接管子代理会话的 read/send 响应",
+  "cliCommands": ["codebuddy", "devin", "opencode", "claude", "smartagent"],
+  "messageTypes": ["codebuddy_exec", "devin_exec", "opencode_exec", "claude_exec", "smartagent_exec"],
+  "decorateTypes": ["list", "read", "send"],
+  "autoMount": ["list", "read", "send"],
+  "contextHidden": false,
+  "events": {
+    "subscribe": ["session.ended"]
+  },
+  "hooks": {
+    "handle_message": {},
+    "on_bus_event": {},
+    "decorate_response": {},
+    "before_request": {},
+    "render_response": {}
+  },
+  "cliOptions": [
+    {
+      "name": "rf",
+      "type": "choice",
+      "choices": ["snapshot", "message"],
+      "default": "snapshot",
+      "help": "响应格式：snapshot=屏幕快照（默认）；message=最近 N 条结构化消息（需 -l）",
+      "commands": ["read"]
+    }
+  ],
+  "permissions": {
+    "required": ["session.read", "session.write"]
+  }
+}

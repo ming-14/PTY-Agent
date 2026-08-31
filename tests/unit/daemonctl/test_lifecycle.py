@@ -107,22 +107,34 @@ class TestFindDaemonPort:
 
 
 class TestFindDaemonPid:
-    """_find_daemon_pid 测试（经单实例锁持有者查询）"""
+    """_find_daemon_pid 测试（锁持有者查询优先，端口回退兜底）"""
 
     def test_returns_none_when_not_running(self):
+        """锁无持有者且无监听端口 → None"""
         with patch("src.client.daemonctl.SingleInstanceLock") as mock_lock_cls:
-            mock_lock = MagicMock()
-            mock_lock.is_locked.return_value = False
-            mock_lock_cls.return_value = mock_lock
-            assert _find_daemon_pid() is None
+            mock_lock_cls.find_owner_pid.return_value = None
+            with patch("src.client.daemonctl._find_daemon_port", return_value=None):
+                assert _find_daemon_pid() is None
 
     def test_returns_owner_pid_when_running(self):
+        """锁有持有者 → 返回持有者 PID（不走端口回退）"""
         with patch("src.client.daemonctl.SingleInstanceLock") as mock_lock_cls:
-            mock_lock = MagicMock()
-            mock_lock.is_locked.return_value = True
-            mock_lock_cls.return_value = mock_lock
             mock_lock_cls.find_owner_pid.return_value = os.getpid()
             assert _find_daemon_pid() == os.getpid()
+
+    def test_falls_back_to_port_when_lock_missing(self):
+        """锁无持有者但端口在监听 → 端口级回退找到 PID
+
+        端口回退经 /proc/net/tcp 实现（_find_pid_by_port_unix），仅 Unix 有；
+        Windows 上 _find_daemon_pid 无端口回退路径（IS_WINDOWS 直接 return None）。
+        """
+        if sys.platform == "win32":
+            pytest.skip("端口级 PID 回退仅 Unix 实现（/proc/net/tcp）")
+        with patch("src.client.daemonctl.SingleInstanceLock") as mock_lock_cls:
+            mock_lock_cls.find_owner_pid.return_value = None
+            with patch("src.client.daemonctl._find_daemon_port", return_value=10520):
+                with patch("src.client.daemonctl._find_pid_by_port_unix", return_value=12345):
+                    assert _find_daemon_pid() == 12345
 
 
 class TestIsRunning:
@@ -175,6 +187,10 @@ class TestStartDaemon:
                               return_value=0).start()
             mock_execve = patch("src.client.daemonctl.os.execve").start()
             patch("src.client.daemonctl.os._exit").start()
+            # fork mock 为 0 会让测试进程自身走 daemon 化路径的
+            # os.chdir("/")（真实子进程才该执行），会污染 pytest 的 cwd，
+            # 导致后续相对路径子进程（如 node 脚本测试）找不到文件。
+            patch("src.client.daemonctl.os.chdir").start()
         try:
             with patch("src.client.daemonctl.SingleInstanceLock") as mock_lock_cls, \
                  patch("src.client.daemonctl.subprocess.Popen") as mock_popen:

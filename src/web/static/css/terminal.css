@@ -78,11 +78,14 @@ body.touch-device .term-instance.active {
   height: 100%;
 }
 
-.term-instance .xterm-viewport {
-  background-color: transparent !important;
-  overflow-y: auto !important;
+/* 6.0.0 滚动容器：隐藏浏览器原生滚动条（showScrollbar:false 时滚动条 DOM 不渲染，
+   此处兜底覆盖 5.x 遗留的 .xterm-viewport 规则） */
+.term-instance .xterm-scrollable-element {
   scrollbar-width: none;
   -ms-overflow-style: none;
+}
+.term-instance .xterm-scrollable-element::-webkit-scrollbar {
+  display: none;
 }
 
 .term-instance.readonly,
@@ -99,10 +102,6 @@ body.touch-device .term-instance.active {
 .term-instance.readonly .xterm-cursor,
 .term-instance.readonly .xterm-cursor-layer {
   display: none !important;
-}
-
-.xterm-viewport::-webkit-scrollbar {
-  display: none;
 }
 
 /* 移动端长按选择后显示的复制按钮 */

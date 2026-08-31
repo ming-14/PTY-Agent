@@ -1,4 +1,4 @@
-"""统计各模块代码规模，输出 JSON 数据供 _gen_html.py 生成可视化报告。"""
+"""统计各模块代码规模，输出 JSON 数据供 gen_html.py 生成可视化报告。"""
 from __future__ import annotations
 
 import json
@@ -18,7 +18,8 @@ TOP_MODULES: dict[str, str] = {
     "fastscreen": "快速截屏 (C++)",
     "web_rime": "Web 输入法 (Rime)",
     "wezterm-py": "WezTerm 终端集成",
-    "win-sandbox": "Windows 沙箱 (C++)",
+    "sandbox": "Windows 沙箱 (C++)",
+    "tools": "辅助工具 (leaf 录制回放 / analyze 规模分析)",
     "tests": "测试套件",
     "docs": "文档",
     "config": "配置",
@@ -29,14 +30,13 @@ TOP_MODULES: dict[str, str] = {
 # 外部参考/第三方目录（单独标注，不计入主统计）
 EXTERNAL_MODULES: dict[str, str] = {
     "wezterm-py/wezterm": "wezterm Rust 源码 (上游)",
-    "win-sandbox/third_party": "win-sandbox 第三方库",
+    "sandbox/third_party": "sandbox 第三方库",
     "src/web/static/vendor": "Web 前端第三方库",
 }
 
 # 完全忽略的目录（不统计、不展示）
 IGNORE_PATHS: set[str] = {
-    "reference",
-    ".cli-test",
+    "_verify_tmp",
 }
 
 # src 子模块描述
@@ -62,6 +62,7 @@ SRC_SUBMODULES: dict[str, str] = {
     "vnc": "VNC 远程桌面",
     "web": "Web 服务",
     "workflow": "工作流",
+    "assets": "资源文件 (字体)",
 }
 
 # src/web/static 子模块描述（前端资源）
@@ -193,7 +194,7 @@ def main() -> None:
     top_stats: list[ModuleStat] = []
     module_excludes: dict[str, set[str]] = {
         "wezterm-py": {"wezterm"},
-        "win-sandbox": {"third_party"},
+        "sandbox": {"third_party"},
     }
     for dirname, desc in TOP_MODULES.items():
         top_stats.append(walk_module(ROOT / dirname, dirname, desc, module_excludes.get(dirname)))

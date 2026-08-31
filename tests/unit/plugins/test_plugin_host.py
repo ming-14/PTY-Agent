@@ -160,7 +160,7 @@ class TestLifecycle:
     def test_snapshot_info(self, session):
         h = PluginHost(session, plugins=[LoggingPlugin("a")])
         info = h.snapshot_info()
-        assert info == [{"name": "a", "version": "1.0"}]
+        assert info == [{"name": "a", "version": "1.0", "options": {}}]
         assert PluginHost(session, plugins=[]).snapshot_info() is None
 
 

@@ -346,6 +346,19 @@ def drain_stdout(proc, callback: Callable[[bytes], None],
     return t
 
 
+def contains_access_denied_keyword(data: bytes) -> bool:
+    """检查 bytes 数据是否包含"拒绝访问"/"Access is denied"关键字
+
+    Args:
+        data: 从 stderr 读取的原始字节数据
+
+    Returns:
+        True 包含 access denied 关键字
+    """
+    text = data.decode("utf-8", errors="replace").lower()
+    return "拒绝访问" in text or "access is denied" in text or "access denied" in text
+
+
 def drain_stderr(proc, callback: Callable[[bytes], None],
                  buffer_size: int = 65536) -> threading.Thread:
     """后台线程循环 read_pipe(proc.stderr_handle) → callback(data)。EOF 退出。
@@ -361,8 +374,6 @@ def drain_stderr(proc, callback: Callable[[bytes], None],
     Returns:
         后台线程对象（daemon=True）
     """
-    import win_sandbox_native
-
     def _loop():
         while True:
             try:
@@ -373,7 +384,7 @@ def drain_stderr(proc, callback: Callable[[bytes], None],
                 break
             callback(data)
             # 内置 AccessDenied 扫描
-            if win_sandbox_native.contains_access_denied_keyword(data):
+            if contains_access_denied_keyword(data):
                 cb = getattr(proc, "on_access_denied", None)
                 if cb is not None:
                     try:

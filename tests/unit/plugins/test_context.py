@@ -52,9 +52,9 @@ class TestScan:
                                                                     str(tmp_path / "clix"),
                                                                     str(tmp_path / "sess"),
                                                                     str(tmp_path / "not_plugin")]))
-        assert result["proc"][0] == "process"
-        assert result["clix"][0] == "cli"
-        assert result["sess"][0] == "session"
+        assert result["proc"][0] == ["process"]
+        assert result["clix"][0] == ["cli"]
+        assert result["sess"][0] == ["session"]
         assert len(result) == 3
 
     def test_find_plugin_dir(self, tmp_path):

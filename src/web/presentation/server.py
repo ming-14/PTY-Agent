@@ -23,7 +23,6 @@ from ..application.adaptive_lock import AdaptiveLockService
 from ..application.ports import EventPublisher, HistoryRepository, SessionRepository
 from ..infrastructure import (
     EventPublisherImpl,
-    FastAPIWebSocketTransport,
     HistoryRepositoryAdapter,
     SessionRepositoryAdapter,
     ShellProviderImpl,
@@ -31,6 +30,7 @@ from ..infrastructure import (
     ThreadExecutorImpl,
     WebSocketConnectionContext,
 )
+from ..infrastructure.web.fastapi_transport import FastAPIWebSocketTransport
 from ..infrastructure.repositories.history_store import HistoryStore
 from ..infrastructure.auth import SessionStore
 from .controllers.auth_controller import (
@@ -40,6 +40,7 @@ from .controllers.auth_controller import (
 )
 from .controllers.screenshare_controller import create_screenshare_router
 from .controllers.settings_controller import create_settings_router
+from .controllers.filesystem_controller import create_filesystem_router
 from .controllers.websocket_controller import WebSocketController
 from ...logging import get_logger
 
@@ -83,17 +84,14 @@ class WebServer:
 
         # 基础设施层
         self._executor = ThreadExecutorImpl()
-        self._history_store = HistoryStore()
+        # 复用 daemon 核心已创建的历史归档存储（同一实例，避免归档不一致）
+        self._history_store = manager.history_store or HistoryStore()
         self._session_repo: SessionRepository = SessionRepositoryAdapter(manager)
         self._history_repo: HistoryRepository = HistoryRepositoryAdapter(
             self._history_store
         )
         self._system_stats = SystemStatsProviderImpl()
         self._shell_provider = ShellProviderImpl()
-
-        existing = getattr(manager, "_history_store", None)
-        if existing is None:
-            manager._history_store = self._history_store
 
         # 连接管理与事件发布
         self._connections: dict = {}
@@ -208,6 +206,7 @@ class WebServer:
     def _watch_loop(self):
         _logger.info("WebServer watcher started (interval=5s)")
         check_count = 0
+        fail_count = 0
         while not self._shutdown:
             time.sleep(5)
             if self._shutdown:
@@ -216,12 +215,17 @@ class WebServer:
             thread_alive = self._thread is not None and self._thread.is_alive()
             health_ok = self._health_check()
             if not thread_alive or not health_ok:
+                fail_count += 1
                 _logger.error(
-                    "WebServer unhealthy (check #%d: thread_alive=%s health_ok=%s), restarting",
-                    check_count,
-                    thread_alive,
-                    health_ok,
+                    "WebServer unhealthy (check #%d: thread_alive=%s health_ok=%s),"
+                    " restarting (fail=%d)",
+                    check_count, thread_alive, health_ok, fail_count,
                 )
+                if fail_count >= 10:
+                    _logger.critical(
+                        "WebServer 连续失败 %d 次，放弃重启", fail_count
+                    )
+                    break
                 try:
                     self._stop_loop()
                     if self._thread and self._thread.is_alive():
@@ -231,14 +235,20 @@ class WebServer:
                     )
                     self._thread.start()
                     _logger.info(
-                        "WebServer restart thread started (attempt after check #%d)",
-                        check_count,
+                        "WebServer restart thread started (attempt after check #%d)"
+                        "   fail=%d interval=%ds",
+                        check_count, fail_count,
+                        30 if fail_count >= 3 else 5,
                     )
+                    if fail_count >= 3:
+                        time.sleep(25)  # 连续失败后拉长间隔
                 except Exception:
                     _logger.exception(
                         "WebServer restart failed (after check #%d)", check_count
                     )
-            elif check_count % 12 == 0:
+            else:
+                fail_count = 0
+            if check_count % 12 == 0:
                 _logger.debug("WebServer watcher check #%d: healthy", check_count)
         _logger.info("WebServer watcher stopped (total checks=%d)", check_count)
 
@@ -442,11 +452,6 @@ class WebServer:
         except Exception:
             _logger.exception("Auth router mount failed")
 
-        # 登录页路由（密码为空时也需要能访问 login.html）
-        @app.get("/login", response_class=FileResponse)
-        async def _login_page():
-            return FileResponse(os.path.join(_STATIC_DIR, "login.html"))
-
         # HTTP 请求认证校验函数（供子路由使用）
         _http_auth = self._get_http_auth_validator()
 
@@ -460,7 +465,13 @@ class WebServer:
             try:
                 response = await call_next(request)
                 elapsed_ms = (time.monotonic() - start) * 1000
-                _logger.info(
+                # 静态资源请求量大且无业务价值，降为 DEBUG 避免刷日志
+                log = (
+                    _logger.debug
+                    if path.startswith("/static/")
+                    else _logger.info
+                )
+                log(
                     "HTTP %s %s from %s -> %d (%.1fms)",
                     method,
                     path,
@@ -604,6 +615,15 @@ class WebServer:
             _logger.info("Settings router mounted at /api/settings")
         except Exception:
             _logger.exception("Settings router mount failed")
+
+        # 文件系统浏览端点（/api/listdir）
+        # 新建会话对话框工作目录自动补全使用
+        try:
+            fs_router = create_filesystem_router(auth_validator=_http_auth)
+            app.include_router(fs_router)
+            _logger.info("Filesystem router mounted at /api/listdir")
+        except Exception:
+            _logger.exception("Filesystem router mount failed")
 
         @app.websocket("/ws")
         async def _ws(ws: WebSocket):

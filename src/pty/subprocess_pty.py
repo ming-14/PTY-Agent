@@ -21,6 +21,7 @@ spawn 后通过 register_root 登记根进程，与 pty 后端同一约定。
 编码统一为字节流，由 Session 的 EncodingDetector 解码。
 """
 
+import os
 import queue
 import subprocess
 import threading
@@ -65,6 +66,10 @@ class SubprocessPseudoTerminal(PseudoTerminal):
         env_dict.setdefault("COLORTERM", "truecolor")
 
         try:
+            # cwd 缺省统一为守护进程当前目录（Popen cwd=None 虽继承 daemon
+            # cwd，但显式传入与 PTY 后端语义一致，避免后端差异）
+            if cwd is None:
+                cwd = os.getcwd()
             popen_kwargs: dict = {
                 "stdin": subprocess.PIPE,
                 "stdout": subprocess.PIPE,

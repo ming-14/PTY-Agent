@@ -56,7 +56,13 @@ def create_pty(
     if isinstance(command, str):
         command = shlex.split(command)
     if IS_WINDOWS:
-        # 首选 wezterm-py（OpenConsole 宿主，规避系统 conhost 的 VT 输入缺陷）
+        # 沙箱后端优先（当 sandbox.toml enabled=true + 沙箱 tracker 时）
+        sbx_pty = _try_create_sandbox_pty(
+            command, cols, rows, cwd, env, encoding, tracker
+        )
+        if sbx_pty is not None:
+            return sbx_pty
+        # 否则走 wezterm-py（OpenConsole 宿主，规避系统 conhost 的 VT 输入缺陷）
         if _HAS_WEZTERM:
             try:
                 _logger.info("create_pty: trying WeztermPseudoTerminal")
@@ -77,11 +83,6 @@ def create_pty(
                 _logger.warning(
                     "create_pty: WeztermPseudoTerminal failed: %s, falling back", e
                 )
-        sbx_pty = _try_create_sandbox_pty(
-            command, cols, rows, cwd, env, encoding, tracker
-        )
-        if sbx_pty is not None:
-            return sbx_pty
         raise RuntimeError("所有 PTY 后端均创建失败（wezterm-py 不可用或创建失败）")
 
     # Unix：统一 wezterm-py（portable-pty openpty）
@@ -129,7 +130,7 @@ def _try_create_sandbox_pty(
         _logger.error("sandbox.enabled=true 但 tracker 不是 SandboxProcessTreeTracker")
         raise RuntimeError("沙箱已启用但进程树追踪器类型不匹配")
     try:
-        _logger.info("create_pty: trying SandboxPty (winsandbox)")
+        _logger.info("create_pty: trying SandboxPty (win_sandbox_native)")
         return SandboxPty(
             command,
             cols,

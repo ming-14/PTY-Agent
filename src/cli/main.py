@@ -1,7 +1,7 @@
 """命令行交互式程序交互代理
 
 通过伪终端（PTY）与交互式 CLI 程序双向通信。
-守护进程以独立子进程运行，首次执行命令时自动启动。
+守护进程以独立子进程运行，exec 命令时自动启动。
 
 子命令: start | stop | list | exec | send | advsend | read | kill | events | closewin | mouse | attend | keygen
 """
@@ -13,6 +13,7 @@ from ..client.result import ErrorResult
 from ..client.lifecycle import setup_client_logging
 from ..client.transport import Client
 from ..logging import get_logger
+from ..plugins.cli_options import collect_option_values
 from .base import CommandContext
 from .commands import register_all
 from .pipeline import (
@@ -37,15 +38,29 @@ def main() -> None:
     except (AttributeError, ValueError):
         pass
     setup_client_logging()
-    _logger.info("pty-agent CLI 启动, argv=%s", sys.argv)
+    _logger.info("pty-agent CLI 启动, cmd=%s", sys.argv[0])
     fix_windows_exec_quoting()
 
     registry = CommandRegistry()
     register_all(registry)
+    # CLI 插件宿主须在解析前就绪：插件声明的 CLI 选项（cliOptions）需在
+    # build_parser 阶段注册到子命令解析器，parse 后才能收集显式提供的值
+    cli_plugins = setup_cli_plugins()
+    # 插件注册的新命令（cliCommands 声明，插件代码导出 Command 类）
+    if cli_plugins is not None:
+        for cmd_cls in cli_plugins.command_classes():
+            try:
+                registry.register(cmd_cls())
+            except ValueError as e:
+                _logger.error("插件命令注册失败: %s", e)
+    plugin_regs = (
+        cli_plugins.option_registrations() if cli_plugins is not None else {}
+    )
     parser = registry.build_parser(
         prog="pty-agent",
         description="命令行交互式程序交互代理",
         epilog=__doc__,
+        plugin_registrations=plugin_regs,
     )
 
     args = parser.parse_args()
@@ -63,14 +78,22 @@ def main() -> None:
     if not check_common_conflicts(args):
         return
 
+    plugin_options = collect_option_values(args, plugin_regs)
     cmd = registry.get(args.subcmd)
-    ctx = CommandContext(parser=parser, config_overrides=config_overrides)
+    ctx = CommandContext(
+        parser=parser,
+        config_overrides=config_overrides,
+        plugin_options=plugin_options,
+    )
     if cmd.needs_client:
-        ctx.cli_plugins = setup_cli_plugins()
+        ctx.cli_plugins = cli_plugins
         ctx.client = Client(
             config_overrides=config_overrides or None,
             cli_plugins=ctx.cli_plugins,
+            plugin_options=plugin_options,
         )
+        if ctx.cli_plugins is not None:
+            ctx.cli_plugins.set_client(ctx.client)
         # set-default 全局默认存于守护进程内存（不写文件）：每次 CLI 调用
         # 启动时拉取合并到本地配置（仅采纳未被 --default/显式参数覆盖的键）
         ctx.client.load_global_defaults()

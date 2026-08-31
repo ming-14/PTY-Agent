@@ -1,7 +1,7 @@
 """session write_input 控制序列分段停顿单元测试
 
 覆盖 {esc}:wq{enter} 场景：pause_offsets 触发分段写入，
-段间停顿 50ms，保证控制序列与后续字节分隔（防终端组合键误解析）。
+段间停顿 0.2s，保证控制序列与后续字节分隔（防终端组合键误解析）。
 """
 
 import time
@@ -39,12 +39,13 @@ class TestWriteInputPauseOffsets:
         assert s._pty.writes[0] == "hello\r"
 
     def test_pause_offsets_split_segments(self):
-        """停顿偏移把输入切分为多段，完整数据不变、末尾偏移规整跳过"""
+        """停顿偏移把输入切分为多段，完整数据不变；行尾字符独立成段、末尾偏移 == len 也生效"""
         s = _make_session()
         s.write_input("\x1b:wq\r", pause_offsets=[1, 5])
         joined = "".join(s._pty.writes)
         assert joined == "\x1b:wq\r"
-        assert len(s._pty.writes) == 2
+        assert len(s._pty.writes) == 3
+        assert s._pty.writes == ["\x1b", ":wq", "\r"]
 
     def test_segment_pause_interval(self):
         """段间有停顿（模拟按键间隔）"""
@@ -52,8 +53,9 @@ class TestWriteInputPauseOffsets:
         start = time.monotonic()
         s.write_input("\x1b:wq\r", pause_offsets=[1, 5])
         elapsed = time.monotonic() - start
-        # 1 个有效间隔 × 50ms（末尾偏移 5==len(data) 规整跳过）
-        assert elapsed >= 0.04
+        # 3 段产生 2 个有效间隔（末尾偏移 5==len 生效、行尾 \r 独立成段），
+        # 每段停顿 _CONTROL_SEQUENCE_PAUSE_S，耗时远大于 0.09s 下限
+        assert elapsed >= 0.09
 
     def test_offset_normalization(self):
         """乱序/越界偏移自动规整，不影响正确切分"""

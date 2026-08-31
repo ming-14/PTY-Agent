@@ -20,7 +20,7 @@ class ReadCommand(Command):
         )
         parser.add_argument("--grep", "-g", default=None, help="正则匹配过滤行（子进程模式不支持，仅终端模式可用）")
         parser.add_argument(
-            "--offset", type=int, default=None, help="增量读取：从指定字节偏移开始"
+            "--offset", type=int, default=None, help="增量读取：从指定字节偏移开始（仅子进程模式，终端模式拒绝）"
         )
         parser.add_argument(
             "--full",
@@ -60,4 +60,5 @@ class ReadCommand(Command):
             svg_compression_level=args.svg_compression_level,
             snapshot_diff=args.snapshot_diff,
             column=args.column,
+            notify=args.notify,
         )

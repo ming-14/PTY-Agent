@@ -27,11 +27,16 @@ import {
   killSession,
   removeSessionTab,
   updateMouseModeButton,
-  updateCommandEmptyState,
   showRestartDialog,
   hideRestartDialog,
   checkRestartSidConflict,
   submitRestartSession,
+  toggleShellDropdown,
+  hideShellDropdown,
+  selectShell,
+  refreshDirDropdown,
+  hideDirDropdown,
+  selectDir,
 } from '../views/ui.js';
 import { hideDetailDialog } from '../views/detail.js';
 import { toggleSizeDropdown, updateSizeStatusDisplay } from '../views/sizeSelector.js';
@@ -123,6 +128,68 @@ export function bindGlobalEvents() {
     });
   }
   bindOverlayDismiss($('dialog-overlay'), () => { $('dialog-overlay').style.display = 'none'; });
+
+  // Shell 选择器（新建会话对话框）——body 级浮层，JS 定位到按钮下方
+  const shellPicker = $('btn-shell-picker');
+  if (shellPicker) {
+    shellPicker.onclick = (e) => {
+      e.stopPropagation();
+      toggleShellDropdown();
+      const dd = $('shell-dropdown');
+      if (dd && dd.style.display === 'block') {
+        // 定位下拉到按钮下方（屏幕坐标，浮层在 body 级不受对话框裁剪）
+        const rect = shellPicker.getBoundingClientRect();
+        const maxLeft = window.innerWidth - dd.offsetWidth - 4;
+        dd.style.left = Math.max(4, Math.min(rect.left + rect.width - dd.offsetWidth, maxLeft)) + 'px';
+        dd.style.top = (rect.bottom + 4) + 'px';
+      }
+    };
+  }
+  const shellDropdown = $('shell-dropdown');
+  if (shellDropdown) {
+    // 点击下拉项选中 shell
+    shellDropdown.addEventListener('click', (e) => {
+      const item = e.target.closest('.shell-dropdown-item');
+      if (!item) return;
+      const name = item.dataset.shell;
+      if (name) selectShell(name);
+    });
+  }
+  // 点击非下拉/按钮区域关闭浮层
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#shell-dropdown, #btn-shell-picker')) hideShellDropdown();
+    if (!e.target.closest('#dir-dropdown, #form-cwd, #btn-dir-picker')) hideDirDropdown();
+  });
+
+  // 工作目录自动补全：输入防抖 200ms + 右侧按钮立即触发
+  const dirInput = $('form-cwd');
+  if (dirInput) {
+    let dirDebounce = null;
+    dirInput.addEventListener('input', () => {
+      if (dirDebounce) clearTimeout(dirDebounce);
+      dirDebounce = setTimeout(() => {
+        dirDebounce = null;
+        refreshDirDropdown();
+      }, 200);
+    });
+  }
+  const dirPicker = $('btn-dir-picker');
+  if (dirPicker) {
+    dirPicker.onclick = (e) => {
+      e.stopPropagation();
+      refreshDirDropdown();
+    };
+  }
+  const dirDropdown = $('dir-dropdown');
+  if (dirDropdown) {
+    // 点击下拉项选中目录并继续列出
+    dirDropdown.addEventListener('click', (e) => {
+      const item = e.target.closest('.shell-dropdown-item');
+      if (!item) return;
+      const name = item.dataset.dir;
+      if (name) selectDir(name);
+    });
+  }
 
   $('confirm-cancel').onclick = hideConfirm;
   $('confirm-ok').onclick = () => {

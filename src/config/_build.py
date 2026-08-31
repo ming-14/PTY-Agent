@@ -9,7 +9,7 @@
 import os
 
 from . import common as _common
-from ._loader import apply_env_overrides, flatten, load_toml, merge
+from ._loader import apply_env_overrides, expand_env, flatten, load_toml, merge
 
 
 def build_config(*extra: dict) -> dict:
@@ -50,4 +50,4 @@ def resolve_data_path(value: str, data_dir: str, default_sub: str) -> str:
     """
     if not value:
         return os.path.normpath(os.path.join(data_dir, default_sub))
-    return os.path.normpath(os.path.expandvars(os.path.expanduser(value)))
+    return os.path.normpath(expand_env(value))

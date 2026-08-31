@@ -1,15 +1,15 @@
-"""config/plugins/files/read.py 单元测试 — file read 读取用例"""
+"""src/files/read/reader.py 单元测试 — file read 读取用例"""
 
 import os
 import pytest
 
-from config.plugins.files.read.reader import (
+from src.files.read.reader import (
     read_file,
     is_image_file,
     suggest_similar,
     ReadResult,
 )
-from config.plugins.files.errors import FileToolError
+from src.files.errors import FileToolError
 
 
 @pytest.fixture
@@ -73,7 +73,7 @@ class TestReadFile:
             read_file(str(p))
 
     def test_too_large(self, tmp_path):
-        from config.plugins.files.settings import settings
+        from src.files.settings import settings
         p = tmp_path / "big.txt"
         p.write_bytes(b"x" * (settings.max_read_size + 1))
         with pytest.raises(FileToolError):

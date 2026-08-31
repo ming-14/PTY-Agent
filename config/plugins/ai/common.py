@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import queue
 import re
@@ -15,7 +17,7 @@ DEFAULT_CONFIG = os.path.normpath(
 
 def ensure_aichat() -> None:
     if not os.path.exists(AICHAT_EXE):
-        sys.exit(
+        raise RuntimeError(
             f"aichat.exe not found at {AICHAT_EXE}. "
             f"Run BUILD.ps1 to download it."
         )
@@ -29,6 +31,49 @@ def _ensure_config(config_path: str) -> None:
     if not os.path.exists(config_path) and os.path.exists(example_path):
         import shutil
         shutil.copy2(example_path, config_path)
+
+
+def _parse_yaml_value(content: str, key: str) -> str | None:
+    """解析 yaml 顶层标量键（如 prompt）；缺失/空返回 None"""
+    m = re.search(r'^' + re.escape(key) + r':[ \t]*(.*?)[ \t]*$', content, re.MULTILINE)
+    if not m or not m.group(1):
+        return None
+    return m.group(1)
+
+
+def _parse_yaml_int(content: str, key: str) -> int | None:
+    """解析 yaml 顶层整数键（如 timeout）；缺失/非法返回 None"""
+    m = re.search(r'^' + re.escape(key) + r':[ \t]*(\d+)[ \t]*$', content, re.MULTILINE)
+    if not m:
+        return None
+    return int(m.group(1))
+
+
+def load_settings(config_path: str | None = None) -> dict | None:
+    """读取插件自身配置（prompt/timeout）
+
+    单一来源为 config/ 目录：config.yaml 优先，键缺失时回退 .example
+    （_ensure_config 自愈复制）；两者都缺失返回 None（调用方跳过分析）。
+    """
+    path = config_path or DEFAULT_CONFIG
+    _ensure_config(path)
+    settings: dict = {}
+    for p in (path, path + ".example"):
+        if not os.path.exists(p):
+            continue
+        try:
+            with open(p, encoding="utf-8") as f:
+                content = f.read()
+        except OSError:
+            continue
+        # setdefault 不覆盖已存在的 key（即使值为 None），需要手动检查
+        if "prompt" not in settings or settings.get("prompt") is None:
+            settings["prompt"] = _parse_yaml_value(content, "prompt")
+        if "timeout" not in settings or settings.get("timeout") is None:
+            settings["timeout"] = _parse_yaml_int(content, "timeout")
+    if "prompt" not in settings or "timeout" not in settings:
+        return None
+    return settings
 
 def run_aichat(
     args: list[str],

@@ -27,7 +27,6 @@ import {
   restoreScrollbackAndSnapshot,
   reapplyAllTerminalSizes,
   applySessionFrameRatio,
-  monitorTerminalFrame,
 } from './infrastructure/terminalAdapter.js';
 import { showToast, updateSystemStatsUI } from './infrastructure/domUtils.js';
 import {
@@ -419,11 +418,6 @@ async function init() {
 
   // 终端应用鼠标模式变化时刷新状态按钮
   setMouseModeChangeCallback(() => updateMouseModeButton(state.activeTab));
-
-  // frame 尺寸变化监控（诊断 IME/输入导致"框被顶动"）
-  try {
-    monitorTerminalFrame();
-  } catch (_) {}
 
   // 暴露全局状态供调试（光标问题排查）
   window.state = state;

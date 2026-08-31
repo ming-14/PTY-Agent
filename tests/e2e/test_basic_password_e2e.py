@@ -221,6 +221,11 @@ def basic_auth_env(tmp_path, config_reloader):
             basic_password: daemon 侧 basic 监听器密码（空=无认证）
             client_password: 客户端配置的 basic 密码（空=不认证）
         """
+        # 清理残留 daemon：持有单实例互斥锁会导致新 daemon 启动即退出。
+        # 经互斥锁定位 PID 强杀（不依赖 CONNECT_MODE 路由，兼容任意残留模式）。
+        from src.client.daemonctl import is_running, _stop_daemon_force
+        if is_running():
+            _stop_daemon_force()
         # 写入 common.toml（共享配置）
         _cfg_path("common.toml").write_text(
             _build_common_toml(),
@@ -295,6 +300,8 @@ def basic_auth_env(tmp_path, config_reloader):
         _cfg_path("common.toml").write_bytes(backup_common)
         _cfg_path("daemon", "daemon.toml").write_bytes(backup_daemon)
         _cfg_path("client", "client.toml").write_bytes(backup_client)
+        # 恢复文件后重载进程内 config，使后续测试读到正确的配置
+        config_reloader()
 
 
 def _assert_auth_passed(result: subprocess.CompletedProcess):

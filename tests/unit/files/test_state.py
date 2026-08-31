@@ -1,12 +1,12 @@
-"""config/plugins/files/state.py 单元测试 — 读写状态机"""
+"""src/files/state.py 单元测试 — 读写状态机"""
 
 import sys
 import time
 
 import pytest
 
-from config.plugins.files.state import FileRecordStore
-from config.plugins.files.paths import normalize_key
+from src.files.state import FileRecordStore
+from src.files.paths import normalize_key
 
 
 class TestFileRecordStore:
