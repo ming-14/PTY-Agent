@@ -5,7 +5,7 @@
 - Subprocess 继承基类，返回 b""
 - Unix PTY 非阻塞 os.read 循环排空
 - Windows ConPTY PeekNamedPipe + ReadFile 排空（仅 Windows）
-- Windows ConDrv 重叠 I/O + PeekNamedPipe 排空（仅 Windows）
+
 """
 
 import os
@@ -249,20 +249,6 @@ class TestWindowsPseudoTerminalDrain:
                 pty.close()
             except Exception:
                 pass
-
-
-@pytest.mark.skipif(
-    sys.platform != "win32",
-    reason="ConDrv 仅 Windows 平台",
-)
-class TestConDrvPseudoTerminalDrain:
-    """Windows ConDrv drain() 测试"""
-
-    def test_drain_method_exists(self):
-        """ConDrvPseudoTerminal 有 drain() 方法"""
-        from src.pty.windows.condrv import ConDrvPseudoTerminal
-        assert hasattr(ConDrvPseudoTerminal, "drain")
-        assert callable(ConDrvPseudoTerminal.drain)
 
 
 class TestDrainInterface:

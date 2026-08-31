@@ -14,7 +14,7 @@ from ..config import IS_WINDOWS
 if IS_WINDOWS:
     from .windows.job import ProcessJob
     from .windows.gui_monitor import GuiWindowMonitor
-    from .windows.convars import K, _CloseHandle
+    from .windows.convars import K, _CloseHandle, _SetThreadErrorMode
 
 # ── Windows 错误模式常量（禁止子进程弹出崩溃对话框）──
 _SEM_FAILCRITICALERRORS     = 0x0001   # 禁止 critical-error-handler 消息框

@@ -3,7 +3,7 @@
 定义统一的接口契约，所有 PTY 后端（Windows / Unix / subprocess）必须
 实现全部方法。平台实现放在对等的包结构中：
 
-- src/pty/windows/  — Windows 实现（ConPTY / ConDrv）
+- src/pty/windows/  — Windows 实现（ConPTY）
 - src/pty/unix/     — Unix 实现（os.openpty + fork）
 
 能力对齐原则：
@@ -91,7 +91,7 @@ class PseudoTerminal:
         """返回 PTY 后端类型标识
 
         Returns:
-            字符串标识，如 "win-condrv"、"win-conpty"、"unix-pty"、"subprocess"。
+            字符串标识，如 "win-conpty"、"unix-pty"、"subprocess"。
         """
         return "unknown"
 

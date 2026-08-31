@@ -4,7 +4,7 @@
 
 平台包结构（对称、接口对齐）：
   - src/pty/unix/     — Unix 实现（UnixPseudoTerminal + UnixProcessTracker）
-  - src/pty/windows/  — Windows 实现（ConPTY / ConDrv + ProcessJob + GuiWindowMonitor）
+  - src/pty/windows/  — Windows 实现（ConPTY + ProcessJob + GuiWindowMonitor）
   - src/pty/base.py   — 统一抽象接口（PseudoTerminal + ProcessEvent）
   - src/pty/errors.py — 跨平台退出码/错误格式化
 """
@@ -19,8 +19,6 @@ _logger = logging.getLogger("pty-factory")
 
 if IS_WINDOWS:
     from .windows.kernel32_api import WindowsPseudoTerminal
-    from .windows.condrv import ConDrvPseudoTerminal
-    from .windows.convars import _CONDRV_OK
 
 
 def create_pty(command, cols: int = 80, rows: int = 24, shell: Optional[str] = None,
@@ -29,7 +27,6 @@ def create_pty(command, cols: int = 80, rows: int = 24, shell: Optional[str] = N
 
     优先级:
       Windows: kernel32.CreatePseudoConsole > subprocess 管道
-                （ConDrv 直连不可行：conhost VT I/O 走 ConDrv IPC 而非 hStdOutput）
       Unix:    UnixPseudoTerminal > subprocess 管道
 
     Args:
@@ -51,12 +48,6 @@ def create_pty(command, cols: int = 80, rows: int = 24, shell: Optional[str] = N
         return SubprocessPseudoTerminal(command, cols, rows, shell=shell, cwd=cwd)
 
     if IS_WINDOWS:
-        if _CONDRV_OK:
-            try:
-                _logger.info("create_pty: trying ConDrvPseudoTerminal")
-                return ConDrvPseudoTerminal(command, cols, rows, cwd=cwd)
-            except Exception as e:
-                _logger.warning("create_pty: ConDrvPseudoTerminal failed: %s, falling back", e)
         try:
             _logger.info("create_pty: trying WindowsPseudoTerminal (ConPTY)")
             return WindowsPseudoTerminal(command, cols, rows, cwd=cwd)
