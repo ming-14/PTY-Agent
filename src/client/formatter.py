@@ -16,20 +16,8 @@ _logger = logging.getLogger("pty-client")
 
 # ── 全局标志 ──
 
-# 颜色模式：True=元数据输出到 stderr（终端可着色），False=输出到 stdout（纯文本）
-_USE_COLOR = False
 # Debug 输出：True=输出 debug 段（进程树/GUI 窗口/事件），False=隐藏
 _SHOW_DEBUG = True
-
-
-def set_color_mode(enabled: bool):
-    """设置颜色模式
-
-    Args:
-        enabled: True 启用颜色（stderr），False 禁用（stdout）。
-    """
-    global _USE_COLOR
-    _USE_COLOR = enabled
 
 
 def set_debug_mode(enabled: bool):
@@ -40,14 +28,6 @@ def set_debug_mode(enabled: bool):
     """
     global _SHOW_DEBUG
     _SHOW_DEBUG = enabled
-
-
-def _meta_file():
-    """返回元数据输出流
-
-    颜色模式下元数据走 stderr（可着色），普通模式下走 stdout（纯文本）。
-    """
-    return sys.stderr if _USE_COLOR else sys.stdout
 
 
 def _format_event(ev: dict) -> str:
@@ -112,10 +92,10 @@ def print_response(resp: dict):
             output = output.rstrip("\r\n")
             safe_print(output)
         if not matched:
-            safe_print("\n[trigger not matched]", file=_meta_file())
+            safe_print("\n[trigger not matched]")
         return
 
-    safe_print(f"response: {resp}", file=_meta_file())
+    safe_print(f"response: {resp}")
 
 
 # ── 原因标签映射 ──
@@ -145,7 +125,6 @@ def _print_result(resp: dict):
     program = resp.get("program", {})
     debug = resp.get("debug", {})
     session_id = resp.get("session_id")
-    mf = _meta_file  # 短引用
 
     # ── 终端输出 ──
     if output:
@@ -179,22 +158,22 @@ def _print_result(resp: dict):
     # first line: trigger + status
     first_line = " | ".join(trigger_parts + status_parts)
     if first_line or session_id:
-        safe_print(f"\n# ── session ────────────────────────", file=mf())
+        safe_print(f"\n# ── session ────────────────────────")
         warning = resp.get("warning")
         if warning:
-            safe_print(f"# ⚠ {warning}", file=mf())
+            safe_print(f"# ⚠ {warning}")
         if first_line:
-            safe_print(f"# {first_line}", file=mf())
+            safe_print(f"# {first_line}")
         if session_id:
-            safe_print(f"# session id: {session_id}", file=mf())
+            safe_print(f"# session id: {session_id}")
         pty_type = program.get("pty_type")
         if pty_type:
-            safe_print(f"# pty type: {pty_type}", file=mf())
+            safe_print(f"# pty type: {pty_type}")
         # 程序名
         command = program.get("command")
         if command:
             cmd_str = command if isinstance(command, str) else " ".join(command)
-            safe_print(f"# program: {cmd_str}", file=mf())
+            safe_print(f"# program: {cmd_str}")
         # 启动时间
         start_time = program.get("start_time")
         if start_time:
@@ -202,10 +181,10 @@ def _print_result(resp: dict):
                 st = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time))
             else:
                 st = str(start_time)
-            safe_print(f"# started at: {st}", file=mf())
+            safe_print(f"# started at: {st}")
         # 当前时间
         now_str = time.strftime("%Y-%m-%d %H:%M:%S")
-        safe_print(f"# current time: {now_str}", file=mf())
+        safe_print(f"# current time: {now_str}")
 
     # ── debug ──
     processes = debug.get("processes") if _SHOW_DEBUG else None
@@ -213,7 +192,7 @@ def _print_result(resp: dict):
 
     has_debug = processes or gui_windows
     if has_debug:
-        safe_print(f"\n# ── debug ────────────────────────", file=mf())
+        safe_print(f"\n# ── debug ────────────────────────")
 
         # process tree（含名称）
         if processes:
@@ -230,7 +209,7 @@ def _print_result(resp: dict):
                     pid = int(p) if not isinstance(p, int) else p
                     proc_strs.append(f"PID {pid}")
             pid_str = ", ".join(proc_strs)
-            safe_print(f"# process tree: {pid_str}", file=mf())
+            safe_print(f"# process tree: {pid_str}")
 
         # GUI windows
         if gui_windows:
@@ -241,7 +220,6 @@ def _print_result(resp: dict):
                 cls = w.get("class_name", "")
                 safe_print(
                     f"# window: [0x{hwnd:08X}] PID={pid} \"{title}\" ({cls})",
-                    file=mf(),
                 )
 
     # ── pending events（exec/send 返回的 debug.pending_events）──
@@ -249,36 +227,35 @@ def _print_result(resp: dict):
     if pending_events:
         has_crash = any(ev.get("type") == "process_crash" for ev in pending_events)
         if has_crash:
-            safe_print(f"\n# ════════════ process crashes ════════════", file=mf())
+            safe_print(f"\n# ════════════ process crashes ════════════")
         else:
-            safe_print(f"\n# ── events ({len(pending_events)}) ────────", file=mf())
+            safe_print(f"\n# ── events ({len(pending_events)}) ────────")
         for ev in pending_events:
-            safe_print(_format_event(ev), file=mf())
+            safe_print(_format_event(ev))
 
     # ── error message ──
     if error_message:
-        safe_print(f"\n# ── error ────────────────────────", file=mf())
+        safe_print(f"\n# ── error ────────────────────────")
         for line in error_message.split("\n"):
-            safe_print(f"# {line}", file=mf())
+            safe_print(f"# {line}")
 
     # ── offset ──
     output_offset = resp.get("output_offset")
     if output_offset is not None and output_offset > 0:
-        safe_print(f"\n# ── offset ────────────────────────", file=mf())
-        safe_print(f"# {output_offset}", file=mf())
+        safe_print(f"\n# ── offset ────────────────────────")
+        safe_print(f"# {output_offset}")
 
 
 def _print_ok(resp: dict):
     """print ok response"""
-    mf = _meta_file
 
     # ── session list (list command) ──
     sessions = resp.get("sessions")
     if sessions is not None:
         if not sessions:
-            safe_print("# no active sessions", file=mf())
+            safe_print("# no active sessions")
         else:
-            safe_print(f"\n# ── sessions ({len(sessions)}) ──────", file=mf())
+            safe_print(f"\n# ── sessions ({len(sessions)}) ──────")
             for s in sessions:
                 sid = s.get("id", "?")
                 cmd = s.get("command", "?")
@@ -286,7 +263,7 @@ def _print_ok(resp: dict):
                 state = "running" if running else "ended"
                 ev_count = s.get("pending_events", 0)
                 ev_str = f", pending {ev_count}" if ev_count else ""
-                safe_print(f"#   [{sid}] {cmd}  [{state}{ev_str}]", file=mf())
+                safe_print(f"#   [{sid}] {cmd}  [{state}{ev_str}]")
         return
 
     output = resp.get("output", "")
@@ -296,10 +273,10 @@ def _print_ok(resp: dict):
 
     note = resp.get("note", "")
     if note:
-        safe_print(note, file=mf())
+        safe_print(note)
 
     closed = resp.get("closed")
     hwnd = resp.get("hwnd")
     if closed is not None and hwnd is not None:
         safe_print(f"window 0x{hwnd:08X} closed" if closed else
-                    f"window 0x{hwnd:08X} close failed", file=mf())
+                    f"window 0x{hwnd:08X} close failed")

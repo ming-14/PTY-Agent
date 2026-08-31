@@ -16,7 +16,6 @@ _logger = logging.getLogger("pty-client")
 _DEFAULTS: dict = {
     "timeout": 120.0,
     "newline": False,
-    "keep_ansi": False,
     "debug": True,
 }
 
@@ -86,8 +85,8 @@ class ConfigManager:
         if key == "timeout":
             value = float(value)
 
-        # newline/keep_ansi/debug 转为 bool
-        if key in ("newline", "keep_ansi", "debug"):
+        # newline/debug 转为 bool
+        if key in ("newline", "debug"):
             if not isinstance(value, bool):
                 value = bool(value)
 

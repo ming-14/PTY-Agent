@@ -238,12 +238,6 @@ class RequestHandler:
             result["warning"] = warning
         return result
 
-    def _strip_if_needed(self, output: str, msg: dict) -> str:
-        """按请求中的 keep_ansi 开关过滤 ANSI 颜色/样式码"""
-        if not msg.get("keep_ansi"):
-            return strip_ansi(output)
-        return output
-
     def _run_trigger_flow(
         self,
         session,
@@ -264,8 +258,7 @@ class RequestHandler:
                             idle_timeout=idle_timeout,
                             idle_after_first_output=idle_after_first)
         matched, reason = session.wait_for_trigger(timeout, gui_short_circuit=False)
-        output = session.get_output(from_offset=trigger_offset)
-        output = self._strip_if_needed(output, msg)
+        output = strip_ansi(session.get_output(from_offset=trigger_offset))
         result = self._build_result(
             session.id, output, matched, reason,
             consume_events=True,
@@ -297,8 +290,7 @@ class RequestHandler:
         else:
             matched, reason = False, "ok"
 
-        output = session.get_output()
-        output = self._strip_if_needed(output, msg)
+        output = strip_ansi(session.get_output())
         return self._build_result(
             session.id, output, matched, reason,
             consume_events=True,
@@ -412,8 +404,7 @@ class RequestHandler:
             }
 
         if not session.running:
-            output = session.get_output()
-            output = self._strip_if_needed(output, msg)
+            output = strip_ansi(session.get_output())
             return self._build_result(
                 session_id, output, False, "ended",
                 consume_events=True,
@@ -473,8 +464,7 @@ class RequestHandler:
         if msg.get("full"):
             read_offset = 0
 
-        output = session.get_output(from_offset=read_offset)
-        output = self._strip_if_needed(output, msg)
+        output = strip_ansi(session.get_output(from_offset=read_offset))
 
         if read_offset is not None and not lines_param and not grep:
             return self._build_result(

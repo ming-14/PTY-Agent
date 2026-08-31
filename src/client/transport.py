@@ -139,18 +139,15 @@ class Client:
         self,
         *,
         timeout: Optional[float] = None,
-        keep_ansi: Optional[bool] = None,
         newline: Optional[bool] = None,
     ) -> tuple:
         """应用配置默认值"""
         cfg = self._config.get_all()
         if timeout is None:
             timeout = cfg.get("timeout", 120.0)
-        if keep_ansi is None:
-            keep_ansi = cfg.get("keep_ansi", False)
         if newline is None:
             newline = cfg.get("newline", False)
-        return timeout, keep_ansi, newline
+        return timeout, newline
 
     # ---- 命令方法 ----
 
@@ -171,7 +168,6 @@ class Client:
         fresh: bool = False,
         timeout: Optional[float] = None,
         full: bool = False,
-        keep_ansi: Optional[bool] = None,
         idle_timeout: Optional[float] = None,
         idle_after_first_output: bool = False,
         pty: bool = False,
@@ -180,8 +176,8 @@ class Client:
         cwd: Optional[str] = None,
     ):
         _logger.info("cmd_exec: id=%r pty=%s force=%s shell=%s", session_id, pty, force, shell)
-        timeout, keep_ansi, newline = self._apply_config_defaults(
-            timeout=timeout, keep_ansi=keep_ansi, newline=newline,
+        timeout, newline = self._apply_config_defaults(
+            timeout=timeout, newline=newline,
         )
 
         if pty and shell:
@@ -214,7 +210,7 @@ class Client:
         msg = {
             "type": "exec", "id": session_id, "command": command,
             "newline": newline, "fresh": fresh, "full": full,
-            "keep_ansi": keep_ansi, "timeout": timeout,
+            "timeout": timeout,
         }
         if trigger is not None:
             msg["trigger"] = trigger
@@ -237,22 +233,21 @@ class Client:
         fresh: bool = False,
         timeout: Optional[float] = None,
         full: bool = False,
-        keep_ansi: Optional[bool] = None,
         idle_timeout: Optional[float] = None,
         idle_after_first_output: bool = False,
         json_escaping: bool = False,
     ):
         _logger.info("cmd_send: id=%r trigger=%r timeout=%s json_escaping=%s",
                      session_id, trigger, timeout, json_escaping)
-        timeout, keep_ansi, newline = self._apply_config_defaults(
-            timeout=timeout, keep_ansi=keep_ansi, newline=newline,
+        timeout, newline = self._apply_config_defaults(
+            timeout=timeout, newline=newline,
         )
 
         msg = {
             "type": "send", "id": session_id,
             "input": process_input(input_text, json_escaping=json_escaping),
             "newline": newline, "fresh": fresh, "full": full,
-            "keep_ansi": keep_ansi, "timeout": timeout,
+            "timeout": timeout,
         }
         if trigger is not None:
             msg["trigger"] = trigger
@@ -270,17 +265,13 @@ class Client:
         grep: Optional[str] = None,
         offset: Optional[int] = None,
         full: bool = False,
-        keep_ansi: Optional[bool] = None,
     ):
         _logger.info("cmd_read: id=%r lines=%s grep=%r offset=%s full=%s",
                      session_id, lines, grep, offset, full)
-        _, keep_ansi, _ = self._apply_config_defaults(
-            keep_ansi=keep_ansi,
-        )
 
         msg = {
             "type": "read", "id": session_id,
-            "full": full, "keep_ansi": keep_ansi,
+            "full": full,
         }
         if lines is not None:
             msg["lines"] = lines

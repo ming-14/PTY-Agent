@@ -16,20 +16,20 @@ class TestParseDefaultKey:
     """_parse_default_key 测试"""
 
     def test_hyphen_to_underscore(self):
-        assert _parse_default_key("keep-ansi") == "keep_ansi"
+        assert _parse_default_key("idle-timeout") == "idle_timeout"
 
     def test_keep_underscore(self):
         assert _parse_default_key("timeout") == "timeout"
 
-    def test_keep_ansi(self):
-        assert _parse_default_key("keep-ansi") == "keep_ansi"
+    def test_no_hyphen(self):
+        assert _parse_default_key("timeout") == "timeout"
 
 
 class TestFormatConfigKey:
     """_format_config_key 测试"""
 
     def test_underscore_to_hyphen(self):
-        assert _format_config_key("keep_ansi") == "keep-ansi"
+        assert _format_config_key("idle_timeout") == "idle-timeout"
 
     def test_no_underscore(self):
         assert _format_config_key("timeout") == "timeout"

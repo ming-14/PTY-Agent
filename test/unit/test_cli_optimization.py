@@ -21,7 +21,6 @@ class TestConfigManager:
         """测试默认配置值"""
         assert cfg.get("timeout") == 120.0
         assert cfg.get("newline") is False
-        assert cfg.get("keep_ansi") is False
         assert cfg.get("debug") is True
 
     def test_set_and_get(self, cfg):
@@ -29,13 +28,10 @@ class TestConfigManager:
         cfg.set("timeout", 30)
         assert cfg.get("timeout") == 30.0
 
-        cfg.set("keep_ansi", True)
-        assert cfg.get("keep_ansi") is True
-
     def test_off_value(self, cfg):
         """测试 'off' 字符串转为 False"""
-        cfg.set("keep_ansi", "off")
-        assert cfg.get("keep_ansi") is False
+        cfg.set("newline", "off")
+        assert cfg.get("newline") is False
 
     def test_get_all(self, cfg):
         """测试 get_all 返回完整配置"""
@@ -70,8 +66,8 @@ class TestConfigManager:
         cfg.set("newline", "on")
         assert cfg.get("newline") is True
 
-        cfg.set("keep_ansi", "off")
-        assert cfg.get("keep_ansi") is False
+        cfg.set("debug", "off")
+        assert cfg.get("debug") is False
 
     def test_timeout_float_conversion(self, cfg):
         """测试 timeout 字符串自动转为 float"""
@@ -290,8 +286,8 @@ class TestConfigParserIntegration:
         """测试 CLI 键名到内部键名的转换"""
         from src.__main__ import _parse_default_key, _format_config_key
 
-        assert _parse_default_key("keep-ansi") == "keep_ansi"
-        assert _format_config_key("keep_ansi") == "keep-ansi"
+        assert _parse_default_key("idle-timeout") == "idle_timeout"
+        assert _format_config_key("idle_timeout") == "idle-timeout"
         assert _parse_default_key("timeout") == "timeout"
 
 

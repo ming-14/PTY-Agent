@@ -8,7 +8,7 @@
 
 **pty-agent**：通过 PTY 启动交互式程序，对外提供 CLI 接口管理会话（启动/发送/读取/触发）。
 
-**自然语言输出**：程序实际输出到 **stdout**，元数据/调试信息到 stdout 或 stderr（`--color` 启用时走 stderr）。守护进程日志不会泄漏到 stderr。
+**自然语言输出**：程序实际输出到 **stdout**，元数据/调试信息到 stdout。守护进程日志不会泄漏到 stderr。
 
 ```
 pty-agent/

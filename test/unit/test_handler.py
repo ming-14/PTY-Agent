@@ -316,24 +316,6 @@ class TestRequestHandlerBuildResult:
         assert result["reason"] == "matched"
 
 
-class TestRequestHandlerStrip:
-    """RequestHandler._strip_if_needed 测试"""
-
-    def test_strip_ansi(self):
-        """默认过滤 ANSI"""
-        mgr = _MockManager()
-        handler = RequestHandler(mgr)
-        result = handler._strip_if_needed("\x1b[31mred\x1b[0m", {})
-        assert result == "red"
-
-    def test_keep_ansi(self):
-        """keep_ansi=True 保留 ANSI"""
-        mgr = _MockManager()
-        handler = RequestHandler(mgr)
-        result = handler._strip_if_needed("\x1b[31mred\x1b[0m", {"keep_ansi": True})
-        assert "\x1b[31m" in result
-
-
 class TestRequestHandlerGetDetail:
     """RequestHandler._get_detail 测试"""
 

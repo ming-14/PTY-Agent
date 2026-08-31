@@ -14,7 +14,7 @@ import ctypes.wintypes
 from typing import Optional
 
 from .client.transport import Client
-from .client.formatter import set_color_mode, set_debug_mode
+from .client.formatter import set_debug_mode
 from .client.config_manager import ConfigManager
 from .daemon.lifecycle import setup_client_logging
 
@@ -25,10 +25,10 @@ def _parse_default_key(key: str) -> str:
     """将 CLI 中的配置键名转为内部存储键名
 
     Args:
-        key: CLI 配置键名（如 keep-ansi）。
+        key: CLI 配置键名（如 idle-timeout）。
 
     Returns:
-        内部存储键名（如 keep_ansi）。
+        内部存储键名（如 idle_timeout）。
     """
     return key.replace("-", "_")
 
@@ -37,10 +37,10 @@ def _format_config_key(key: str) -> str:
     """将内部存储键名转为 CLI 配置键名
 
     Args:
-        key: 内部存储键名（如 keep_ansi）。
+        key: 内部存储键名（如 idle_timeout）。
 
     Returns:
-        CLI 配置键名（如 keep-ansi）。
+        CLI 配置键名（如 idle-timeout）。
     """
     return key.replace("_", "-")
 
@@ -89,14 +89,11 @@ class _InputHintAction(argparse.Action):
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
-    """为子命令解析器添加通用参数（颜色、默认配置）"""
-    parser.add_argument("--color", action="store_true", default=False,
-                        help="启用终端颜色输出（默认禁用）")
-
+    """为子命令解析器添加通用参数（默认配置）"""
     parser.add_argument("--default", nargs=2, metavar=("KEY", "VALUE"),
                         default=None,
                         help="设置默认配置 "
-                             "(timeout/newline/keep-ansi/debug)")
+                             "(timeout/newline/debug)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -115,9 +112,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--default", nargs=2, metavar=("KEY", "VALUE"),
                         default=None,
                          help="临时覆盖默认配置 "
-                              "(timeout/newline/keep-ansi/debug)")
-    parser.add_argument("--color", action="store_true", default=False,
-                        help="启用终端颜色输出（默认禁用）")
+                              "(timeout/newline/debug)")
     parser.add_argument("--no-debug", action="store_true", default=False,
                         help="禁用响应中的 debug 输出（进程树/GUI 窗口/事件）")
 
@@ -154,8 +149,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help="仅在程序首次输出后才开始检测静默超时（初始不检测）")
     p_exec.add_argument("--full", action="store_true", default=False,
                         help="返回全部累积输出而非仅新输出")
-    p_exec.add_argument("--keep-ansi", action="store_true", default=None,
-                        help="保留终端颜色/样式码（默认过滤；清屏/光标等控制序列始终保留）")
     p_exec.add_argument("--shell", default=None,
                         choices=["cmd", "powershell", "pwsh", "bash"],
                         help="指定命令解释器（默认 powershell，不可用时回退 cmd；与 --pty 互斥）")
@@ -181,8 +174,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help="仅在程序首次输出后才开始检测静默超时（初始不检测）")
     p_send.add_argument("--full", action="store_true", default=False,
                         help="返回全部累积输出而非仅新输出")
-    p_send.add_argument("--keep-ansi", action="store_true", default=None,
-                        help="保留终端颜色/样式码（默认过滤；清屏/光标等控制序列始终保留）")
     p_send.add_argument("--json-escaping", action="store_true", default=False,
                         help="启用 JSON 转义解码（\\n→换行 \\t→制表符等）；默认 raw 模式原样发送")
 
@@ -200,8 +191,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help="增量读取：从指定字节偏移开始")
     p_read.add_argument("--full", action="store_true", default=False,
                         help="返回全部累积输出而非仅新输出")
-    p_read.add_argument("--keep-ansi", action="store_true", default=None,
-                        help="保留终端颜色/样式码（默认过滤；清屏/光标等控制序列始终保留）")
 
     # kill
     p_kill = sub.add_parser("kill", help="终止指定会话")
@@ -384,9 +373,6 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
-    # 设置颜色模式（各子命令都有这些参数）
-    set_color_mode(getattr(args, "color", False))
-
     # 处理配置管理操作，获取 --default 设置的临时覆盖值
     config_overrides = _handle_config_ops(args)
     if config_overrides is None:
@@ -445,7 +431,6 @@ def main():
                 fresh=True,
                 timeout=args.timeout,
                 full=args.full,
-                keep_ansi=args.keep_ansi,
                 idle_timeout=args.idle_timeout,
                 idle_after_first_output=args.idle_after_first_output,
                 pty=args.pty,
@@ -462,7 +447,6 @@ def main():
                 fresh=True,
                 timeout=args.timeout,
                 full=args.full,
-                keep_ansi=args.keep_ansi,
                 idle_timeout=args.idle_timeout,
                 idle_after_first_output=args.idle_after_first_output,
                 json_escaping=args.json_escaping,
@@ -474,7 +458,6 @@ def main():
                 grep=args.grep,
                 offset=args.offset,
                 full=args.full,
-                keep_ansi=args.keep_ansi,
             )
         elif args.subcmd == "kill":
             client.cmd_kill(args.id)
