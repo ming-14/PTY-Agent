@@ -19,6 +19,7 @@
 tomli>=2.0; python_version < "3.11" # TOML 配置解析，Python<3.11 必须装，3.11+ 用标准库 tomllib
 pyyaml>=6.0 # Workflow 编排，插件配置
 psutil>=5.9 # 进程存在性探测（pid_exists），CLI daemonctl 启动就加载
+pyte>=0.8 # subagent 插件 VT 屏幕解析（claude/devin/workbuddy/opencode parser）
 
 # ===================== 可选依赖（缺失时自动关闭） =====================
 # 以下功能开启但依赖缺失时，daemon 启动提示并自动禁用该功能。

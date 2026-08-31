@@ -31,6 +31,8 @@ class TestEventsToDicts:
     """_events_to_dicts 测试"""
 
     def test_conversion(self):
+        from datetime import datetime, timezone
+
         events = [
             PendingEvent(timestamp=1.0, type="process_spawn", pid=100, info="a"),
             PendingEvent(timestamp=2.0, type="process_exit", pid=100, info="b"),
@@ -38,7 +40,11 @@ class TestEventsToDicts:
         dicts = _events_to_dicts(events)
         assert len(dicts) == 2
         assert dicts[0]["type"] == "process_spawn"
-        assert dicts[1]["time"] == "1970-01-01T08:00:02.00"
+        # _events_to_dicts 按本地时区格式化（astimezone()），期望值须与本地时区一致
+        expected = datetime.fromtimestamp(2.0, tz=timezone.utc).astimezone()
+        expected_str = expected.strftime("%Y-%m-%dT%H:%M:%S.") + \
+            f"{expected.microsecond // 10000:02d}"
+        assert dicts[1]["time"] == expected_str
 
     def test_empty(self):
         assert _events_to_dicts([]) == []
