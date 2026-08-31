@@ -147,7 +147,11 @@ Note: disable `SINGLE_INSTANCE` if running two PTY-Agent instances on one machin
 | [PLUGINS_API.md](docs/PLUGINS_API.md) | Plugin development guide |
 | [CONFIG.md](docs/CONFIG.md) | Configuration reference |
 
----
+## License
+
+Except for `src\web\static\` and `web_rime\`, everything else is MIT.
+
+`src\web\static\` and `web_rime\` use AGPL-3.0 license.
 
 </div>
 
@@ -259,6 +263,12 @@ CLI ──tls────▶ 0.0.0.0  :18767    (提供跨机访问)
 | [WORKFLOW.md](docs/WORKFLOW.md) | Workflow 脚本编排使用文档（YAML 步骤定义、依赖并行、条件、重试） |
 | [PLUGINS_API.md](docs/PLUGINS_API.md) | 插件开发指南（Plugin API） |
 | [CONFIG.md](docs/CONFIG.md) | 配置说明 |
+
+## 许可证
+
+除了`src\web\static\`、`web_rime\`，其他都为 MIT
+
+`src\web\static\`、`web_rime\`使用 AGPL-3.0 license
 
 </div>
 
