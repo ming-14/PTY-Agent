@@ -2,13 +2,17 @@
 
 提供按 PID 查询进程可执行文件名/路径的工具函数，
 以及进程退出码和 PTY 创建失败的错误消息格式化。
+
+退出码格式化统一委托 pty/errors.py（跨平台单一实现），
+本模块仅保留 Windows 特有的 PTY 创建错误翻译。
 """
 
 import os
 import logging
-from typing import Optional
 
 from ...config import IS_WINDOWS
+from ...pty.errors import format_exit_code_message as _format_exit_code_message
+from ...pty.errors import signal_name as _signal_name
 
 _logger = logging.getLogger("pty-session")
 
@@ -89,49 +93,10 @@ def _get_process_path(pid: int) -> str:
 
 
 # ── 错误消息格式化 ──
-
-
-def _format_exit_code_message(exit_code: int) -> Optional[str]:
-    """格式化进程退出码为可读的错误消息
-
-    在 Windows 上尝试翻译 NTSTATUS/Win32 错误码。
-    在 Unix 上对信号终止的情况提供描述。
-
-    Args:
-        exit_code: 子进程退出码。
-
-    Returns:
-        可读的错误描述字符串。退出码为 0 时返回 None。
-    """
-    if exit_code is None or exit_code == 0:
-        return None
-
-    if IS_WINDOWS:
-        try:
-            from ...pty.windows.error_msg import format_process_exit_code
-            return format_process_exit_code(exit_code)
-        except ImportError:
-            pass
-
-    # Unix：信号终止（负值表示信号编号）
-    if exit_code < 0:
-        sig_name = _signal_name(-exit_code)
-        return f"进程被信号 {sig_name} ({-exit_code}) 终止"
-    # Unix：非零退出码
-    return f"进程异常退出 (exit={exit_code})"
-
-
-def _signal_name(signum: int) -> str:
-    """获取 Unix 信号名称"""
-    try:
-        import signal as _sig
-        for name in dir(_sig):
-            if name.startswith("SIG") and not name.startswith("SIG_"):
-                if getattr(_sig, name, None) == signum:
-                    return name
-    except Exception:
-        pass
-    return f"SIGUNKNOWN({signum})"
+#
+# 退出码格式化统一委托 pty/errors.py（跨平台单一实现），
+# 本模块仅保留 Windows 特有的 PTY 创建错误翻译。
+# _format_exit_code_message 和 _signal_name 已在模块级从 errors 导入。
 
 
 def _format_pty_error(exception: Exception) -> str:

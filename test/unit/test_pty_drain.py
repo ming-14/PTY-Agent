@@ -82,10 +82,24 @@ class TestUnixPseudoTerminalDrain:
     drain() 应循环读取直到无数据，拼接所有 chunk 返回。
     """
 
-    def test_drain_loops_until_empty(self, monkeypatch):
-        """drain() 循环读取直到 os.read 返回 b"""""
+    @staticmethod
+    def _make_pty(monkeypatch):
+        """构造不真正 fork 的 UnixPseudoTerminal（供 drain 逻辑测试）
+
+        在 Linux/macOS 上用一对真实管道 fd 模拟 pty master/slave，
+        仅 mock openpty/fork/waitpid，避免测试产生真实孤儿进程。
+        `os.read` 由各测试单独 mock；fd 由 close() 正常回收。
+        """
         from src.pty.unix import UnixPseudoTerminal
 
+        r, w = os.pipe()
+        monkeypatch.setattr(os, "openpty", lambda: (r, w))
+        monkeypatch.setattr(os, "fork", lambda: 12345)  # 父进程分支
+        monkeypatch.setattr(os, "waitpid", lambda pid, opts: (0, 0))
+        return UnixPseudoTerminal(["/bin/true"])
+
+    def test_drain_loops_until_empty(self, monkeypatch):
+        """drain() 循环读取直到 os.read 返回 b"""""
         read_results = [b"chunk1", b"chunk2", b"chunk3", b""]
 
         def mock_read(fd, n):
@@ -93,7 +107,7 @@ class TestUnixPseudoTerminalDrain:
 
         monkeypatch.setattr(os, "read", mock_read)
 
-        pty = UnixPseudoTerminal()
+        pty = self._make_pty(monkeypatch)
         try:
             result = pty.drain(65536)
             assert result == b"chunk1chunk2chunk3"
@@ -102,7 +116,6 @@ class TestUnixPseudoTerminalDrain:
 
     def test_drain_handles_eagain_early(self, monkeypatch):
         """drain() 遇到 EAGAIN 即停止"""
-        from src.pty.unix import UnixPseudoTerminal
 
         call_count = 0
 
@@ -115,7 +128,7 @@ class TestUnixPseudoTerminalDrain:
 
         monkeypatch.setattr(os, "read", mock_read)
 
-        pty = UnixPseudoTerminal()
+        pty = self._make_pty(monkeypatch)
         try:
             result = pty.drain(65536)
             assert result == b"data"
@@ -125,14 +138,13 @@ class TestUnixPseudoTerminalDrain:
 
     def test_drain_does_not_block_on_empty(self, monkeypatch):
         """drain() 在管道无数据时立即返回 b"""""
-        from src.pty.unix import UnixPseudoTerminal
 
         def mock_read(fd, n):
             raise OSError(errno.EAGAIN, "EAGAIN")
 
         monkeypatch.setattr(os, "read", mock_read)
 
-        pty = UnixPseudoTerminal()
+        pty = self._make_pty(monkeypatch)
         try:
             result = pty.drain(65536)
             assert result == b""
@@ -141,7 +153,6 @@ class TestUnixPseudoTerminalDrain:
 
     def test_drain_multiple_chunks(self, monkeypatch):
         """drain() 拼接 5 个以上小 chunk 仍正确"""
-        from src.pty.unix import UnixPseudoTerminal
 
         chunks = [f"chunk{i} ".encode() for i in range(10)]
 
@@ -150,7 +161,7 @@ class TestUnixPseudoTerminalDrain:
 
         monkeypatch.setattr(os, "read", mock_read)
 
-        pty = UnixPseudoTerminal()
+        pty = self._make_pty(monkeypatch)
         try:
             result = pty.drain(65536)
             expected = b"chunk0 chunk1 chunk2 chunk3 chunk4 chunk5 chunk6 chunk7 chunk8 chunk9 "
@@ -160,7 +171,6 @@ class TestUnixPseudoTerminalDrain:
 
     def test_drain_respects_max_bytes(self, monkeypatch):
         """drain 每次读取传入 max_bytes"""
-        from src.pty.unix import UnixPseudoTerminal
 
         def mock_read(fd, n):
             assert n == 4096
@@ -168,7 +178,7 @@ class TestUnixPseudoTerminalDrain:
 
         monkeypatch.setattr(os, "read", mock_read)
 
-        pty = UnixPseudoTerminal()
+        pty = self._make_pty(monkeypatch)
         try:
             pty.drain(max_bytes=4096)
         finally:
@@ -176,7 +186,6 @@ class TestUnixPseudoTerminalDrain:
 
     def test_read_and_drain_work_together(self, monkeypatch):
         """read() + drain() 组合使用，数据不丢失"""
-        from src.pty.unix import UnixPseudoTerminal
 
         read_results = [b"part1", b"part2", b"part3", b"", b""]
         idx = [0]
@@ -190,7 +199,7 @@ class TestUnixPseudoTerminalDrain:
 
         monkeypatch.setattr(os, "read", mock_read)
 
-        pty = UnixPseudoTerminal()
+        pty = self._make_pty(monkeypatch)
         try:
             data = pty.read(65536)
             assert data == b"part1"
