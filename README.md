@@ -2,10 +2,23 @@
 
 # PTY-Agent
 
-**让 AI 像真正用户一样使用终端**
+<div id="lang-switch" style="margin-bottom: 10px">
+  <a href="#en" style="text-decoration:underline;color:inherit;font-weight:bold">English</a>
+  ·
+  <a href="#zh" style="text-decoration:none;color:gray">中文</a>
+</div>
 
-让不会用命令行的调用方，可靠地驱动 REPL、调试器、TUI、安装向导、长跑服务、编码 Agent ——
-拿到的是**用户真正看到的那一屏**，而不只是一串 stdout 字节流
+</div>
+
+<div id="en" style="display:block">
+
+<div align="center">
+
+**Let AI use terminals like a real user**
+
+Drive REPLs, debuggers, TUIs, installers, long-running services, and coding agents — getting **what the user actually sees on screen**, not just a raw stdout byte stream.
+
+</div>
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%2B%20%C2%B7%20ConPTY-0078D4?logo=windows&logoColor=white)
@@ -27,7 +40,116 @@
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+---
+
+## Features
+
+- ✨ **Shell · CUI · TUI** — use terminals like a human: start sessions, send keys, wait for prompts, read screens
+- ✨ **Cross-platform** — Windows / Linux, macOS coming soon
+- ✨ **Real-time Web monitoring** — watch and control every terminal session, collaborate live
+- ✨ **Sandbox** — restrict AI operations to the workspace, prevent accidental damage
+- ✨ **Plugin system** — extend functionality freely
+- **AI secondary analysis** — pipe long logs, large outputs, even rendered **terminal screenshots** to another AI
+- **Sub-agents** — launch OpenCode / Claude Code / ... across harnesses, managed centrally
+- **Workflow orchestration** — multi-session DAG choreography
+- **Remote terminal access** — SSH-like experience
+
+---
+
+## Why PTY-Agent?
+
+Traditional agents can't run `ssh`, `gdb`, `cdb`, or any program that **asks you a question**.
+
+| Traditional approach | PTY-Agent |
+|---|---|
+| No TTY — program falls back to non-interactive mode | Real pseudo-terminal |
+| "Run and check" only | Persistent sessions |
+| Can't "wait for a specific prompt" | `-t "<regex>"` trigger, return on match |
+| Hangs / crashes / popups → caller hangs, user waits | Timeout, GUI detection, crash detection — all return cleanly |
+| Raw byte stream | **Rendered terminal snapshot** |
+
+## Quick overview
+
+| | |
+|---|---|
+| **Mode** | `pty` (default, screen snapshot, for TUI/REPL); `--subprocess` (incremental output + stderr, for compile/download) |
+| **Return reasons** | `ok` / `matched` / `timeout` / `idle` / `ended` / `crashed` / `gui` / `cancelled` / `notify` |
+| **Output filtering** | `-l N`, `-g "<regex>"`, `-s` incremental diff, `--column N`, `-o` export `.svg/.png/.jpg/.txt` |
+| **Input** | `send` raw text; `advsend` supports `{ctrl+c}` `{enter}` `{f1}`~`{f12}`, newline `lf/crlf/cr/none`; mouse `click/drag/scroll/hover/press/grep` with `--grep` coordinate lookup |
+| **Async** | `--notify` returns immediately, pick up results via `wait` / `notice <nid>`, non-blocking |
+| **Orchestration** | `workflow` YAML DAG: dependency parallelism, `if` conditions (AST safe eval), `retry`, `on_error` |
+| **Web** | Browser terminal (xterm.js + Web RIME IME), FastScreen streaming, VNC remote desktop, default `127.0.0.1:18766` |
+| **Sandbox** | Windows opt-in: Job Object + restricted token, workspace-only writes, CPU/memory/process/wall-clock quotas |
+
+## Installation
+
+Compilation is required. **Download the pre-built Release package**, or clone and run `build.py`.
+
+One-line install via the script (auto-detects platform, fetches latest release, installs as a Skill):
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/ming-14/PTY-Agent/main/install.ps1 | iex
+```
+
+**Linux / macOS:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/ming-14/PTY-Agent/main/install.sh | bash
+```
+
+## Architecture
+
+```mermaid
+graph LR
+    A["AI Agent"] -->|"PTY-Agent &lt;cmd&gt;"| B["CLI<br/>src/cli · src/client"]
+    B -->|"TCP · NDJSON<br/>Token+HMAC / TLS+Ed25519"| C["Daemon<br/>src/daemon"]
+    C --> D["Session<br/>src/session"]
+    D --> E["PTY backend<br/>src/pty"]
+    E -->|"ConPTY / openpty"| F["Real program"]
+    F --> G["Reader thread → output buffer"]
+    G --> H["Terminal model wezterm-term<br/>VT parse → snapshot/diff/SVG"]
+    H --> I["Trigger detection<br/>regex · idle · crash · GUI"]
+    I -->|"Response JSON"| B
+    C --> J["Web · workflow · plugins"]
+```
+
+## Configuration
+
+Config files are in `config/`, overridable via env vars `PTY_AGENT_<KEY>`, restart required.
+
+```
+CLI ──token──▶ 127.0.0.1:10520    (local dev, strong auth)
+CLI ──basic──▶ 0.0.0.0  :10521    (local dev, weak auth)
+CLI ──tls────▶ 0.0.0.0  :18767    (remote access)
+Browser ──────▶ 127.0.0.1:18766    (Web UI)
+```
+
+| File | Purpose |
+|---|---|
+| `common.toml` / `shared.toml` | Data dir (`~/.pty-agent`), default terminal size, protocol buffers |
+| `daemon/daemon.toml` | 3 listeners, buffers, default timeout (120s), auth & keys |
+| `daemon/sandbox.toml` | Sandbox toggle & quota (default: off) |
+| `client/client.toml` | `CONNECT_MODE = basic\|token\|tls`, TOFU strict mode |
+
+Note: disable `SINGLE_INSTANCE` if running two PTY-Agent instances on one machine.
+
+---
+
+## Docs
+
+| Doc | Description |
+|---|---|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | `src/` package architecture, module layering, call chains |
+| [CLI.md](docs/CLI.md) | CLI reference |
+| [WORKFLOW.md](docs/WORKFLOW.md) | Workflow orchestration (YAML steps, parallelism, conditions, retry) |
+| [PLUGINS_API.md](docs/PLUGINS_API.md) | Plugin development guide |
+| [CONFIG.md](docs/CONFIG.md) | Configuration reference |
+
+---
+
 </div>
+
+<summary style="cursor:pointer;font-size:1.5em;font-weight:bold">中文</summary>
 
 ---
 
@@ -72,20 +194,20 @@
 
 ## 安装
 
-该 Skill 需要编译，请下载 Release 的预编译包，或者 clone 之后使用`build.py`编译
+该 Skill 需要编译，**请下载 Release 的预编译包**，或者 clone 之后使用`build.py`编译
 
-推荐使用npx安装预编译包：
+一行安装（自动判断平台、拉取最新 Release、安装为 Skill）：
 
-Windows：
+Windows（PowerShell）：
 
-```bash
-npx skills add ming-14/agent-skills
+```powershell
+irm https://raw.githubusercontent.com/ming-14/PTY-Agent/main/install.ps1 | iex
 ```
 
-Linux：
+Linux / macOS：
 
 ```bash
-npx skills add ming-14/agent-skills
+curl -fsSL https://raw.githubusercontent.com/ming-14/PTY-Agent/main/install.sh | bash
 ```
 
 ## 它是怎么工作的
@@ -135,9 +257,3 @@ CLI ──tls────▶ 0.0.0.0  :18767    (提供跨机访问)
 | [WORKFLOW.md](docs/WORKFLOW.md) | Workflow 脚本编排使用文档（YAML 步骤定义、依赖并行、条件、重试） |
 | [PLUGINS_API.md](docs/PLUGINS_API.md) | 插件开发指南（Plugin API） |
 | [CONFIG.md](docs/CONFIG.md) | 配置说明 |
-
----
-
-<div align="center">
-
-</div>

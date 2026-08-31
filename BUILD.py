@@ -19,7 +19,7 @@ wezterm-py，下载 aichat / ripgrep / UltraVNC / terminal_injector 并统一放
     DOWNLOAD_TERMINALINJECTOR  - 是否下载 terminal_injector（默认 true）
     BUILD_RIME                 - 是否构建 rime-plugin（默认 true）
     DOWNLOAD_RG                - 是否下载 ripgrep（默认 true）
-    DOWNLOAD_FONTS             - 是否下载 MapleMono NF CN 字体（默认 true）
+    DOWNLOAD_FONTS             - 是否下载 MapleMono NF CN 字体（默认 false）
 
 命令行参数：
     -NoAichat / -NoFastscreen / -NoWinsandbox / -NoWeztermPy / -NoUltravnc /
@@ -287,8 +287,8 @@ def step_build_rime():
 
 
 def step_copy_base():
-    """复制基础包（src/bin/app.py/SKILL.md + 整体 config/ 配置）到发布目录。"""
-    for name in ("src", "bin"):
+    """复制基础包（src/bin/docs/app.py/SKILL.md + 整体 config/ 配置）到发布目录。"""
+    for name in ("src", "bin", "docs"):
         shutil.copytree(str(SCRIPT_DIR / name), str(OUTPUT_DIR / name), dirs_exist_ok=True)
     # 整体复制 config/：运行期必需 common/shared/transfer.toml 与 client/、daemon/
     # 子目录，插件也随 config/plugins 携带；apikey.env、真实 vnc.toml、ai 插件的
@@ -342,11 +342,15 @@ def step_clean_pycache():
 
 
 def step_clean_gitkeep():
-    """删除发布目录中的 .gitkeep 占位文件。"""
+    """删除发布目录中的 .gitkeep 占位文件和 AGENTS.md。"""
     for f in OUTPUT_DIR.rglob(".gitkeep"):
         if f.is_file():
             f.unlink()
             logger.info("已删除: %s", f)
+    agents_md = OUTPUT_DIR / "AGENTS.md"
+    if agents_md.is_file():
+        agents_md.unlink()
+        logger.info("已删除: %s", agents_md)
 
 
 def step_prune_dev_files():
@@ -790,8 +794,7 @@ def step_download_fonts():
 def step_package_zip():
     """把发布目录打包为 pty-agent-{win_x86-64|linux_x86-64}.zip。
 
-    zip 顶层直接是 src/bin/config/app.py/SKILL.md（不带 pty-agent 目录前缀），
-    与解压即用（zip 解到目录后直接 python app.py）的发布形态一致。
+    zip 顶层包含 pty-agent/ 文件夹（解压到任意目录后 python pty-agent/app.py 即可运行）。
     """
     platform_tag = "win_x86-64" if IS_WINDOWS else "linux_x86-64"
     zip_path = SCRIPT_DIR / "pty-agent-{}.zip".format(platform_tag)
@@ -804,7 +807,7 @@ def step_package_zip():
             rel = item.relative_to(OUTPUT_DIR)
             if any(part.startswith(".") for part in rel.parts):
                 continue
-            zf.write(str(item), str(rel))
+            zf.write(str(item), "pty-agent/" + str(rel))
     logger.info("[package] 打包完成: %s (%.1f MB)", zip_path, zip_path.stat().st_size / (1024 * 1024))
 
 
@@ -846,11 +849,11 @@ def build_parser():
     return parser
 
 
-def _enabled(cli_off, env_name):
-    """步骤开关：命令行 -NoX 优先，否则看环境变量（默认 true）。"""
+def _enabled(cli_off, env_name, default=True):
+    """步骤开关：命令行 -NoX 优先，否则看环境变量（默认 default）。"""
     if cli_off:
         return False
-    return os.environ.get(env_name, "true").lower() == "true"
+    return os.environ.get(env_name, "true" if default else "false").lower() == "true"
 
 
 def main():
@@ -906,7 +909,7 @@ def main():
         steps.append(("下载 ripgrep", step_download_rg))
     else:
         logger.info("[rg] 跳过下载（DOWNLOAD_RG=false 或 -NoRg）")
-    if _enabled(args.NoFonts, "DOWNLOAD_FONTS"):
+    if _enabled(args.NoFonts, "DOWNLOAD_FONTS", default=False):
         steps.append(("下载 MapleMono 字体", step_download_fonts))
     else:
         logger.info("[fonts] 跳过下载（DOWNLOAD_FONTS=false 或 -NoFonts）")

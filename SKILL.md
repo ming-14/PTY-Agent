@@ -17,6 +17,10 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过伪终端（
 
 Python>=3.8 requirements.txt
 
+守护进程会向`~/pty-agent/`写日志和配置，若你在沙箱运行，请允许读写`~/pty-agent/`
+
+出现守护进程报认证失败或其他启动错误，可以在用户允许的前提下，执行`app.py stop force`
+
 ## 两种运行模式
 
 ### 终端模式
@@ -379,13 +383,13 @@ python app.py plugin config <name> [key value]     # 查看/修改插件配置�
 
 ### file 用法
 
-`file` 是 **PTY-Agent 内置顶层命令**（不依赖插件系统，始终可用），提供文件工具：读、写、唯一匹配替换、内容搜索、文件名匹配、上传、下载。
+`file` 提供文件工具：读、写、唯一匹配替换、内容搜索、文件名匹配、上传、下载
 
 ```bash
 python app.py file <read|write|edit|grep|glob|upload|download> ... -s <session-id>
 ```
 
-`-s/--cwd-session` **必填**：指定某个会话，取它的 cwd 作为路径解析基准（不操作该会话）。
+`-s/--cwd-session` **必填**：指定某个会话，取它的 cwd 作为路径解析基准（不操作该会话）
 
 | 子命令 | 用法 | 要点 |
 | ------ | ---- | ---- |
@@ -450,10 +454,6 @@ python app.py file download remote_dir/local.txt ./local.txt --force -s sid_cwd
 ## 插件
 
 使用前请先挂载（state_check/ai 用 `exec --plugin <name>` 或 `plugin attach <session-id> <name>` 挂载到会话）。
-
-### state_check
-
-提供基本状态查询（命令返回时检测终端状态并附加到返回信息），见`config/plugins/state_check/state_check.md`
 
 ### ai
 
@@ -533,7 +533,7 @@ app.py exec sid -c "terminal_injector.exe --mediator --target-pid <pid>" --timeo
 
 ---
 
-@附录：workflow 用法
+## @附录：workflow 用法
 
 ```bash
 python app.py workflow run <file>              # 启动（后台执行，立即返回 runId）
@@ -698,3 +698,19 @@ steps:
 
 send 步骤需要发送快捷键/转义时用 `json: true`（如 `input: "{ctrl+c}"`），
 需要控制行尾时用 `eol`（如 `input: "make -j8"` 后触发 `eol: none` 的按键步骤）。
+
+## @附录：文档
+
+文档很大，用户明确要求再查看
+
+配置文件使用方法请查看`docs\CONFIG.md`
+插件开发请查看`‪docs\PLUGINS_API.md`
+了解项目架构请查看`docs\ARCHITECTURE.md`
+
+## @附录：沙箱
+
+配置沙箱请查看`docs\CONFIG.md`
+
+## @附录：远程执行命令，跨机开发
+
+跨机开发请查看`docs\CONFIG.md`
