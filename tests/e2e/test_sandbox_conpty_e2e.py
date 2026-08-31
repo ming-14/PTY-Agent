@@ -157,8 +157,9 @@ def _run() -> int:
         # 先 drain 至输出静止再继续
         _read_available(pty, 2.0)
 
-        # 7. exit（正常退出 + wait 非阻塞探测）
-        pty.write(b"exit\r\n")
+        # 7. exit（正常退出 + wait 非阻塞探测；用 exit 0 确保退出码为 0，
+        #    Ctrl+C 中断后 cmd 的 ERRORLEVEL 可能非零）
+        pty.write(b"exit 0\r\n")
         t0 = time.time()
         while time.time() - t0 < 20.0:
             code = pty.get_exit_code()
