@@ -28,5 +28,5 @@ xcopy "%~dp0src" "%~dp0pty-agent\src\" /e /i /q
 copy "%~dp0app.py" "%~dp0pty-agent\" >nul
 copy "%~dp0SKILL.md" "%~dp0pty-agent\" >nul
 mkdir "%~dp0pty-agent\doc"
-xcopy "%~dp0doc\Skill文档\*" "%~dp0pty-agent\doc\" /q >nul
+xcopy "%~dp0docs\Skill文档\*" "%~dp0pty-agent\doc\" /q >nul
 echo 构建完成: %~dp0pty-agent

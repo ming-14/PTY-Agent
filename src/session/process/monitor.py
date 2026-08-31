@@ -15,7 +15,7 @@
 import time
 import logging
 from threading import Event
-from typing import Callable, Dict, List, Optional, Set
+from typing import Callable, Dict, Optional, Set
 
 from ...config import IS_WINDOWS
 from .info import _get_process_name

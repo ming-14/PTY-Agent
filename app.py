@@ -8,7 +8,7 @@
 import sys
 import os
 
-_REQUIRED_VERSION = (3, 8)
+_REQUIRED_VERSION = (3, 11)
 if sys.version_info < _REQUIRED_VERSION:
     print(
         f"错误: 需要 Python {_REQUIRED_VERSION[0]}.{_REQUIRED_VERSION[1]}+，"

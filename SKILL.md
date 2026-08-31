@@ -35,7 +35,6 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
 | `read <session-id> [options]` | 读取会话输出 | `--lines`, `--grep` | `read myid --lines 10` |
 | `list` | 列出所有会话 | | |
 | `kill <session-id>` | 终止会话 | | |
-| `events <session-id> [options]` | 查看会话事件 | `--last <N>`, `--since <iso-datetime\|HH:MM>` | `events myid --last 10` |
 | `closewin <session-id> <window-handle>` | 关闭 GUI 窗口；`<window-handle>`支持十进制或 0x十六进制| |
 
 ### 命令 send 的返回条件
@@ -97,33 +96,28 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
 - `--offset <bytes>` 增量读取
 - `--full` 返回终端全部数据（数据大，尽量用`--lines N`）
 
-## events 完整用法
-`python app.py events <session-id> [options]`
-
-选项：
-- `--last N`
-- `--since <iso-datetime\|HH:MM>`
-- `--until <iso-datetime\|HH:MM>`
-
 ## 全局/通用选项
 
 - `--keep-ansi` 保留控制码
 - `--color` - 启用终端颜色输出
-- `--output-by-natural-language` 自然语言输出
 - `--encoding <encoding>` 终端编码，乱码时设置`utf-8/gbk/gb2312/gb18030/big5`
 - `--no-debug` 禁用响应中的 debug 输出（进程树/GUI 窗口/事件）
 - `--show-config [KEY]` 查看当前调用配置
-- `--default <KEY> <VALUE>` 临时覆盖默认配置（可用键：`output-by-natural-language`/`timeout`/`newline`/`keep-ansi`/`encoding`/`debug`，`<VALUE>`是配置值或者`on`/`off`）
+- `--default <KEY> <VALUE>` 临时覆盖默认配置（可用键：`timeout`/`newline`/`keep-ansi`/`encoding`/`debug`，`<VALUE>`是配置值或者`on`/`off`）
 
 ## 输出格式
 
-1. JSON 模式（默认）— stdout 仅输出 JSON，每行一个 JSON 对象，。所有非命令响应（守护进程启停信息、配置查询、帮助文本、警告等）也以 JSON 格式输出：
-   - 命令响应：`{"type": "result", ...}` / `{"type": "ok", ...}` / `{"type": "error", ...}`
-   - 守护进程信息：`{"type": "info", "message": "[pty-agent] 守护进程已启动"}`
-   - 配置查询：`{"type": "config", "content": "当前调用配置:\n  ..."}`
-   - 帮助文本：`{"type": "help", "content": "usage: pty-agent ..."}`
-   - 警告信息：`{"type": "warning", "message": "..."}`
-2. 自然语言模式 — 使用 `--output-by-natural-language` 切换
+程序实际输出 → **stdout**（纯文本）
+
+元数据/调试信息 → **stdout**（默认）或 **stderr**（`--color` 启用时终端着色输出）
+
+输出结构：
+- 终端输出：子进程的实际输出内容，直接输出到 stdout（纯文本）
+- session 段：`# ── session ────────` 包含触发匹配状态、会话 ID、PTY 类型、命令、时间等元数据
+- debug 段：`# ── debug ────────` 包含进程树、GUI 窗口信息（`--no-debug` 隐藏）
+- events 段：`# ── events ────────` 包含进程创建/退出/崩溃等事件
+- error 段：`# ── error ────────` 错误信息
+- offset 段：`# ── offset ────────` 输出字节偏移量
 
 ## 示例场景
 
@@ -142,5 +136,5 @@ app.py kill srv # 不再需要时终止
 ```bash
 app.py exec job -c "python worker.py" --idle-timeout 5 # 启动，idle-timeout 等待输出
 # 若进程崩溃，返回中 trigger.reason="ended"，program.exit_code 非零，error_message 含崩溃信息
-app.py events job --last 10 # 查看崩溃事件详情（process_crash 类型）
+# 崩溃详情在 exec/send 返回的 debug.pending_events 中自动附带
 ```

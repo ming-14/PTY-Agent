@@ -53,12 +53,6 @@ class _MockSession:
     def consume_events(self):
         return []
 
-    def get_all_events(self, **kwargs):
-        return []
-
-    def check_event_existence(self, ev):
-        return False
-
     def close_window(self, hwnd):
         return True
 
@@ -254,6 +248,20 @@ class TestRequestHandlerHandle:
             }))
             assert resp["type"] == "exec"
 
+    def test_handle_exec_passes_shell_to_session(self):
+        """exec 的 --shell 参数传递到 create_session"""
+        handler, mgr = _setup_handler()
+        with patch.object(handler, '_run_trigger_flow',
+                          return_value={"type": "exec", "session_id": "s1"}):
+            with patch.object(mgr, 'create_session', wraps=mgr.create_session) as spy:
+                handler.handle(_with_token({
+                    "type": "exec", "id": "s1", "command": "pwsh --help",
+                    "shell": "pwsh", "timeout": 5,
+                }))
+                spy.assert_called_once()
+                _, kwargs = spy.call_args
+                assert kwargs.get("shell") == "pwsh", f"shell not passed: {kwargs}"
+
     def test_handle_read(self):
         """read 读取输出"""
         s = _MockSession("s1")
@@ -261,14 +269,6 @@ class TestRequestHandlerHandle:
         resp = handler.handle(_with_token({"type": "read", "id": "s1"}))
         assert resp["type"] == "read" or resp["type"] == "result"
         assert "output" in resp
-
-    def test_handle_events(self):
-        """events 返回事件"""
-        s = _MockSession("s1")
-        handler, _ = _setup_handler(sessions={"s1": s})
-        resp = handler.handle(_with_token({"type": "events", "id": "s1"}))
-        assert resp["type"] == "ok"
-        assert "pending_events" in resp
 
     def test_handle_closewin(self):
         """closewin 关闭窗口"""

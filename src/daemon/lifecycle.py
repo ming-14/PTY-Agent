@@ -8,7 +8,6 @@
 import os
 import sys
 import time
-import json
 import logging
 import subprocess
 from typing import Optional
@@ -41,22 +40,11 @@ from ..session.shm_utils import (
 
 _logger = logging.getLogger("pty-daemon")
 
-_json_mode = False
-
-
-def set_json_mode(enabled: bool):
-    global _json_mode
-    _json_mode = enabled
-
 
 def _safe_print(text: str):
-    """安全打印：JSON 模式下输出 JSON，否则 UTF-8 文本"""
+    """安全打印 UTF-8 文本到 stdout"""
     try:
-        if _json_mode:
-            msg = json.dumps({"type": "info", "message": text}, ensure_ascii=False)
-            sys.stdout.buffer.write(msg.encode("utf-8") + b"\n")
-        else:
-            sys.stdout.buffer.write(text.encode("utf-8") + b"\n")
+        sys.stdout.buffer.write(text.encode("utf-8") + b"\n")
         sys.stdout.buffer.flush()
     except Exception:
         pass

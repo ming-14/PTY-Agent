@@ -18,7 +18,7 @@
 import ctypes
 import logging
 import threading
-from typing import List, Optional, Tuple
+from typing import List, Optional
 from ctypes import wintypes as W
 
 from .convars import (
@@ -46,7 +46,6 @@ from .convars import (
     _JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS,
     K,
 )
-from .error_msg import STILL_ACTIVE
 
 _logger = logging.getLogger("pty-job")
 

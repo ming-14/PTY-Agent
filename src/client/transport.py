@@ -40,20 +40,11 @@ def _has_shell_operators(cmd: str) -> bool:
     return any(t in _SHELL_OPS for t in tokens)
 
 
-def _parse_iso_time(s: str) -> float:
-    """将 ISO 8601 时间字符串转为 Unix 时间戳"""
-    from datetime import datetime
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
-    dt = datetime.fromisoformat(s)
-    return dt.timestamp()
-
-
 class Client:
     """前端客户端，封装与守护进程的共享内存通信
 
     提供 cmd_start / cmd_stop / cmd_list / cmd_exec / cmd_send /
-    cmd_read / cmd_kill / cmd_events / cmd_closewin 方法，
+    cmd_read / cmd_kill / cmd_closewin 方法，
     每个方法构建请求 dict → _send_recv → print_response。
 
     请求/响应通过命名共享内存 + 信箱传递，无 socket 依赖。
@@ -324,21 +315,6 @@ class Client:
                 print_response(resp)
         else:
             print_response(resp)
-
-    def cmd_events(self, session_id: str,
-                   last: Optional[int] = None,
-                   since: Optional[str] = None,
-                   until: Optional[str] = None):
-        _logger.info("cmd_events: id=%r last=%s since=%s until=%s", session_id, last, since, until)
-        msg: dict = {"type": "events", "id": session_id}
-        if since:
-            msg["since"] = _parse_iso_time(since)
-        if until:
-            msg["until"] = _parse_iso_time(until)
-        if last is not None:
-            msg["last"] = last
-        resp = self._send_recv(msg)
-        print_response(resp)
 
     def cmd_kill(self, session_id: str):
         _logger.info("cmd_kill: id=%r", session_id)

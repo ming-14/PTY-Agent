@@ -1,6 +1,6 @@
 """EventHistoryManager 单元测试
 
-测试事件历史管理器的添加、消费、查询、过滤、存在性检测、线程安全。
+测试事件历史管理器的添加、消费、清除、线程安全。
 """
 
 import time
@@ -84,76 +84,6 @@ class TestEventHistoryManagerConsume:
         result = mgr.consume_all()
         assert result[0]["pid"] == 1
         assert result[1]["pid"] == 2
-
-
-class TestEventHistoryManagerGetAll:
-    """EventHistoryManager.get_all 测试"""
-
-    def test_get_all_combined(self):
-        mgr = EventHistoryManager()
-        mgr.add_event(PendingEvent(timestamp=1.0, type="process_spawn", pid=1, info="h"))
-        mgr.consume_all()
-        mgr.add_event(PendingEvent(timestamp=2.0, type="process_exit", pid=2, info="p"))
-        result = mgr.get_all()
-        assert len(result) == 2
-
-    def test_get_all_with_last(self):
-        mgr = EventHistoryManager()
-        for i in range(10):
-            mgr.add_event(PendingEvent(timestamp=float(i), type="process_spawn", pid=i, info=f"e{i}"))
-        result = mgr.get_all(last=3)
-        assert len(result) == 3
-
-    def test_get_all_with_since(self):
-        mgr = EventHistoryManager()
-        mgr.add_event(PendingEvent(timestamp=100.0, type="process_spawn", pid=1, info="old"))
-        mgr.add_event(PendingEvent(timestamp=200.0, type="process_spawn", pid=2, info="new"))
-        result = mgr.get_all(since=150.0)
-        assert len(result) == 1
-        assert result[0]["pid"] == 2
-
-    def test_get_all_with_until(self):
-        mgr = EventHistoryManager()
-        mgr.add_event(PendingEvent(timestamp=100.0, type="process_spawn", pid=1, info="old"))
-        mgr.add_event(PendingEvent(timestamp=200.0, type="process_spawn", pid=2, info="new"))
-        result = mgr.get_all(until=150.0)
-        assert len(result) == 1
-        assert result[0]["pid"] == 1
-
-    def test_get_all_does_not_consume(self):
-        mgr = EventHistoryManager()
-        mgr.add_event(PendingEvent(timestamp=1.0, type="process_spawn", pid=1, info="a"))
-        mgr.get_all()
-        assert mgr.pending_count == 1
-
-
-class TestEventHistoryManagerCheckExistence:
-    """EventHistoryManager.check_existence 测试"""
-
-    def test_process_exit_always_false(self):
-        mgr = EventHistoryManager()
-        assert mgr.check_existence({"type": "process_exit", "pid": 100},
-                                   pty_provider=lambda: None) is False
-
-    def test_process_crash_always_false(self):
-        mgr = EventHistoryManager()
-        assert mgr.check_existence({"type": "process_crash", "pid": 100},
-                                   pty_provider=lambda: None) is False
-
-    def test_process_spawn_no_pty(self):
-        mgr = EventHistoryManager()
-        assert mgr.check_existence({"type": "process_spawn", "pid": 100},
-                                   pty_provider=lambda: None) is False
-
-    def test_process_spawn_zero_pid(self):
-        mgr = EventHistoryManager()
-        assert mgr.check_existence({"type": "process_spawn", "pid": 0},
-                                   pty_provider=lambda: None) is False
-
-    def test_unknown_type_false(self):
-        mgr = EventHistoryManager()
-        assert mgr.check_existence({"type": "unknown", "pid": 0},
-                                   pty_provider=lambda: None) is False
 
 
 class TestEventHistoryManagerClear:

@@ -29,7 +29,7 @@ from .convars import (
 )
 from .error_msg import STILL_ACTIVE
 from .job import ProcessJob
-from .gui_monitor import GuiWindowMonitor, GuiWindowInfo
+from .gui_monitor import GuiWindowMonitor
 
 
 class WindowsPseudoTerminal(PseudoTerminal):

@@ -1,10 +1,8 @@
-"""事件历史管理器 — 进程/GUI 事件的队列、历史记录与查询
+"""事件历史管理器 — 进程/GUI 事件的队列、历史记录与消费
 
 管理所有 PendingEvent 的:
 - 实时添加到待处理队列（由 ProcessMonitor / GUI 检测调用）
 - 消费并移入历史记录（consume_all）
-- 全量查询与过滤（get_all）
-- 存在性检测（check_existence）
 - 线程安全（内部锁）
 """
 
@@ -12,9 +10,7 @@ import logging
 import threading
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, List, Optional
-
-from ...config import IS_WINDOWS
+from typing import List
 
 _logger = logging.getLogger("pty-session")
 
@@ -72,68 +68,6 @@ class EventHistoryManager:
         _logger.debug("consume_all: consumed %d events (history=%d)", len(events), len(self._history))
         return _events_to_dicts(events)
 
-    def get_all(self, last: Optional[int] = None,
-                since: Optional[float] = None,
-                until: Optional[float] = None) -> List[dict]:
-        """获取所有事件（待处理 + 历史），支持过滤
-
-        Args:
-            last:  仅返回最近 N 条。
-            since: 仅返回时间 >= since 的事件（Unix 时间戳）。
-            until: 仅返回时间 <= until 的事件（Unix 时间戳）。
-
-        Returns:
-            过滤后的事件字典列表（时间由远到近）。
-        """
-        with self._lock:
-            all_ev = list(self._history) + list(self._pending)
-
-        if since is not None:
-            all_ev = [e for e in all_ev if e.timestamp >= since]
-        if until is not None:
-            all_ev = [e for e in all_ev if e.timestamp <= until]
-
-        dicts = _events_to_dicts(all_ev)
-
-        if last is not None and last > 0:
-            dicts = dicts[-last:]
-
-        return dicts
-
-    def check_existence(self, ev: dict, pty_provider: Callable) -> bool:
-        """检测事件关联的进程/窗口是否仍然存在
-
-        Args:
-            ev:           事件字典（含 type/pid/hwnd）。
-            pty_provider: 返回当前 PTY 实例的可调用对象。
-
-        Returns:
-            True 表示进程/窗口仍然存在。
-        """
-        ev_type = ev.get("type", "")
-
-        # process_exit / process_crash：进程已退出，始终不存在
-        if ev_type in ("process_exit", "process_crash"):
-            return False
-
-        if ev_type == "process_spawn":
-            pid = ev.get("pid", 0)
-            if pid <= 0:
-                return False
-            pty = pty_provider()
-            if not pty:
-                return False
-            try:
-                pids = pty.get_process_list()
-                return pid in pids
-            except Exception:
-                return False
-
-        if ev_type == "gui_window":
-            return _check_hwnd_exists(ev.get("hwnd", 0))
-
-        return False
-
     def clear(self):
         """清空所有待处理事件和历史记录"""
         with self._lock:
@@ -188,15 +122,3 @@ def _events_to_dicts(events: List[PendingEvent]) -> List[dict]:
             d["hwnd"] = e.hwnd
         result.append(d)
     return result
-
-
-def _check_hwnd_exists(hwnd: int) -> bool:
-    """检查窗口句柄是否仍然有效（Windows 专用）"""
-    if not hwnd or not IS_WINDOWS:
-        return False
-    import ctypes
-    try:
-        user32 = ctypes.windll.user32
-        return bool(user32.IsWindow(ctypes.c_void_p(hwnd)))
-    except Exception:
-        return False

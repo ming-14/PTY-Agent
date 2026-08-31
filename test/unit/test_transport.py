@@ -6,7 +6,7 @@
 
 import pytest
 
-from src.client.transport import Client, _has_shell_operators, _parse_iso_time
+from src.client.transport import Client, _has_shell_operators
 
 
 class TestHasShellOperators:
@@ -46,26 +46,6 @@ class TestHasShellOperators:
 
     def test_empty_string(self):
         assert _has_shell_operators("") is False
-
-
-class TestParseIsoTime:
-    """_parse_iso_time 测试"""
-
-    def test_full_iso(self):
-        """完整 ISO 8601"""
-        ts = _parse_iso_time("2026-06-07T18:00:00+08:00")
-        assert isinstance(ts, float)
-        assert ts > 0
-
-    def test_utc_z_suffix(self):
-        """Z 后缀"""
-        ts = _parse_iso_time("2026-06-07T18:00:00Z")
-        assert isinstance(ts, float)
-
-    def test_invalid_raises(self):
-        """无效格式抛出 ValueError"""
-        with pytest.raises(ValueError):
-            _parse_iso_time("not-a-date")
 
 
 class TestClientApplyConfigDefaults:

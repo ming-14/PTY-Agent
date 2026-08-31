@@ -1,6 +1,6 @@
 """__main__.py CLI 入口单元测试
 
-测试参数解析、配置键转换、时间补全、引号修复。
+测试参数解析、配置键转换、引号修复。
 """
 
 import pytest
@@ -8,7 +8,6 @@ import pytest
 from src.__main__ import (
     _parse_default_key,
     _format_config_key,
-    _maybe_expand_time,
     build_parser,
 )
 
@@ -17,7 +16,7 @@ class TestParseDefaultKey:
     """_parse_default_key 测试"""
 
     def test_hyphen_to_underscore(self):
-        assert _parse_default_key("output-by-natural-language") == "output_by_natural_language"
+        assert _parse_default_key("keep-ansi") == "keep_ansi"
 
     def test_keep_underscore(self):
         assert _parse_default_key("timeout") == "timeout"
@@ -30,38 +29,10 @@ class TestFormatConfigKey:
     """_format_config_key 测试"""
 
     def test_underscore_to_hyphen(self):
-        assert _format_config_key("output_by_natural_language") == "output-by-natural-language"
+        assert _format_config_key("keep_ansi") == "keep-ansi"
 
     def test_no_underscore(self):
         assert _format_config_key("timeout") == "timeout"
-
-
-class TestMaybeExpandTime:
-    """_maybe_expand_time 测试"""
-
-    def test_none_returns_none(self):
-        assert _maybe_expand_time(None) is None
-
-    def test_full_iso_passthrough(self):
-        """完整 ISO 8601 直接通过"""
-        result = _maybe_expand_time("2026-06-07T18:00:00+08:00")
-        assert "2026-06-07" in result
-        assert "18:00" in result
-
-    def test_utc_z_suffix(self):
-        """Z 后缀转换为 +00:00"""
-        result = _maybe_expand_time("2026-06-07T18:00:00Z")
-        assert result is not None
-
-    def test_hhmm_expands(self):
-        """HH:MM 补全当天日期"""
-        result = _maybe_expand_time("18:00")
-        assert "T18:00" in result
-
-    def test_hhmmss_expands(self):
-        """HH:MM:SS 补全当天日期"""
-        result = _maybe_expand_time("18:30:00")
-        assert "T18:30:00" in result
 
 
 class TestBuildParser:
@@ -107,14 +78,6 @@ class TestBuildParser:
         args = parser.parse_args(["kill", "test-id"])
         assert args.subcmd == "kill"
         assert args.id == "test-id"
-
-    def test_parse_events(self):
-        """解析 events 子命令"""
-        parser = build_parser()
-        args = parser.parse_args(["events", "test-id", "--last", "5"])
-        assert args.subcmd == "events"
-        assert args.id == "test-id"
-        assert args.last == 5
 
     def test_parse_closewin(self):
         """解析 closewin 子命令"""
@@ -195,12 +158,6 @@ class TestBuildParser:
         parser = build_parser()
         args = parser.parse_args(["exec", "test-id", "-c", "python", "--idle-timeout", "5"])
         assert args.idle_timeout == 5.0
-
-    def test_parse_events_with_since(self):
-        """解析 events --since"""
-        parser = build_parser()
-        args = parser.parse_args(["events", "test-id", "--since", "18:00"])
-        assert args.since == "18:00"
 
     def test_parse_closewin_decimal_hwnd(self):
         """解析 closewin 十进制 hwnd"""

@@ -50,7 +50,6 @@ from .convars import (
     _UNICODE_STRING,
     _OBJECT_ATTRIBUTES,
     _IO_STATUS_BLOCK,
-    _COORD,
     _OVERLAPPED,
     _SIE,
     _PI,
@@ -58,7 +57,7 @@ from .convars import (
 )
 from .error_msg import STILL_ACTIVE
 from .job import ProcessJob
-from .gui_monitor import GuiWindowMonitor, GuiWindowInfo
+from .gui_monitor import GuiWindowMonitor
 
 _logger = logging.getLogger("pty-condrv")
 

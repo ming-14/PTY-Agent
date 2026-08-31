@@ -1,6 +1,6 @@
 """Session 事件系统单元测试
 
-测试事件历史记录、get_all_events、check_event_existence 等新增功能。"""
+测试事件消费、历史记录、崩溃信号等内部事件系统功能。"""
 
 import time
 import threading
@@ -135,29 +135,6 @@ class TestSessionEvents:
         # 待处理队列应清空
         assert session.event_history.pending_count == 0
 
-    def test_get_all_events_contains_history(self, session):
-        """测试 get_all_events 返回历史+待处理事件"""
-
-        # 添加两个历史事件
-        session.event_history.add_event(PendingEvent(
-            timestamp=100.0, type="process_spawn", pid=1, info="first",
-        ))
-        session.consume_events()  # 移入历史
-
-        # 添加一个待处理事件
-        session.event_history.add_event(PendingEvent(
-            timestamp=200.0, type="process_exit", pid=2, info="second",
-        ))
-
-        # get_all_events 返回所有事件（不消费）
-        all_ev = session.get_all_events()
-        assert len(all_ev) == 2
-        assert all_ev[0]["type"] == "process_spawn"  # 历史事件
-        assert all_ev[1]["type"] == "process_exit"   # 待处理事件
-
-        # 验证待处理事件未被消费
-        assert session.event_history.pending_count == 1
-
     def test_consume_without_history_affects_pending_only(self, session):
         """测试 consume_events 只消费待处理事件"""
 
@@ -197,54 +174,6 @@ class TestSessionEvents:
         time.sleep(0.1)
 
         assert session.event_history.history_count == 0
-
-    def test_check_event_existence_process_spawn(self, session):
-        """测试 process_spawn 事件的存在检测"""
-        # 进程在当前进程列表中的事件
-        ev = {"type": "process_spawn", "pid": 100}  # MockPty 有 PID 100
-        assert session.check_event_existence(ev) is True
-
-        # 进程不在列表中的事件
-        ev = {"type": "process_spawn", "pid": 99999}
-        assert session.check_event_existence(ev) is False
-
-    def test_check_event_existence_process_exit(self, session):
-        """测试 process_exit 事件始终标记为不存在"""
-        ev = {"type": "process_exit", "pid": 100}
-        assert session.check_event_existence(ev) is False
-
-    def test_check_event_existence_process_crash(self, session):
-        """测试 process_crash 事件始终标记为不存在"""
-        ev = {"type": "process_crash", "pid": 100}
-        assert session.check_event_existence(ev) is False
-
-    def test_check_event_existence_unknown_type(self, session):
-        """测试未知类型事件返回 False"""
-        ev = {"type": "unknown_type", "pid": 0}
-        assert session.check_event_existence(ev) is False
-
-    def test_check_event_existence_zero_pid(self, session):
-        """测试 PID 为 0 时返回 False"""
-        ev = {"type": "process_spawn", "pid": 0}
-        assert session.check_event_existence(ev) is False
-
-    def test_get_all_events_no_modification(self, session):
-        """测试 get_all_events 不修改事件队列"""
-
-        session.event_history.add_event(PendingEvent(
-            timestamp=100.0, type="process_spawn", pid=1, info="evt",
-        ))
-        session.consume_events()
-
-        session.event_history.add_event(PendingEvent(
-            timestamp=200.0, type="process_exit", pid=1, info="evt2",
-        ))
-
-        # 多次调用 get_all_events 结果一致
-        all1 = session.get_all_events()
-        all2 = session.get_all_events()
-        assert len(all1) == len(all2)
-        assert [e["type"] for e in all1] == [e["type"] for e in all2]
 
     def test_crash_event_flag_on_crash(self, session):
         """测试检测到崩溃时 crash_event 被设置"""

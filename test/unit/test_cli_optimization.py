@@ -1,9 +1,8 @@
 """ConfigManager 与 Formatter 单元测试
 
-测试客户端配置管理、JSON/自然语言双模式输出。"""
-
-import json
+测试客户端配置管理、自然语言输出。"""
 import pytest
+
 
 # ---- ConfigManager 测试 ----
 
@@ -20,7 +19,6 @@ class TestConfigManager:
 
     def test_default_values(self, cfg):
         """测试默认配置值"""
-        assert cfg.get("output_by_natural_language") is False
         assert cfg.get("timeout") == 120.0
         assert cfg.get("newline") is False
         assert cfg.get("encoding") is None
@@ -31,9 +29,6 @@ class TestConfigManager:
         """测试设置值并读取"""
         cfg.set("timeout", 30)
         assert cfg.get("timeout") == 30.0
-
-        cfg.set("output_by_natural_language", "on")
-        assert cfg.get("output_by_natural_language") is True
 
         cfg.set("encoding", "gbk")
         assert cfg.get("encoding") == "gbk"
@@ -129,24 +124,15 @@ class TestFormatter:
     @pytest.fixture(autouse=True)
     def reset_mode(self):
         """每个测试后重置输出模式"""
-        from src.client.formatter import set_output_mode, set_debug_mode
+        from src.client.formatter import set_debug_mode
 
         yield
-        set_output_mode(True)
         set_debug_mode(True)
 
-    def test_json_mode_default(self):
-        """测试默认使用 JSON 模式"""
-        from src.client.formatter import set_output_mode
+    def test_result_output(self, capsys):
+        """测试 result 输出"""
+        from src.client.formatter import print_response
 
-        # 默认应该是 JSON 模式（True）
-        set_output_mode(True)
-
-    def test_natural_language_result(self, capsys):
-        """测试自然语言模式下的 result 输出"""
-        from src.client.formatter import print_response, set_output_mode
-
-        set_output_mode(False)  # 自然语言模式
         resp = {
             "type": "result",
             "session_id": "test-sess",
@@ -159,177 +145,34 @@ class TestFormatter:
         print_response(resp)
         captured = capsys.readouterr()
 
-        # 自然语言模式：输出内容进入 stdout，元数据在 stderr 或 stdout
+        # 输出内容进入 stdout，元数据在 stderr 或 stdout
         assert "Hello World" in captured.out or "Hello World" in captured.err
 
-    def test_json_mode_result(self, capsys):
-        """测试 JSON 模式下的 result 输出"""
-        from src.client.formatter import print_response, set_output_mode
+    def test_error_output(self, capsys):
+        """测试错误输出"""
+        from src.client.formatter import print_response
 
-        set_output_mode(True)  # JSON 模式
-        resp = {
-            "type": "result",
-            "session_id": "test-sess",
-            "output": "Hello World",
-            "trigger": {"matched": False, "reason": "timeout"},
-            "program": {"running": False, "exit_code": 0, "error_message": None},
-            "debug": {"processes": [], "gui_windows": [], "pending_events": []},
-        }
-        print_response(resp)
-        captured = capsys.readouterr()
-
-        # 验证输出是有效的 JSON
-        data = json.loads(captured.out.strip())
-        assert data["type"] == "result"
-        assert data["session_id"] == "test-sess"
-        assert data["output"] == "Hello World"
-
-    def test_json_mode_events(self, capsys):
-        """测试 JSON 模式下 events 输出"""
-        from src.client.formatter import print_response, set_output_mode
-
-        set_output_mode(True)
-        resp = {
-            "type": "ok",
-            "session_id": "test-sess",
-            "pending_events": [
-                {
-                    "time": 1000000.0,
-                    "type": "process_spawn",
-                    "pid": 1234,
-                    "info": "PID 1234 创建",
-                    "hwnd": 0,
-                    "still_active": True,
-                },
-                {
-                    "time": 1000001.0,
-                    "type": "process_exit",
-                    "pid": 1234,
-                    "info": "PID 1234 退出",
-                    "hwnd": 0,
-                    "still_active": False,
-                },
-            ],
-            "count": 2,
-        }
-        print_response(resp)
-        captured = capsys.readouterr()
-
-        data = json.loads(captured.out.strip())
-        assert data["type"] == "ok"
-        assert data["count"] == 2
-        assert "pending_events" in data
-        assert data["pending_events"][0]["still_active"] is True
-        assert data["pending_events"][1]["still_active"] is False
-
-    def test_json_mode_error(self, capsys):
-        """测试 JSON 模式下错误输出"""
-        from src.client.formatter import print_response, set_output_mode
-
-        set_output_mode(True)
         resp = {"type": "error", "error": "会话不存在"}
         print_response(resp)
         captured = capsys.readouterr()
 
-        data = json.loads(captured.out.strip())
-        assert data["type"] == "error"
-        assert "会话不存在" in data["error"]
+        assert "会话不存在" in captured.err
 
-    def test_json_mode_none(self, capsys):
-        """测试 JSON 模式下 None 响应"""
-        from src.client.formatter import print_response, set_output_mode
+    def test_none_response(self, capsys):
+        """测试 None 响应"""
+        from src.client.formatter import print_response
 
-        set_output_mode(True)
         print_response(None)
         captured = capsys.readouterr()
 
-        data = json.loads(captured.out.strip())
-        assert data["type"] == "error"
-
-    def test_set_output_mode(self):
-        """测试 set_output_mode 切换模式"""
-        from src.client.formatter import set_output_mode
-
-        set_output_mode(True)
-        set_output_mode(False)
-
-    def test_events_with_still_active_natural(self, capsys):
-        """测试自然语言模式下含 still_active 的事件输出"""
-        from src.client.formatter import print_response, set_output_mode
-
-        set_output_mode(False)
-        resp = {
-            "type": "ok",
-            "session_id": "test-sess",
-            "pending_events": [
-                {
-                    "time": 1000000.0,
-                    "type": "process_crash",
-                    "pid": 5678,
-                    "info": "PID 5678 崩溃!",
-                    "hwnd": 0,
-                    "still_active": False,
-                },
-            ],
-            "count": 1,
-        }
-        print_response(resp)
-        captured = capsys.readouterr()
-
-        # 自然语言模式下崩溃事件应有特殊标记
-        assert "[!!]" in captured.out or "[!!]" in captured.err
+        assert "daemon not responding" in captured.err
 
     # ---- debug 模式测试 ----
 
-    def test_json_mode_debug_enabled(self, capsys):
-        """测试 JSON 模式下 debug 开启时包含 debug 字段"""
-        from src.client.formatter import print_response, set_output_mode, set_debug_mode
+    def test_debug_enabled(self, capsys):
+        """测试 debug 开启时显示 debug 段"""
+        from src.client.formatter import print_response, set_debug_mode
 
-        set_output_mode(True)
-        set_debug_mode(True)
-        resp = {
-            "type": "result",
-            "session_id": "test-sess",
-            "output": "hello",
-            "trigger_matched": True,
-            "reason": "matched",
-            "program": {"running": True},
-            "debug": {"processes": [1234], "gui_windows": [], "pending_events": []},
-        }
-        print_response(resp)
-        captured = capsys.readouterr()
-
-        data = json.loads(captured.out.strip())
-        assert "debug" in data
-        assert data["debug"]["processes"] == [1234]
-
-    def test_json_mode_debug_disabled(self, capsys):
-        """测试 JSON 模式下 debug 关闭时移除 debug 字段"""
-        from src.client.formatter import print_response, set_output_mode, set_debug_mode
-
-        set_output_mode(True)
-        set_debug_mode(False)
-        resp = {
-            "type": "result",
-            "session_id": "test-sess",
-            "output": "hello",
-            "trigger_matched": True,
-            "reason": "matched",
-            "program": {"running": True},
-            "debug": {"processes": [1234], "gui_windows": [], "pending_events": []},
-        }
-        print_response(resp)
-        captured = capsys.readouterr()
-
-        data = json.loads(captured.out.strip())
-        assert "debug" not in data
-        assert data["output"] == "hello"
-
-    def test_natural_language_debug_enabled(self, capsys):
-        """测试自然语言模式下 debug 开启时显示 debug 段"""
-        from src.client.formatter import print_response, set_output_mode, set_debug_mode
-
-        set_output_mode(False)
         set_debug_mode(True)
         resp = {
             "type": "result",
@@ -351,11 +194,10 @@ class TestFormatter:
         assert "debug" in combined
         assert "1234" in combined
 
-    def test_natural_language_debug_disabled(self, capsys):
-        """测试自然语言模式下 debug 关闭时隐藏 debug 段"""
-        from src.client.formatter import print_response, set_output_mode, set_debug_mode
+    def test_debug_disabled(self, capsys):
+        """测试 debug 关闭时隐藏 debug 段"""
+        from src.client.formatter import print_response, set_debug_mode
 
-        set_output_mode(False)
         set_debug_mode(False)
         resp = {
             "type": "result",
@@ -377,11 +219,10 @@ class TestFormatter:
         assert "debug" not in combined
         assert "process tree" not in combined
 
-    def test_natural_language_debug_disabled_hides_events(self, capsys):
-        """测试自然语言模式下 debug 关闭时隐藏 pending_events"""
-        from src.client.formatter import print_response, set_output_mode, set_debug_mode
+    def test_debug_disabled_hides_events(self, capsys):
+        """测试 debug 关闭时隐藏 pending_events"""
+        from src.client.formatter import print_response, set_debug_mode
 
-        set_output_mode(False)
         set_debug_mode(False)
         resp = {
             "type": "result",
@@ -410,11 +251,10 @@ class TestFormatter:
         assert "events" not in combined
         assert "process_spawn" not in combined
 
-    def test_natural_language_debug_disabled_hides_gui(self, capsys):
-        """测试自然语言模式下 debug 关闭时隐藏 GUI 窗口"""
-        from src.client.formatter import print_response, set_output_mode, set_debug_mode
+    def test_debug_disabled_hides_gui(self, capsys):
+        """测试 debug 关闭时隐藏 GUI 窗口"""
+        from src.client.formatter import print_response, set_debug_mode
 
-        set_output_mode(False)
         set_debug_mode(False)
         resp = {
             "type": "result",
@@ -438,32 +278,6 @@ class TestFormatter:
         assert "window" not in combined
         assert "0x1234" not in combined
 
-    def test_json_mode_debug_disabled_keeps_other_fields(self, capsys):
-        """测试 JSON 模式下 debug 关闭时其他字段不受影响"""
-        from src.client.formatter import print_response, set_output_mode, set_debug_mode
-
-        set_output_mode(True)
-        set_debug_mode(False)
-        resp = {
-            "type": "result",
-            "session_id": "test-sess",
-            "output": "hello",
-            "output_offset": 42,
-            "trigger_matched": True,
-            "reason": "matched",
-            "program": {"running": True, "pty_type": "subprocess"},
-            "debug": {"processes": [1234], "gui_windows": [], "pending_events": []},
-        }
-        print_response(resp)
-        captured = capsys.readouterr()
-
-        data = json.loads(captured.out.strip())
-        assert "debug" not in data
-        assert data["output"] == "hello"
-        assert data["output_offset"] == 42
-        assert data["trigger_matched"] is True
-        assert data["program"]["pty_type"] == "subprocess"
-
     def test_set_debug_mode(self):
         """测试 set_debug_mode 切换"""
         from src.client.formatter import set_debug_mode
@@ -479,15 +293,13 @@ class TestConfigParserIntegration:
         """测试 CLI 键名到内部键名的转换"""
         from src.__main__ import _parse_default_key, _format_config_key
 
-        assert _parse_default_key("output-by-natural-language") == "output_by_natural_language"
-        assert _format_config_key("output_by_natural_language") == "output-by-natural-language"
         assert _parse_default_key("keep-ansi") == "keep_ansi"
         assert _format_config_key("keep_ansi") == "keep-ansi"
         assert _parse_default_key("timeout") == "timeout"
 
 
 class TestUnescapeJsonString:
-    """JSON 风格转义解码测试"""
+    """JSON 风格转义解码测试（输入功能）"""
 
     def test_unescape_double_quote(self):
         """测试 \\" → 字面引号"""

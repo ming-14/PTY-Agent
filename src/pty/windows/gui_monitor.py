@@ -14,7 +14,7 @@ import ctypes
 import logging
 from threading import Lock
 from typing import Dict, List, Optional, Set
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass
 from ctypes import wintypes as W
 
 from .convars import (

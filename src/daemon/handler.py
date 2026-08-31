@@ -149,8 +149,6 @@ class RequestHandler:
                 return {"type": "ok", "sessions": sessions}
             elif msg_type == "kill":
                 return self._handle_kill(msg)
-            elif msg_type == "events":
-                return self._handle_events(msg)
             elif msg_type == "closewin":
                 return self._handle_closewin(msg)
             elif msg_type == "stop":
@@ -364,7 +362,7 @@ class RequestHandler:
             try:
                 session = self.manager.create_session(
                     session_id, command, encoding=msg.get("encoding"),
-                    cwd=msg.get("cwd"),
+                    shell=msg.get("shell"), cwd=msg.get("cwd"),
                 )
                 log_cmd = (
                     command if isinstance(command, str)
@@ -555,29 +553,3 @@ class RequestHandler:
         except Exception as e:
             _logger.warning("关闭窗口异常: %s", e)
             return {"type": "error", "error": "关闭窗口失败"}
-
-    def _handle_events(self, msg: dict) -> dict:
-        """处理 events 指令：获取会话的所有事件"""
-        session_id = msg.get("id", "")
-        if not session_id:
-            return {"type": "error", "error": "缺少会话 id"}
-        session = self.manager.get_session(session_id)
-        if not session:
-            return {"type": "error", "error": f"会话 '{session_id}' 不存在"}
-        last_n = msg.get("last")
-        since = msg.get("since")
-        until = msg.get("until")
-        _logger.info("_handle_events: id=%r last=%s since=%s until=%s",
-                     session_id, last_n, since, until)
-        events = session.get_all_events(last=last_n, since=since, until=until)
-        for ev in events:
-            ev["still_active"] = session.check_event_existence(ev)
-        resp = {
-            "type": "ok",
-            "session_id": session_id,
-            "pending_events": events,
-            "count": len(events),
-        }
-        if not session.running:
-            resp["warning"] = "会话已结束（旧会话数据）"
-        return resp

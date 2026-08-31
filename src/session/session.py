@@ -14,26 +14,18 @@ Session 自身仅保留：PTY 生命周期、I/O 接口、触发条件协调、�
 / event_history / process_monitor。
 """
 
-import os
-import sys
-import errno
 import time
 import logging
-import threading
-from typing import Optional, List, Tuple
+from typing import Optional, List
 
 from ..pty.factory import create_pty
 from ..pty.base import PseudoTerminal
 from ..config import IS_WINDOWS
 from ..config import (
     MAX_OUTPUT_BUFFER,
-    MAX_TRIGGER_SCAN,
 )
 from .process import (
-    _get_process_name,
-    _get_process_path,
     _format_exit_code_message,
-    _signal_name,
     _format_pty_error,
     ProcessMonitor,
     GuiDetector,
@@ -41,19 +33,10 @@ from .process import (
 from .output import (
     OutputBuffer,
     TriggerMatcher,
-    safe_regex_search,
     EventHistoryManager,
-    PendingEvent,
-    _events_to_dicts,
 )
 from .encoding import EncodingDetector
 from .session_threads import SessionThreads, SessionComponents, _capture_exit_code_retry
-
-if IS_WINDOWS:
-    from ..pty.windows.error_msg import (
-        STILL_ACTIVE, translate_windows_error,
-        format_process_exit_code,
-    )
 
 _logger = logging.getLogger("pty-session")
 
@@ -423,22 +406,6 @@ class Session:
         """消费所有待处理事件并移入历史记录"""
         return self._evt_hist.consume_all()
 
-    def get_all_events(self, last: Optional[int] = None,
-                       since: Optional[float] = None,
-                       until: Optional[float] = None) -> List[dict]:
-        """获取所有事件（待处理 + 历史），支持过滤"""
-        return self._evt_hist.get_all(last=last, since=since, until=until)
-
-    @staticmethod
-    def _events_to_dicts(events: List[PendingEvent]) -> List[dict]:
-        """将 PendingEvent 对象列表转为字典列表（静态方法，用于测试兼容）"""
-        return _events_to_dicts(events)
-
-    def check_event_existence(self, ev: dict) -> bool:
-        """检测事件关联的进程/窗口是否仍然存在"""
-        return self._evt_hist.check_existence(
-            ev, pty_provider=lambda: self._pty)
-
     @property
     def pending_event_count(self) -> int:
         """待处理事件数量"""
@@ -501,11 +468,6 @@ class Session:
     @property
     def processes(self) -> List[int]:
         """当前进程树 PID 列表"""
-        return self._gui.processes
-
-    @processes.setter
-    def processes(self, value: List[int]):
-        self._gui.processes = value
         return self._gui.processes
 
     @processes.setter

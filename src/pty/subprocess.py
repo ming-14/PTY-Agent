@@ -5,7 +5,7 @@ import os
 import shutil
 import subprocess
 import logging
-from typing import Optional, List, Union
+from typing import Optional, List
 from ctypes import wintypes as W
 
 from .base import PseudoTerminal
@@ -13,7 +13,7 @@ from ..config import IS_WINDOWS
 
 if IS_WINDOWS:
     from .windows.job import ProcessJob
-    from .windows.gui_monitor import GuiWindowMonitor, GuiWindowInfo
+    from .windows.gui_monitor import GuiWindowMonitor
     from .windows.convars import K, _CloseHandle
 
 # ── Windows 错误模式常量（禁止子进程弹出崩溃对话框）──

@@ -8,7 +8,7 @@
 
 **pty-agent**：通过 PTY 启动交互式程序，对外提供 CLI 接口管理会话（启动/发送/读取/触发）。
 
-**JSON 输出纯度**：JSON 模式（默认）下，stdout 仅输出 JSON，不含任何非 JSON 内容。守护进程启停信息、配置查询、帮助文本、警告等均以 JSON 格式输出（`type` 为 `info`/`config`/`help`/`warning`）。守护进程日志不会泄漏到 stderr。
+**自然语言输出**：程序实际输出到 **stdout**，元数据/调试信息到 stdout 或 stderr（`--color` 启用时走 stderr）。守护进程日志不会泄漏到 stderr。
 
 ```
 pty-agent/

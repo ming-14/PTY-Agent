@@ -14,9 +14,6 @@ python app.py send py "print(100*100)" -t ">>>"
 # 读取输出
 python app.py read py --lines 10
 
-# 查看会话事件
-python app.py events py --last 5
-
 # 终止会话
 python app.py kill py
 ```
@@ -39,7 +36,6 @@ cd pty-agent
 | `read <id>` | 读取会话输出 |
 | `list` | 列出所有会话 |
 | `kill <id>` | 终止会话 |
-| `events <id>` | 查看会话事件 |
 | `start` / `stop` | 手动启停守护进程 |
 | `closewin <id> <hwnd>` | 关闭 GUI 窗口 |
 
@@ -78,14 +74,6 @@ python app.py send myid "import os\nprint(os.name)" -t ">>>" --json-escaping
 python app.py read myid --lines 20          # 最近 20 行
 python app.py read myid --grep "ERROR"      # 正则过滤
 python app.py read myid --offset 1024       # 增量读取
-```
-
-### events — 查看事件
-
-```powershell
-python app.py events myid --last 10
-python app.py events myid --since "14:30"
-python app.py events myid --since "2026-06-22T14:00:00" --until "2026-06-22T15:00:00"
 ```
 
 ## 项目结构

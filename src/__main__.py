@@ -3,43 +3,32 @@ r"""PTY-Agent — 命令行交互式程序交互代理
 通过 subprocess 或伪终端（PTY）与交互式 CLI 程序双向通信。
 守护进程以独立子进程运行，首次执行命令时自动启动。
 
-子命令: start | stop | list | exec | send | read | kill | events | closewin
+子命令: start | stop | list | exec | send | read | kill | closewin
 """
 
 import logging
 import sys
 import argparse
-import json
 import ctypes
 import ctypes.wintypes
 from typing import Optional
 
 from .client.transport import Client
-from .client.formatter import set_color_mode, set_output_mode, set_debug_mode, is_json_mode
+from .client.formatter import set_color_mode, set_debug_mode
 from .client.config_manager import ConfigManager
-from .daemon.lifecycle import setup_client_logging, set_json_mode as _set_lifecycle_json_mode
+from .daemon.lifecycle import setup_client_logging
 
 _logger = logging.getLogger("pty-client")
-
-# ── 配置键列表（用于 argparse 动态验证）─
-_CONFIG_KEYS = (
-    "output-by-natural-language",
-    "timeout",
-    "newline",
-    "keep-ansi",
-    "encoding",
-    "debug",
-)
 
 
 def _parse_default_key(key: str) -> str:
     """将 CLI 中的配置键名转为内部存储键名
 
     Args:
-        key: CLI 配置键名（如 output-by-natural-language）。
+        key: CLI 配置键名（如 keep-ansi）。
 
     Returns:
-        内部存储键名（如 output_by_natural_language）。
+        内部存储键名（如 keep_ansi）。
     """
     return key.replace("-", "_")
 
@@ -48,44 +37,12 @@ def _format_config_key(key: str) -> str:
     """将内部存储键名转为 CLI 配置键名
 
     Args:
-        key: 内部存储键名（如 output_by_natural_language）。
+        key: 内部存储键名（如 keep_ansi）。
 
     Returns:
-        CLI 配置键名（如 output-by-natural-language）。
+        CLI 配置键名（如 keep-ansi）。
     """
     return key.replace("_", "-")
-
-
-def _maybe_expand_time(s: Optional[str]) -> Optional[str]:
-    """补全简写时间 "HH:MM" 为完整 ISO 8601
-
-    如果输入已是完整 ISO 8601（包含日期部分），直接返回。
-    如果形如 "HH:MM" 或 "HH:MM:SS"，自动补全当天日期。
-
-    Args:
-        s: 用户输入的时间字符串，可为 None。
-
-    Returns:
-        完整 ISO 8601 字符串或 None。
-    """
-    if s is None:
-        return None
-    # 如果已包含日期分隔符（T 或空格后的日期部分），视为完整格式
-    if "T" in s or "-" in s[:5]:
-        # 已是完整 ISO 8601，去除可能存在的空格代替 T 的情况
-        s = s.replace(" ", "T")
-        # 无时区后缀时加上本地时区偏移
-        if "+" not in s and not s.endswith("Z") and len(s) >= 19:
-            from datetime import datetime, timezone, timedelta
-            # Windows 下 timezone.utc 可用
-            local_offset = -time.timezone // 3600
-            sign = "+" if local_offset >= 0 else "-"
-            s += f"{sign}{abs(local_offset):02d}:00"
-        return s
-    # 简写 "HH:MM" 或 "HH:MM:SS" → 补全当天日期
-    from datetime import date
-    today = date.today().isoformat()
-    return f"{today}T{s}"
 
 
 class _HintParser(argparse.ArgumentParser):
@@ -132,19 +89,16 @@ class _InputHintAction(argparse.Action):
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
-    """为子命令解析器添加通用参数（颜色、输出模式、编码、默认配置）"""
+    """为子命令解析器添加通用参数（颜色、编码、默认配置）"""
     parser.add_argument("--color", action="store_true", default=False,
                         help="启用终端颜色输出（默认禁用）")
-    parser.add_argument("--output-by-natural-language", action="store_true",
-                        default=False,
-                        help="使用自然语言输出（默认 JSON）")
     parser.add_argument("--encoding", default=None,
                         help="终端编码（如 utf-8、gbk），本次调用记忆")
 
     parser.add_argument("--default", nargs=2, metavar=("KEY", "VALUE"),
                         default=None,
                         help="设置默认配置 "
-                             "(output-by-natural-language/timeout/newline/keep-ansi/encoding/debug)")
+                             "(timeout/newline/keep-ansi/encoding/debug)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -163,12 +117,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--default", nargs=2, metavar=("KEY", "VALUE"),
                         default=None,
                          help="临时覆盖默认配置 "
-                              "(output-by-natural-language/timeout/newline/keep-ansi/encoding/debug)")
+                              "(timeout/newline/keep-ansi/encoding/debug)")
     parser.add_argument("--color", action="store_true", default=False,
                         help="启用终端颜色输出（默认禁用）")
-    parser.add_argument("--output-by-natural-language", action="store_true",
-                        default=False,
-                        help="使用自然语言输出（默认 JSON）")
     parser.add_argument("--encoding", default=None,
                         help="终端编码（如 utf-8、gbk），本次调用记忆")
     parser.add_argument("--no-debug", action="store_true", default=False,
@@ -261,17 +212,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_args(p_kill)
     p_kill.add_argument("id", help="会话标识")
 
-    # events
-    p_events = sub.add_parser("events", help="查看会话事件（默认返回所有事件）")
-    _add_common_args(p_events)
-    p_events.add_argument("id", help="会话标识")
-    p_events.add_argument("--last", type=int, default=None, metavar="N",
-                          help="仅返回最近 N 条事件")
-    p_events.add_argument("--since", type=str, default=None, metavar="<ISO时间|HH:MM>",
-                          help="仅返回此时间之后的事件（支持 ISO 8601 或 HH:MM）")
-    p_events.add_argument("--until", type=str, default=None, metavar="<ISO时间|HH:MM>",
-                          help="仅返回此时间之前的事件（支持 ISO 8601 或 HH:MM）")
-
     # closewin
     p_closewin = sub.add_parser("closewin", help="关闭指定 GUI 窗口")
     _add_common_args(p_closewin)
@@ -310,17 +250,9 @@ def _handle_config_ops(args) -> Optional[dict]:
                     f"警告: --default 仅在与子命令（如 exec/send）配合时有效，"
                     f"单独使用不会产生效果\n  已设置临时值: {key} = {value}"
                 )
-                if is_json_mode():
-                    from .client.input import safe_print
-                    safe_print(json.dumps({"type": "warning", "message": warn_msg}, ensure_ascii=False))
-                else:
-                    print(warn_msg, file=sys.stderr)
+                print(warn_msg, file=sys.stderr)
         except ValueError as e:
-            if is_json_mode():
-                from .client.input import safe_print
-                safe_print(json.dumps({"type": "error", "error": str(e)}, ensure_ascii=False))
-            else:
-                print(str(e), file=sys.stderr)
+            print(str(e), file=sys.stderr)
             sys.exit(1)
 
     # --show-config [KEY]
@@ -333,11 +265,7 @@ def _handle_config_ops(args) -> Optional[dict]:
                 "\n  # 注: 这些默认值仅在有子命令（如 exec/send）时生效，"
                 "仅作查询参考"
             )
-        if is_json_mode():
-            from .client.input import safe_print
-            safe_print(json.dumps({"type": "config", "content": show_text}, ensure_ascii=False))
-        else:
-            print(show_text)
+        print(show_text)
         # --show-config 单独使用时直接退出
         if args.subcmd is None:
             return None
@@ -368,7 +296,7 @@ def _fix_windows_exec_quoting() -> None:
     -c 的参数值会被 PowerShell 自身拆分，此时 sys.argv 中 -c 后的值
     已经丢失了嵌套引号内容，CommandLineToArgvW 无法还原。
     PowerShell/pwsh 用户应使用外层单引号 '...' + 内层双引号。
-    详见 doc/引号处理规则.md。
+    详见 docs/Skill文档/引号处理规则.md。
     """
     if sys.platform != "win32":
         return
@@ -460,11 +388,8 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
-    # 设置颜色模式和输出模式（各子命令都有这些参数）
-    json_mode = not getattr(args, "output_by_natural_language", False)
+    # 设置颜色模式（各子命令都有这些参数）
     set_color_mode(getattr(args, "color", False))
-    set_output_mode(json_mode)
-    _set_lifecycle_json_mode(json_mode)
 
     # 处理配置管理操作，获取 --default 设置的临时覆盖值
     config_overrides = _handle_config_ops(args)
@@ -487,14 +412,7 @@ def main():
 
     # 无子命令时显示帮助
     if args.subcmd is None:
-        if is_json_mode():
-            from .client.input import safe_print
-            import io
-            buf = io.StringIO()
-            parser.print_help(buf)
-            safe_print(json.dumps({"type": "help", "content": buf.getvalue()}, ensure_ascii=False))
-        else:
-            parser.print_help()
+        parser.print_help()
         return
 
     # 验证 exec 命令的参数
@@ -507,13 +425,7 @@ def main():
             "--idle-after-first-output 需要配合 --idle-timeout 使用，"
             "单独设置无效（当前未启用静默超时检测）"
         )
-        if is_json_mode():
-            from .client.input import safe_print
-            safe_print(json.dumps({"type": "warning", "message": warn_msg}, ensure_ascii=False))
-        else:
-            print(warn_msg, file=sys.stderr)
-
-    # events 中 since/until/last 无需 --all 依赖（默认始终返回所有事件）
+        print(warn_msg, file=sys.stderr)
 
     # 修正 argparse 对 kill 的处理：第二个 parser 会覆盖第一个
     # 已在构建时修正，这里使用 args.id
@@ -573,31 +485,13 @@ def main():
             )
         elif args.subcmd == "kill":
             client.cmd_kill(args.id)
-        elif args.subcmd == "events":
-            # 处理 HH:MM 简写 → 补齐当天日期
-            since = _maybe_expand_time(args.since)
-            until = _maybe_expand_time(args.until)
-            client.cmd_events(
-                args.id,
-                last=args.last,
-                since=since,
-                until=until,
-            )
         elif args.subcmd == "closewin":
             client.cmd_closewin(args.id, args.hwnd)
     except KeyboardInterrupt:
-        if args.output_by_natural_language:
-            print("\n操作被用户中断", file=sys.stderr)
-        else:
-            from .client.formatter import print_response
-            print_response({"type": "error", "error": "操作被用户中断"})
+        print("\n操作被用户中断", file=sys.stderr)
         sys.exit(130)
     except Exception as e:
-        if args.output_by_natural_language:
-            print(f"错误: {e}", file=sys.stderr)
-        else:
-            from .client.formatter import print_response
-            print_response({"type": "error", "error": str(e)})
+        print(f"错误: {e}", file=sys.stderr)
         sys.exit(1)
 
 

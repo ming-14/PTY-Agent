@@ -6,7 +6,6 @@
 
 import logging
 import threading
-from contextlib import contextmanager
 from typing import Optional
 
 from ...config import MAX_OUTPUT_BUFFER

@@ -7,7 +7,6 @@ Windows 特有代码存放在 windows/ 子包下，Unix 平台零加载。
 import logging
 from typing import Optional
 from ..config import IS_WINDOWS
-from .base import PseudoTerminal
 from .unix import UnixPseudoTerminal
 from .subprocess import SubprocessPseudoTerminal
 
