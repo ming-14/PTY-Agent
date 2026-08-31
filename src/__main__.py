@@ -89,16 +89,14 @@ class _InputHintAction(argparse.Action):
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
-    """为子命令解析器添加通用参数（颜色、编码、默认配置）"""
+    """为子命令解析器添加通用参数（颜色、默认配置）"""
     parser.add_argument("--color", action="store_true", default=False,
                         help="启用终端颜色输出（默认禁用）")
-    parser.add_argument("--encoding", default=None,
-                        help="终端编码（如 utf-8、gbk），本次调用记忆")
 
     parser.add_argument("--default", nargs=2, metavar=("KEY", "VALUE"),
                         default=None,
                         help="设置默认配置 "
-                             "(timeout/newline/keep-ansi/encoding/debug)")
+                             "(timeout/newline/keep-ansi/debug)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -117,11 +115,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--default", nargs=2, metavar=("KEY", "VALUE"),
                         default=None,
                          help="临时覆盖默认配置 "
-                              "(timeout/newline/keep-ansi/encoding/debug)")
+                              "(timeout/newline/keep-ansi/debug)")
     parser.add_argument("--color", action="store_true", default=False,
                         help="启用终端颜色输出（默认禁用）")
-    parser.add_argument("--encoding", default=None,
-                        help="终端编码（如 utf-8、gbk），本次调用记忆")
     parser.add_argument("--no-debug", action="store_true", default=False,
                         help="禁用响应中的 debug 输出（进程树/GUI 窗口/事件）")
 
@@ -223,7 +219,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _handle_config_ops(args) -> Optional[dict]:
-    """处理配置管理操作（--default / --show-config / --encoding）
+    """处理配置管理操作（--default / --show-config）
 
     这些操作在子命令之前或独立执行。
 
@@ -448,7 +444,6 @@ def main():
                 newline=args.newline,
                 fresh=True,
                 timeout=args.timeout,
-                encoding=args.encoding,
                 full=args.full,
                 keep_ansi=args.keep_ansi,
                 idle_timeout=args.idle_timeout,
@@ -466,7 +461,6 @@ def main():
                 newline=args.newline,
                 fresh=True,
                 timeout=args.timeout,
-                encoding=args.encoding,
                 full=args.full,
                 keep_ansi=args.keep_ansi,
                 idle_timeout=args.idle_timeout,
@@ -479,7 +473,6 @@ def main():
                 lines=args.lines,
                 grep=args.grep,
                 offset=args.offset,
-                encoding=args.encoding,
                 full=args.full,
                 keep_ansi=args.keep_ansi,
             )

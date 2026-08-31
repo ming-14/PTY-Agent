@@ -5,7 +5,6 @@
 - TriggerMatcher      触发条件匹配与空闲超时检测
 - ProcessMonitor      进程树 diff、IOCP 排空、崩溃检测
 - EventHistoryManager 事件队列与历史记录管理
-- EncodingDetector    编码探测与解码状态管理
 - GuiDetector         GUI 窗口轮询检测
 - SessionThreads      后台读者线程与监控线程管理
 
@@ -35,7 +34,7 @@ from .output import (
     TriggerMatcher,
     EventHistoryManager,
 )
-from .encoding import EncodingDetector
+from .encoding import decode_utf8
 from .session_threads import SessionThreads, SessionComponents, _capture_exit_code_retry
 
 _logger = logging.getLogger("pty-session")
@@ -53,7 +52,6 @@ class Session:
         command:       启动时执行的命令。
         exit_code:     子进程退出码（None 表示仍在运行）。
         error_message: 子进程退出时的错误描述（None 表示无错误）。
-        encoding:      当前自动探测到的编码。
     """
 
     def __init__(
@@ -62,7 +60,6 @@ class Session:
         command,
         cols: int = 80,
         rows: int = 24,
-        encoding: Optional[str] = None,
         shell: Optional[str] = None,
         cwd: Optional[str] = None,
     ):
@@ -75,12 +72,9 @@ class Session:
         self.exit_code = None
         self.error_message = None
 
-        # ── 编码探测 ──
-        self._enc = EncodingDetector(encoding)
-
         # ── 子组件（使用不冲突的内部名，避免 __getattr__ 名称干扰）──
         self._out_buf = OutputBuffer(max_size=MAX_OUTPUT_BUFFER)
-        self._trig_mat = TriggerMatcher(decode_func=self._decode_only)
+        self._trig_mat = TriggerMatcher(decode_func=decode_utf8)
         self._evt_hist = EventHistoryManager()
         self._proc_mon = ProcessMonitor(
             pty_provider=lambda: self._pty,
@@ -176,7 +170,7 @@ class Session:
     def write_input(self, data):
         """写入输入到 PTY
 
-        当 data 为 str 且会话已锁定编码时，用该编码编码后写入。
+        统一使用 UTF-8 编码输入的字符串。
 
         Args:
             data: 要写入的数据（str 或 bytes）。
@@ -191,12 +185,8 @@ class Session:
             raise TypeError(
                 f"输入数据必须是 str 或 bytes, 收到 {type(data).__name__}",
             )
-        if isinstance(data, str) and self._encoding_locked and self.encoding:
-            enc_norm = self.encoding.lower().replace("-", "").replace("_", "")
-            if enc_norm not in ("utf8", "utf"):
-                _logger.debug("write_input: encoding=%s → encode input to %s",
-                              self.encoding, self.encoding)
-                data = data.encode(self.encoding, errors="replace")
+        if isinstance(data, str):
+            data = data.encode("utf-8")
         try:
             self._pty.write(data)
         except Exception as e:
@@ -206,20 +196,18 @@ class Session:
     def get_output(
         self,
         from_offset: Optional[int] = None,
-        encoding: Optional[str] = None,
     ) -> str:
         """获取会话输出
 
         Args:
             from_offset: 从指定字节偏移开始读取。None 表示从头读取。
-            encoding:    指定解码编码。None 表示使用已探测编码或自动探测。
 
         Returns:
-            解码后的输出文本字符串。
+            解码后的输出文本字符串（UTF-8）。
         """
         data = self._out_buf.get_slice(
             start=from_offset if from_offset is not None else 0)
-        return self._enc.detect_decode(data, encoding)
+        return decode_utf8(data)
 
     @property
     def output_offset(self) -> int:
@@ -352,12 +340,6 @@ class Session:
         self._trig_mat.clear()
         self._proc_mon.clear_crash()
 
-    # ── 编码委托 ─────────────────────────────────────────────
-
-    def _decode_only(self, data: bytes) -> str:
-        """无副作用解码（供 TriggerMatcher 回调使用）"""
-        return self._enc.decode_only(data)
-
     # ── 读者退出回调 ─────────────────────────────────────────
 
     def _on_reader_exit(self, exit_code, error_message):
@@ -438,23 +420,6 @@ class Session:
     # ════════════════════════════════════════════════════════════
     # 状态代理（保持外部接口不变）
     # ════════════════════════════════════════════════════════════
-
-    @property
-    def encoding(self) -> Optional[str]:
-        """当前自动探测到的编码"""
-        return self._enc.encoding
-
-    @encoding.setter
-    def encoding(self, value: Optional[str]):
-        self._enc.encoding = value
-
-    @property
-    def _encoding_locked(self) -> bool:
-        return self._enc._encoding_locked
-
-    @_encoding_locked.setter
-    def _encoding_locked(self, value: bool):
-        self._enc._encoding_locked = value
 
     @property
     def gui_windows(self) -> List[dict]:

@@ -21,7 +21,6 @@ class TestConfigManager:
         """测试默认配置值"""
         assert cfg.get("timeout") == 120.0
         assert cfg.get("newline") is False
-        assert cfg.get("encoding") is None
         assert cfg.get("keep_ansi") is False
         assert cfg.get("debug") is True
 
@@ -30,8 +29,8 @@ class TestConfigManager:
         cfg.set("timeout", 30)
         assert cfg.get("timeout") == 30.0
 
-        cfg.set("encoding", "gbk")
-        assert cfg.get("encoding") == "gbk"
+        cfg.set("keep_ansi", True)
+        assert cfg.get("keep_ansi") is True
 
     def test_off_value(self, cfg):
         """测试 'off' 字符串转为 False"""
@@ -43,7 +42,6 @@ class TestConfigManager:
         all_cfg = cfg.get_all()
         assert isinstance(all_cfg, dict)
         assert "timeout" in all_cfg
-        assert "encoding" in all_cfg
 
     def test_show_single(self, cfg):
         """测试 show 展示单个配置项"""
@@ -56,7 +54,6 @@ class TestConfigManager:
         text = cfg.show()
         assert "当前调用配置" in text
         assert "timeout" in text
-        assert "encoding" in text
 
     def test_show_unknown_key(self, cfg):
         """测试展示未知配置项"""
@@ -317,7 +314,7 @@ class TestUnescapeJsonString:
         """测试 Windows 路径中的 \\r 不被当作回车转义"""
         from src.client.input import unescape_json_string
 
-        assert unescape_json_string("C:\\Users\\rikka\\Desktop") == "C:\\Users\\rikka\\Desktop"
+        assert unescape_json_string("C:\\Users\\username\\Desktop") == "C:\\Users\\username\\Desktop"
 
     def test_unescape_path_backslash_t_preserved(self):
         """测试 Windows 路径中的 \\t 不被当作制表符转义"""

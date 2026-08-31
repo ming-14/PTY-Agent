@@ -1,10 +1,3 @@
-"""编码子包 — 编解码函数与编码探测状态管理"""
+"""编码子包 — UTF-8 统一解码"""
 
-from .codec import (
-    detect_decode,
-    decode_strip_tail,
-    detect_decode_ext,
-    auto_detect,
-    check_encoding_ok,
-)
-from .detector import EncodingDetector
+from .codec import decode_utf8

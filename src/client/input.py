@@ -35,7 +35,7 @@ def process_input(text: str, json_escaping: bool = False) -> str:
     """处理输入文本：可选 JSON 转义解码 + 自动追加换行
 
     默认 raw 模式（json_escaping=False）：原样发送，不做任何转义处理。
-    Windows 路径中的反斜杠（如 C:\\Users\\rikka\\new_folder）不会被误转换。
+    Windows 路径中的反斜杠（如 C:\\Users\\username\\new_folder）不会被误转换。
 
     启用 json_escaping 时：使用完整 JSON 反转移处理所有标准转义序列
    （\\n、\\t、\\r、\\uXXXX、\\"、\\\\ 等），适用于需要发送多行代码等场景。
@@ -57,11 +57,10 @@ def process_input(text: str, json_escaping: bool = False) -> str:
 
 
 def safe_print(text: str, **kwargs):
-    """安全打印，自动适配控制台编码
+    """安全打印，统一 UTF-8 输出
 
-    优先使用原生 print，遇到编码错误时回退到 XML 字符引用或系统编码。
-    当 stdout 被重定向且编码不是 UTF-8 时，强制使用 UTF-8 编码字节流写入，
-    避免 GBK 终端与实际 UTF-8 管道不匹配。
+    优先将文本以 UTF-8 字节直接写入输出流，避免控制台/管道编码不匹配
+    导致的乱码；无 buffer 或写入失败时回退到原生 print。
 
     Args:
         text:   要打印的文本。
@@ -69,18 +68,16 @@ def safe_print(text: str, **kwargs):
     """
     target = kwargs.get("file", sys.stdout)
     is_tty = hasattr(target, "isatty") and target.isatty()
+    buf = getattr(target, "buffer", None)
 
-    # 非 TTY 且编码为 GBK 时，强制 UTF-8 输出
-    if not is_tty and hasattr(target, "encoding"):
-        enc = getattr(target, "encoding", None)
-        if enc and enc.lower() in ("gbk", "cp936", "gb2312"):
-            try:
-                raw = text.encode("utf-8")
-                kwargs.get("file", sys.stdout).buffer.write(raw + b"\n")
-                kwargs.get("file", sys.stdout).buffer.flush()
-                return
-            except Exception:
-                pass
+    # 非 TTY 且可访问 buffer 时，直接以 UTF-8 字节写入
+    if buf is not None and not is_tty:
+        try:
+            buf.write(text.encode("utf-8") + b"\n")
+            buf.flush()
+            return
+        except Exception:
+            pass
 
     try:
         print(text, **kwargs)

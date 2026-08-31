@@ -106,7 +106,7 @@ class UnixPseudoTerminal(PseudoTerminal):
 
     def write(self, data):
         if isinstance(data, str):
-            data = data.encode()
+            data = data.encode("utf-8")
         _logger.debug("write: %d bytes", len(data))
         os.write(self._master, data)
 

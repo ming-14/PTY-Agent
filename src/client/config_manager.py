@@ -16,7 +16,6 @@ _logger = logging.getLogger("pty-client")
 _DEFAULTS: dict = {
     "timeout": 120.0,
     "newline": False,
-    "encoding": None,
     "keep_ansi": False,
     "debug": True,
 }

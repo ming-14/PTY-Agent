@@ -104,8 +104,6 @@ class RequestHandler:
             parts.append(f"cmd={cmd[:60]!r}")
         if msg.get("trigger"):
             parts.append(f"trigger={msg['trigger']!r}")
-        if msg.get("encoding"):
-            parts.append(f"enc={msg['encoding']!r}")
         if msg.get("offset"):
             parts.append(f"offset={msg['offset']}")
         return ", ".join(parts) if parts else ""
@@ -266,7 +264,7 @@ class RequestHandler:
                             idle_timeout=idle_timeout,
                             idle_after_first_output=idle_after_first)
         matched, reason = session.wait_for_trigger(timeout, gui_short_circuit=False)
-        output = session.get_output(from_offset=trigger_offset, encoding=msg.get("encoding"))
+        output = session.get_output(from_offset=trigger_offset)
         output = self._strip_if_needed(output, msg)
         result = self._build_result(
             session.id, output, matched, reason,
@@ -299,7 +297,7 @@ class RequestHandler:
         else:
             matched, reason = False, "ok"
 
-        output = session.get_output(encoding=msg.get("encoding"))
+        output = session.get_output()
         output = self._strip_if_needed(output, msg)
         return self._build_result(
             session.id, output, matched, reason,
@@ -361,7 +359,7 @@ class RequestHandler:
         else:
             try:
                 session = self.manager.create_session(
-                    session_id, command, encoding=msg.get("encoding"),
+                    session_id, command,
                     shell=msg.get("shell"), cwd=msg.get("cwd"),
                 )
                 log_cmd = (
@@ -414,7 +412,7 @@ class RequestHandler:
             }
 
         if not session.running:
-            output = session.get_output(encoding=msg.get("encoding"))
+            output = session.get_output()
             output = self._strip_if_needed(output, msg)
             return self._build_result(
                 session_id, output, False, "ended",
@@ -454,7 +452,6 @@ class RequestHandler:
         lines_param = msg.get("lines")
         grep = msg.get("grep")
         offset = msg.get("offset")
-        encoding = msg.get("encoding")
 
         err = self._validate_request(msg, [
             ("id", MAX_SESSION_ID_LEN),
@@ -476,7 +473,7 @@ class RequestHandler:
         if msg.get("full"):
             read_offset = 0
 
-        output = session.get_output(from_offset=read_offset, encoding=encoding)
+        output = session.get_output(from_offset=read_offset)
         output = self._strip_if_needed(output, msg)
 
         if read_offset is not None and not lines_param and not grep:

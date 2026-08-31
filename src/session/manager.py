@@ -26,7 +26,6 @@ class SessionManager:
         self,
         session_id: str,
         command,
-        encoding: Optional[str] = None,
         shell: Optional[str] = None,
         cwd: Optional[str] = None,
     ) -> Session:
@@ -35,7 +34,6 @@ class SessionManager:
         Args:
             session_id: 会话唯一标识符。
             command:    要执行的命令。
-            encoding:   终端编码（默认自动探测）。
             shell:      指定解释器（cmd/powershell/pwsh/bash），默认 cmd。
             cwd:        子进程工作目录（默认守护进程当前目录）。
 
@@ -51,7 +49,7 @@ class SessionManager:
         with self._lock:
             if session_id in self._sessions:
                 raise KeyError(f"会话 '{session_id}' 已存在")
-            s = Session(session_id, command, encoding=encoding, shell=shell, cwd=cwd)
+            s = Session(session_id, command, shell=shell, cwd=cwd)
             self._sessions[session_id] = s
         s.start()
         return s

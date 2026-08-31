@@ -156,7 +156,7 @@ class WindowsPseudoTerminal(PseudoTerminal):
 
     def write(self, data):
         if isinstance(data, str):
-            data = data.encode()
+            data = data.encode("utf-8")
         _logger.debug("write: %d bytes", len(data))
         wr = W.DWORD(0)
         _WriteFile(self._inW, data, len(data), ctypes.byref(wr), None)

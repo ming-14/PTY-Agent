@@ -100,10 +100,9 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
 
 - `--keep-ansi` 保留控制码
 - `--color` - 启用终端颜色输出
-- `--encoding <encoding>` 终端编码，乱码时设置`utf-8/gbk/gb2312/gb18030/big5`
 - `--no-debug` 禁用响应中的 debug 输出（进程树/GUI 窗口/事件）
 - `--show-config [KEY]` 查看当前调用配置
-- `--default <KEY> <VALUE>` 临时覆盖默认配置（可用键：`timeout`/`newline`/`keep-ansi`/`encoding`/`debug`，`<VALUE>`是配置值或者`on`/`off`）
+- `--default <KEY> <VALUE>` 临时覆盖默认配置（可用键：`timeout`/`newline`/`keep-ansi`/`debug`，`<VALUE>`是配置值或者`on`/`off`）
 
 ## 输出格式
 

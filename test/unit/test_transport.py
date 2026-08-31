@@ -54,27 +54,25 @@ class TestClientApplyConfigDefaults:
     def test_defaults(self):
         """未传参数时使用配置默认值"""
         client = Client()
-        timeout, keep_ansi, encoding, newline = client._apply_config_defaults()
+        timeout, keep_ansi, newline = client._apply_config_defaults()
         assert timeout == 120.0
         assert keep_ansi is False
-        assert encoding is None
         assert newline is False
 
     def test_explicit_values(self):
         """显式传参覆盖默认值"""
         client = Client()
-        timeout, keep_ansi, encoding, newline = client._apply_config_defaults(
-            timeout=30, keep_ansi=True, encoding="gbk", newline=True,
+        timeout, keep_ansi, newline = client._apply_config_defaults(
+            timeout=30, keep_ansi=True, newline=True,
         )
         assert timeout == 30
         assert keep_ansi is True
-        assert encoding == "gbk"
         assert newline is True
 
     def test_partial_override(self):
         """部分参数覆盖"""
         client = Client()
-        timeout, _, _, _ = client._apply_config_defaults(timeout=60)
+        timeout, _, _ = client._apply_config_defaults(timeout=60)
         assert timeout == 60
 
 

@@ -45,7 +45,7 @@ cd pty-agent
 - **静默超时**：`--idle-timeout` 在程序持续无输出时触发返回
 - **进程崩溃检测**：实时感知崩溃事件（Windows Job Object IOCP）
 - **GUI 窗口检测**：自动检测子进程弹出的 GUI 窗口
-- **编码自动探测**：支持 UTF-8/GBK/GB2312/GB18030/Big5 等编码
+- **统一 UTF-8 编码**：子进程 I/O 统一按 UTF-8 编解码，自动处理管道跨读周期的截断字符
 - **多 shell 支持**：`--shell cmd/powershell/pwsh/bash`
 - **伪终端模式**：`--pty` 启用完整 PTY（适用于需要 TTY 的程序）
 - **配置临时覆盖**：`--default timeout 30` 临时修改默认配置
@@ -102,7 +102,7 @@ pty-agent/
                                                     ├─ 触发匹配
                                                     ├─ 进程监控（IOCP）
                                                     ├─ GUI 窗口检测
-                                                    └─ 编码探测
+                                                    └─ 编码解码（UTF-8）
 ```
 
 通信基于**命名共享内存**（Windows mmap / Unix 文件 mmap），无 socket、无端口、无锁文件。

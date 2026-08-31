@@ -14,7 +14,7 @@
 pty-agent/
 ├── docs/          # 设计文档（架构/规范/命令参考）
 ├── src/          # 主包（模块化架构：protocol/ client/ daemon/ session/ pty/）
-│   └── session/  # 已拆分为 encoding/ output/ process/ 三个子包
+│   └── session/  # 已拆分为 output/ process/ 三个子包 + encoding/ 子包
 ├── test/         # 测试套件
 │   ├── conftest.py                   # pytest 配置
 │   ├── unit/                         # 单元测试（隔离测试单一模块）
@@ -56,7 +56,7 @@ python -m src stop
                                                               ├─ output/trigger      触发匹配
                                                               ├─ output/events       事件管理
                                                               ├─ process/monitor     进程监控
-                                                              ├─ encoding/detector   编码探测
+                                                              ├─ encoding/codec      UTF-8 解码
                                                               ├─ process/gui         GUI 检测
                                                               ├─ session_threads     后台线程
                                                               └─ PTY 后端 (pty/factory: create_pty)

@@ -240,7 +240,7 @@ class SubprocessPseudoTerminal(PseudoTerminal):
 
     def write(self, data):
         if isinstance(data, str):
-            data = data.encode()
+            data = data.encode("utf-8")
         self._proc.stdin.write(data)
         self._proc.stdin.flush()
 
