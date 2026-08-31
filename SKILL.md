@@ -461,6 +461,15 @@ python app.py file download remote_dir/local.txt ./local.txt --force -s sid_cwd
 
 （另注：`config/plugins/` 下还有 `2048`（游戏）、`subagent`（子代理管理，注册 codebuddy/devin/opencode/claude/smartagent 命令等插件）
 
+## 其他
+
+Windows注意事项：
+- 少用cmd
+- 输入带空格的文文件时，建议使用 8.3 短路径
+
+跨机使用注意事项：
+exec时请**显式设定环境变量**，避免不同环境的冲突
+
 ## 示例场景
 
 ### 长时运行**服务器**
