@@ -35,6 +35,7 @@ class _MockSession:
         self.output_offset = 100
         self.gui_windows = []
         self.event_history = _MockEventHistory()
+        self.tracker = _MockTracker()
 
     @property
     def cols(self):
@@ -61,6 +62,13 @@ class _MockPty:
 
     def get_child_pid(self):
         return None
+
+
+class _MockTracker:
+    """web 详情处理器依赖的 tracker 端口（get_gui_windows 全量窗口）"""
+
+    def get_gui_windows(self):
+        return []
 
 
 class _MockBuffer:

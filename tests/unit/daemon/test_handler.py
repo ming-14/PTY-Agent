@@ -66,6 +66,11 @@ class _MockSession:
         self.client_config = {}
         self._trig_lock = threading.RLock()
 
+    def consume_gui_windows(self):
+        windows = list(self.gui_windows)
+        self.gui_windows = []
+        return windows
+
     def get_output(self, **kwargs):
         return "test output"
 
