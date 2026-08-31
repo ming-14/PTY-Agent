@@ -280,12 +280,13 @@ def describe_output_format(msg, is_subprocess: bool = False) -> str:
     """
     if msg.get("snapshot_diff"):
         return "diff"
-    if msg.get("full"):
-        return "full"
     lines = msg.get("lines")
     if lines is not None and lines != "":
         s = str(lines)
         return f"lines:{s}" if ":" in s else f"tail:{s}"
+    # full 放 lines 之后：隐式 full（如 read -l 走 force_full）不应覆盖 tail:N 标签
+    if msg.get("full"):
+        return "full"
     col = msg.get("column")
     if col is not None:
         return f"col:{col}"
