@@ -10,17 +10,15 @@
 
 </div>
 
-<div id="en" style="display:block">
+<div id="en" style="display:block"></div>
 
 <br>
 
 <div align="center">
 
-**Let AI use terminals like a real user**
+<font size="4">**Let AI use <u>terminals</u> like a <u>real user</u>.**</font>
 
 Drive REPLs, debuggers, TUIs, installers, long-running services, and coding agents — getting **what the user actually sees on screen**, not just a raw stdout byte stream.
-
-</div>
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%2B%20%C2%B7%20ConPTY-0078D4?logo=windows&logoColor=white)
@@ -42,6 +40,10 @@ Drive REPLs, debuggers, TUIs, installers, long-running services, and coding agen
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+</div>
+
+click <a href="#v">here</a> to view demo video
+
 ---
 
 ## Features
@@ -55,8 +57,6 @@ Drive REPLs, debuggers, TUIs, installers, long-running services, and coding agen
 - **Sub-agents** — launch OpenCode / Claude Code / ... across harnesses, managed centrally
 - **Workflow orchestration** — multi-session DAG choreography
 - **Remote terminal access** — SSH-like experience
-
----
 
 ## Why PTY-Agent?
 
@@ -135,8 +135,6 @@ Browser ──────▶ 127.0.0.1:18766    (Web UI)
 
 Note: disable `SINGLE_INSTANCE` if running two PTY-Agent instances on one machine.
 
----
-
 ## Docs
 
 | Doc | Description |
@@ -153,9 +151,7 @@ Except for `src\web\static\` and `web_rime\`, everything else is MIT.
 
 `src\web\static\` and `web_rime\` use AGPL-3.0 license.
 
-</div>
-
-<div id="zh">
+<div id="zh"></div>
 
 ---
 
@@ -170,8 +166,6 @@ Except for `src\web\static\` and `web_rime\`, everything else is MIT.
 - **子 Agent：跨 Harness 启动，统一管理** —— OpenCode / Claude Code / ... 支持扩展
 - **workflow 多会话编排**
 - **跨机访问终端** —— 支持 ssh 般的体验
-
----
 
 ## 为什么需要它
 
@@ -252,8 +246,6 @@ CLI ──tls────▶ 0.0.0.0  :18767    (提供跨机访问)
 
 注意：如果一台设备要开启两个 PTY-Agent，请关闭单实例锁`SINGLE_INSTANCE`
 
----
-
 ## 文档
 
 | 文档 | 说明 |
@@ -270,8 +262,8 @@ CLI ──tls────▶ 0.0.0.0  :18767    (提供跨机访问)
 
 `src\web\static\`、`web_rime\`使用 AGPL-3.0 license
 
-</div>
-
 ---
+
+<div id="v"></div>
 
 https://github.com/user-attachments/assets/5d8402e8-5fa6-4c7e-91b0-124a2ea953e4
