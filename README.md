@@ -12,6 +12,8 @@
 
 <div id="en" style="display:block">
 
+<br>
+
 <div align="center">
 
 **Let AI use terminals like a real user**
@@ -149,7 +151,7 @@ Note: disable `SINGLE_INSTANCE` if running two PTY-Agent instances on one machin
 
 </div>
 
-<summary style="cursor:pointer;font-size:1.5em;font-weight:bold">中文</summary>
+<div id="zh">
 
 ---
 
@@ -257,3 +259,6 @@ CLI ──tls────▶ 0.0.0.0  :18767    (提供跨机访问)
 | [WORKFLOW.md](docs/WORKFLOW.md) | Workflow 脚本编排使用文档（YAML 步骤定义、依赖并行、条件、重试） |
 | [PLUGINS_API.md](docs/PLUGINS_API.md) | 插件开发指南（Plugin API） |
 | [CONFIG.md](docs/CONFIG.md) | 配置说明 |
+
+</div>
+
