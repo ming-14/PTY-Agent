@@ -160,7 +160,8 @@ JOBOBJECT_BASIC_PROCESS_ID_LIST = type(
         "_fields_": [
             ("NumberOfAssignedProcesses", W.DWORD),
             ("NumberOfProcessIdsInList", W.DWORD),
-            ("ProcessIdList", W.DWORD * _MAX_JOB_PIDS),
+            # ULONG_PTR = 8 字节（64位），DWORD 会导致 PID 列表错位
+            ("ProcessIdList", ctypes.c_size_t * _MAX_JOB_PIDS),
         ]
     },
 )
@@ -199,6 +200,10 @@ _WAIT_TIMEOUT = 0x00000102
 WNDENUMPROC = ctypes.WINFUNCTYPE(W.BOOL, W.HANDLE, W.LPARAM)
 
 _EnumWindows = _uapi("EnumWindows", W.BOOL, [WNDENUMPROC, W.LPARAM])
+# EnumChildWindows 有父窗口句柄参数（与 EnumWindows 不同）
+_EnumChildWindows = _uapi(
+    "EnumChildWindows", W.BOOL, [W.HANDLE, WNDENUMPROC, W.LPARAM]
+)
 _GetWindowThreadProcessId = _uapi(
     "GetWindowThreadProcessId", W.DWORD, [W.HANDLE, ctypes.POINTER(W.DWORD)]
 )

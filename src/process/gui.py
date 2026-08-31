@@ -67,16 +67,20 @@ class GuiDetector:
                 )
                 ev_now = time.time()
                 for w in new_windows:
+                    text_content = w.get("text_content", "")
                     self._event_sink(
                         PendingEvent(
                             timestamp=ev_now,
                             type="gui_window",
                             pid=w.get("pid", 0),
-                            info=w.get("title", ""),
+                            # info 优先使用窗口完整文本（对话框文字等），
+                            # 供 reason=gui_detected 的返回原因直接呈现
+                            info=text_content or w.get("title", ""),
                             hwnd=w.get("hwnd", 0),
                             detail={
                                 "title": w.get("title", ""),
                                 "className": w.get("class_name", ""),
+                                "textContent": text_content,
                             },
                         )
                     )

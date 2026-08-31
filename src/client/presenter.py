@@ -209,21 +209,25 @@ def _render_session(r: SessionResult, out, err) -> None:
 
     # 有实际内容（输出/GUI窗口）才画上下列分隔框，避免空快照框
     # （命中列表已先行输出，不计入框内容）
-    has_content = bool(r.output or gui_windows)
-    if has_content:
+    has_output = bool(r.output)
+    has_gui = bool(gui_windows)
+    if has_output:
         _write(out, _separator(r.meta.get("format", "")))
-    elif not (is_mouse and (r.matches or mouse_fail)):
+    elif not has_gui and not (is_mouse and (r.matches or mouse_fail)):
         _write(out, fmt_message("No output."))
-    # 内容 → stdout
+    # 终端输出 → stdout（snapshot 框内）
     if r.output:
         _write(out, r.output, end="\n" if r.output.rstrip() else "")
-    for w in gui_windows:
-        _write(out, "  " + _fmt_gui_window(w))
+    if has_output:
+        _write(out, _separator())
+    # GUI 窗口信息 → [gui] 标签块（参考 [debug] 的标签行 + 缩进内容格式）
+    if has_gui:
+        _write(out, "[gui]")
+        for w in gui_windows:
+            _write(out, "  " + _fmt_gui_window(w))
     # 程序 stderr → stderr（不影响 stdout 内容顺序）
     if r.stderr:
         _write(err, r.stderr)
-    if has_content:
-        _write(out, _separator())
     # 状态行 → stdout 底部（与内容同流，顺序确定，不受 stderr 合并干扰）
     _write(out, _status_line(r))
     if r.terminal_state:
@@ -293,7 +297,11 @@ def _session_reason_hint(r: SessionResult) -> str:
 
 
 def _fmt_gui_window(w: dict) -> str:
-    """格式化单个 GUI 窗口：``GUI pid=.. hwnd=0x.. title (class)``"""
+    """格式化单个 GUI 窗口：``GUI pid=.. hwnd=0x.. title (class)``
+
+    含 text_content（对话框文字等）时，换行缩进展示窗口内容，
+    方便 CLI 用户直接看到对话框上的文字。
+    """
     parts = ["GUI"]
     pid = w.get("pid")
     if pid:
@@ -307,7 +315,16 @@ def _fmt_gui_window(w: dict) -> str:
     cls = w.get("class_name")
     if cls:
         parts.append(f"({cls})")
-    return "  ".join(parts)
+    head = "  ".join(parts)
+    text = (w.get("text_content") or "").strip()
+    if text:
+        lines = [ln for ln in text.splitlines() if ln.strip()]
+        # 主窗口标题已展示在头部，跳过重复的首行
+        if lines and lines[0].strip() == (title or "").strip():
+            lines = lines[1:]
+        if lines:
+            return head + "\n" + "\n".join("  " + ln for ln in lines)
+    return head
 
 
 def _status_line(r: SessionResult) -> str:
@@ -350,8 +367,18 @@ def _render_debug(r: SessionResult, out) -> None:
         else:
             lines.append(f"process: {p}")
     for g in di.get("guiWindows") or []:
-        title = g.get("title") if isinstance(g, dict) else g
-        lines.append(f"gui: {title}")
+        if isinstance(g, dict):
+            title = g.get("title") if isinstance(g, dict) else g
+            line = f"gui: {title}" if title else "gui:"
+            lines.append(line)
+            text = (g.get("text_content") or "").strip()
+            if text:
+                for ln in text.splitlines():
+                    ln = ln.strip()
+                    if ln and ln != (title or "").strip():
+                        lines.append(f"  {ln}")
+        else:
+            lines.append(f"gui: {g}")
     if r.output_offset:
         lines.append(f"offset: {r.output_offset}")
 

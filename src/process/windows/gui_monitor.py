@@ -22,6 +22,7 @@ from ..base import ProcessTreeTracker
 from .api import (
     WM_CLOSE,
     WNDENUMPROC,
+    _EnumChildWindows,
     _EnumWindows,
     _GetClassNameW,
     _GetWindowTextW,
@@ -35,6 +36,10 @@ _logger = get_logger("process-gui-monitor")
 
 _WINDOW_TITLE_MAX = 256
 _WINDOW_CLASS_MAX = 256
+# 控件文本提取缓冲（对话框文字可能较长，独立于标题缓冲）
+_WINDOW_TEXT_MAX = 2048
+# 子窗口递归枚举深度上限（防止极端窗口层级导致耗时过长）
+_CHILD_ENUM_MAX_DEPTH = 8
 
 
 @dataclass
@@ -42,25 +47,30 @@ class GuiWindowInfo:
     """GUI 窗口信息
 
     Attributes:
-        hwnd:       窗口句柄（整数值）。
-        pid:        拥有该窗口的进程 PID。
-        title:      窗口标题。
-        class_name: 窗口类名。
+        hwnd:        窗口句柄（整数值）。
+        pid:         拥有该窗口的进程 PID。
+        title:       窗口标题。
+        class_name:  窗口类名。
+        text_content: 窗口及子控件（对话框按钮/静态文本等）的完整文本内容。
     """
 
     hwnd: int
     pid: int
     title: str
     class_name: str
+    text_content: str = ""
 
     def to_dict(self) -> Dict:
         """转换为字典（用于 JSON 序列化）"""
-        return {
+        d = {
             "hwnd": self.hwnd,
             "pid": self.pid,
             "title": self.title,
             "class_name": self.class_name,
         }
+        if self.text_content:
+            d["text_content"] = self.text_content
+        return d
 
 
 class GuiWindowMonitor:
@@ -97,14 +107,14 @@ class GuiWindowMonitor:
         """轮询检测新增 GUI 窗口
 
         枚举当前所有可见顶层窗口，将 PID 属于进程树且
-        尚未上报的窗口返回。
+        尚未上报的窗口返回，并提取窗口及子控件的文本内容。
 
         Args:
             pids: 调用方已获取的进程树 PID 列表（同一 tick 复用，
                   避免重复查询）；None 时自行获取。
 
         Returns:
-            新检测到的窗口列表（仅包含本轮新增的）。
+            新检测到的窗口列表（仅包含本轮新增的，text_content 已填充）。
         """
         if not self._tracker:
             return []
@@ -128,7 +138,18 @@ class GuiWindowMonitor:
 
             new_windows = list(self._temp_new_windows)
             self._windows.extend(new_windows)
-            return new_windows
+
+        # 锁外提取窗口文本（EnumChildWindows 递归枚举可能较慢，避免长时间持锁）
+        for w in new_windows:
+            w.text_content = self._extract_window_text(w.hwnd)
+            if w.text_content:
+                _logger.info(
+                    "GUI 窗口文本: hwnd=0x%X text=%s",
+                    w.hwnd,
+                    w.text_content[:200].replace("\n", "\\n"),
+                )
+
+        return new_windows
 
     def _enum_proc(self, hwnd: int, lparam: int) -> bool:
         """EnumWindows 回调 — 检查窗口是否属于进程树
@@ -223,6 +244,48 @@ class GuiWindowMonitor:
                     if self.close_window(w.hwnd):
                         count += 1
         return count
+
+    # ── 窗口文本提取 ──
+
+    def _extract_window_text(self, hwnd: int) -> str:
+        """提取窗口及其全部子控件的文本内容
+
+        递归枚举可见子窗口（对话框上的静态文本/按钮/编辑框等控件），
+        收集控件文本（GetWindowText 对标准控件返回控件文字）。
+
+        Args:
+            hwnd: 目标窗口句柄。
+
+        Returns:
+            合并后的文本（换行分隔）；无文本返回空字符串。
+        """
+        texts: List[str] = []
+        title_buf = ctypes.create_unicode_buffer(_WINDOW_TITLE_MAX)
+        _GetWindowTextW(hwnd, title_buf, _WINDOW_TITLE_MAX)
+        if title_buf.value and title_buf.value.strip():
+            texts.append(title_buf.value)
+
+        self._collect_child_text(hwnd, texts, 0)
+        return "\n".join(texts)
+
+    def _collect_child_text(self, hwnd: int, texts: List[str], depth: int):
+        """递归收集子窗口文本（深度限制防止极端窗口层级导致耗时过长）"""
+        if depth >= _CHILD_ENUM_MAX_DEPTH:
+            return
+
+        def _child_enum_proc(child_hwnd: int, lparam: int) -> bool:
+            if not _IsWindowVisible(child_hwnd):
+                return True
+            buf = ctypes.create_unicode_buffer(_WINDOW_TEXT_MAX)
+            _GetWindowTextW(child_hwnd, buf, _WINDOW_TEXT_MAX)
+            text = buf.value or ""
+            if text.strip():
+                texts.append(text)
+            self._collect_child_text(child_hwnd, texts, depth + 1)
+            return True
+
+        cb = WNDENUMPROC(_child_enum_proc)
+        _EnumChildWindows(hwnd, cb, 0)
 
     def clear(self):
         """清空去重状态和窗口记录

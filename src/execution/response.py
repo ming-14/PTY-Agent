@@ -239,7 +239,9 @@ def build_result(
 
         if process_tree:
             debug_info["processes"] = process_tree
-        gui_windows = session.gui_windows if session else None
+        # GUI 窗口信息按次消费：同一窗口只在首次返回的响应中上报，
+        # 后续 read/send 不再重复返回（与事件消费语义一致）
+        gui_windows = session.consume_gui_windows() if session else None
         if gui_windows:
             debug_info["guiWindows"] = gui_windows
         if events:

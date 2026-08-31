@@ -78,7 +78,8 @@ class SessionDetailHandler(MessageHandler):
         )
         process_details = {str(pid): d for pid, d in process_details_raw.items()}
         events = await ctx.executor.run(session.get_all_events)
-        gui_windows = session.gui_windows
+        # web 详情展示全部已检测窗口（gui_windows 按 CLI 响应消费，这里取 tracker 全量）
+        gui_windows = session.tracker.get_gui_windows()
 
         return SessionDetail(
             id=session.id,

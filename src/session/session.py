@@ -545,6 +545,13 @@ class Session(
         with self._gui._lock:
             self._gui.gui_windows = value
 
+    def consume_gui_windows(self) -> List[dict]:
+        """返回并清空待上报的 GUI 窗口列表（供响应构建使用，避免重复上报）"""
+        with self._gui._lock:
+            windows = list(self._gui.gui_windows)
+            self._gui.gui_windows = []
+        return windows
+
     @property
     def processes(self) -> List[int]:
         return list(self._gui.processes)

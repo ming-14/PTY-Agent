@@ -25,7 +25,8 @@ class CloseWinHandler(DaemonHandler):
             Message.send(conn, Response.error(f"Session '{session_id}' not found"))
             return
 
-        tracked_hwnds = {w["hwnd"] for w in session.gui_windows}
+        # 用 tracker 全量窗口列表校验（gui_windows 按响应消费，可能已被清空）
+        tracked_hwnds = {w["hwnd"] for w in session.tracker.get_gui_windows()}
         if hwnd not in tracked_hwnds:
             _logger.warning(
                 "closewin: hwnd=0x%X 不属于会话 '%s' 的已跟踪 GUI 窗口",
