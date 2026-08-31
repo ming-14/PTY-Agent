@@ -119,7 +119,7 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
 
 1. JSON 模式（默认）— stdout 仅输出 JSON，每行一个 JSON 对象，。所有非命令响应（守护进程启停信息、配置查询、帮助文本、警告等）也以 JSON 格式输出：
    - 命令响应：`{"type": "result", ...}` / `{"type": "ok", ...}` / `{"type": "error", ...}`
-   - 守护进程信息：`{"type": "info", "message": "[pty-agent] 守护进程已启动 (端口 12345)"}`
+   - 守护进程信息：`{"type": "info", "message": "[pty-agent] 守护进程已启动"}`
    - 配置查询：`{"type": "config", "content": "当前调用配置:\n  ..."}`
    - 帮助文本：`{"type": "help", "content": "usage: pty-agent ..."}`
    - 警告信息：`{"type": "warning", "message": "..."}`

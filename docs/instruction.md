@@ -50,17 +50,21 @@ python -m src stop
 
 ```
 用户 → CLI (src/__main__.py)
-         → Client (client/transport) — TCP 请求 → 守护进程 (daemon/server + handler)
-                                                        → Session 协调器 (session/session)
-                                                            ├─ output/buffer       输出缓冲
-                                                            ├─ output/trigger      触发匹配
-                                                            ├─ output/events       事件管理
-                                                            ├─ process/monitor     进程监控
-                                                            ├─ encoding/detector   编码探测
-                                                            ├─ process/gui         GUI 检测
-                                                            ├─ session_threads     后台线程
-                                                            └─ PTY 后端 (pty/factory: create_pty)
+         → Client (client/transport) — 共享内存请求 → 守护进程 (daemon/server + handler)
+                                                          → Session 协调器 (session/session)
+                                                              ├─ output/buffer       输出缓冲
+                                                              ├─ output/trigger      触发匹配
+                                                              ├─ output/events       事件管理
+                                                              ├─ process/monitor     进程监控
+                                                              ├─ encoding/detector   编码探测
+                                                              ├─ process/gui         GUI 检测
+                                                              ├─ session_threads     后台线程
+                                                              └─ PTY 后端 (pty/factory: create_pty)
 ```
+
+通信方式：**纯共享内存**（Windows 命名 mmap / Unix 文件 mmap），无 socket、无端口、无锁文件。
+客户端通过请求信箱注册请求，守护进程轮询处理，响应通过独立共享内存通道返回。
+单实例检测基于共享内存中的 PID + 心跳时间戳。
 
 详细的分层图、模块职责表、数据流、线程模型、通信协议等全部见 [`设计架构.md`](设计架构.md)。
 

@@ -96,20 +96,20 @@ pty-agent/
 ├── src/
 │   ├── __main__.py        # CLI 入口（参数解析 + 命令派发）
 │   ├── config.py          # 配置常量
-│   ├── protocol/          # 通信协议（JSON 行编解码 + ANSI 过滤）
-│   ├── client/            # 前端客户端（TCP 连接 + 格式化输出）
-│   ├── daemon/            # 守护进程（TCP 服务器 + 请求处理）
+│   ├── protocol/          # 通信协议（共享内存 + JSON 编解码 + ANSI 过滤）
+│   ├── client/            # 前端客户端（共享内存请求 + 格式化输出）
+│   ├── daemon/            # 守护进程（共享内存信箱轮询 + 请求处理）
 │   ├── pty/               # 伪终端后端（Unix/Windows ConPTY/Subprocess）
 │   └── session/           # 会话管理（缓冲区 + 触发 + 事件 + 进程监控）
 ├── test/                  # 单元测试 + 集成测试
-├── doc/                   # 设计文档
+├── docs/                  # 设计文档
 └── SKILL.md               # AI 技能描述
 ```
 
 ## 架构
 
 ```
-用户 → CLI → Client (TCP) → 守护进程 → Session → PTY 后端
+用户 → CLI → Client (共享内存) → 守护进程 → Session → PTY 后端
                                                     ├─ 输出缓冲区
                                                     ├─ 触发匹配
                                                     ├─ 进程监控（IOCP）
@@ -117,7 +117,11 @@ pty-agent/
                                                     └─ 编码探测
 ```
 
-详细架构设计见 [`doc/设计架构.md`](doc/设计架构.md)。
+通信基于**命名共享内存**（Windows mmap / Unix 文件 mmap），无 socket、无端口、无锁文件。
+客户端通过请求信箱发送请求，守护进程轮询处理并通过独立共享内存通道返回响应。
+单实例检测基于共享内存中的 PID + 心跳时间戳。
+
+详细架构设计见 [`docs/设计架构.md`](docs/设计架构.md)。
 
 ## 测试
 

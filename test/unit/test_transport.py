@@ -1,7 +1,7 @@
 """Client 传输层单元测试
 
 测试 Client 类的配置应用、shell 操作符检测、命令构建等。
-使用 mock 替代 TCP 连接。
+使用 mock 替代共享内存通信。
 """
 
 import pytest
@@ -96,30 +96,6 @@ class TestClientApplyConfigDefaults:
         client = Client()
         timeout, _, _, _ = client._apply_config_defaults(timeout=60)
         assert timeout == 60
-
-
-class TestClientMaybeSaveEncoding:
-    """Client._maybe_save_encoding 测试"""
-
-    def test_save_when_different(self):
-        """编码不同时自动保存"""
-        client = Client()
-        client._maybe_save_encoding("gbk", False)
-        assert client._config.get("encoding") == "gbk"
-
-    def test_no_save_when_same(self):
-        """编码相同时不重复保存"""
-        client = Client()
-        client._config.set("encoding", "utf-8")
-        client._maybe_save_encoding("utf-8", False)
-        assert client._config.get("encoding") == "utf-8"
-
-    def test_force_save(self):
-        """save_encoding=True 强制保存"""
-        client = Client()
-        client._config.set("encoding", "utf-8")
-        client._maybe_save_encoding("utf-8", True)
-        assert client._config.get("encoding") == "utf-8"
 
 
 class TestClientPtyConflict:

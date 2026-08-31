@@ -1,121 +1,105 @@
 """单实例检查集成测试
 
 验证共享内存单实例检查在真实场景下的行为：
-- 守护进程启动后共享内存包含 PID+端口
-- 守护进程停止后共享内存被清理
-- 僵死守护进程被正确检测和清理
-- 不写磁盘文件
+- 守护进程信息区写入后能读取（PID+状态+心跳）
+- 心跳过期检测
+- 不写磁盘 PID/端口文件
 """
 
 import os
-import sys
 import time
-import socket
-import threading
 import pytest
 
-from src.session.shm_utils import (
-    read_daemon_info_from_shm,
-    read_port_from_shm,
-    write_daemon_info_to_shm,
+from src.protocol.shm import (
+    write_daemon_info_handle,
+    read_daemon_info,
+    cleanup_daemon_info,
 )
+from src.protocol.shm_utils import open_shm, close_shm
 from src.daemon.lifecycle import (
-    _pid_exists,
-    _ping_daemon,
-    _find_daemon_port,
+    _heartbeat_fresh,
     is_running,
 )
-from src.config import DATA_DIR, IS_WINDOWS
+from src.config import (
+    DATA_DIR, IS_WINDOWS,
+    MMAP_DAEMON_INFO_NAME, MMAP_DAEMON_INFO_SIZE,
+)
+
+
+@pytest.fixture(autouse=True)
+def _cleanup():
+    cleanup_daemon_info()
+    yield
+    cleanup_daemon_info()
+
+
+@pytest.fixture()
+def _held_handle():
+    """持有信息区句柄（与真实守护进程行为一致）"""
+    shm = open_shm(MMAP_DAEMON_INFO_NAME, MMAP_DAEMON_INFO_SIZE)
+    assert shm is not None
+    yield shm
+    close_shm(shm)
 
 
 @pytest.mark.skipif(not IS_WINDOWS, reason="Windows 共享内存集成测试")
 class TestSingleInstanceIntegration:
     """单实例检查集成测试（Windows）"""
 
-    def test_shm_contains_pid_and_port_after_write(self):
-        shm = write_daemon_info_to_shm(os.getpid(), 54321)
-        try:
-            info = read_daemon_info_from_shm()
-            assert info is not None
-            pid, port = info
-            assert pid == os.getpid()
-            assert port == 54321
-        finally:
-            if shm:
-                shm.close()
+    def test_write_and_read_info(self, _held_handle):
+        write_daemon_info_handle(_held_handle, os.getpid(), True, time.time())
+        info = read_daemon_info()
+        assert info is not None
+        pid, running, heartbeat = info
+        assert pid == os.getpid()
+        assert running is True
+        assert abs(time.time() - heartbeat) < 2
 
-    def test_find_daemon_port_detects_zombie(self):
-        shm = write_daemon_info_to_shm(99999999, 12345)
-        try:
-            result = _find_daemon_port()
-            assert result is None
-        finally:
-            if shm:
-                shm.close()
+    def test_read_none_after_cleanup(self, _held_handle):
+        write_daemon_info_handle(_held_handle, os.getpid(), True, time.time())
+        cleanup_daemon_info()
+        assert read_daemon_info() is None
 
-    def test_find_daemon_port_detects_alive_but_pingless(self):
-        shm = write_daemon_info_to_shm(os.getpid(), 19999)
-        try:
-            result = _find_daemon_port()
-            assert result is None
-        finally:
-            if shm:
-                shm.close()
+    def test_is_running_true_when_healthy(self, _held_handle):
+        write_daemon_info_handle(_held_handle, os.getpid(), True, time.time())
+        assert is_running() is True
 
-    def test_find_daemon_port_succeeds_with_real_server(self):
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        srv.bind(("127.0.0.1", 0))
-        srv.listen(1)
-        port = srv.getsockname()[1]
+    def test_is_running_false_when_pid_dead(self, _held_handle):
+        write_daemon_info_handle(_held_handle, 99999999, True, time.time())
+        assert is_running() is False
 
-        from src.protocol.message import Message
-
-        def handle():
-            conn, _ = srv.accept()
-            msg = Message.recv(conn)
-            if msg and msg.get("type") == "ping":
-                Message.send(conn, {"type": "pong"})
-            conn.close()
-
-        t = threading.Thread(target=handle, daemon=True)
-        t.start()
-
-        shm = write_daemon_info_to_shm(os.getpid(), port)
-        try:
-            result = _find_daemon_port()
-            assert result == port
-        finally:
-            if shm:
-                shm.close()
-            srv.close()
-            t.join(timeout=3)
+    def test_is_running_false_when_stopped(self, _held_handle):
+        write_daemon_info_handle(_held_handle, os.getpid(), False, time.time())
+        assert is_running() is False
 
     def test_no_pid_file_created(self):
         pid_file = os.path.join(DATA_DIR, "daemon.pid")
         assert not os.path.exists(pid_file)
 
-    def test_no_data_dir_created(self):
-        if IS_WINDOWS:
-            assert not os.path.exists(DATA_DIR)
+    def test_no_port_file_created(self):
+        port_file = os.path.join(DATA_DIR, "daemon.port")
+        assert not os.path.exists(port_file)
 
-    def test_overwrite_shm_with_new_daemon(self):
-        shm1 = write_daemon_info_to_shm(11111, 22222)
-        shm1.close()
-        shm2 = write_daemon_info_to_shm(33333, 44444)
-        try:
-            info = read_daemon_info_from_shm()
-            assert info is not None
-            pid, port = info
-            assert pid == 33333
-            assert port == 44444
-        finally:
-            if shm2:
-                shm2.close()
+    def test_heartbeat_fresh_check(self):
+        """心跳新鲜检查"""
+        assert _heartbeat_fresh(time.time()) is True
+        assert _heartbeat_fresh(time.time() - 60) is False
 
-    def test_is_running_false_when_no_daemon(self):
-        shm = write_daemon_info_to_shm(99999999, 12345)
-        try:
-            assert is_running() is False
-        finally:
-            if shm:
-                shm.close()
+    def test_info_overwrite_with_new_daemon(self, _held_handle):
+        write_daemon_info_handle(_held_handle, 11111, True, 1000.0)
+        write_daemon_info_handle(_held_handle, 22222, True, 2000.0)
+        info = read_daemon_info()
+        assert info is not None
+        assert info[0] == 22222
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="Unix 文件 mmap 测试")
+class TestSingleInstanceUnix:
+    """单实例检查集成测试（Unix）"""
+
+    def test_info_write_read(self, _held_handle):
+        write_daemon_info_handle(_held_handle, os.getpid(), True, time.time())
+        info = read_daemon_info()
+        assert info is not None
+        assert info[0] == os.getpid()
+        assert info[1] is True

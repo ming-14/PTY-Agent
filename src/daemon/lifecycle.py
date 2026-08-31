@@ -1,38 +1,43 @@
 """守护进程层 — 生命周期管理
 
 提供守护进程的启动/停止/检测函数和入口 main()。
-端口动态分配：每次启动随机选取未被占用的端口，通过共享内存传递到客户端。
-单实例检查：纯共享内存，PID+端口同区存储，ping 验证确保存活。
+单实例检测：纯共享内存（PID + 状态 + 心跳），PID 存在且心跳新鲜即视为存活，
+无 TCP ping、无端口、无锁文件。
 """
 
 import os
 import sys
 import time
-import socket
 import json
 import logging
 import subprocess
 from typing import Optional
 
 from ..config import (
-    DAEMON_HOST,
-    DEFAULT_DAEMON_PORT,
     LOG_DIR,
     DAEMON_LOG_LEVEL,
     CLIENT_LOG_LEVEL,
     DAEMON_START_TIMEOUT,
-    PING_TIMEOUT,
+    DAEMON_HEARTBEAT_FRESH,
     STOP_TIMEOUT,
+    REQ_SHM_SIZE,
+    RESP_SHM_SIZE,
     IS_WINDOWS,
 )
+from ..protocol.shm import (
+    read_daemon_info,
+    cleanup_daemon_info,
+    Mailbox,
+    make_channel_names,
+    read_message,
+    write_message,
+    _DATA_BODY_OFF,
+)
+from ..protocol.shm_utils import open_shm, close_shm
 from ..session.shm_utils import (
-    read_daemon_info_from_shm,
-    read_port_from_shm,
     read_auth_token,
-    cleanup_port_shm,
     cleanup_auth_shm,
 )
-from ..protocol.message import Message
 
 _logger = logging.getLogger("pty-daemon")
 
@@ -66,20 +71,9 @@ def _print_shell_info():
         pass
 
 
-def _find_free_port() -> int:
-    """查找一个随机可用的 TCP 端口
-
-    Returns:
-        操作系统随机分配的可用端口号。
-    """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind((DAEMON_HOST, 0))
-        return s.getsockname()[1]
-
-
-def _cleanup_port():
-    """清理共享内存残留（端口 + 认证令牌）"""
-    cleanup_port_shm()
+def _cleanup_shm_resources():
+    """清理共享内存残留（守护进程信息区 + 认证令牌）"""
+    cleanup_daemon_info()
     cleanup_auth_shm()
 
 
@@ -119,76 +113,47 @@ def _pid_exists(pid: int) -> bool:
             return True
 
 
-def _ping_daemon(port: int) -> bool:
-    """通过 ping-pong 探测指定端口的守护进程
+def _heartbeat_fresh(heartbeat: float) -> bool:
+    """判断心跳时间戳是否新鲜
 
     Args:
-        port: 端口号。
+        heartbeat: 心跳时间戳（time.time()）。
 
     Returns:
-        True 表示守护进程响应了 ping。
+        True 表示心跳新鲜（守护进程存活）。
     """
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(PING_TIMEOUT)
-        sock.connect((DAEMON_HOST, port))
-        Message.send(sock, {"type": "ping"})
-        resp = Message.recv(sock)
-        sock.close()
-        return resp is not None and resp.get("type") == "pong"
-    except (socket.error, ConnectionRefusedError, OSError):
-        return False
-
-
-def _find_daemon_port() -> Optional[int]:
-    """查找正在运行的守护进程端口
-
-    从共享内存读取 PID+端口，验证进程存活且 TCP 可 ping。
-    用于 start_daemon 的单实例检查和 stop_daemon 的孤儿清理。
-
-    Returns:
-        守护进程端口，未找到返回 None。
-    """
-    info = read_daemon_info_from_shm()
-    if info is None:
-        return None
-
-    pid, port = info
-
-    # 进程不存在 → 僵死残留，清理
-    if not _pid_exists(pid):
-        _logger.info("共享内存中的进程 %d 已不存在，清理残留", pid)
-        _cleanup_port()
-        return None
-
-    # 进程存在但 ping 不通 → 僵死守护进程，清理
-    if not _ping_daemon(port):
-        _logger.info("进程 %d 存在但端口 %d 无响应，判定为僵死守护进程", pid, port)
-        _cleanup_port()
-        return None
-
-    return port
+    return (time.time() - heartbeat) <= DAEMON_HEARTBEAT_FRESH
 
 
 def _find_daemon_pid() -> Optional[int]:
-    """查找正在运行的守护进程 PID
+    """查找正在运行的守护进程 PID（纯共享内存）
+
+    从共享内存读取 PID + 心跳，进程存在且心跳新鲜视为存活；
+    否则清理残留返回 None。
 
     Returns:
         守护进程 PID，未找到返回 None。
     """
-    info = read_daemon_info_from_shm()
+    info = read_daemon_info()
     if info is None:
         return None
 
-    pid, port = info
+    pid, running, heartbeat = info
 
-    if not _pid_exists(pid):
-        _cleanup_port()
+    if not running:
+        _logger.info("共享内存中的守护进程已标记停止，清理残留")
+        _cleanup_shm_resources()
         return None
 
-    if not _ping_daemon(port):
-        _logger.info("进程 %d 存在但端口 %d 无响应，判定为僵死守护进程", pid, port)
-        _cleanup_port()
+    if not _pid_exists(pid):
+        _logger.info("共享内存中的进程 %d 已不存在，清理残留", pid)
+        _cleanup_shm_resources()
+        return None
+
+    if not _heartbeat_fresh(heartbeat):
+        _logger.info("进程 %d 心跳过期（%.1fs 前），判定为僵死守护进程",
+                     pid, time.time() - heartbeat)
+        _cleanup_shm_resources()
         return None
 
     return pid
@@ -200,27 +165,19 @@ def is_running() -> bool:
     Returns:
         True 表示守护进程在运行。
     """
-    port = _find_daemon_port()
-    if port is not None:
-        return True
-    _cleanup_port()
-    return False
+    return _find_daemon_pid() is not None
 
 
 def start_daemon():
     """启动守护进程（以子进程方式）
 
-    自动分配一个随机端口，通过共享内存传递到客户端。
     启动前检查共享内存，防止重复启动。
     Windows: DETACHED_PROCESS 创建独立子进程。
     Unix:    双 fork 彻底守护化。
     """
-    port = _find_daemon_port()
-    if port is not None:
-        _safe_print(f"[pty-agent] 守护进程已在运行中 (端口 {port})")
+    if is_running():
+        _safe_print("[pty-agent] 守护进程已在运行中")
         return
-
-    port = _find_free_port()
 
     os.makedirs(LOG_DIR, exist_ok=True)
     log_file = os.path.join(LOG_DIR, "daemon.log")
@@ -236,7 +193,7 @@ def start_daemon():
         startupinfo.wShowWindow = 0
         with open(log_file, "a", encoding="utf-8") as err_log:
             proc = subprocess.Popen(
-                [sys.executable, "-m", "src.daemon", "--port", str(port)],
+                [sys.executable, "-m", "src.daemon"],
                 close_fds=True,
                 creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
                 stdin=subprocess.DEVNULL,
@@ -263,65 +220,86 @@ def start_daemon():
             os.dup2(f.fileno(), 2)
         env = os.environ.copy()
         env["PYTHONPATH"] = src_parent + os.pathsep + env.get("PYTHONPATH", "")
-        sys.argv = ["src.daemon", "--port", str(port)]
+        sys.argv = ["src.daemon"]
 
     for _ in range(int(DAEMON_START_TIMEOUT / 0.3) + 1):
         if is_running():
-            actual_port = read_port_from_shm()
-            _safe_print(f"[pty-agent] 守护进程已启动 (端口 {actual_port})")
+            _safe_print("[pty-agent] 守护进程已启动")
             _print_shell_info()
             return
         time.sleep(0.3)
 
-    _safe_print(
-        f"[pty-agent] 守护进程启动失败（超时），"
-        f"端口 {port} 可能已被占用",
-    )
+    _safe_print("[pty-agent] 守护进程启动失败（超时）")
+
+
+def _stop_via_mailbox() -> bool:
+    """通过共享内存信箱发送 stop 请求（优雅停止）
+
+    Returns:
+        True 表示守护进程已响应停止。
+    """
+    token = read_auth_token() or ""
+    seq = int(time.time() * 1000) % 100000
+    req_name, resp_name = make_channel_names(os.getpid(), seq)
+
+    req_shm = open_shm(req_name, REQ_SHM_SIZE)
+    resp_shm = open_shm(resp_name, RESP_SHM_SIZE)
+    if req_shm is None or resp_shm is None:
+        close_shm(req_shm)
+        close_shm(resp_shm)
+        return False
+
+    mailbox = Mailbox()
+    slot = None
+    try:
+        write_message(req_shm, {"type": "stop"}, REQ_SHM_SIZE - _DATA_BODY_OFF,
+                      truncated_marker=False)
+        slot = mailbox.acquire_slot(os.getpid(), req_name, resp_name, token, seq)
+        if slot is None:
+            _safe_print("[pty-agent] 停止失败: 请求信箱已满")
+            return False
+        if not mailbox.wait_done(slot, STOP_TIMEOUT):
+            _safe_print("[pty-agent] 停止守护进程失败（超时）")
+            return False
+        resp = read_message(resp_shm)
+        return resp is not None and resp.get("type") == "ok"
+    finally:
+        if slot is not None:
+            mailbox.release_slot(slot)
+        close_shm(req_shm)
+        close_shm(resp_shm)
 
 
 def stop_daemon():
     """停止守护进程
 
-    通过共享内存查找守护进程，依次尝试 TCP stop → 强制 kill。
+    依次尝试：共享内存 stop 请求 → 强制 kill PID。
     """
-    port = _find_daemon_port()
-    if port is None:
+    pid = _find_daemon_pid()
+    if pid is None:
         _safe_print("[pty-agent] 守护进程未运行")
-        _cleanup_port()
+        _cleanup_shm_resources()
         return
 
-    pid = _find_daemon_pid()
     stopped = False
-
-    # 1. 尝试通过 TCP 发送 stop 命令
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(STOP_TIMEOUT)
-        sock.connect((DAEMON_HOST, port))
-        Message.send(sock, {"type": "stop", "token": read_auth_token() or ""})
-        resp = Message.recv(sock)
-        sock.close()
-        if resp and resp.get("type") == "ok":
-            stopped = True
-        else:
-            _safe_print(f"[pty-agent] 停止守护进程失败 (响应: {resp})")
+        stopped = _stop_via_mailbox()
     except Exception as e:
-        _safe_print(f"[pty-agent] TCP 停止失败: {e}")
+        _safe_print(f"[pty-agent] 共享内存停止失败: {e}")
 
-    # 2. TCP 停止失败时，尝试通过 PID 强制终止
-    if not stopped and pid is not None:
-        if _pid_exists(pid):
-            try:
-                if IS_WINDOWS:
-                    os.system(f"taskkill /PID {pid} /F >nul 2>&1")
-                else:
-                    os.kill(pid, 9)
-                _safe_print(f"[pty-agent] 已强制终止守护进程 (PID {pid})")
-                stopped = True
-            except Exception as e:
-                _safe_print(f"[pty-agent] 强制终止失败: {e}")
+    # 停止失败时，尝试通过 PID 强制终止
+    if not stopped and _pid_exists(pid):
+        try:
+            if IS_WINDOWS:
+                os.system(f"taskkill /PID {pid} /F >nul 2>&1")
+            else:
+                os.kill(pid, 9)
+            _safe_print(f"[pty-agent] 已强制终止守护进程 (PID {pid})")
+            stopped = True
+        except Exception as e:
+            _safe_print(f"[pty-agent] 强制终止失败: {e}")
 
-    _cleanup_port()
+    _cleanup_shm_resources()
 
     if stopped:
         _safe_print("[pty-agent] 守护进程已停止")
@@ -333,11 +311,7 @@ def stop_daemon():
 
 
 def setup_client_logging():
-    """前台模式日志配置：写入 <程序根>/logs/client.log
-
-    为 pty-client 等前台相关 logger 配置文件输出。
-    CLIENT_LOG_LEVEL 设为 None 则不配置日志。
-    """
+    """前台模式日志配置：写入 <程序根>/logs/client.log"""
     if CLIENT_LOG_LEVEL is None:
         return
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -357,12 +331,7 @@ def setup_client_logging():
 
 
 def _hide_console_window():
-    """隐藏当前进程的控制台窗口（Windows）
-
-    venv python.exe 启动系统 python.exe 时，系统 python 会创建自己的控制台窗口，
-    CREATE_NO_WINDOW 和 STARTUPINFO 对此无效。在守护进程入口主动调用 FreeConsole
-    彻底脱离控制台，使窗口消失。
-    """
+    """隐藏当前进程的控制台窗口（Windows）"""
     if sys.platform != "win32":
         return
     try:
@@ -373,13 +342,7 @@ def _hide_console_window():
 
 
 def _setup_logging():
-    """配置日志：仅文件输出（UTF-8），无控制台输出
-
-    避免 Chinese UTF-8 日志在 GBK 控制台上显示为乱码。
-    守护进程的 stderr 可能继承自父进程，不设 StreamHandler。
-    DAEMON_LOG_LEVEL 设为 None 则不配置日志，但添加 NullHandler
-    阻止 Python lastResort handler 将 WARNING+ 输出到 stderr。
-    """
+    """配置日志：仅文件输出（UTF-8），无控制台输出"""
     level_name = DAEMON_LOG_LEVEL
     if level_name is None:
         for name in ("pty-daemon", "pty-session", "pty-subprocess", "pty-windows-error",
@@ -412,23 +375,14 @@ def _setup_logging():
 def main():
     """守护进程入口
 
-    支持 --port <N> 参数指定监听端口（由 start_daemon 传入）。
-    通过共享内存发布 PID+端口号，启动 TCP 服务器。
+    通过共享内存发布 PID + 状态 + 心跳，启动信箱轮询服务器。
+    无端口参数、无 socket。
     """
     _hide_console_window()
     _setup_logging()
     _logger.info("=== 守护进程启动 ===")
 
-    port = DEFAULT_DAEMON_PORT
-    if "--port" in sys.argv:
-        idx = sys.argv.index("--port")
-        if idx + 1 < len(sys.argv):
-            try:
-                port = int(sys.argv[idx + 1])
-            except ValueError:
-                pass
-
-    _logger.info("PID: %s, port: %s", os.getpid(), port)
+    _logger.info("PID: %s", os.getpid())
 
     try:
         from ..pty.subprocess import format_shell_info
@@ -438,7 +392,7 @@ def main():
 
     from .server import DaemonServer
 
-    server = DaemonServer(port=port)
+    server = DaemonServer()
     try:
         server.run()
     except OSError as e:
@@ -448,5 +402,5 @@ def main():
     except KeyboardInterrupt:
         _logger.info("收到键盘中断，关闭守护进程...")
     finally:
-        _cleanup_port()
+        _cleanup_shm_resources()
         server.stop()

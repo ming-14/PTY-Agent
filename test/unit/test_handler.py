@@ -1,38 +1,19 @@
 """RequestHandler 单元测试
 
 测试请求处理器的认证、验证、消息派发、各 _handle_* 方法。
-使用 mock 替代 TCP 连接和 SessionManager。
+handler.handle(msg) 直接返回 dict，无需 TCP 连接。
 """
 
 import json
 import time
-import socket
-import threading
+import sys
+import os
 import pytest
+from unittest.mock import patch, MagicMock
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from src.daemon.handler import RequestHandler, _validate_field
-from src.protocol.message import Message
-
-
-class _MockConn:
-    """模拟 TCP 连接，记录发送的消息"""
-
-    def __init__(self):
-        self.sent_messages = []
-        self._recv_data = b""
-        self._closed = False
-
-    def sendall(self, data):
-        pass
-
-    def close(self):
-        self._closed = True
-
-    def fileno(self):
-        return -1
-
-    def settimeout(self, t):
-        pass
 
 
 class _MockSession:
@@ -118,35 +99,41 @@ class _MockManager:
         self._sessions.clear()
 
 
-def _setup_handler_and_conn(auth_token="test-token", sessions=None):
-    """创建 handler 和 mock 连接"""
+def _setup_handler(auth_token="test-token", sessions=None, server=None):
+    """创建 handler"""
     mgr = _MockManager(sessions)
-    handler = RequestHandler(mgr, auth_token=auth_token)
+    handler = RequestHandler(mgr, auth_token=auth_token, server=server)
     return handler, mgr
 
 
+def _with_token(msg: dict) -> dict:
+    """注入有效令牌（模拟服务器从信箱槽位注入）"""
+    msg = dict(msg)
+    msg["token"] = "test-token"
+    return msg
+
+
 class TestValidateField:
-    """_validate_field 测试"""
+    """_validate_field 测试（新版本返回 error dict 或 None）"""
 
     def test_valid_field(self):
-        """字段长度未超限返回 True"""
-        conn = _MockConn()
-        assert _validate_field("short", "name", 100, conn) is True
+        """字段长度未超限返回 None"""
+        assert _validate_field("short", "name", 100) is None
 
     def test_overlimit_field(self):
-        """字段长度超限返回 False"""
-        conn = _MockConn()
-        assert _validate_field("x" * 200, "name", 100, conn) is False
+        """字段长度超限返回 error dict"""
+        err = _validate_field("x" * 200, "name", 100)
+        assert err is not None
+        assert err["type"] == "error"
+        assert "过长" in err["error"]
 
     def test_none_field(self):
         """None 字段通过验证"""
-        conn = _MockConn()
-        assert _validate_field(None, "name", 100, conn) is True
+        assert _validate_field(None, "name", 100) is None
 
     def test_non_string_field(self):
         """非字符串字段通过验证"""
-        conn = _MockConn()
-        assert _validate_field(123, "name", 100, conn) is True
+        assert _validate_field(123, "name", 100) is None
 
 
 class TestRequestHandlerAuth:
@@ -154,114 +141,141 @@ class TestRequestHandlerAuth:
 
     def test_valid_token(self):
         """有效令牌通过认证"""
-        handler, _ = _setup_handler_and_conn("my-token")
+        handler, _ = _setup_handler("my-token")
         assert handler._is_token_valid("my-token") is True
 
     def test_invalid_token(self):
         """无效令牌认证失败"""
-        handler, _ = _setup_handler_and_conn("my-token")
+        handler, _ = _setup_handler("my-token")
         assert handler._is_token_valid("wrong-token") is False
 
     def test_empty_token_when_auth_enforced(self):
         """认证启用时空令牌失败"""
-        handler, _ = _setup_handler_and_conn("my-token")
+        handler, _ = _setup_handler("my-token")
         assert handler._is_token_valid("") is False
 
     def test_no_auth_when_not_enforced(self):
         """认证未启用时空令牌通过"""
-        handler, _ = _setup_handler_and_conn("")
+        handler, _ = _setup_handler("")
         assert handler._auth_enforced is False
 
     def test_add_valid_token(self):
         """添加新令牌后旧令牌在宽限期内有效"""
-        handler, _ = _setup_handler_and_conn("old-token")
+        handler, _ = _setup_handler("old-token")
         handler.add_valid_token("new-token", "old-token")
         assert handler._is_token_valid("new-token") is True
         assert handler._is_token_valid("old-token") is True
 
     def test_expired_old_token(self):
         """过期旧令牌认证失败"""
-        handler, _ = _setup_handler_and_conn("old-token")
+        handler, _ = _setup_handler("old-token")
         handler.add_valid_token("new-token", "old-token")
         handler._auth_tokens["old-token"] = time.monotonic() - 1
         assert handler._is_token_valid("old-token") is False
 
 
 class TestRequestHandlerHandle:
-    """RequestHandler.handle 消息派发测试"""
-
-    def _handle_msg(self, handler, msg_dict):
-        """通过真实 TCP 连接测试 handle"""
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        srv.bind(("127.0.0.1", 0))
-        srv.listen(1)
-        port = srv.getsockname()[1]
-
-        result = [None]
-
-        def server():
-            conn, _ = srv.accept()
-            try:
-                handler.handle(conn, ("127.0.0.1", 0))
-            finally:
-                conn.close()
-
-        t = threading.Thread(target=server, daemon=True)
-        t.start()
-
-        cli = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        cli.connect(("127.0.0.1", port))
-        msg_dict["token"] = "test-token"
-        Message.send(cli, msg_dict)
-        resp = Message.recv(cli)
-        cli.close()
-        srv.close()
-        t.join(timeout=5)
-        return resp
+    """RequestHandler.handle 消息派发测试（直接返回 dict，无 TCP）"""
 
     def test_ping(self):
         """ping 返回 pong"""
-        handler, _ = _setup_handler_and_conn()
-        resp = self._handle_msg(handler, {"type": "ping"})
-        assert resp is not None
+        handler, _ = _setup_handler()
+        resp = handler.handle({"type": "ping"})
         assert resp["type"] == "pong"
 
     def test_unknown_command(self):
         """未知指令返回 error"""
-        handler, _ = _setup_handler_and_conn()
-        resp = self._handle_msg(handler, {"type": "unknown_cmd"})
-        assert resp is not None
+        handler, _ = _setup_handler()
+        resp = handler.handle(_with_token({"type": "unknown_cmd"}))
         assert resp["type"] == "error"
         assert "未知指令" in resp["error"]
 
     def test_auth_failure(self):
         """认证失败返回 error"""
-        handler, _ = _setup_handler_and_conn("secret")
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        srv.bind(("127.0.0.1", 0))
-        srv.listen(1)
-        port = srv.getsockname()[1]
-
-        def server():
-            conn, _ = srv.accept()
-            try:
-                handler.handle(conn, ("127.0.0.1", 0))
-            finally:
-                conn.close()
-
-        t = threading.Thread(target=server, daemon=True)
-        t.start()
-
-        cli = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        cli.connect(("127.0.0.1", port))
-        Message.send(cli, {"type": "exec", "id": "x", "token": "wrong"})
-        resp = Message.recv(cli)
-        cli.close()
-        srv.close()
-        t.join(timeout=5)
-        assert resp is not None
+        handler, _ = _setup_handler("secret")
+        resp = handler.handle({"type": "exec", "id": "x", "token": "wrong"})
         assert resp["type"] == "error"
         assert "认证" in resp["error"]
+
+    def test_ping_no_auth_needed(self):
+        """ping 不需要认证"""
+        handler, _ = _setup_handler("secret")
+        resp = handler.handle({"type": "ping"})
+        assert resp["type"] == "pong"
+
+    def test_stop_no_auth_needed(self):
+        """stop 不需要认证"""
+        handler, _ = _setup_handler("secret")
+        resp = handler.handle({"type": "stop"})
+        assert resp["type"] == "ok"
+
+    def test_handle_list(self):
+        """list 返回会话列表"""
+        s = _MockSession("s1")
+        handler, _ = _setup_handler(sessions={"s1": s})
+        resp = handler.handle(_with_token({"type": "list"}))
+        assert resp["type"] == "ok"
+        assert len(resp["sessions"]) == 1
+
+    def test_handle_kill(self):
+        """kill 终止会话"""
+        s = _MockSession("s1")
+        handler, _ = _setup_handler(sessions={"s1": s})
+        resp = handler.handle(_with_token({"type": "kill", "id": "s1"}))
+        assert resp["type"] == "ok"
+        assert "已终止" in resp.get("note", "")
+
+    def test_handle_kill_nonexistent(self):
+        """kill 不存在的会话返回 error"""
+        handler, _ = _setup_handler()
+        resp = handler.handle(_with_token({"type": "kill", "id": "nonexistent"}))
+        assert resp["type"] == "error"
+
+    def test_handle_exec_missing_id(self):
+        """exec 缺少 id 返回 error"""
+        handler, _ = _setup_handler()
+        resp = handler.handle(_with_token({"type": "exec", "command": "echo test"}))
+        assert resp["type"] == "error"
+
+    def test_handle_exec_missing_command(self):
+        """exec 缺少 command 返回 error"""
+        handler, _ = _setup_handler()
+        resp = handler.handle(_with_token({"type": "exec", "id": "test"}))
+        assert resp["type"] == "error"
+
+    def test_handle_exec_creates_session(self):
+        """exec 创建新会话"""
+        handler, _ = _setup_handler()
+        with patch.object(handler, '_run_trigger_flow',
+                          return_value={"type": "exec", "session_id": "new-sess"}):
+            resp = handler.handle(_with_token({
+                "type": "exec", "id": "new-sess", "command": "python",
+                "trigger": ">>>", "timeout": 10,
+            }))
+            assert resp["type"] == "exec"
+
+    def test_handle_read(self):
+        """read 读取输出"""
+        s = _MockSession("s1")
+        handler, _ = _setup_handler(sessions={"s1": s})
+        resp = handler.handle(_with_token({"type": "read", "id": "s1"}))
+        assert resp["type"] == "read" or resp["type"] == "result"
+        assert "output" in resp
+
+    def test_handle_events(self):
+        """events 返回事件"""
+        s = _MockSession("s1")
+        handler, _ = _setup_handler(sessions={"s1": s})
+        resp = handler.handle(_with_token({"type": "events", "id": "s1"}))
+        assert resp["type"] == "ok"
+        assert "pending_events" in resp
+
+    def test_handle_closewin(self):
+        """closewin 关闭窗口"""
+        s = _MockSession("s1")
+        handler, _ = _setup_handler(sessions={"s1": s})
+        resp = handler.handle(_with_token({"type": "closewin", "id": "s1", "hwnd": 1234}))
+        assert resp["type"] == "ok"
 
 
 class TestRequestHandlerBuildResult:
@@ -281,7 +295,7 @@ class TestRequestHandlerBuildResult:
         assert result["program"]["running"] is True
 
     def test_build_result_no_session(self):
-        """会话不存在时构建 result（None session 已安全处理，不再抛 AttributeError）"""
+        """会话不存在时构建 result"""
         mgr = _MockManager()
         handler = RequestHandler(mgr)
         result = handler._build_result("no-such", "output", False, "timeout")
@@ -297,8 +311,6 @@ class TestRequestHandlerBuildResult:
         handler = RequestHandler(mgr)
         result = handler._build_result("test-sess", "output", True, "matched",
                                        consume_events=True)
-        # MockSession.consume_events 返回空列表 → debug 不出现
-        # 此处验证没有 debug 时响应仍正常，不抛异常
         assert result["type"] == "result"
         assert result["trigger_matched"] is True
         assert result["reason"] == "matched"
@@ -347,16 +359,9 @@ class TestRequestHandlerGetDetail:
 
 
 class TestRequestHandlerStop:
-    """RequestHandler stop 命令测试
-
-    回归测试：handler.py 曾缺少 `import socket`，导致 stop 命令
-    在 conn.shutdown(socket.SHUT_WR) 处抛 NameError，server.stop()
-    永不执行，守护进程卡在中间状态。
-    """
+    """RequestHandler stop 命令测试（新版本 handler.handle 返回 ok）"""
 
     class _StopTrackingServer:
-        """跟踪 server.stop() 是否被调用的 mock"""
-
         def __init__(self):
             self.stop_called = False
 
@@ -365,62 +370,13 @@ class TestRequestHandlerStop:
 
     def test_stop_returns_ok(self):
         """stop 命令返回 ok 响应"""
-        handler, _ = _setup_handler_and_conn()
-        resp = self._handle_stop(handler)
+        handler, _ = _setup_handler()
+        resp = handler.handle({"type": "stop"})
         assert resp is not None
         assert resp["type"] == "ok"
-
-    def test_stop_calls_server_stop(self):
-        """stop 命令触发 server.stop()（regression: 曾因 NameError 不被调用）"""
-        mgr = _MockManager()
-        mock_server = self._StopTrackingServer()
-        handler = RequestHandler(mgr, auth_token="test-token", server=mock_server)
-        resp = self._handle_stop(handler)
-        assert resp is not None
-        assert resp["type"] == "ok"
-        assert mock_server.stop_called, "server.stop() 未被调用"
 
     def test_stop_no_name_error(self):
         """stop 命令不抛 NameError（regression: socket 未导入）"""
-        handler, _ = _setup_handler_and_conn()
-        # 如果 socket 未导入，handle 会捕获异常并发送 error 响应
-        resp = self._handle_stop(handler)
-        assert resp is not None
+        handler, _ = _setup_handler()
+        resp = handler.handle({"type": "stop"})
         assert resp["type"] != "error", f"stop 命令返回了 error: {resp}"
-
-    def _handle_stop(self, handler):
-        """通过真实 TCP 连接发送 stop 消息并接收响应"""
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        srv.bind(("127.0.0.1", 0))
-        srv.listen(1)
-        port = srv.getsockname()[1]
-
-        result = [None]
-
-        def server():
-            conn, _ = srv.accept()
-            try:
-                handler.handle(conn, ("127.0.0.1", 0))
-            except Exception:
-                pass
-            finally:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-
-        t = threading.Thread(target=server, daemon=True)
-        t.start()
-
-        cli = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        cli.connect(("127.0.0.1", port))
-        cli.settimeout(5)
-        Message.send(cli, {"type": "stop", "token": "test-token"})
-        try:
-            resp = Message.recv(cli)
-        except Exception:
-            resp = None
-        cli.close()
-        srv.close()
-        t.join(timeout=5)
-        return resp

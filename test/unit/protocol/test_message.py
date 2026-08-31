@@ -1,9 +1,10 @@
-"""协议层单元测试 — message 模块"""
+"""协议层单元测试 — message 模块（编解码部分）
+
+通信已改为共享内存，message 仅保留 encode/decode。
+"""
 
 import sys
 import os
-import socket
-import threading
 import json
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -13,7 +14,6 @@ from src.protocol.message import Message
 
 def test_encode_decode():
     """编码与解码"""
-
     obj = {"type": "ping", "id": "test"}
     data = Message.encode(obj)
     assert isinstance(data, bytes)
@@ -24,127 +24,42 @@ def test_encode_decode():
 
 def test_encode_unicode():
     """Unicode 文本编码"""
-
     obj = {"output": "你好, 世界! 🔥"}
     data = Message.encode(obj)
     decoded = Message.decode(data)
     assert decoded["output"] == "你好, 世界! 🔥"
 
 
-def test_send_recv():
-    """send + recv 往返"""
-
-    def server(sock):
-        conn, _ = sock.accept()
-        msg = Message.recv(conn)
-        assert msg == {"type": "ping"}
-        Message.send(conn, {"type": "pong", "echo": msg})
-        conn.close()
-
-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    srv.bind(("127.0.0.1", 0))
-    srv.listen(1)
-    port = srv.getsockname()[1]
-
-    t = threading.Thread(target=server, args=(srv,), daemon=True)
-    t.start()
-
-    cli = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    cli.connect(("127.0.0.1", port))
-    Message.send(cli, {"type": "ping"})
-    resp = Message.recv(cli)
-    assert resp == {"type": "pong", "echo": {"type": "ping"}}
-    cli.close()
-    srv.close()
+def test_decode_invalid_json():
+    """无效 JSON 返回 None"""
+    result = Message.decode(b"not json\n")
+    assert result is None
 
 
-def test_recv_large_message():
-    """接收大消息"""
+def test_decode_empty():
+    """空数据返回 None"""
+    result = Message.decode(b"")
+    # 空字符串 '' 不是有效 JSON，decode 返回 None
+    assert result is None
 
-    big_obj = {"type": "result", "output": "x" * 10000}
+
+def test_decode_large():
+    """大消息解码"""
+    big_obj = {"type": "result", "output": "x" * 100000}
     data = Message.encode(big_obj)
-
-    def server(sock):
-        conn, _ = sock.accept()
-        conn.sendall(data)
-        conn.close()
-
-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    srv.bind(("127.0.0.1", 0))
-    srv.listen(1)
-    port = srv.getsockname()[1]
-
-    t = threading.Thread(target=server, args=(srv,), daemon=True)
-    t.start()
-
-    cli = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    cli.connect(("127.0.0.1", port))
-    resp = Message.recv(cli)
-    assert resp is not None
-    assert len(resp["output"]) == 10000
-    cli.close()
-    srv.close()
-
-
-def test_recv_multiple_messages():
-    """接收多条消息"""
-
-    def server(sock):
-        conn, _ = sock.accept()
-        for i in range(3):
-            Message.send(conn, {"type": "msg", "seq": i})
-        conn.close()
-
-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    srv.bind(("127.0.0.1", 0))
-    srv.listen(1)
-    port = srv.getsockname()[1]
-
-    t = threading.Thread(target=server, args=(srv,), daemon=True)
-    t.start()
-
-    cli = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    cli.connect(("127.0.0.1", port))
-    for i in range(3):
-        resp = Message.recv(cli)
-        assert resp is not None
-        assert resp["seq"] == i
-    cli.close()
-    srv.close()
-
-
-def test_recv_empty():
-    """连接关闭时返回 None"""
-
-    def server(sock):
-        conn, _ = sock.accept()
-        conn.close()
-
-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    srv.bind(("127.0.0.1", 0))
-    srv.listen(1)
-    port = srv.getsockname()[1]
-
-    t = threading.Thread(target=server, args=(srv,), daemon=True)
-    t.start()
-
-    cli = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    cli.connect(("127.0.0.1", port))
-    resp = Message.recv(cli)
-    assert resp is None
-    cli.close()
-    srv.close()
+    decoded = Message.decode(data)
+    assert decoded["type"] == "result"
+    assert len(decoded["output"]) == 100000
 
 
 def run_all():
     """运行所有测试"""
     tests = [
-        ("编码/解码",            test_encode_decode),
-        ("Unicode 编码",         test_encode_unicode),
-        ("send/recv 往返",       test_send_recv),
-        ("大消息接收",            test_recv_large_message),
-        ("多条消息接收",          test_recv_multiple_messages),
-        ("连接关闭返回 None",     test_recv_empty),
+        ("编码/解码",           test_encode_decode),
+        ("Unicode 编码",        test_encode_unicode),
+        ("无效 JSON 返回 None", test_decode_invalid_json),
+        ("空数据返回 None",      test_decode_empty),
+        ("大消息解码",           test_decode_large),
     ]
     passed = 0
     for name, fn in tests:

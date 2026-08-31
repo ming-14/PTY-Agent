@@ -10,3 +10,6 @@ pty-agent-*.zip
 
 # Test fixtures
 test_debug.exe
+
+# Runtime logs
+logs/

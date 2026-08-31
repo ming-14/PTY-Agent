@@ -3,10 +3,6 @@
 import os
 import sys
 
-# ── 网络 ──
-DAEMON_HOST = "127.0.0.1"
-DEFAULT_DAEMON_PORT = 18765              # 默认端口（实际端口由动态分配写入 port 文件）
-
 # ── 日志 ──
 # 日志级别: "DEBUG" / "INFO" / "WARNING" / "ERROR" / "CRITICAL"
 # 设为 None 则不写日志
@@ -15,10 +11,9 @@ CLIENT_LOG_LEVEL = "DEBUG"
 CLIENT_DEBUG = True
 
 # ── 文件路径 ──
-DATA_DIR = os.path.join(os.path.expanduser("~"), ".pty-agent")  # Unix 回退用
+DATA_DIR = os.path.join(os.path.expanduser("~"), ".pty-agent")  # Unix 共享内存文件目录
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
-PORT_FILE = os.path.join(DATA_DIR, "daemon.port")  # Unix 回退用
 
 # ── 缓冲区 ──
 MAX_OUTPUT_BUFFER = 100 * 1024 * 1024    # 100 MB，会话输出缓冲区上限
@@ -27,13 +22,15 @@ MAX_TRIGGER_SCAN  = 10 * 1024 * 1024     # 10 MB，触发检查最大扫描范�
 # ── 超时 ──
 DEFAULT_TRIGGER_TIMEOUT = 120.0          # 触发等待超时（秒）
 DAEMON_START_TIMEOUT    = 3.0            # 守护进程启动等待（秒）
-PING_TIMEOUT            = 1.0            # ping 探测超时（秒）
-CONNECT_TIMEOUT         = 30.0           # 客户端连接超时（秒）
 STOP_TIMEOUT            = 3.0            # 停止守护进程超时（秒）
 
+# ── 共享内存轮询 ──
+DAEMON_POLL_INTERVAL    = 0.1            # 守护进程信箱轮询间隔（秒）
+CLIENT_POLL_INTERVAL    = 0.02           # 客户端响应轮询间隔（秒）
+DAEMON_HEARTBEAT_INTERVAL = 1.0          # 守护进程心跳更新间隔（秒）
+DAEMON_HEARTBEAT_FRESH  = 10.0           # 心跳新鲜阈值（秒，超过视为僵死）
+
 # ── 其他 ──
-SOCKET_LISTEN_BACKLOG  = 5
-SOCKET_RECV_BUFSIZE    = 4096
 PTY_READ_SIZE          = 65536
 
 # ── 输入长度限制（防资源耗尽）──
@@ -42,19 +39,27 @@ MAX_COMMAND_LEN        = 65536    # 命令字符串最大长度（64 KB）
 MAX_PATTERN_LEN        = 4096     # 触发/过滤正则最大长度（4 KB）
 MAX_INPUT_LEN          = 65536    # send 输入文本最大长度
 
-# ── 共享内存（Windows 命名 mmap 用于守护进程端口传递）─
-# 安全说明：`Local\` 前缀限定同 Windows 会话/同 Unix 用户访问，
-# 跨用户隔离由内核保证。同用户下其他进程可读写共享内存，但：
-# 1) 这些进程同样可以连接 127.0.0.1 TCP 端口
-# 2) 令牌每 30 分钟轮换
-# 3) 攻击者需同时绕过共享内存 + TCP 两层防护
-MMAP_NAME = "Local\\PTYAgentDaemon"
-MMAP_SIZE = 32
+# ── 共享内存 — 守护进程信息区（单实例 + 心跳）─
+# 格式: "PID:状态:心跳时间戳"（如 "5488:1:1234567890.123"）
+# 状态: 0=停止, 1=运行
+MMAP_DAEMON_INFO_NAME = "Local\\PTYAgentDaemon"
+MMAP_DAEMON_INFO_SIZE = 64
+
+# ── 共享内存 — 请求信箱（客户端 → 守护进程）─
+# 固定槽位数组，每槽 256 字节，共 32 槽
+# 每槽: state(1) + client_pid(8) + req_name(64) + resp_name(64) + token(64) + seq(8) + padding
+MMAP_MAILBOX_NAME = "Local\\PTYAgentMailbox"
+MAILBOX_SLOT_COUNT = 32
+MAILBOX_SLOT_SIZE = 256           # 每槽 256 字节
+MAILBOX_SIZE = 32 * 256           # 8192 字节
+
+# ── 共享内存 — 请求/响应通道 ──
+REQ_SHM_SIZE = 256 * 1024         # 256 KB，请求 JSON 最大 64KB
+RESP_SHM_SIZE = 64 * 1024 * 1024  # 64 MB，响应 JSON（超出截断+truncated 标志）
 
 # ── 认证令牌（同用户会话隔离，防跨用户越权）─
-# 令牌通过共享内存在守护进程与客户端之间传递，随后在 TCP 连接中明文发送。
-# 这是接受的设计决策：127.0.0.1 TCP 嗅探在 Windows 上需要管理员权限，
-# 在 Linux 上需要 root 权限。令牌每 30 分钟轮换限制泄露窗口。
+# 令牌通过共享内存在守护进程与客户端之间传递，每次请求携带。
+# 令牌每 30 分钟轮换限制泄露窗口。
 AUTH_TOKEN_NAME = "Local\\PTYAgentAuth"
 AUTH_TOKEN_SIZE = 64  # hex-encoded 32-byte token
 AUTH_TOKEN_ROTATE_INTERVAL = 1800  # 令牌轮换周期（秒），默认 30 分钟

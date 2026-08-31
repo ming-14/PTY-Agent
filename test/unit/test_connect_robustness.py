@@ -1,190 +1,159 @@
-"""Client._connect 健壮性单元测试
+"""Client 共享内存通信健壮性单元测试
 
-测试 _connect 的僵死守护进程检测、自动重启、连接重试逻辑。
-使用 mock 替代 TCP 连接和守护进程管理。
+测试 _ensure_daemon 的自动启动逻辑、_send_recv 的共享内存请求/响应流程。
+使用 mock 替代共享内存和守护进程管理（无 socket、无端口）。
 """
 
-import socket
-import threading
+import os
+import sys
+import time
 import pytest
 from unittest.mock import patch, MagicMock
 
 from src.client.transport import Client
-from src.protocol.message import Message
 
 
-class TestConnectBasic:
-    """_connect 基本连接测试"""
+class TestEnsureDaemon:
+    """_ensure_daemon 自动启动测试"""
 
-    def test_connect_to_healthy_daemon(self):
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        srv.bind(("127.0.0.1", 0))
-        srv.listen(1)
-        port = srv.getsockname()[1]
-
-        def handle():
-            conn, _ = srv.accept()
-            msg = Message.recv(conn)
-            if msg and msg.get("type") == "ping":
-                Message.send(conn, {"type": "pong"})
-            conn.close()
-
-        t = threading.Thread(target=handle, daemon=True)
-        t.start()
-
-        with patch("src.daemon.lifecycle._find_daemon_port", return_value=port), \
-             patch("src.daemon.lifecycle._ping_daemon", return_value=True):
-            client = Client()
-            sock = client._connect()
-            assert sock is not None
-            sock.close()
-
-        srv.close()
-        t.join(timeout=3)
-
-
-class TestConnectAutoStart:
-    """_connect 自动启动守护进程测试"""
+    def test_no_op_when_running(self):
+        client = Client()
+        with patch("src.client.transport.is_running", return_value=True), \
+             patch("src.client.transport.start_daemon") as mock_start:
+            client._ensure_daemon()
+            mock_start.assert_not_called()
 
     def test_auto_starts_when_not_running(self):
-        started = {"called": False}
-
-        def mock_start():
-            started["called"] = True
-
+        client = Client()
         call_count = {"n": 0}
 
-        def mock_find_port():
+        def mock_is_running():
             call_count["n"] += 1
-            if call_count["n"] <= 1:
-                return None
-            return None
+            return call_count["n"] >= 2  # 第一次 False，之后 True
 
-        with patch("src.daemon.lifecycle._find_daemon_port", side_effect=mock_find_port), \
-             patch("src.client.transport.start_daemon", side_effect=mock_start):
-            client = Client()
-            try:
-                client._connect()
-            except SystemExit:
-                pass
-            assert started["called"]
+        with patch("src.client.transport.is_running", side_effect=mock_is_running), \
+             patch("src.client.transport.start_daemon") as mock_start, \
+             patch("src.client.transport.time.sleep"):
+            client._ensure_daemon()
+            mock_start.assert_called_once()
 
     def test_exits_when_start_fails(self):
-        with patch("src.daemon.lifecycle._find_daemon_port", return_value=None), \
-             patch("src.client.transport.start_daemon"):
-            client = Client()
+        client = Client()
+        with patch("src.client.transport.is_running", return_value=False), \
+             patch("src.client.transport.start_daemon"), \
+             patch("src.client.transport.time.sleep"):
             with pytest.raises(SystemExit):
-                client._connect()
+                client._ensure_daemon()
 
 
-class TestConnectZombieRecovery:
-    """_connect 僵死守护进程自动恢复测试"""
+class TestSendRecv:
+    """_send_recv 共享内存请求/响应测试"""
 
-    def test_restarts_when_daemon_dies_mid_connect(self):
-        call_count = {"n": 0}
+    def _fake_shm(self):
+        shm = MagicMock()
+        shm.size.return_value = 1024 * 1024
+        return shm
 
-        def mock_find_port():
-            call_count["n"] += 1
-            if call_count["n"] <= 1:
-                return 19999
-            return None
+    def test_roundtrip(self):
+        client = Client()
+        with patch.object(client, "_ensure_daemon"), \
+             patch("src.client.transport.open_shm") as mock_open, \
+             patch("src.client.transport.read_auth_token", return_value="tok"), \
+             patch("src.client.transport.Mailbox") as mock_mailbox_cls, \
+             patch("src.client.transport.read_message",
+                   return_value={"type": "pong"}):
+            mock_open.side_effect = [self._fake_shm(), self._fake_shm()]
 
-        restarted = {"called": False}
+            mock_mailbox = MagicMock()
+            mock_mailbox.acquire_slot.return_value = 0
+            mock_mailbox.wait_done.return_value = True
+            mock_mailbox_cls.return_value = mock_mailbox
 
-        def mock_start():
-            restarted["called"] = True
+            resp = client._send_recv({"type": "ping"})
+            assert resp == {"type": "pong"}
+            # token 注入
+            req = mock_open.call_args_list[0][0][0]
+            assert "PTYAgentReq_" in req
+            mock_mailbox.acquire_slot.assert_called_once()
+            mock_mailbox.release_slot.assert_called_once()
 
-        with patch("src.daemon.lifecycle._find_daemon_port", side_effect=mock_find_port), \
-             patch("src.client.transport.start_daemon", side_effect=mock_start):
-            client = Client()
-            try:
-                client._connect()
-            except SystemExit:
-                pass
-            assert restarted["called"]
+    def test_mailbox_full(self):
+        client = Client()
+        with patch.object(client, "_ensure_daemon"), \
+             patch("src.client.transport.open_shm") as mock_open, \
+             patch("src.client.transport.read_auth_token", return_value="tok"), \
+             patch("src.client.transport.Mailbox") as mock_mailbox_cls:
+            mock_open.side_effect = [self._fake_shm(), self._fake_shm()]
+            mock_mailbox = MagicMock()
+            mock_mailbox.acquire_slot.return_value = None
+            mock_mailbox_cls.return_value = mock_mailbox
 
-    def test_connects_after_restart(self):
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        srv.bind(("127.0.0.1", 0))
-        srv.listen(1)
-        real_port = srv.getsockname()[1]
+            resp = client._send_recv({"type": "ping"})
+            assert resp["type"] == "error"
+            assert "信箱已满" in resp["error"]
 
-        def handle():
-            conn, _ = srv.accept()
-            msg = Message.recv(conn)
-            if msg and msg.get("type") == "ping":
-                Message.send(conn, {"type": "pong"})
-            conn.close()
+    def test_timeout(self):
+        client = Client()
+        with patch.object(client, "_ensure_daemon"), \
+             patch("src.client.transport.open_shm") as mock_open, \
+             patch("src.client.transport.read_auth_token", return_value="tok"), \
+             patch("src.client.transport.Mailbox") as mock_mailbox_cls:
+            mock_open.side_effect = [self._fake_shm(), self._fake_shm()]
+            mock_mailbox = MagicMock()
+            mock_mailbox.acquire_slot.return_value = 0
+            mock_mailbox.wait_done.return_value = False
+            mock_mailbox_cls.return_value = mock_mailbox
 
-        t = threading.Thread(target=handle, daemon=True)
-        t.start()
+            resp = client._send_recv({"type": "ping"})
+            assert resp["type"] == "error"
+            assert "超时" in resp["error"]
 
-        call_count = {"n": 0}
+    def test_no_response_data(self):
+        client = Client()
+        with patch.object(client, "_ensure_daemon"), \
+             patch("src.client.transport.open_shm") as mock_open, \
+             patch("src.client.transport.read_auth_token", return_value="tok"), \
+             patch("src.client.transport.Mailbox") as mock_mailbox_cls, \
+             patch("src.client.transport.read_message", return_value=None):
+            mock_open.side_effect = [self._fake_shm(), self._fake_shm()]
+            mock_mailbox = MagicMock()
+            mock_mailbox.acquire_slot.return_value = 0
+            mock_mailbox.wait_done.return_value = True
+            mock_mailbox_cls.return_value = mock_mailbox
 
-        def mock_find_port():
-            call_count["n"] += 1
-            if call_count["n"] <= 1:
-                return None
-            return real_port
-
-        with patch("src.daemon.lifecycle._find_daemon_port", side_effect=mock_find_port), \
-             patch("src.client.transport.start_daemon"):
-            client = Client()
-            try:
-                sock = client._connect()
-                assert sock is not None
-                sock.close()
-            except Exception:
-                pass
-
-        srv.close()
-        t.join(timeout=3)
-
-
-class TestConnectRetry:
-    """_connect 重试逻辑测试"""
-
-    def test_retries_on_connection_refused(self):
-        attempts = {"n": 0}
-
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        srv.bind(("127.0.0.1", 0))
-        srv.listen(1)
-        real_port = srv.getsockname()[1]
-
-        def handle():
-            conn, _ = srv.accept()
-            msg = Message.recv(conn)
-            if msg and msg.get("type") == "ping":
-                Message.send(conn, {"type": "pong"})
-            conn.close()
-
-        t = threading.Thread(target=handle, daemon=True)
-        t.start()
-
-        def mock_find_port():
-            attempts["n"] += 1
-            if attempts["n"] <= 2:
-                return 19999
-            return real_port
-
-        with patch("src.daemon.lifecycle._find_daemon_port", side_effect=mock_find_port):
-            client = Client()
-            try:
-                sock = client._connect()
-                sock.close()
-            except Exception:
-                pass
-
-        srv.close()
-        t.join(timeout=3)
+            resp = client._send_recv({"type": "ping"})
+            assert resp["type"] == "error"
+            assert "读取响应失败" in resp["error"]
 
 
-class TestClientNoPidFile:
-    """验证 Client 不依赖 PID 文件"""
+class TestClientNoLockFiles:
+    """验证 Client 不依赖 PID 文件/端口文件/锁文件"""
 
-    def test_connect_does_not_import_pid_file_functions(self):
+    def test_transport_has_no_socket(self):
+        import src.client.transport as transport_mod
+        import inspect
+        source = inspect.getsource(transport_mod)
+        assert "import socket" not in source
+        assert "socket.socket" not in source
+
+    def test_transport_has_no_pid_file_functions(self):
         import src.client.transport as transport_mod
         assert not hasattr(transport_mod, "write_pid_file")
         assert not hasattr(transport_mod, "read_pid_file")
         assert not hasattr(transport_mod, "cleanup_pid_file")
+
+
+class TestShellOperators:
+    """_has_shell_operators 测试"""
+
+    def test_detects_pipe(self):
+        from src.client.transport import _has_shell_operators
+        assert _has_shell_operators("echo a | grep b") is True
+
+    def test_no_operators(self):
+        from src.client.transport import _has_shell_operators
+        assert _has_shell_operators("python -u -i") is False
+
+    def test_quoted_operator_not_detected(self):
+        from src.client.transport import _has_shell_operators
+        assert _has_shell_operators('echo "a | b"') is False

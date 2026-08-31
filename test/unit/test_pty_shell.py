@@ -206,7 +206,7 @@ class TestShellConflict:
         assert "不能同时使用" in responses[0]["error"]
 
     def test_pty_without_shell_ok(self, monkeypatch):
-        """--pty 不带 --shell 时不触发冲突（后续连接失败由守护进程处理）"""
+        """--pty 不带 --shell 时不触发冲突（后续请求由共享内存守护进程处理）"""
         from src.client.transport import Client
 
         responses = []
@@ -214,10 +214,10 @@ class TestShellConflict:
             "src.client.transport.print_response",
             lambda r: responses.append(r),
         )
-        # 阻止真正的 TCP 连接
+        # 阻止真实的共享内存请求
         monkeypatch.setattr(
-            "src.client.transport.Client._connect",
-            lambda self: (_ for _ in ()).throw(Exception("mock")),
+            "src.client.transport.Client._send_recv",
+            lambda self, msg: (_ for _ in ()).throw(Exception("mock")),
         )
 
         client = Client()
@@ -241,8 +241,8 @@ class TestShellConflict:
             lambda r: responses.append(r),
         )
         monkeypatch.setattr(
-            "src.client.transport.Client._connect",
-            lambda self: (_ for _ in ()).throw(Exception("mock")),
+            "src.client.transport.Client._send_recv",
+            lambda self, msg: (_ for _ in ()).throw(Exception("mock")),
         )
 
         client = Client()
