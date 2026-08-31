@@ -272,3 +272,4 @@ CLI ──tls────▶ 0.0.0.0  :18767    (提供跨机访问)
 
 </div>
 
+https://github.com/user-attachments/assets/5d8402e8-5fa6-4c7e-91b0-124a2ea953e4
