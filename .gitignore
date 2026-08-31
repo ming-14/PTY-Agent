@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Build artifacts
+pty-agent/
+pty-agent-*.zip
+
+# Test fixtures
+test_debug.exe
