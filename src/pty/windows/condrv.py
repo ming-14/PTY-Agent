@@ -26,7 +26,7 @@ import logging
 from ctypes import wintypes as W
 from typing import Optional, List
 
-from ..base import PseudoTerminal
+from ..base import PseudoTerminal, ProcessEvent
 from .convars import (
     K,
     _CONDRV_OK,
@@ -541,7 +541,7 @@ class ConDrvPseudoTerminal(PseudoTerminal):
         """查询 Job 进程中某个 PID 的退出码"""
         return self._job.query_process_exit_code(pid)
 
-    def get_job_notifications(self) -> list:
+    def get_job_notifications(self) -> List[ProcessEvent]:
         """获取 Job Object 实时通知"""
         if not self._job:
             return []

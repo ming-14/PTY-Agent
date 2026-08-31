@@ -21,6 +21,7 @@ import threading
 from typing import List, Optional
 from ctypes import wintypes as W
 
+from ..base import ProcessEvent
 from .convars import (
     _CreateJobObjectW,
     _AssignProcessToJobObject,
@@ -53,25 +54,38 @@ _logger = logging.getLogger("pty-job")
 _IOCP_TIMEOUT = 1000  # 每秒检查停止标志
 
 
-class JobNotification:
-    """Job Object 实时通知
+class JobNotification(ProcessEvent):
+    """Job Object 实时通知（继承 ProcessEvent 统一接口）
 
-    封装 IOCP 推送的进程事件，包含发生时间。
+    与 base.py 定义的 ProcessEvent 接口对齐，增加 Windows 特有的
+    msg_type 字段（原始 IOCP 消息类型）。
+
+    Attributes:
+        msg_type:  Windows Job Object 通知消息类型
+                   （_JOB_OBJECT_MSG_NEW_PROCESS / EXIT_PROCESS / ABNORMAL_EXIT_PROCESS）。
+        pid:        相关进程 PID。
+        exit_code:  进程退出码（退出/崩溃事件）。
     """
 
-    def __init__(self, msg_type: int, pid: int = 0, exit_code: Optional[int] = None):
+    def __init__(self, msg_type: int, pid: int = 0,
+                 exit_code: Optional[int] = None):
         self.msg_type = msg_type
-        self.pid = pid
-        self.exit_code = exit_code
+        kind = self._kind_from_msg_type(msg_type)
+        super().__init__(kind=kind, pid=pid, exit_code=exit_code)
 
-    def is_crash(self) -> bool:
-        return self.msg_type == _JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS
+    @staticmethod
+    def _kind_from_msg_type(msg_type: int) -> str:
+        """将 Windows Job Object 消息类型映射为平台无关事件类型"""
+        if msg_type == _JOB_OBJECT_MSG_NEW_PROCESS:
+            return ProcessEvent.KIND_SPAWN
+        if msg_type == _JOB_OBJECT_MSG_EXIT_PROCESS:
+            return ProcessEvent.KIND_EXIT
+        if msg_type == _JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS:
+            return ProcessEvent.KIND_CRASH
+        return "unknown"
 
-    def is_exit(self) -> bool:
-        return self.msg_type == _JOB_OBJECT_MSG_EXIT_PROCESS
-
-    def is_spawn(self) -> bool:
-        return self.msg_type == _JOB_OBJECT_MSG_NEW_PROCESS
+    # is_spawn() / is_exit() / is_crash() 继承自 ProcessEvent，
+    # 内部使用 self.kind 判断，与 msg_type 检查行为一致。
 
 
 class ProcessJob:

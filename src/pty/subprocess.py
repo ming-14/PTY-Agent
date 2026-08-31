@@ -8,7 +8,7 @@ import logging
 from typing import Optional, List
 from ctypes import wintypes as W
 
-from .base import PseudoTerminal
+from .base import PseudoTerminal, ProcessEvent
 from ..config import IS_WINDOWS
 
 if IS_WINDOWS:
@@ -348,7 +348,7 @@ class SubprocessPseudoTerminal(PseudoTerminal):
             return None
         return self._job.query_process_exit_code(pid)
 
-    def get_job_notifications(self) -> list:
+    def get_job_notifications(self) -> List[ProcessEvent]:
         """获取 Job Object 实时通知（IOCP 推送）"""
         if not self._job:
             return []

@@ -1,16 +1,71 @@
-"""PseudoTerminal 抽象基类
+"""PseudoTerminal 抽象基类与跨平台数据结构
 
-定义了最小接口契约，所有具体 PTY 后端必须实现全部方法。
+定义统一的接口契约，所有 PTY 后端（Windows / Unix / subprocess）必须
+实现全部方法。平台实现放在对等的包结构中：
+
+- src/pty/windows/  — Windows 实现（ConPTY / ConDrv）
+- src/pty/unix/     — Unix 实现（os.openpty + fork）
+
+能力对齐原则：
+- 接口签名统一：两平台提供相同的方法集合。
+- 能力有差异的项在文档中标注：无法实现的平台返回空/None（例如
+  Unix 没有 Job Object IOCP，get_job_notifications() 返回空列表）。
 """
 
 import logging
-from typing import Optional, List
+from typing import List, Optional
 
-_logger = logging.getLogger("pty-factory")
+_logger = logging.getLogger("pty-base")
+
+
+class ProcessEvent:
+    """跨平台进程生命周期事件（统一数据结构）
+
+    Windows 后端通过 Job Object IOCP 推送实时事件；
+    Unix 后端目前无实时通知机制（接口预留，返回空列表）。
+
+    消费方（session/process/monitor.py）只依赖本类公开的
+    is_spawn() / is_exit() / is_crash() / pid / exit_code，
+    不感知底层平台。
+    """
+
+    # 平台无关的事件类型常量
+    KIND_SPAWN = "spawn"
+    KIND_EXIT = "exit"
+    KIND_CRASH = "crash"
+
+    def __init__(self, kind: str, pid: int = 0,
+                 exit_code: Optional[int] = None):
+        """创建进程事件
+
+        Args:
+            kind:      事件类型，取 KIND_SPAWN / KIND_EXIT / KIND_CRASH。
+            pid:       相关进程 PID。
+            exit_code: 进程退出码（退出/崩溃事件）。
+        """
+        self.kind = kind
+        self.pid = pid
+        self.exit_code = exit_code
+
+    def is_spawn(self) -> bool:
+        """是否为进程创建事件"""
+        return self.kind == self.KIND_SPAWN
+
+    def is_exit(self) -> bool:
+        """是否为进程正常退出事件"""
+        return self.kind == self.KIND_EXIT
+
+    def is_crash(self) -> bool:
+        """是否为进程异常退出（崩溃）事件"""
+        return self.kind == self.KIND_CRASH
+
+    def __repr__(self) -> str:
+        return (f"ProcessEvent(kind={self.kind!r}, pid={self.pid}, "
+                f"exit_code={self.exit_code})")
 
 
 class PseudoTerminal:
-    """伪终端抽象基类
+    """伪终端抽象基类 — 统一接口契约
 
     所有具体实现必须实现以下方法：
     - read(n) → bytes
@@ -23,6 +78,13 @@ class PseudoTerminal:
     - get_gui_windows()
     - poll_gui_windows()
     - close_gui_window()
+
+    能力差异（两平台对齐但能力不同）：
+    - get_process_list()：Windows 返回 Job 进程树全部 PID；
+      Unix 通过进程组/遍历返回进程树全部 PID；subprocess 尽力而为。
+    - get_job_notifications()：Windows 返回 IOCP 实时事件；
+      Unix / subprocess 返回空列表（无等价机制）。
+    - GUI 窗口检测：Windows 通过 EnumWindows；Unix / subprocess 返回空。
     """
 
     def get_type(self) -> str:
@@ -83,10 +145,14 @@ class PseudoTerminal:
         return None
 
     def get_child_process_exit_code(self, pid: int) -> Optional[int]:
-        """查询子/孙进程退出码（通过 Job Object）
+        """查询子/孙进程退出码
 
         用于检测子进程崩溃：即使主进程正常退出，子进程异常退出
-        也能被检测到。非 Windows 后端返回 None。
+        也能被检测到。
+
+        - Windows：通过 Job Object 查询。
+        - Unix：仅对直接子进程可用（waitpid），孙进程返回 None。
+        - subprocess：Windows 通过 Job Object，其余返回 None。
 
         Args:
             pid: 子/孙进程 ID。
@@ -96,24 +162,26 @@ class PseudoTerminal:
         """
         return None
 
-    def get_job_notifications(self) -> list:
-        """获取 Job Object IOCP 实时通知
+    def get_job_notifications(self) -> List[ProcessEvent]:
+        """获取实时进程事件通知
 
-        返回 JobNotification 列表，由 Session 的 _drain_job_notifications 消费。
-        非 Windows 后端返回空列表。
+        Windows 后端通过 Job Object IOCP 返回 ProcessEvent 列表，
+        由 Session 的 ProcessMonitor 消费。
+        Unix / subprocess 后端返回空列表（无 IOCP 等价机制）。
 
         Returns:
-            JobNotification 列表。
+            ProcessEvent 列表。
         """
         return []
 
-    # ---- Job Object 进程树追踪 ----
+    # ---- 进程树追踪 ----
 
     def get_process_list(self) -> List[int]:
         """获取进程树所有进程的 PID 列表
 
-        Windows 后端通过 Job Object 查询所有子/孙进程 PID。
-        Unix 和 subprocess 后端仅返回直接子进程 PID。
+        - Windows 后端通过 Job Object 查询所有子/孙进程 PID。
+        - Unix 后端通过 /proc 遍历构建进程树。
+        - subprocess 后端：Windows 通过 Job Object，其余仅返回直接子进程。
 
         Returns:
             PID 列表。
@@ -121,7 +189,7 @@ class PseudoTerminal:
         pid = self.get_child_pid()
         return [pid] if pid is not None else []
 
-    # ---- GUI 窗口检测 ----
+    # ---- GUI 窗口检测（Windows 专有能力，其余平台返回空）----
 
     def get_gui_windows(self) -> List[dict]:
         """获取已检测到的 GUI 窗口列表
@@ -135,7 +203,7 @@ class PseudoTerminal:
     def poll_gui_windows(self) -> List[dict]:
         """轮询检测新增 GUI 窗口
 
-        与 get_gui_windows 不同，此方法执行一次新的 EnumWindows 扫描，
+        与 get_gui_windows 不同，此方法执行一次新的扫描，
         仅返回本轮新增的窗口。
 
         Returns:
@@ -150,6 +218,6 @@ class PseudoTerminal:
             hwnd: 窗口句柄。
 
         Returns:
-            True 表示 WM_CLOSE 已发送。
+            True 表示关闭请求已发送。
         """
         return False

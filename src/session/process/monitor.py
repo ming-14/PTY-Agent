@@ -17,16 +17,11 @@ import logging
 from threading import Event
 from typing import Callable, Dict, Optional, Set
 
-from ...config import IS_WINDOWS
+from ...pty.errors import STILL_ACTIVE, translate_exit_code
 from .info import _get_process_name
 from ..output.events import PendingEvent
 
 _logger = logging.getLogger("pty-session")
-
-if IS_WINDOWS:
-    from ...pty.windows.error_msg import (
-        STILL_ACTIVE, translate_windows_error,
-    )
 
 
 class ProcessMonitor:
@@ -91,7 +86,7 @@ class ProcessMonitor:
                     n.pid, _get_process_name(n.pid))
                 rc = n.exit_code
                 if rc is not None and rc != 0 and rc != STILL_ACTIVE:
-                    crash_desc = translate_windows_error(rc)
+                    crash_desc = translate_exit_code(rc)
                     _logger.info(
                         "IOCP crash pid=%d rc=%d (0x%08X) desc=%s",
                         n.pid, rc, rc & 0xFFFFFFFF, crash_desc)
@@ -162,7 +157,7 @@ class ProcessMonitor:
                     pass
             if (exit_code is not None and exit_code != 0
                     and exit_code != STILL_ACTIVE):
-                crash_desc = translate_windows_error(exit_code)
+                crash_desc = translate_exit_code(exit_code)
                 _logger.info(
                     "ProcessMonitor: crash pid=%d exit_code=%d (0x%08X) "
                     "desc=%s",

@@ -1,7 +1,12 @@
 """伪终端后端层 — 工厂函数与平台检测
 
 提供 create_pty() 工厂函数，按优先级尝试各后端实现。
-Windows 特有代码存放在 windows/ 子包下，Unix 平台零加载。
+
+平台包结构（对称、接口对齐）：
+  - src/pty/unix/     — Unix 实现（UnixPseudoTerminal + UnixProcessTracker）
+  - src/pty/windows/  — Windows 实现（ConPTY / ConDrv + ProcessJob + GuiWindowMonitor）
+  - src/pty/base.py   — 统一抽象接口（PseudoTerminal + ProcessEvent）
+  - src/pty/errors.py — 跨平台退出码/错误格式化
 """
 
 import logging
