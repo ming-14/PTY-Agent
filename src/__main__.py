@@ -90,10 +90,11 @@ class _InputHintAction(argparse.Action):
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
     """为子命令解析器添加通用参数（默认配置）"""
+    # SUPPRESS：子解析器不覆盖全局 --default（否则放在子命令前的 --default 会丢失）
     parser.add_argument("--default", nargs=2, metavar=("KEY", "VALUE"),
-                        default=None,
+                        default=argparse.SUPPRESS,
                         help="设置默认配置 "
-                             "(timeout/newline/debug)")
+                             "(timeout/newline/debug/send-eol)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -174,6 +175,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="仅在程序首次输出后才开始检测静默超时（初始不检测）")
     p_send.add_argument("--full", action="store_true", default=False,
                         help="返回全部累积输出而非仅新输出")
+    p_send.add_argument("--send-eol", default=None,
+                        choices=["lf", "cr", "crlf"],
+                        help="行尾样式：lf(\\n 默认) / cr(\\r) / crlf(\\r\\n)")
 
     # read
     p_read = sub.add_parser("read", help="读取会话终端输出（无需触发条件）")
@@ -447,6 +451,7 @@ def main():
                 full=args.full,
                 idle_timeout=args.idle_timeout,
                 idle_after_first_output=args.idle_after_first_output,
+                send_eol=args.send_eol,
             )
         elif args.subcmd == "read":
             client.cmd_read(

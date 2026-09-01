@@ -4,8 +4,10 @@
 OutputBuffer / Session 协作。
 
 关键设计:
-- 匹配逻辑在持锁路径（OutputBuffer.lock）中执行，通过传入的
-  OutputBuffer 引用直接读取原始字节。
+- 匹配分为两个阶段：prepare_snapshot()（持锁，仅状态判断+字节切片快照）
+  与 check_snapshot()（锁外，解码+正则搜索）。耗时正则完全移出锁，
+  避免阻塞缓冲区的读写操作。
+- 快照对象固化预编译正则与原始模式，避免锁外匹配期间模式被并发修改。
 - 解码依赖外部的 decode_func 回调（Session._decode_only），
   避免引入编码探测的循环依赖。
 - ReDoS 防护: safe_regex_search 在独立 daemon 线程中执行，
@@ -17,6 +19,7 @@ import time
 import logging
 import threading
 import concurrent.futures
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 from ...config import MAX_TRIGGER_SCAN
@@ -25,6 +28,20 @@ _logger = logging.getLogger("pty-session")
 
 # ReDoS 防护：正则搜索超时保护
 _RE_SEARCH_TIMEOUT = 2.0
+
+
+@dataclass
+class _TriggerSnapshot:
+    """触发匹配快照 — 锁内提取、锁外匹配的载体
+
+    Attributes:
+        raw:     待匹配的字节切片（从 _start_offset 到 MAX_TRIGGER_SCAN 范围）。
+        regex:   提取快照时的预编译正则（可能为 None）。
+        pattern: 原始模式字符串（正则无效时用于子串匹配）。
+    """
+    raw: bytes
+    regex: Optional[re.Pattern]
+    pattern: str
 
 # 共享线程池（最多 4 个 worker，线程名前缀 safe-regex）
 _EXECUTOR = concurrent.futures.ThreadPoolExecutor(
@@ -164,13 +181,32 @@ class TriggerMatcher:
         Returns:
             True 表示匹配成功并设置了 _event。
         """
-        if not self._pattern or self._matched:
+        snapshot = self.prepare_snapshot(output_buffer)
+        if snapshot is None:
             return False
+        return self.check_snapshot(snapshot)
+
+    def prepare_snapshot(self, output_buffer):
+        """锁内阶段：判断是否应匹配并提取待匹配快照（不执行正则）
+
+        仅在 OutputBuffer.lock 已获取的线程上下文中调用。此阶段只做
+        状态判断和字节切片，将耗时的解码+正则搜索推迟到锁外的
+        check_snapshot()，避免长正则阻塞所有依赖该锁的操作。
+
+        Args:
+            output_buffer: OutputBuffer 实例（持锁状态下）。
+
+        Returns:
+            快照对象（含字节数据、预编译正则、原始模式），
+            无需匹配时返回 None。
+        """
+        if not self._pattern or self._matched:
+            return None
 
         # 新鲜模式：等待读周期推进后才开始检查
         if self._fresh:
             if output_buffer.read_cycle <= self._fresh_cycle:
-                return False
+                return None
             self._fresh = False
 
         if self._on_newline:
@@ -180,26 +216,40 @@ class TriggerMatcher:
             elif self._newline_first_ok:
                 self._newline_first_ok = False
             else:
-                return False
+                return None
 
         # 从 offset 开始扫描，限制最大范围
         start = min(self._start_offset, len(output_buffer.raw))
         end = min(start + MAX_TRIGGER_SCAN, len(output_buffer.raw))
         raw = bytes(output_buffer.raw[start:end])
-        text = self._decode_func(raw)
+        return _TriggerSnapshot(raw, self._regex, self._pattern)
 
-        if self._regex:
-            if safe_regex_search(self._regex, text):
-                _logger.info("TriggerMatcher.check: MATCHED pattern=%r",
-                             self._pattern)
+    def check_snapshot(self, snapshot) -> bool:
+        """锁外阶段：对 prepare_snapshot 的快照执行解码+正则匹配
+
+        可在任意线程上下文调用（通常为 reader 线程或请求处理线程），
+        不持有 OutputBuffer 锁，因此耗时的正则搜索不会阻塞缓冲读写。
+
+        Args:
+            snapshot: prepare_snapshot() 返回的快照对象。
+
+        Returns:
+            True 表示匹配成功并设置了 _event。
+        """
+        text = self._decode_func(snapshot.raw)
+
+        if snapshot.regex:
+            if safe_regex_search(snapshot.regex, text):
+                _logger.info("TriggerMatcher.check_snapshot: MATCHED pattern=%r",
+                             snapshot.pattern)
                 self._matched = True
                 self._event.set()
                 return True
         else:
             # 正则无效时回退到子串匹配
-            if self._pattern in text:
-                _logger.info("TriggerMatcher.check: substring MATCHED "
-                             "pattern=%r", self._pattern)
+            if snapshot.pattern in text:
+                _logger.info("TriggerMatcher.check_snapshot: substring MATCHED "
+                             "pattern=%r", snapshot.pattern)
                 self._matched = True
                 self._event.set()
                 return True

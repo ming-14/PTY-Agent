@@ -264,10 +264,14 @@ class Session:
             self._trig_mat.fresh_cycle = self._out_buf.read_cycle
             return
 
-        self._trig_mat.newline_count = (
-            self._out_buf.count_byte(ord("\n")))
+        # 锁内：计数换行 + 提取匹配快照（不执行耗时正则）
+        snapshot = None
         with self._out_buf.lock:
-            self._trig_mat.check(self._out_buf)
+            self._trig_mat.newline_count = self._out_buf.raw.count(b"\n")
+            snapshot = self._trig_mat.prepare_snapshot(self._out_buf)
+        # 锁外：执行耗时正则匹配
+        if snapshot is not None:
+            self._trig_mat.check_snapshot(snapshot)
 
     def wait_for_trigger(
         self,

@@ -199,6 +199,7 @@ def start_daemon():
         pid2 = os.fork()
         if pid2 > 0:
             os._exit(0)
+        # 孙进程：彻底守护化后直接启动守护进程主循环
         os.chdir("/")
         with open(os.devnull, "r") as f:
             os.dup2(f.fileno(), 0)
@@ -208,7 +209,10 @@ def start_daemon():
             os.dup2(f.fileno(), 2)
         env = os.environ.copy()
         env["PYTHONPATH"] = src_parent + os.pathsep + env.get("PYTHONPATH", "")
+        os.environ.update(env)
         sys.argv = ["src.daemon"]
+        main()
+        os._exit(0)
 
     for _ in range(int(DAEMON_START_TIMEOUT / 0.3) + 1):
         if is_running():

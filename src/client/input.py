@@ -9,21 +9,22 @@ import sys
 _logger = logging.getLogger("pty-client")
 
 
-def process_input(text: str) -> str:
-    """处理输入文本：原样发送 + 自动追加换行
+def process_input(text: str, eol: str = "\n") -> str:
+    """处理输入文本：原样发送 + 自动追加行尾
 
     Windows 路径中的反斜杠（如 C:\\Users\\username\\new_folder）不会被误转换。
 
     Args:
         text: 原始输入文本。
+        eol:  行尾字符串（默认 "\\n"，可传 "\\r" / "\\r\\n" 等）。
 
     Returns:
-        处理后的文本，末尾始终有换行符。
+        处理后的文本，末尾始终有行尾字符。
     """
     if not text.endswith("\n") and not text.endswith("\r"):
-        text += "\n"
-    _logger.debug("process_input: len=%d ends_with_newline=%s",
-                  len(text), text.endswith("\n"))
+        text += eol
+    _logger.debug("process_input: len=%d eol=%r ends_with_newline=%s",
+                  len(text), eol, text.endswith("\n"))
     return text
 
 

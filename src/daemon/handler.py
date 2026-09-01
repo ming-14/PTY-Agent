@@ -38,6 +38,9 @@ from ..config import (
 
 _logger = logging.getLogger("pty-daemon")
 
+# 会话级命令（需要 per-session 锁串行化）
+_SESSION_CMDS = frozenset({"exec", "send", "read", "kill", "closewin"})
+
 
 def _validate_field(value, name: str, max_len: int) -> dict:
     """验证请求字段长度，超限时返回错误响应
@@ -75,6 +78,23 @@ class RequestHandler:
         self._auth_tokens: dict = (
             {auth_token: float("inf")} if auth_token else {}
         )
+        # per-session 锁字典（防止同一会话的并发请求互踩触发状态）
+        self._session_locks: dict = {}
+        self._session_locks_lock = threading.Lock()
+
+    def _get_session_lock(self, session_id: str) -> threading.Lock:
+        """获取或创建 per-session 锁
+
+        Args:
+            session_id: 会话标识符。
+
+        Returns:
+            该会话专用的 threading.Lock。
+        """
+        with self._session_locks_lock:
+            if session_id not in self._session_locks:
+                self._session_locks[session_id] = threading.Lock()
+            return self._session_locks[session_id]
 
     def add_valid_token(self, new_token: str, old_token: str):
         """添加新令牌，旧令牌指定宽限期截止时间"""
@@ -132,12 +152,6 @@ class RequestHandler:
 
             if msg_type == "ping":
                 return {"type": "pong"}
-            elif msg_type == "exec":
-                return self._handle_exec(msg)
-            elif msg_type == "send":
-                return self._handle_send(msg)
-            elif msg_type == "read":
-                return self._handle_read(msg)
             elif msg_type == "list":
                 sessions = self.manager.list_sessions()
                 for s in sessions:
@@ -145,14 +159,17 @@ class RequestHandler:
                     session = self.manager.get_session(sid)
                     s["pending_events"] = session.pending_event_count if session else 0
                 return {"type": "ok", "sessions": sessions}
-            elif msg_type == "kill":
-                return self._handle_kill(msg)
-            elif msg_type == "closewin":
-                return self._handle_closewin(msg)
             elif msg_type == "stop":
                 return {"type": "ok"}
-            else:
-                return {"type": "error", "error": f"未知指令类型: {msg_type}"}
+
+            # 会话级命令（exec/send/read/kill/closewin）：
+            # 对同一会话加锁串行化，防止并发请求互踩触发状态/输入缓冲。
+            if msg_type in _SESSION_CMDS:
+                if session_id:
+                    with self._get_session_lock(session_id):
+                        return self._dispatch_session_cmd(msg_type, msg)
+                return {"type": "error", "error": "缺少会话 id"}
+            return {"type": "error", "error": f"未知指令类型: {msg_type}"}
 
         except json.JSONDecodeError:
             _logger.error("JSON 解析失败")
@@ -162,6 +179,20 @@ class RequestHandler:
             _logger.error("请求处理异常: %s", e)
             _logger.error(tb)
             return {"type": "error", "error": "服务器内部错误"}
+
+    def _dispatch_session_cmd(self, msg_type: str, msg: dict) -> dict:
+        """派发会话级命令（需在 per-session 锁内调用）"""
+        if msg_type == "exec":
+            return self._handle_exec(msg)
+        elif msg_type == "send":
+            return self._handle_send(msg)
+        elif msg_type == "read":
+            return self._handle_read(msg)
+        elif msg_type == "kill":
+            return self._handle_kill(msg)
+        elif msg_type == "closewin":
+            return self._handle_closewin(msg)
+        return {"type": "error", "error": f"未知指令类型: {msg_type}"}
 
     @staticmethod
     def _format_iso_ms(timestamp: float) -> str:
@@ -540,3 +571,4 @@ class RequestHandler:
         except Exception as e:
             _logger.warning("关闭窗口异常: %s", e)
             return {"type": "error", "error": "关闭窗口失败"}
+

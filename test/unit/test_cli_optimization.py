@@ -107,6 +107,38 @@ class TestConfigManager:
         text = cfg.show("debug")
         assert "off" in text
 
+    def test_send_eol_default_lf(self, cfg):
+        """send_eol 默认值为 lf"""
+        assert cfg.get("send_eol") == "lf"
+
+    def test_send_eol_set_valid(self, cfg):
+        """设置合法 send_eol 值"""
+        cfg.set("send_eol", "crlf")
+        assert cfg.get("send_eol") == "crlf"
+        cfg.set("send_eol", "CR")  # 大小写不敏感
+        assert cfg.get("send_eol") == "cr"
+
+    def test_send_eol_invalid(self, cfg):
+        """设置非法 send_eol 值应抛 ValueError"""
+        with pytest.raises(ValueError):
+            cfg.set("send_eol", "br")
+
+    def test_resolve_eol(self, cfg):
+        """resolve_eol 将配置名解析为实际行尾字符串"""
+        from src.client.config_manager import resolve_eol
+        assert resolve_eol("lf") == "\n"
+        assert resolve_eol("cr") == "\r"
+        assert resolve_eol("crlf") == "\r\n"
+        assert resolve_eol("unknown") == "\n"  # 未知回退 \n
+
+    def test_process_input_eol(self):
+        """process_input 使用指定行尾"""
+        from src.client.input import process_input
+        from src.client.config_manager import resolve_eol
+        assert process_input("x", eol=resolve_eol("lf")) == "x\n"
+        assert process_input("x", eol=resolve_eol("cr")) == "x\r"
+        assert process_input("x", eol=resolve_eol("crlf")) == "x\r\n"
+
 
 # ---- Formatter 测试 ----
 

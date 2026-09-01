@@ -23,7 +23,7 @@ from ..daemon.lifecycle import is_running, start_daemon, stop_daemon
 from ..session.shm_utils import read_auth_token
 from .input import process_input
 from .formatter import print_response
-from .config_manager import ConfigManager
+from .config_manager import ConfigManager, resolve_eol
 
 _logger = logging.getLogger("pty-client")
 
@@ -235,16 +235,21 @@ class Client:
         full: bool = False,
         idle_timeout: Optional[float] = None,
         idle_after_first_output: bool = False,
+        send_eol: Optional[str] = None,
     ):
         _logger.info("cmd_send: id=%r trigger=%r timeout=%s",
                      session_id, trigger, timeout)
         timeout, newline = self._apply_config_defaults(
             timeout=timeout, newline=newline,
         )
+        # send_eol：显式参数 > --default 配置 > 内置默认 "lf"
+        eol_name = send_eol or self._config.get("send_eol")
+        eol = resolve_eol(eol_name)
+        _logger.debug("cmd_send: send_eol=%r eol=%r", eol_name, eol)
 
         msg = {
             "type": "send", "id": session_id,
-            "input": process_input(input_text),
+            "input": process_input(input_text, eol=eol),
             "newline": newline, "fresh": fresh, "full": full,
             "timeout": timeout,
         }

@@ -17,10 +17,26 @@ _DEFAULTS: dict = {
     "timeout": 120.0,
     "newline": False,
     "debug": True,
+    "send_eol": "lf",
 }
 
 # on/off -> bool 映射
 _ON_OFF = {"on": True, "off": False}
+
+# send_eol 名称 -> 实际行尾字符串
+_EOL_MAP = {"lf": "\n", "cr": "\r", "crlf": "\r\n"}
+
+
+def resolve_eol(name: str) -> str:
+    """将 send_eol 配置名解析为实际行尾字符串
+
+    Args:
+        name: 行尾名（"lf"/"cr"/"crlf"），未知值回退到 "\\n"。
+
+    Returns:
+        实际行尾字符串。
+    """
+    return _EOL_MAP.get(str(name).lower(), "\n")
 
 
 class ConfigManager:
@@ -89,6 +105,24 @@ class ConfigManager:
         if key in ("newline", "debug"):
             if not isinstance(value, bool):
                 value = bool(value)
+
+        # send_eol 验证
+        if key == "send_eol":
+            if not isinstance(value, str) or value.lower() not in _EOL_MAP:
+                raise ValueError(
+                    f"无效的 send_eol 值: {value!r}，"
+                    f"可用: {', '.join(sorted(_EOL_MAP.keys()))}",
+                )
+            value = value.lower()
+
+        # send_eol 验证
+        if key == "send_eol":
+            if not isinstance(value, str) or value.lower() not in _EOL_MAP:
+                raise ValueError(
+                    f"无效的 send_eol 值: {value!r}，"
+                    f"可用: {', '.join(sorted(_EOL_MAP.keys()))}",
+                )
+            value = value.lower()
 
         _logger.debug("ConfigManager.set: %s=%r", key, value)
         self._config[key] = value

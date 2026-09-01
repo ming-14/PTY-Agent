@@ -75,8 +75,9 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
     - 注：**高效利用本程序的条件返回功能，及时根据对应程序的输出结果更新条件（特别是`-t`），灵活使用不同的返回条件**。不建议终端执行Sleep，不建议反复send后又read
 - `--idle-timeout <seconds>` 输出静默超时，程序在指定时间内不输出时触发条件
 - `--full` 返回终端全部数据（数据大，尽量用`--lines N`）
+- `--send-eol <lf|cr|crlf>` 行尾样式（默认 `lf`=`\n`）。终端模式（ConPTY）下某些程序需要 `\r`（回车）或 `\r\n` 才能正确提交输入行
 
-`<content>`末尾自动追加换行
+`<content>`末尾自动追加行尾（默认 `\n`，可用 `--send-eol` 或 `--default send-eol crlf` 修改）
 没有`--input`参数
 
 ### 引号处理规则（命令行层）

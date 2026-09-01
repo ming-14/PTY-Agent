@@ -145,12 +145,18 @@ class DaemonServer:
 
         _logger.info("守护进程启动，轮询信箱（PID:%d）", self._my_pid)
 
+        _reclaim_counter = 0
         try:
             while self._running:
                 if not self._verify_shm():
                     _logger.error("共享内存被覆盖，检测到另一个守护进程启动，自动退出")
                     break
                 self._update_heartbeat()
+                # 定期回收孤儿 CLAIMED 槽位（约每 10 轮 = 1 秒）
+                _reclaim_counter += 1
+                if _reclaim_counter >= 10:
+                    _reclaim_counter = 0
+                    self._reclaim_orphan_claimed()
                 slot = self._mailbox.find_pending()
                 if slot is not None:
                     info = self._mailbox.get_slot_info(slot)
@@ -206,7 +212,7 @@ class DaemonServer:
         else:
             _logger.warning("响应通道 %s 不可用", resp_name)
 
-        self._mailbox.mark_done(slot)
+        self._mailbox.mark_done_owned(slot, resp_name)
         _logger.debug("槽位 %d 处理完成 (type=%s)", slot, msg.get("type") if msg else "?")
 
         # stop 请求：响应写入完成后停止服务器
@@ -218,6 +224,13 @@ class DaemonServer:
         """停止服务器"""
         self._running = False
         self._cleanup()
+
+    def _reclaim_orphan_claimed(self):
+        """回收孤儿 CLAIMED 槽位（客户端在写字段前崩溃）"""
+        from .lifecycle import _pid_exists
+        reclaimed = self._mailbox.reclaim_orphan_claimed(_pid_exists)
+        if reclaimed:
+            _logger.info("回收了 %d 个孤儿 CLAIMED 槽位", reclaimed)
 
     def _verify_shm(self) -> bool:
         """检查守护进程信息区是否仍属于当前进程。

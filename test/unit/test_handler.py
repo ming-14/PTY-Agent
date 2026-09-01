@@ -362,3 +362,76 @@ class TestRequestHandlerStop:
         handler, _ = _setup_handler()
         resp = handler.handle({"type": "stop"})
         assert resp["type"] != "error", f"stop 命令返回了 error: {resp}"
+
+
+class TestRequestHandlerSessionLock:
+    """RequestHandler per-session 锁测试"""
+
+    def test_get_session_lock_same_session(self):
+        """同一会话的锁应返回同一对象"""
+        handler, _ = _setup_handler()
+        lock1 = handler._get_session_lock("test")
+        lock2 = handler._get_session_lock("test")
+        assert lock1 is lock2
+
+    def test_get_session_lock_different_session(self):
+        """不同会话的锁应是不同对象"""
+        handler, _ = _setup_handler()
+        lock1 = handler._get_session_lock("sess_a")
+        lock2 = handler._get_session_lock("sess_b")
+        assert lock1 is not lock2
+
+    def test_session_lock_serializes(self):
+        """per-session 锁应串行化并发请求（一个线程持锁时另一个阻塞）"""
+        import threading
+        handler, _ = _setup_handler()
+        lock = handler._get_session_lock("test")
+        acquired = threading.Event()
+        can_release = threading.Event()
+        released = threading.Event()
+
+        def holder():
+            with lock:
+                acquired.set()
+                can_release.wait()
+            released.set()
+
+        t = threading.Thread(target=holder, daemon=True)
+        t.start()
+        acquired.wait(timeout=5)
+
+        # 主线程尝试获取锁 -> 应阻塞（因为 holder 持有）
+        blocking = threading.Event()
+        block_started = threading.Event()
+
+        def blocker():
+            block_started.set()
+            with lock:
+                blocking.set()
+
+        t2 = threading.Thread(target=blocker, daemon=True)
+        t2.start()
+        block_started.wait(timeout=1)
+        # 此时 blocker 应被阻塞，不能获取到锁
+        assert blocking.wait(timeout=0.3) is False  # 还未获取到
+        # 释放 holder 的锁
+        can_release.set()
+        released.wait(timeout=5)
+        # 现在 blocker 应能获取到锁
+        assert blocking.wait(timeout=5) is True
+        t.join(1)
+        t2.join(1)
+
+    def test_session_cmd_no_id_returns_error(self):
+        """会话命令缺少 session_id 返回错误"""
+        handler, _ = _setup_handler()
+        resp = handler.handle(_with_token({"type": "exec"}))
+        assert resp["type"] == "error"
+        assert "缺少会话 id" in resp["error"]
+
+    def test_non_session_cmd_without_id_ok(self):
+        """非会话命令无需 session_id"""
+        handler, _ = _setup_handler()
+        resp = handler.handle(_with_token({"type": "list"}))
+        assert resp["type"] == "ok"
+

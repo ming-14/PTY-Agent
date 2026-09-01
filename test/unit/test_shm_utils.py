@@ -241,6 +241,116 @@ class TestMailbox:
                 mailbox.release_slot(s)
             mailbox.close()
 
+    def test_acquire_slot_atomic_pid(self):
+        """acquire_slot 写入的 PID 应正确（归属校验用）"""
+        mailbox = Mailbox(keep_open=True)
+        req_name, resp_name = make_channel_names(os.getpid(), 20)
+        slot = mailbox.acquire_slot(os.getpid(), req_name, resp_name, "tok", 20)
+        assert slot is not None
+        info = mailbox.get_slot_info(slot)
+        assert info["client_pid"] == str(os.getpid())
+        mailbox.release_slot(slot)
+        mailbox.close()
+
+    def test_mark_done_owned_matches(self):
+        """mark_done_owned: resp_name 匹配时正常标记 DONE"""
+        mailbox = Mailbox(keep_open=True)
+        req_name, resp_name = make_channel_names(os.getpid(), 30)
+        slot = mailbox.acquire_slot(os.getpid(), req_name, resp_name, "tok", 30)
+        assert slot is not None
+        found = mailbox.find_pending()
+        assert found == slot
+        # 使用正确的 resp_name → 应标记 DONE
+        mailbox.mark_done_owned(slot, resp_name)
+        assert mailbox.wait_done(slot, timeout=2.0) is True
+        mailbox.release_slot(slot)
+        mailbox.close()
+
+    def test_mark_done_owned_mismatch_skips(self):
+        """mark_done_owned: resp_name 不匹配时跳过标记 DONE"""
+        mailbox = Mailbox(keep_open=True)
+        req_name, resp_name = make_channel_names(os.getpid(), 31)
+        slot = mailbox.acquire_slot(os.getpid(), req_name, resp_name, "tok", 31)
+        assert slot is not None
+        found = mailbox.find_pending()
+        assert found == slot
+        # 使用错误的 resp_name → 不应标记 DONE
+        mailbox.mark_done_owned(slot, "wrong_resp_name")
+        # 槽位未标记 DONE，wait_done 应超时
+        assert mailbox.wait_done(slot, timeout=0.5) is False
+        mailbox.release_slot(slot)
+        mailbox.close()
+
+    def test_mark_done_owned_not_processing_skips(self):
+        """mark_done_owned: 槽位非 PROCESSING 时跳过"""
+        mailbox = Mailbox(keep_open=True)
+        req_name, resp_name = make_channel_names(os.getpid(), 32)
+        slot = mailbox.acquire_slot(os.getpid(), req_name, resp_name, "tok", 32)
+        assert slot is not None
+        # 未调用 find_pending（仍为 PENDING）→ 不应标记 DONE
+        mailbox.mark_done_owned(slot, resp_name)
+        # 槽位未标记 DONE，wait_done 应超时
+        assert mailbox.wait_done(slot, timeout=0.5) is False
+        mailbox.release_slot(slot)
+        mailbox.close()
+
+    def test_reclaim_orphan_claimed_skips_active(self):
+        """reclaim_orphan_claimed: 存活进程的 CLAIMED 槽位不应回收"""
+        mailbox = Mailbox(keep_open=True)
+        # 直接模拟 CLAIMED 状态（手动设置）
+        req_name, resp_name = make_channel_names(os.getpid(), 40)
+        from src.protocol.shm import SLOT_CLAIMED, SLOT_EMPTY, _set_slot_state, _slot_state
+        import mmap
+        from src.protocol.shm_utils import open_shm
+        from src.config import MMAP_MAILBOX_NAME, MAILBOX_SIZE
+        shm = open_shm(MMAP_MAILBOX_NAME, MAILBOX_SIZE)
+        try:
+            # 找一个空槽位置 CLAIMED 并写入当前 PID
+            slot = None
+            for s in range(32):
+                if _slot_state(shm, s) == SLOT_EMPTY:
+                    slot = s
+                    break
+            if slot is not None:
+                from src.protocol.shm import _SLOT_PID_OFF, write_text
+                base = slot * 256
+                _set_slot_state(shm, slot, SLOT_CLAIMED)
+                write_text(shm, base + _SLOT_PID_OFF, str(os.getpid()), 8)
+                # 当前进程活跃 → 不应回收
+                reclaimed = mailbox.reclaim_orphan_claimed(lambda pid: True)
+                assert reclaimed == 0
+                # 清理
+                _set_slot_state(shm, slot, SLOT_EMPTY)
+        finally:
+            close_shm(shm)
+        mailbox.close()
+
+    def test_reclaim_orphan_claimed_reclaims_dead(self):
+        """reclaim_orphan_claimed: 不存活进程的 CLAIMED 槽位应回收"""
+        mailbox = Mailbox(keep_open=True)
+        from src.protocol.shm import SLOT_CLAIMED, SLOT_EMPTY, _set_slot_state, _slot_state
+        from src.protocol.shm_utils import open_shm
+        from src.config import MMAP_MAILBOX_NAME, MAILBOX_SIZE
+        from src.protocol.shm import _SLOT_PID_OFF, write_text
+        shm = open_shm(MMAP_MAILBOX_NAME, MAILBOX_SIZE)
+        try:
+            for s in range(32):
+                if _slot_state(shm, s) == SLOT_EMPTY:
+                    slot = s
+                    break
+            else:
+                slot = None
+            if slot is not None:
+                base = slot * 256
+                _set_slot_state(shm, slot, SLOT_CLAIMED)
+                write_text(shm, base + _SLOT_PID_OFF, "99999", 8)  # 不存在的 PID
+                reclaimed = mailbox.reclaim_orphan_claimed(lambda pid: False)
+                assert reclaimed == 1
+                assert _slot_state(shm, slot) == SLOT_EMPTY
+        finally:
+            close_shm(shm)
+        mailbox.close()
+
 
 class TestAuthTokenShm:
     """认证令牌共享内存读写测试"""
@@ -261,3 +371,4 @@ class TestAuthTokenShm:
     def test_cleanup_auth_shm_no_error(self):
         cleanup_auth_shm()
         cleanup_auth_shm()  # 幂等
+

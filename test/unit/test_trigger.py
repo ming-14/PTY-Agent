@@ -203,6 +203,99 @@ class TestTriggerMatcherCheck:
         assert tm.check(buf) is True
 
 
+class TestTriggerMatcherSnapshot:
+    """TriggerMatcher 两阶段匹配（prepare_snapshot + check_snapshot）测试"""
+
+    def test_prepare_returns_snapshot_on_match_candidate(self):
+        """锁内 prepare_snapshot 返回快照对象"""
+        tm = TriggerMatcher(decode_func=_decode_utf8)
+        tm.set(r">>>", buffer_length=0)
+        buf = _MockBuffer(b"output\n>>>")
+        snap = tm.prepare_snapshot(buf)
+        assert snap is not None
+        assert snap.raw == b"output\n>>>"
+        assert snap.pattern == ">>>"
+        assert snap.regex is not None
+        # 锁外匹配
+        assert tm.check_snapshot(snap) is True
+        assert tm.matched is True
+        assert tm.event.is_set()
+
+    def test_prepare_returns_none_no_pattern(self):
+        """无模式时 prepare_snapshot 返回 None"""
+        tm = TriggerMatcher(decode_func=_decode_utf8)
+        buf = _MockBuffer(b"data")
+        assert tm.prepare_snapshot(buf) is None
+
+    def test_prepare_returns_none_already_matched(self):
+        """已匹配时 prepare_snapshot 返回 None"""
+        tm = TriggerMatcher(decode_func=_decode_utf8)
+        tm.set(r">>>", buffer_length=0)
+        buf = _MockBuffer(b">>>")
+        snap = tm.prepare_snapshot(buf)
+        assert tm.check_snapshot(snap) is True
+        assert tm.prepare_snapshot(buf) is None
+
+    def test_prepare_fresh_waits_cycle(self):
+        """新鲜模式：read_cycle 未推进时 prepare_snapshot 返回 None"""
+        tm = TriggerMatcher(decode_func=_decode_utf8)
+        tm.set(r">>>", fresh=True, buffer_length=0)
+        tm.fresh_cycle = 0
+        buf = _MockBuffer(b">>>", read_cycle=0)
+        assert tm.prepare_snapshot(buf) is None
+        buf2 = _MockBuffer(b">>>", read_cycle=1)
+        snap = tm.prepare_snapshot(buf2)
+        assert snap is not None
+        assert tm.check_snapshot(snap) is True
+
+    def test_prepare_newline_blocks(self):
+        """换行策略：无新换行且非首次时 prepare_snapshot 返回 None"""
+        tm = TriggerMatcher(decode_func=_decode_utf8)
+        tm.set(r">>>", newline=True, buffer_length=0)
+        tm.newline_count = 0
+        tm._newline_first_ok = False
+        buf = _MockBuffer(b">>>")
+        assert tm.prepare_snapshot(buf) is None
+
+    def test_prepare_newline_allows_after_newline(self):
+        """换行策略：新换行后 prepare_snapshot 返回快照并可匹配"""
+        tm = TriggerMatcher(decode_func=_decode_utf8)
+        tm.set(r">>>", newline=True, buffer_length=0)
+        tm.newline_count = 0
+        buf = _MockBuffer(b"\n>>>")
+        snap = tm.prepare_snapshot(buf)
+        assert snap is not None
+        assert tm.check_snapshot(snap) is True
+
+    def test_check_snapshot_invalid_regex_substring(self):
+        """无效正则回退到子串匹配（check_snapshot 路径）"""
+        tm = TriggerMatcher(decode_func=_decode_utf8)
+        tm.set(r"[invalid", buffer_length=0)
+        buf = _MockBuffer(b"[invalid data")
+        snap = tm.prepare_snapshot(buf)
+        assert snap is not None
+        assert snap.regex is None
+        assert tm.check_snapshot(snap) is True
+
+    def test_check_snapshot_no_match(self):
+        """快照不匹配返回 False"""
+        tm = TriggerMatcher(decode_func=_decode_utf8)
+        tm.set(r"xxx", buffer_length=0)
+        buf = _MockBuffer(b"output\n>>>")
+        snap = tm.prepare_snapshot(buf)
+        assert snap is not None
+        assert tm.check_snapshot(snap) is False
+        assert tm.matched is False
+
+    def test_check_is_two_phase_wrapper(self):
+        """check() 是两阶段的包装：行为与原先一致"""
+        tm = TriggerMatcher(decode_func=_decode_utf8)
+        tm.set(r">>>", buffer_length=0)
+        buf = _MockBuffer(b"output\n>>>")
+        assert tm.check(buf) is True
+        assert tm.check(buf) is False  # 已匹配
+
+
 class TestTriggerMatcherIdleTimeout:
     """TriggerMatcher 静默超时测试"""
 
@@ -269,3 +362,4 @@ class TestTriggerMatcherClear:
         tm.set(">>>", idle_timeout=5.0, buffer_length=0)
         tm.clear()
         assert tm.idle_timeout is None
+

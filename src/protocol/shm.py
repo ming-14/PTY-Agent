@@ -41,10 +41,13 @@ _logger = logging.getLogger("pty-protocol")
 
 # ── 槽位状态 ──
 # 注意：新建共享内存区域为全零（b"\x00"），与释放后的状态一致
+# 状态机: EMPTY(0) → CLAIMED(4) → PENDING(1) → PROCESSING(2) → DONE(3) → 客户端 release → EMPTY(0)
+# CLAIMED 是客户端写字段前的临时占位，daemon 不处理 CLAIMED，只处理 PENDING。
 SLOT_EMPTY = b"\x00"
 SLOT_PENDING = b"1"
 SLOT_PROCESSING = b"2"
 SLOT_DONE = b"3"
+SLOT_CLAIMED = b"4"
 
 # ── 信息区布局（64 字节）─
 _INFO_PID_OFF = 0            # 8 字节 ASCII 十进制
@@ -140,9 +143,14 @@ class Mailbox:
 
     def acquire_slot(self, client_pid: int, req_name: str, resp_name: str,
                      token: str, seq: int) -> Optional[int]:
-        """抢占一个空槽位并注册请求
+        """跨进程原子抢占一个空槽位并注册请求
 
-        写后读验证（单字节写原子性）防止并发客户端同时抢占同一槽位。
+        抢占流程（单字节状态写原子性保证跨进程互斥）：
+          1. 扫描 EMPTY 槽位，原子写入 CLAIMED 状态
+          2. 写入归属 PID 字段（用于 H3 归属校验 + 孤儿回收）
+          3. 写入请求字段（req_name / resp_name / token / seq）
+          4. 验证状态仍为 CLAIMED 且 PID 归属自己 → 置 PENDING 返回
+          5. 验证失败（被其他进程抢走）→ 清空状态，重试下一个槽位
 
         Returns:
             槽位索引，信箱满时返回 None。
@@ -153,22 +161,37 @@ class Mailbox:
                 return None
             try:
                 for slot in range(MAILBOX_SLOT_COUNT):
-                    if _slot_state(shm, slot) == SLOT_EMPTY:
-                        base = slot * MAILBOX_SLOT_SIZE
-                        write_text(shm, base + _SLOT_PID_OFF, str(client_pid), 8)
-                        write_text(shm, base + _SLOT_REQNAME_OFF, req_name, 64)
-                        write_text(shm, base + _SLOT_RESPNAME_OFF, resp_name, 64)
-                        write_text(shm, base + _SLOT_TOKEN_OFF, token, 64)
-                        write_text(shm, base + _SLOT_SEQ_OFF, str(seq), 8)
-                        # 写后读验证：状态仍是 EMPTY 才置 PENDING
-                        if _slot_state(shm, slot) != SLOT_EMPTY:
-                            continue
-                        _set_slot_state(shm, slot, SLOT_PENDING)
-                        if _slot_state(shm, slot) == SLOT_PENDING:
-                            _logger.debug("mailbox: 槽位 %d 抢占成功 (pid=%d)", slot, client_pid)
-                            return slot
-                        # 验证失败：清空槽位，重试下一个
+                    if _slot_state(shm, slot) != SLOT_EMPTY:
+                        continue
+                    # 1) 原子占位：单字节写 CLAIMED（跨进程互斥的关键）
+                    _set_slot_state(shm, slot, SLOT_CLAIMED)
+                    if _slot_state(shm, slot) != SLOT_CLAIMED:
+                        continue  # 被其他进程先抢走
+                    # 2) 写入归属 PID 字段
+                    base = slot * MAILBOX_SLOT_SIZE
+                    write_text(shm, base + _SLOT_PID_OFF, str(client_pid), 8)
+                    # 验证：状态仍是 CLAIMED 且 PID 是自己
+                    if _slot_state(shm, slot) != SLOT_CLAIMED:
                         _set_slot_state(shm, slot, SLOT_EMPTY)
+                        continue
+                    if read_text(shm, base + _SLOT_PID_OFF, 8) != str(client_pid):
+                        _set_slot_state(shm, slot, SLOT_EMPTY)
+                        continue
+                    # 3) 写入请求字段
+                    write_text(shm, base + _SLOT_REQNAME_OFF, req_name, 64)
+                    write_text(shm, base + _SLOT_RESPNAME_OFF, resp_name, 64)
+                    write_text(shm, base + _SLOT_TOKEN_OFF, token, 64)
+                    write_text(shm, base + _SLOT_SEQ_OFF, str(seq), 8)
+                    # 4) 验证状态未变 → 置 PENDING 并返回
+                    if _slot_state(shm, slot) != SLOT_CLAIMED:
+                        _set_slot_state(shm, slot, SLOT_EMPTY)
+                        continue
+                    _set_slot_state(shm, slot, SLOT_PENDING)
+                    if _slot_state(shm, slot) == SLOT_PENDING:
+                        _logger.debug("mailbox: 槽位 %d 原子抢占成功 (pid=%d)", slot, client_pid)
+                        return slot
+                    # 5) 验证失败：清空后重试
+                    _set_slot_state(shm, slot, SLOT_EMPTY)
                 return None
             finally:
                 if self._shm is None:
@@ -252,15 +275,90 @@ class Mailbox:
                     close_shm(shm)
 
     def mark_done(self, slot: int):
-        """标记槽位为 DONE（处理完成）"""
+        """标记槽位为 DONE（处理完成）
+
+        仅在槽位仍为 PROCESSING（未被客户端释放）时写入 DONE，
+        防止客户端超时释放后槽位被复用导致的错误标记。
+        """
         shm = self._shm or open_shm(MMAP_MAILBOX_NAME, MAILBOX_SIZE)
         if shm is None:
             return
         try:
+            if _slot_state(shm, slot) == SLOT_PROCESSING:
+                _set_slot_state(shm, slot, SLOT_DONE)
+        finally:
+            if self._shm is None:
+                close_shm(shm)
+
+    def mark_done_owned(self, slot: int, resp_name: str):
+        """归属校验后标记槽位为 DONE
+
+        客户端超时后可能已 release_slot（置 EMPTY），槽位随后可能被
+        另一个客户端重新抢占。此时若 daemon 仍写 DONE，会把 DONE 标记
+        到新客户的槽位上，导致新客户 wait_done 立即为真却读到空响应。
+
+        仅当槽位仍为 PROCESSING（未被释放）且 resp_name 仍属于本次
+        请求（未被复用覆盖）时才写 DONE。
+
+        Args:
+            slot:      槽位索引。
+            resp_name: 本次请求的响应通道名（取自 get_slot_info）。
+        """
+        shm = self._shm or open_shm(MMAP_MAILBOX_NAME, MAILBOX_SIZE)
+        if shm is None:
+            return
+        try:
+            base = slot * MAILBOX_SLOT_SIZE
+            state = _slot_state(shm, slot)
+            if state != SLOT_PROCESSING:
+                _logger.debug("mailbox: 槽位 %d 非 PROCESSING(%s)，跳过 mark_done",
+                              slot, state)
+                return
+            cur_resp = read_text(shm, base + _SLOT_RESPNAME_OFF, 64)
+            if cur_resp != resp_name:
+                _logger.debug("mailbox: 槽位 %d resp_name 已变更，跳过 mark_done", slot)
+                return
             _set_slot_state(shm, slot, SLOT_DONE)
         finally:
             if self._shm is None:
                 close_shm(shm)
+
+    def reclaim_orphan_claimed(self, pid_exists) -> int:
+        """回收孤儿 CLAIMED 槽位（客户端在写字段前崩溃）
+
+        客户端在 acquire_slot 中先置 CLAIMED 再写字段，若在两步之间
+        崩溃，槽位会永久停留在 CLAIMED。daemon 定期扫描这些槽位，
+        若归属 PID 已不存在则重置为 EMPTY。
+
+        Args:
+            pid_exists: 可调用对象 pid_exists(pid) -> bool，判断进程是否存活。
+
+        Returns:
+            回收的槽位数。
+        """
+        shm = self._shm or open_shm(MMAP_MAILBOX_NAME, MAILBOX_SIZE)
+        if shm is None:
+            return 0
+        reclaimed = 0
+        try:
+            for slot in range(MAILBOX_SLOT_COUNT):
+                base = slot * MAILBOX_SLOT_SIZE
+                if _slot_state(shm, slot) != SLOT_CLAIMED:
+                    continue
+                pid_text = read_text(shm, base + _SLOT_PID_OFF, 8)
+                try:
+                    pid = int(pid_text) if pid_text else 0
+                except ValueError:
+                    pid = 0
+                if pid and pid_exists(pid):
+                    continue  # 客户端仍存活，可能正在写字段
+                _set_slot_state(shm, slot, SLOT_EMPTY)
+                reclaimed += 1
+                _logger.info("mailbox: 回收孤儿 CLAIMED 槽位 %d (pid=%s)", slot, pid_text)
+        finally:
+            if self._shm is None:
+                close_shm(shm)
+        return reclaimed
 
     def close(self):
         """关闭持有的共享内存引用"""

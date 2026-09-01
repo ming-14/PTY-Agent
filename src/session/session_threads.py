@@ -143,13 +143,18 @@ class SessionThreads:
                 "会话 '%s': reader got %d bytes: %r",
                 session_id, len(data), data[:80])
 
-            # 在 OutputBuffer 锁保护下完成：追加 → 计时 → 触发匹配
+            # 锁内：追加 → 计时 → 提取触发匹配快照（不执行耗时正则）
+            snapshot = None
             with out_buf.lock:
                 if not out_buf.append(data):
                     continue
                 trig_mat.on_data_appended(time.monotonic())
                 if trig_mat.has_pattern:
-                    trig_mat.check(out_buf)
+                    snapshot = trig_mat.prepare_snapshot(out_buf)
+
+            # 锁外：执行耗时正则匹配（避免阻塞缓冲区的读写）
+            if snapshot is not None:
+                trig_mat.check_snapshot(snapshot)
 
             # 更新 pty 引用（stop 后可能变为 None）
             pty = comp.pty_provider()
