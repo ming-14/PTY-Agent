@@ -1,6 +1,6 @@
 ---
 name: pty-agent
-description: Interactive CLI program proxy via subprocess or pseudo-terminal (PTY). Use when: (1) must maintain ongoing dialog with interactive programs (REPLs, debuggers, Servers) — send input and wait for specific prompts; (2) process may block, crash, or pop up GUI windows — need real-time state detection; (3) simulating user interaction tests. DO NOT use for: non-interactive scripts, web/HTTP API calls, GUI interfaces. If a plain script suffices, do not use this tool.
+description: "Interactive CLI program proxy via subprocess or pseudo-terminal (PTY). Use when: (1) must maintain ongoing dialog with interactive programs (REPLs, debuggers, Servers) — send input and wait for specific prompts; (2) process may block, crash, or pop up GUI windows — need real-time state detection; (3) simulating user interaction tests. DO NOT use for: non-interactive scripts, web/HTTP API calls, GUI interfaces. If a plain script suffices, do not use this tool."
 allowed-tools: Bash, Read, Write, Edit
 ---
 
@@ -75,7 +75,6 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
     - 注：**高效利用本程序的条件返回功能，及时根据对应程序的输出结果更新条件（特别是`-t`），灵活使用不同的返回条件**。不建议终端执行Sleep，不建议反复send后又read
 - `--idle-timeout <seconds>` 输出静默超时，程序在指定时间内不输出时触发条件
 - `--full` 返回终端全部数据（数据大，尽量用`--lines N`）
-- `--json-escaping` **JSON 转义模式**，将`<content>`进行JSON转义（`\\ \" \n \t \r \uXXX ...`），**建议在发送多行内容时使用**
 
 `<content>`末尾自动追加换行
 没有`--input`参数

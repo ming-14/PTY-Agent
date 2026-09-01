@@ -65,7 +65,6 @@ python app.py exec gdb -c "gdb -q test.exe" -t "(gdb)" --pty
 ```powershell
 python app.py send myid "print(1)" -t ">>>"
 python app.py send myid "c" --timeout 10                # 无触发条件，等待超时返回
-python app.py send myid "import os\nprint(os.name)" -t ">>>" --json-escaping
 ```
 
 ### read — 读取输出

@@ -235,17 +235,16 @@ class Client:
         full: bool = False,
         idle_timeout: Optional[float] = None,
         idle_after_first_output: bool = False,
-        json_escaping: bool = False,
     ):
-        _logger.info("cmd_send: id=%r trigger=%r timeout=%s json_escaping=%s",
-                     session_id, trigger, timeout, json_escaping)
+        _logger.info("cmd_send: id=%r trigger=%r timeout=%s",
+                     session_id, trigger, timeout)
         timeout, newline = self._apply_config_defaults(
             timeout=timeout, newline=newline,
         )
 
         msg = {
             "type": "send", "id": session_id,
-            "input": process_input(input_text, json_escaping=json_escaping),
+            "input": process_input(input_text),
             "newline": newline, "fresh": fresh, "full": full,
             "timeout": timeout,
         }

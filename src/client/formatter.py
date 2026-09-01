@@ -158,7 +158,7 @@ def _print_result(resp: dict):
     # first line: trigger + status
     first_line = " | ".join(trigger_parts + status_parts)
     if first_line or session_id:
-        safe_print(f"\n# ── session ────────────────────────")
+        safe_print("\n# ── session ────────────────────────")
         warning = resp.get("warning")
         if warning:
             safe_print(f"# ⚠ {warning}")
@@ -192,7 +192,7 @@ def _print_result(resp: dict):
 
     has_debug = processes or gui_windows
     if has_debug:
-        safe_print(f"\n# ── debug ────────────────────────")
+        safe_print("\n# ── debug ────────────────────────")
 
         # process tree（含名称）
         if processes:
@@ -227,7 +227,7 @@ def _print_result(resp: dict):
     if pending_events:
         has_crash = any(ev.get("type") == "process_crash" for ev in pending_events)
         if has_crash:
-            safe_print(f"\n# ════════════ process crashes ════════════")
+            safe_print("\n# ════════════ process crashes ════════════")
         else:
             safe_print(f"\n# ── events ({len(pending_events)}) ────────")
         for ev in pending_events:
@@ -235,14 +235,14 @@ def _print_result(resp: dict):
 
     # ── error message ──
     if error_message:
-        safe_print(f"\n# ── error ────────────────────────")
+        safe_print("\n# ── error ────────────────────────")
         for line in error_message.split("\n"):
             safe_print(f"# {line}")
 
     # ── offset ──
     output_offset = resp.get("output_offset")
     if output_offset is not None and output_offset > 0:
-        safe_print(f"\n# ── offset ────────────────────────")
+        safe_print("\n# ── offset ────────────────────────")
         safe_print(f"# {output_offset}")
 
 

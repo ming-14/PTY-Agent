@@ -174,8 +174,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help="仅在程序首次输出后才开始检测静默超时（初始不检测）")
     p_send.add_argument("--full", action="store_true", default=False,
                         help="返回全部累积输出而非仅新输出")
-    p_send.add_argument("--json-escaping", action="store_true", default=False,
-                        help="启用 JSON 转义解码（\\n→换行 \\t→制表符等）；默认 raw 模式原样发送")
 
     # read
     p_read = sub.add_parser("read", help="读取会话终端输出（无需触发条件）")
@@ -449,7 +447,6 @@ def main():
                 full=args.full,
                 idle_timeout=args.idle_timeout,
                 idle_after_first_output=args.idle_after_first_output,
-                json_escaping=args.json_escaping,
             )
         elif args.subcmd == "read":
             client.cmd_read(

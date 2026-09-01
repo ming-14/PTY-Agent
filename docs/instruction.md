@@ -19,7 +19,6 @@ pty-agent/
 │   ├── conftest.py                   # pytest 配置
 │   ├── unit/                         # 单元测试（隔离测试单一模块）
 │   ├── integration/                  # 集成测试（多模块协作）
-│   └── test_gdb_full/                # GDB 完整端到端集成测试
 ├── app.py        # 快捷入口脚本
 └── logs/         # 运行时日志目录（daemon.log / client.log）
 ```
@@ -95,9 +94,6 @@ python -m pytest test/unit/ -v
 
 # 仅集成测试
 python -m pytest test/integration/ -v
-
-# GDB 完整端到端集成测试（需系统 PATH 中 gdb.exe + test_debug.exe）
-python test/test_gdb_full/test_gdb_full.py
 ```
 
 测试结构详见 [`测试规范.md`](测试规范.md)。
