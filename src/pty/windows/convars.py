@@ -211,7 +211,8 @@ JOBOBJECT_BASIC_PROCESS_ID_LIST = type(
     {"_fields_": [
         ("NumberOfAssignedProcesses", W.DWORD),
         ("NumberOfProcessIdsInList",  W.DWORD),
-        ("ProcessIdList",             W.DWORD * _MAX_JOB_PIDS),
+        # ULONG_PTR = 8 字节（64位），DWORD 会导致 PID 列表错位
+        ("ProcessIdList",             ctypes.c_size_t * _MAX_JOB_PIDS),
     ]},
 )
 
