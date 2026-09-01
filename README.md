@@ -87,18 +87,6 @@ Traditional agents can't run `ssh`, `gdb`, `cdb`, or any program that **asks you
 
 Compilation is required. **Download the pre-built Release package**, or clone and run `build.py`.
 
-One-line install via the script (auto-detects platform, fetches latest release, installs as a Skill):
-
-**Windows (PowerShell):**
-```powershell
-irm https://raw.githubusercontent.com/ming-14/PTY-Agent/main/install.ps1 | iex
-```
-
-**Linux / macOS:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/ming-14/PTY-Agent/main/install.sh | bash
-```
-
 ## Architecture
 
 ```mermaid
@@ -195,20 +183,6 @@ Except for `src\web\static\` and `web_rime\`, everything else is MIT.
 ## 安装
 
 该 Skill 需要编译，**请下载 Release 的预编译包**，或者 clone 之后使用`build.py`编译
-
-一行安装（自动判断平台、拉取最新 Release、安装为 Skill）：
-
-Windows（PowerShell）：
-
-```powershell
-irm https://raw.githubusercontent.com/ming-14/PTY-Agent/main/install.ps1 | iex
-```
-
-Linux / macOS：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ming-14/PTY-Agent/main/install.sh | bash
-```
 
 ## 它是怎么工作的
 
