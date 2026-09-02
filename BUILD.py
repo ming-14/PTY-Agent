@@ -444,14 +444,12 @@ def stage_clean_windows_sandbox_archives():
 
 
 def _win_sandbox_platform():
-    """返回当前平台对应的 wheel 平台标签（win_amd64 / win_arm64 / win32）。"""
+    """返回当前平台对应的 wheel 平台标签（win_amd64 / win_arm64）。"""
     machine = platform.machine().lower()
     if machine in ("amd64", "x86_64"):
         return "win_amd64"
     if machine in ("arm64", "aarch64"):
         return "win_arm64"
-    if machine in ("x86", "i386", "i686"):
-        return "win32"
     return None
 
 
@@ -486,7 +484,7 @@ def step_build_win_sandbox():
     架构映射：
       - AMD64 → win_amd64
       - ARM64 → win_arm64
-      - x86   → win32（仅 win_sandbox，nanobind-backend 无 win32 wheel）
+      （x86 不支持：nanobind-backend 无 win32 wheel，运行期不可用）
     """
     plat = _win_sandbox_platform()
     if not plat:
