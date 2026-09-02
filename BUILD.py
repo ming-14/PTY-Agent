@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """PTY-Agent 发布构建脚本（Python，需 3.8+）。
 
-功能：重建发布目录 pty-agent，构建 rime-plugin / fastscreen / win-sandbox /
-wezterm-py，下载 aichat / ripgrep / UltraVNC / terminal_injector 并统一放入发布目录。
+功能：重建发布目录 pty-agent，构建 rime-plugin / fastscreen / wezterm-py，
+下载 win-sandbox / aichat / ripgrep / UltraVNC / terminal_injector 并统一放入发布目录。
 
 交互行为：任意步骤执行中按 Ctrl+C 只跳过当前步骤并继续后续步骤，
 不会终止整个构建；步骤失败也只告警，不中断后续步骤。
@@ -13,7 +13,7 @@ wezterm-py，下载 aichat / ripgrep / UltraVNC / terminal_injector 并统一放
     GITHUB_API_MIRROR          - GitHub API 镜像（默认 https://api.github.com）
     DOWNLOAD_AICHAT            - 是否下载 aichat（true/false，默认 true）
     BUILD_FASTSCREEN           - 是否构建 fastscreen.dll（默认 true）
-    BUILD_WINSANDBOX           - 是否构建 win_sandbox_native.pyd（默认 true）
+    BUILD_WINSANDBOX           - 是否下载 win-sandbox wheel（默认 true）
     BUILD_WEZTERMPY            - 是否构建 wezterm-py（默认 true）
     DOWNLOAD_ULTRAVNC          - 是否下载 UltraVNC（默认 true）
     DOWNLOAD_TERMINALINJECTOR  - 是否下载 terminal_injector（默认 true）
@@ -243,19 +243,15 @@ def step_clean_platform_artifacts():
                 if stale.is_file():
                     stale.unlink()
                     logger.info("已删除跨平台残留: %s", stale)
-    # Windows 专属组件目录：仅删除构建/下载产物，保留 git 跟踪的源文件。
-    # ultravnc/terminal_injector 整体为下载产物；win_sandbox 仅 _native/ 下
-    # 的 pyd 是构建产物（__init__.py 等 py 文件为仓库跟踪的 vendored 包装）
+    # Windows 专属组件目录：仅删除下载产物，保留 git 跟踪的源文件。
+    # ultravnc/terminal_injector 整体为下载产物；win_sandbox 和
+    # nanobind_backend 也是下载产物（wheel 解包，目录整体可删）
     if not IS_WINDOWS:
-        for name in ("ultravnc", "terminal_injector"):
+        for name in ("ultravnc", "terminal_injector", "win_sandbox", "nanobind_backend"):
             stale_dir = SCRIPT_DIR / "bin" / name
             if stale_dir.is_dir():
                 shutil.rmtree(stale_dir)
                 logger.info("已删除 Windows 专属残留目录: %s", stale_dir)
-        native_dir = SCRIPT_DIR / "bin" / "win_sandbox" / "_native"
-        if native_dir.is_dir():
-            shutil.rmtree(native_dir)
-            logger.info("已删除 Windows 专属残留目录: %s", native_dir)
         # Unix 平台删除 bin/ 根残留的 Windows pyd 与 fastscreen.dll
         for f in SCRIPT_DIR.glob("bin/win_sandbox_native*.pyd"):
             f.unlink(missing_ok=True)
@@ -432,52 +428,138 @@ def step_build_fastscreen():
     logger.info("[fastscreen] 编译完成")
 
 
-def step_build_win_sandbox():
-    """编译 win_sandbox_native.pyd（pybind11 + Ninja；vcvars 环境经临时 .cmd 注入）。"""
-    ws_source = SCRIPT_DIR / "sandbox" / "src"
-    ws_build = ws_source / "build"
-    # 清理 bin/ 根过期的旧 pyd，避免构建产物与旧文件混用
-    old_pyd = SCRIPT_DIR / "bin" / "win_sandbox_native.cp311-win_amd64.pyd"
-    if old_pyd.is_file():
-        old_pyd.unlink()
-        logger.info("已删除 bin/ 根过期 pyd: %s", old_pyd.name)
-    cmake = shutil.which("cmake")
-    if not cmake:
-        logger.warning("[win-sandbox] cmake 未找到，跳过编译")
-        return
-    vcvars = find_vcvars()
-    if not vcvars:
-        logger.warning("[win-sandbox] 未找到 vcvars64.bat，跳过编译")
-        return
-    # CMakeCache 内嵌旧路径会导致重建失败，发布构建每次全量生成
-    if ws_build.exists():
-        shutil.rmtree(ws_build)
-    cmd_file = write_cmd_wrapper("win_sandbox", [
-        'call "{}" >nul 2>&1'.format(vcvars),
-        'cmake -S "{}" -B "{}" -G Ninja -DCMAKE_BUILD_TYPE=Release'.format(ws_source, ws_build),
-        'cmake --build "{}"'.format(ws_build),
-    ])
+def stage_clean_windows_sandbox_archives():
+    """清理上次构建残留的 win-sandbox 解包目录。"""
+    sandbox_dir = SCRIPT_DIR / "bin" / "win_sandbox"
+    if sandbox_dir.is_dir():
+        shutil.rmtree(sandbox_dir)
+        logger.info("[win-sandbox] 清理旧目录: %s", sandbox_dir)
+    nb_dir = SCRIPT_DIR / "bin" / "nanobind_backend"
+    if nb_dir.is_dir():
+        shutil.rmtree(nb_dir)
+        logger.info("[win-sandbox] 清理旧目录: %s", nb_dir)
+    for f in SCRIPT_DIR.glob("bin/win_sandbox_native*.pyd"):
+        f.unlink(missing_ok=True)
+        logger.info("[win-sandbox] 删除过期 pyd: %s", f)
+
+
+def _win_sandbox_platform():
+    """返回当前平台对应的 wheel 平台标签（win_amd64 / win_arm64 / win32）。"""
+    machine = platform.machine().lower()
+    if machine in ("amd64", "x86_64"):
+        return "win_amd64"
+    if machine in ("arm64", "aarch64"):
+        return "win_arm64"
+    if machine in ("x86", "i386", "i686"):
+        return "win32"
+    return None
+
+
+def _pypi_wheel_url(package, py_tag, plat):
+    """查询 PyPI 上匹配 Python 标签与平台的最新 wheel URL。
+
+    Returns:
+        (url, filename) 或 (None, None)
+    """
+    url = "https://pypi.org/pypi/{}/json".format(package)
+    request = urllib.request.Request(url, headers={"Accept": "application/json"})
     try:
-        rc = run_cmd(["cmd", "/c", str(cmd_file)])
+        with urllib.request.urlopen(request, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except BaseException as exc:
+        logger.warning("[%s] PyPI 查询失败: %s", package, exc)
+        return None, None
+    version = data["info"]["version"]
+    for f in data["releases"].get(version, []):
+        fn = f["filename"]
+        if fn.endswith("-{}-{}.whl".format(py_tag, plat)):
+            return f["url"], fn
+    return None, None
+
+
+def step_build_win_sandbox():
+    """下载 win_sandbox wheel（GitHub Releases）+ nanobind-backend wheel（PyPI），按架构自动选。
+
+    二者均为沙箱核心组件：win_sandbox 是 abi3 扩展（Python 3.10+），
+    nanobind-backend 是 split mode 运行期必需的后端模块。
+
+    架构映射：
+      - AMD64 → win_amd64
+      - ARM64 → win_arm64
+      - x86   → win32（仅 win_sandbox，nanobind-backend 无 win32 wheel）
+    """
+    plat = _win_sandbox_platform()
+    if not plat:
+        logger.warning("[win-sandbox] 不支持的平台架构: %s，跳过下载", platform.machine())
+        return
+
+    # —— 0. 清理旧产物 — —
+    stage_clean_windows_sandbox_archives()
+
+    py_tag = "cp{}{}".format(sys.version_info.major, sys.version_info.minor)
+
+    # —— 1. 下载 win_sandbox wheel（从 GitHub Releases） ——
+    try:
+        tag = _latest_release_tag("ming-14/win-sandbox")
+    except BaseException as exc:
+        logger.warning("[win-sandbox] 查询最新 release 失败: %s", exc)
+        return
+    ws_version = tag[1:] if tag.startswith("v") else tag
+    ws_wheel_name = "win_sandbox-{}-cp310-abi3-{}.whl".format(ws_version, plat)
+    ws_url_git = "https://github.com/ming-14/win-sandbox/releases/download/{}/{}".format(tag, ws_wheel_name)
+    archive_path = None
+    extract_dir = None
+    ws_ok = False
+    try:
+        archive_path = _download_to_temp(_mirror_url(ws_url_git), label="win-sandbox")
+        extract_dir = _extract_to_temp(archive_path, "win-sandbox")
+        src = extract_dir / "win_sandbox"
+        if not src.is_dir():
+            logger.warning("[win-sandbox] wheel 中未找到 win_sandbox 包目录，结构可能已更改")
+        else:
+            dst = SCRIPT_DIR / "bin" / "win_sandbox"
+            shutil.copytree(str(src), str(dst))
+            logger.info("[win-sandbox] 已下载: %s → %s", ws_wheel_name, dst)
+            ws_ok = True
+    except BaseException as exc:
+        logger.warning("[win-sandbox] 下载失败: %s", exc)
     finally:
-        cmd_file.unlink(missing_ok=True)
-    if rc != 0:
-        logger.warning("[win-sandbox] 编译失败（exit=%s）", rc)
-        return
-    pyd = next((p for p in ws_build.rglob("win_sandbox_native*.pyd") if p.is_file()), None)
-    if not pyd:
-        logger.warning("[win-sandbox] 未找到编译产物 .pyd")
-        return
-    # 产物落入源目录基础包 bin/win_sandbox，由最后的复制基础包步骤统一打包
-    pyd_dst_dir = SCRIPT_DIR / "bin" / "win_sandbox" / "_native"
-    pyd_dst_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(str(pyd), str(pyd_dst_dir))
-    # vendored python 包装：构建产物目录优先，用 sandbox 下的 py 源覆盖保证与 pyd 版本一致
-    py_src = ws_source / "python" / "win_sandbox"
-    if py_src.is_dir():
-        for py_file in py_src.glob("*.py"):
-            shutil.copy2(str(py_file), str(SCRIPT_DIR / "bin" / "win_sandbox" / py_file.name))
-    logger.info("[win-sandbox] 编译完成: %s", pyd.name)
+        if extract_dir is not None:
+            shutil.rmtree(extract_dir, ignore_errors=True)
+        if archive_path is not None:
+            archive_path.unlink(missing_ok=True)
+
+    # —— 2. 下载 nanobind-backend（从 PyPI，split mode 运行期必需） ——
+    nb_ok = False
+    try:
+        nb_url, nb_fn = _pypi_wheel_url("nanobind-backend", py_tag, plat)
+        if not nb_url:
+            logger.warning("[nanobind-backend] PyPI 上无匹配 wheel: %s-%s，跳过", py_tag, plat)
+        else:
+            archive_path = _download_to_temp(nb_url, label="nanobind-backend")
+            extract_dir = _extract_to_temp(archive_path, "nanobind-backend")
+            src = extract_dir / "nanobind_backend"
+            if not src.is_dir():
+                logger.warning("[nanobind-backend] wheel 中未找到 nanobind_backend 包")
+            else:
+                dst = SCRIPT_DIR / "bin" / "nanobind_backend"
+                shutil.copytree(str(src), str(dst))
+                logger.info("[nanobind-backend] 已下载: %s → %s", nb_fn, dst)
+                nb_ok = True
+            if extract_dir is not None:
+                shutil.rmtree(extract_dir, ignore_errors=True)
+            if archive_path is not None:
+                archive_path.unlink(missing_ok=True)
+    except BaseException as exc:
+        logger.warning("[nanobind-backend] 下载失败: %s", exc)
+
+    # —— 3. 最终状态汇总 ——
+    if ws_ok and nb_ok:
+        logger.info("[win-sandbox] 下载完成: win_sandbox + nanobind-backend 均已就绪")
+    elif ws_ok:
+        logger.warning("[win-sandbox] win_sandbox 已就绪，但 nanobind-backend 缺失（x86 或不支持该 Python 版本）→ 沙箱在运行时可能不可用")
+    else:
+        logger.warning("[win-sandbox] 下载失败，跳过后继打包")
 
 
 def _warn_wezterm_py_missing(detail: str) -> None:
@@ -882,9 +964,9 @@ def main():
         else:
             logger.info("[fastscreen] 跳过构建（BUILD_FASTSCREEN=false 或 -NoFastscreen）")
         if _enabled(args.NoWinsandbox, "BUILD_WINSANDBOX"):
-            steps.append(("编译 win_sandbox_native.pyd", step_build_win_sandbox))
+            steps.append(("下载 win-sandbox + nanobind-backend", step_build_win_sandbox))
         else:
-            logger.info("[win-sandbox] 跳过编译（BUILD_WINSANDBOX=false 或 -NoWinsandbox）")
+            logger.info("[win-sandbox] 跳过下载（BUILD_WINSANDBOX=false 或 -NoWinsandbox）")
         if _enabled(args.NoUltravnc, "DOWNLOAD_ULTRAVNC"):
             steps.append(("下载 UltraVNC", step_download_ultravnc))
         else:
