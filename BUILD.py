@@ -63,33 +63,6 @@ CONFIG = {"mirror": "", "api_mirror": "https://api.github.com"}
 IS_WINDOWS = sys.platform == "win32"
 
 
-def _find_cargo() -> Optional[Path]:
-    """定位 cargo：优先 PATH，回退 rustup 默认安装位置（~/.cargo/bin）。"""
-    cargo = shutil.which("cargo")
-    if cargo:
-        return Path(cargo)
-    home = Path(os.environ.get("USERPROFILE") or Path.home())
-    exe = "cargo.exe" if IS_WINDOWS else "cargo"
-    cand = home / ".cargo" / "bin" / exe
-    return cand if cand.is_file() else None
-
-
-def _ensure_maturin() -> bool:
-    """检查 python -m maturin 可用；缺失时自动 pip 安装。"""
-    try:
-        rc = run_cmd([sys.executable, "-m", "maturin", "--version"])
-        if rc == 0:
-            return True
-    except Exception:
-        pass
-    logger.info("[wezterm-py] maturin 未安装，正在安装...")
-    try:
-        rc = run_cmd([sys.executable, "-m", "pip", "install", "maturin>=1.0,<2.0"])
-        return rc == 0
-    except Exception:
-        return False
-
-
 def _tool_triple(tool: str) -> str:
     """按当前平台与 CPU 架构返回发布资产的 target triple。
 
@@ -151,51 +124,6 @@ def run_step(name, step):
         logger.warning("[build] 收到 Ctrl+C，跳过当前步骤: %s", name)
     except Exception as exc:
         logger.warning("[build] 步骤异常: %s - %s", name, exc)
-
-
-def find_vcvars():
-    """定位 vcvars64.bat：优先 vswhere 探测实际安装，回退常见版本/版本目录路径。"""
-    vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / \
-        "Microsoft Visual Studio/Installer/vswhere.exe"
-    if vswhere.is_file():
-        try:
-            result = subprocess.run(
-                [str(vswhere), "-latest", "-products", "*",
-                 "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-                 "-property", "installationPath"],
-                capture_output=True, text=True, timeout=60)
-        except (subprocess.TimeoutExpired, OSError):
-            result = None
-        if result and result.returncode == 0:
-            candidate = Path(result.stdout.strip()) / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
-            if candidate.is_file():
-                return candidate
-    pf = os.environ.get("ProgramFiles", r"C:\Program Files")
-    candidates = []
-    # 版本目录两种命名并存：VS 2019/2022 用年份，VS 2026 用主版本号（18）
-    for version in ("18", "2022", "17", "2019"):
-        for edition in ("Community", "Professional", "Enterprise", "BuildTools", "Preview"):
-            candidates.append(pf / Path("Microsoft Visual Studio") / version / edition /
-                              "VC" / "Auxiliary" / "Build" / "vcvars64.bat")
-    return next((p for p in candidates if p.is_file()), None)
-
-
-def write_cmd_wrapper(prefix, lines):
-    """写临时 .cmd 脚本：vcvars 环境注入/跨进程环境配置只能经 cmd 执行。
-
-    cmd 按 ANSI 代码页（系统 ACP，简中为 GBK）逐行解析 .cmd，UTF-8 写入会让
-    非 ASCII 路径（如中文用户名）乱码；故按 ACP 编码，无法表示时回退 UTF-8 并告警。
-    """
-    cmd_file = Path(tempfile.gettempdir()) / "{}_{}.cmd".format(prefix, uuid.uuid4().hex[:8])
-    content = "@echo off\nchcp 65001 >nul\n" + "\n".join(lines) + "\nexit /b %errorlevel%\n"
-    encoding = "cp{}".format(ctypes.windll.kernel32.GetACP()) if IS_WINDOWS else "utf-8"
-    try:
-        content.encode(encoding)
-    except (UnicodeEncodeError, LookupError):
-        logger.warning("[cmd] 路径含 %s 无法表示的字符，回退 UTF-8 写入 %s", encoding, cmd_file)
-        encoding = "utf-8"
-    cmd_file.write_text(content, encoding=encoding)
-    return cmd_file
 
 
 # ===================== 基础包与清理步骤 =====================
@@ -574,10 +502,10 @@ def step_build_win_sandbox():
         logger.warning("[win-sandbox] 下载失败，跳过后继打包")
 
 
-def _warn_wezterm_py_missing(detail: str) -> None:
-    """wezterm-py 缺失告警：PTY 后端为必备基本包，发布目录必须携带其二进制。"""
+def _warn_pywezterm_missing(detail: str) -> None:
+    """pywezterm 缺失告警：PTY 后端为必备基本包，发布目录必须携带其二进制。"""
     logger.warning(
-        "[wezterm-py] %s；wezterm-py 为必备基本包（PTY 后端），"
+        "[pywezterm] %s；pywezterm 为必备基本包（PTY 后端），"
         "发布目录必须携带 bin/pywezterm 二进制", detail)
 
 
@@ -640,7 +568,7 @@ def step_download_wezterm_py():
 
     plat = _pywezterm_platform()
     if not plat:
-        _warn_wezterm_py_missing("无法确定当前平台标签（{}-{}），跳过".format(
+        _warn_pywezterm_missing("无法确定当前平台标签（{}-{}），跳过".format(
             sys.platform, platform.machine()))
         return
 
@@ -661,7 +589,7 @@ def step_download_wezterm_py():
     try:
         tag = _latest_release_tag("ming-14/pywezterm")
     except BaseException as exc:
-        _warn_wezterm_py_missing("查询最新 release 失败: %s" % exc)
+        _warn_pywezterm_missing("查询最新 release 失败: %s" % exc)
         return
     version = tag[1:] if tag.startswith("v") else tag
     whl_name = "pywezterm-{}-cp38-abi3-{}.whl".format(version, plat)
@@ -674,7 +602,7 @@ def step_download_wezterm_py():
         extract_dir = _extract_to_temp(archive_path, "pywezterm")
         pkg_src = extract_dir / "pywezterm"
         if not pkg_src.is_dir():
-            _warn_wezterm_py_missing("wheel 中未找到 pywezterm 包（%s），结构可能已更改" % whl_name)
+            _warn_pywezterm_missing("wheel 中未找到 pywezterm 包（%s），结构可能已更改" % whl_name)
             return
         # pywezterm 落入源目录基础包 bin/pywezterm，由复制基础包步骤统一打包
         pkg_dst.parent.mkdir(parents=True, exist_ok=True)
@@ -690,7 +618,7 @@ def step_download_wezterm_py():
             return
         logger.info("[pywezterm] 已下载: %s -> bin\\pywezterm", whl_name)
     except BaseException as exc:
-        _warn_wezterm_py_missing("下载失败: %s" % exc)
+        _warn_pywezterm_missing("下载失败: %s" % exc)
     finally:
         if extract_dir is not None:
             shutil.rmtree(extract_dir, ignore_errors=True)
@@ -1004,9 +932,9 @@ def main():
         logger.info("[fastscreen/win-sandbox/ultravnc/terminal_injector] Unix 平台跳过（Windows 专属组件）")
 
     if _enabled(args.NoWeztermPy, "BUILD_WEZTERMPY"):
-        steps.append(("编译 wezterm-py", step_build_wezterm_py))
+        steps.append(("下载 pywezterm（PTY 后端）", step_download_wezterm_py))
     else:
-        _warn_wezterm_py_missing("跳过编译（BUILD_WEZTERMPY=false 或 -NoWeztermPy）")
+        _warn_pywezterm_missing("跳过下载（BUILD_WEZTERMPY=false 或 -NoWeztermPy）")
 
     if _enabled(args.NoAichat, "DOWNLOAD_AICHAT"):
         steps.append(("下载 aichat", step_download_aichat))
@@ -1040,3 +968,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
