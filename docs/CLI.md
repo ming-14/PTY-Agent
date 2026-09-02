@@ -1572,7 +1572,7 @@ python BUILD.py [选项]
 | `-NoAichat`                       | 跳过 aichat 下载                              |
 | `-NoFastscreen`                   | 跳过 fastscreen.dll 下载（Windows 专属）      |
 | `-NoWinsandbox`                   | 跳过 win_sandbox_native.pyd 编译（Windows 专属） |
-| `-NoWeztermPy`                    | 跳过 wezterm-py 编译                          |
+| `-NoWeztermPy`                    | 跳过 pywezterm 下载（PTY 后端）              |
 | `-NoUltravnc`                     | 跳过 UltraVNC 下载（Windows 专属）            |
 | `-NoTerminalInjector`             | 跳过 terminal_injector 下载（Windows 专属）   |
 | `-NoRime`                         | 跳过 rime-plugin 构建                         |
@@ -1590,7 +1590,7 @@ python BUILD.py [选项]
 | `DOWNLOAD_AICHAT`          | `true`                    | 是否下载 aichat         |
 | `BUILD_FASTSCREEN`         | `true`                    | 是否下载 fastscreen.dll |
 | `BUILD_WINSANDBOX`         | `true`                    | 是否编译 win_sandbox_native.pyd |
-| `BUILD_WEZTERMPY`          | `true`                    | 是否编译 wezterm-py     |
+| `BUILD_WEZTERMPY`          | `true`                    | 是否下载 pywezterm（PTY 后端） |
 | `DOWNLOAD_ULTRAVNC`        | `true`                    | 是否下载 UltraVNC       |
 | `DOWNLOAD_TERMINALINJECTOR`| `true`                    | 是否下载 terminal_injector |
 | `BUILD_RIME`               | `true`                    | 是否构建 rime-plugin    |
@@ -1603,7 +1603,7 @@ python BUILD.py [选项]
 2. 构建 rime-plugin（`web_rime/plugin`，npm run build，产物落入 `src/web/static/vendor/rime/`）
 3. 从 GitHub Releases 下载 `fastscreen.dll`（按当前平台架构 x86_64/x86/arm64，走镜像），产物落入 `bin/fastscreencore/`
 4. 用 cmake + Ninja + vcvars64 编译 `win_sandbox_native.pyd`（`sandbox/src`，pybind11），产物落入 `bin/win_sandbox/_native/`
-5. 用 maturin + vcvars64 + cargo 编译 wezterm-py，解包 wheel 落入 `bin/pywezterm/`
+5. 从 GitHub Releases 下载 pywezterm wheel（按当前平台架构，走镜像），解包 wheel 落入 `bin/pywezterm/`
 6. 从 `sigoden/aichat` releases 下载 `aichat.exe` 到 ai 插件目录 `config/plugins/ai/bin/`
 7. 从 `BurntSushi/ripgrep` releases 下载 `rg`（按系统架构 x86_64/aarch64）到 `bin/rg/`
 8. 下载 `UltraVNC_1824.zip`（按 x64/x86 架构）到 `bin/ultravnc/`
@@ -1780,7 +1780,7 @@ app.py exec sid -c "terminal_injector.exe --mediator --target-pid $pid" \
 | `DOWNLOAD_AICHAT`          | 是否下载 aichat（默认 true）                  |
 | `BUILD_FASTSCREEN`         | 是否下载 fastscreen.dll（默认 true）          |
 | `BUILD_WINSANDBOX`         | 是否编译 win_sandbox_native.pyd（默认 true）  |
-| `BUILD_WEZTERMPY`          | 是否编译 wezterm-py（默认 true）              |
+| `BUILD_WEZTERMPY`          | 是否下载 pywezterm（PTY 后端，默认 true）     |
 | `DOWNLOAD_ULTRAVNC`        | 是否下载 UltraVNC（默认 true）                |
 | `DOWNLOAD_TERMINALINJECTOR`| 是否下载 terminal_injector（默认 true）       |
 | `BUILD_RIME`               | 是否构建 rime-plugin（默认 true）             |
