@@ -1563,14 +1563,14 @@ python app.py exec s1 -c "bash"
 python BUILD.py [选项]
 ```
 
-发布构建脚本（Python，需 3.8+）。重建发布目录 `pty-agent/`，构建 fastscreen / sandbox（win_sandbox_native.pyd）/ wezterm-py，并下载 aichat / ripgrep / UltraVNC / terminal_injector / MapleMono 字体。构建/下载产物统一先落入源目录基础包（`bin/`、`src/web/static/vendor/rime/`、`src/assets/fonts/`），最后整体复制进发布目录并打包 zip。
+发布构建脚本（Python，需 3.8+）。重建发布目录 `pty-agent/`，下载 fastscreen / sandbox（win_sandbox_native.pyd）/ wezterm-py，并下载 aichat / ripgrep / UltraVNC / terminal_injector / MapleMono 字体。构建/下载产物统一先落入源目录基础包（`bin/`、`src/web/static/vendor/rime/`、`src/assets/fonts/`），最后整体复制进发布目录并打包 zip。
 
 **选项：**
 
 | 选项                              | 说明                                          |
 | --------------------------------- | --------------------------------------------- |
 | `-NoAichat`                       | 跳过 aichat 下载                              |
-| `-NoFastscreen`                   | 跳过 fastscreen.dll 编译（Windows 专属）      |
+| `-NoFastscreen`                   | 跳过 fastscreen.dll 下载（Windows 专属）      |
 | `-NoWinsandbox`                   | 跳过 win_sandbox_native.pyd 编译（Windows 专属） |
 | `-NoWeztermPy`                    | 跳过 wezterm-py 编译                          |
 | `-NoUltravnc`                     | 跳过 UltraVNC 下载（Windows 专属）            |
@@ -1588,7 +1588,7 @@ python BUILD.py [选项]
 | `GITHUB_MIRROR`            | `""`                      | GitHub 下载镜像前缀     |
 | `GITHUB_API_MIRROR`        | `https://api.github.com`  | GitHub API 镜像         |
 | `DOWNLOAD_AICHAT`          | `true`                    | 是否下载 aichat         |
-| `BUILD_FASTSCREEN`         | `true`                    | 是否编译 fastscreen.dll |
+| `BUILD_FASTSCREEN`         | `true`                    | 是否下载 fastscreen.dll |
 | `BUILD_WINSANDBOX`         | `true`                    | 是否编译 win_sandbox_native.pyd |
 | `BUILD_WEZTERMPY`          | `true`                    | 是否编译 wezterm-py     |
 | `DOWNLOAD_ULTRAVNC`        | `true`                    | 是否下载 UltraVNC       |
@@ -1601,7 +1601,7 @@ python BUILD.py [选项]
 
 1. 清空并重建发布目录 `pty-agent/`
 2. 构建 rime-plugin（`web_rime/plugin`，npm run build，产物落入 `src/web/static/vendor/rime/`）
-3. 用 cmake + `Visual Studio 18 2026` x64 编译 `fastscreen.dll`，产物落入 `bin/fastscreencore/`
+3. 从 GitHub Releases 下载 `fastscreen.dll`（按当前平台架构 x86_64/x86/arm64，走镜像），产物落入 `bin/fastscreencore/`
 4. 用 cmake + Ninja + vcvars64 编译 `win_sandbox_native.pyd`（`sandbox/src`，pybind11），产物落入 `bin/win_sandbox/_native/`
 5. 用 maturin + vcvars64 + cargo 编译 wezterm-py，解包 wheel 落入 `bin/pywezterm/`
 6. 从 `sigoden/aichat` releases 下载 `aichat.exe` 到 ai 插件目录 `config/plugins/ai/bin/`
@@ -1778,7 +1778,7 @@ app.py exec sid -c "terminal_injector.exe --mediator --target-pid $pid" \
 | `GITHUB_MIRROR`            | GitHub 下载镜像                               |
 | `GITHUB_API_MIRROR`        | GitHub API 镜像（默认 `https://api.github.com`） |
 | `DOWNLOAD_AICHAT`          | 是否下载 aichat（默认 true）                  |
-| `BUILD_FASTSCREEN`         | 是否编译 fastscreen.dll（默认 true）          |
+| `BUILD_FASTSCREEN`         | 是否下载 fastscreen.dll（默认 true）          |
 | `BUILD_WINSANDBOX`         | 是否编译 win_sandbox_native.pyd（默认 true）  |
 | `BUILD_WEZTERMPY`          | 是否编译 wezterm-py（默认 true）              |
 | `DOWNLOAD_ULTRAVNC`        | 是否下载 UltraVNC（默认 true）                |
