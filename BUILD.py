@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """PTY-Agent 发布构建脚本（Python，需 3.8+）。
 
-功能：重建发布目录 pty-agent，构建 rime-plugin / wezterm-py，
-下载 win-sandbox / aichat / ripgrep / UltraVNC / terminal_injector 并统一放入发布目录。
+功能：重建发布目录 pty-agent，构建 rime-plugin，
+下载 wezterm-py / win-sandbox / fastscreen / aichat / ripgrep / UltraVNC / terminal_injector 并统一放入发布目录。
 
 交互行为：任意步骤执行中按 Ctrl+C 只跳过当前步骤并继续后续步骤，
 不会终止整个构建；步骤失败也只告警，不中断后续步骤。
@@ -338,7 +338,7 @@ def _fastscreen_asset_name():
     return "fastscreen-win-x86_64.dll"
 
 
-def step_build_fastscreen():
+def step_download_fastscreen():
     """下载 fastscreen.dll（从 GitHub Releases，按平台自动选择架构资产）。
 
     fastscreen 已作为独立仓库发布三架构 DLL（x86_64 / x86 / arm64），
@@ -417,7 +417,7 @@ def _pypi_wheel_url(package, py_tag, plat):
     return None, None
 
 
-def step_build_win_sandbox():
+def step_download_win_sandbox():
     """下载 win_sandbox wheel（GitHub Releases）+ nanobind-backend wheel（PyPI），按架构自动选。
 
     二者均为沙箱核心组件：win_sandbox 是 abi3 扩展（Python 3.10+），
@@ -913,11 +913,11 @@ def main():
 # 仅 Windows 构建/下载，Unix 平台直接跳过（这些功能依赖 Windows 原生二进制）
     if IS_WINDOWS:
         if _enabled(args.NoFastscreen, "BUILD_FASTSCREEN"):
-            steps.append(("下载 fastscreen.dll", step_build_fastscreen))
+            steps.append(("下载 fastscreen.dll", step_download_fastscreen))
         else:
             logger.info("[fastscreen] 跳过下载（BUILD_FASTSCREEN=false 或 -NoFastscreen）")
         if _enabled(args.NoWinsandbox, "BUILD_WINSANDBOX"):
-            steps.append(("下载 win-sandbox + nanobind-backend", step_build_win_sandbox))
+            steps.append(("下载 win-sandbox + nanobind-backend", step_download_win_sandbox))
         else:
             logger.info("[win-sandbox] 跳过下载（BUILD_WINSANDBOX=false 或 -NoWinsandbox）")
         if _enabled(args.NoUltravnc, "DOWNLOAD_ULTRAVNC"):
