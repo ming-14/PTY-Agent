@@ -585,14 +585,19 @@ def step_download_wezterm_py():
             logger.warning("[pywezterm] 请先停止守护进程与所有 PTY 会话（stop.ps1 / stop.sh）后重新构建")
             return
 
-    # 查询最新 release，拼 wheel 文件名与下载地址（走镜像）
+    # 查询最新 release，从资产列表中找到匹配平台标签的 wheel 文件名
+    # 注意：wheel 内的版本号不一定等于 tag 名（如 tag v1.0 但 wheel 版本 0.1.0），
+    # 不能靠拼版本号构造文件名，必须查 API 获取资产列表匹配。
     try:
         tag = _latest_release_tag("ming-14/pywezterm")
     except BaseException as exc:
         _warn_pywezterm_missing("查询最新 release 失败: %s" % exc)
         return
-    version = tag[1:] if tag.startswith("v") else tag
-    whl_name = "pywezterm-{}-cp38-abi3-{}.whl".format(version, plat)
+    whl_suffix = "-{}.whl".format(plat)
+    whl_name = _release_asset_name("ming-14/pywezterm", tag, whl_suffix)
+    if not whl_name:
+        _warn_pywezterm_missing("release {} 中未找到匹配的 wheel（后缀 {}）".format(tag, whl_suffix))
+        return
     whl_url = "https://github.com/ming-14/pywezterm/releases/download/{}/{}".format(tag, whl_name)
 
     archive_path = None
@@ -648,9 +653,13 @@ def _latest_release_tag(repo):
 def _download_to_temp(url, label):
     """下载到临时文件并返回路径；中断时清理半成品。
 
-    临时文件保留 URL 扩展名（.zip/.tar.gz），供 _extract_to_temp 分流解压。
+    临时文件保留扩展名（.zip/.tar.gz），供 _extract_to_temp 分流解压。
+    wheel（.whl）本质是 zip 容器，统一按 .zip 命名。
     """
-    ext = ".zip" if url.endswith(".zip") else ".tar.gz"
+    if url.endswith(".zip") or url.endswith(".whl"):
+        ext = ".zip"
+    else:
+        ext = ".tar.gz"
     dest = Path(tempfile.gettempdir()) / "{}_{}{}".format(
         label, uuid.uuid4().hex[:8], ext)
     logger.info("[%s] 下载 %s ...", label, url)
@@ -660,6 +669,26 @@ def _download_to_temp(url, label):
         dest.unlink(missing_ok=True)
         raise
     return dest
+
+
+def _release_asset_name(repo, tag, suffix):
+    """查询 GitHub release 中匹配后缀的资产名（走 API 镜像）。
+
+    Returns:
+        第一个匹配的资产文件名，或 None
+    """
+    url = "{}/repos/{}/releases/tags/{}".format(CONFIG["api_mirror"], repo, tag)
+    try:
+        request = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(request, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        for asset in data.get("assets", []):
+            name = asset["name"]
+            if name.endswith(suffix):
+                return name
+    except BaseException:
+        pass
+    return None
 
 
 def _extract_to_temp(archive_path, label):
