@@ -453,13 +453,12 @@ def step_download_win_sandbox():
     try:
         archive_path = _download_to_temp(_mirror_url(ws_url_git), label="win-sandbox")
         extract_dir = _extract_to_temp(archive_path, "win-sandbox")
-        src = extract_dir / "win_sandbox"
-        if not src.is_dir():
+        installed = _install_wheel_packages(extract_dir, SCRIPT_DIR / "bin")
+        if "win_sandbox" not in installed:
             logger.warning("[win-sandbox] wheel 中未找到 win_sandbox 包目录，结构可能已更改")
         else:
-            dst = SCRIPT_DIR / "bin" / "win_sandbox"
-            shutil.copytree(str(src), str(dst))
-            logger.info("[win-sandbox] 已下载: %s → %s", ws_wheel_name, dst)
+            logger.info("[win-sandbox] 已下载: %s → bin/win_sandbox（含 %s）",
+                        ws_wheel_name, ", ".join(installed))
             ws_ok = True
     except BaseException as exc:
         logger.warning("[win-sandbox] 下载失败: %s", exc)
@@ -478,13 +477,12 @@ def step_download_win_sandbox():
         else:
             archive_path = _download_to_temp(nb_url, label="nanobind-backend")
             extract_dir = _extract_to_temp(archive_path, "nanobind-backend")
-            src = extract_dir / "nanobind_backend"
-            if not src.is_dir():
+            installed = _install_wheel_packages(extract_dir, SCRIPT_DIR / "bin")
+            if "nanobind_backend" not in installed:
                 logger.warning("[nanobind-backend] wheel 中未找到 nanobind_backend 包")
             else:
-                dst = SCRIPT_DIR / "bin" / "nanobind_backend"
-                shutil.copytree(str(src), str(dst))
-                logger.info("[nanobind-backend] 已下载: %s → %s", nb_fn, dst)
+                logger.info("[nanobind-backend] 已下载: %s → bin/（含 %s）",
+                            nb_fn, ", ".join(installed))
                 nb_ok = True
             if extract_dir is not None:
                 shutil.rmtree(extract_dir, ignore_errors=True)
@@ -616,7 +614,8 @@ def step_download_wezterm_py():
             if not IS_WINDOWS:
                 for f in ("conpty.dll", "OpenConsole.exe"):
                     (pkg_src / f).unlink(missing_ok=True)
-            shutil.copytree(str(pkg_src), str(pkg_dst), dirs_exist_ok=True)
+            # 顶层目录整体搬（含 pywezterm.libs 若存在），避免 vendored DLL 丢失
+            _install_wheel_packages(extract_dir, SCRIPT_DIR / "bin")
         except PermissionError as exc:
             logger.warning(
                 "[pywezterm] 复制产物时文件被占用: %s；请停止守护进程后重试", exc)
@@ -648,6 +647,25 @@ def _latest_release_tag(repo):
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
     with urllib.request.urlopen(request, timeout=60) as resp:
         return json.loads(resp.read().decode("utf-8"))["tag_name"]
+
+
+def _install_wheel_packages(extract_dir, bin_dir):
+    """把 wheel 解包出的全部顶层包目录复制进 bin/（跳过 dist-info），返回包名列表。
+
+    delvewheel/auditwheel 会把 vendored 运行时 DLL 放在 <包名>.libs/ 兄弟目录
+    （如 nanobind_backend.libs/msvcp140-<hash>.dll），只复制包目录会丢依赖，
+    导致 pyd 加载报 "DLL load failed"，故顶层目录整体搬。
+    """
+    installed = []
+    for item in sorted(extract_dir.iterdir()):
+        if not item.is_dir() or item.name.endswith(".dist-info"):
+            continue
+        dst = bin_dir / item.name
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(str(item), str(dst))
+        installed.append(item.name)
+    return installed
 
 
 def _download_to_temp(url, label):
