@@ -533,7 +533,7 @@ def _pywezterm_platform():
 
     映射与 pywezterm 发布矩阵一致：
       Windows amd64 / x86 / arm64 → win_amd64 / win32 / win_arm64
-      Linux x64 / arm64 → manylinux_2_39_x86_64 / manylinux_2_39_aarch64
+      Linux x64 / arm64 → manylinux_2_28_x86_64 / manylinux_2_28_aarch64
       macOS arm64 → macosx_11_0_arm64
     """
     machine = platform.machine().lower()
@@ -547,9 +547,9 @@ def _pywezterm_platform():
         return None
     if sys.platform.startswith("linux"):
         if machine in ("x86_64", "amd64"):
-            return "manylinux_2_39_x86_64"
+            return "manylinux_2_28_x86_64"
         if machine in ("aarch64", "arm64"):
-            return "manylinux_2_39_aarch64"
+            return "manylinux_2_28_aarch64"
         return None
     if sys.platform == "darwin":
         if machine in ("arm64", "aarch64"):
