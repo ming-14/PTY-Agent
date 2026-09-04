@@ -1,8 +1,8 @@
 import sys
 from pathlib import Path
 
-# fastscreencore 绑定层位于项目根 bin/（构建产物），运行时加入 sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bin"))
+# fastscreencore 包位于仓库根，加入 sys.path 以便导入
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtWidgets import QApplication
 from main_window import MainWindow

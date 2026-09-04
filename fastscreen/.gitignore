@@ -1,14 +1,30 @@
+# ===================== 构建产物 =====================
 build/
-__pycache__/
-.pytest_cache/
-*.pyc
-*.pyo
+dist/
+*.egg-info/
+.eggs/
 *.dll
 *.lib
 *.exp
 *.pdb
 *.ilk
 *.obj
+*.exe
+*.o
+*.a
+
+# ===================== Python =====================
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.env/
+
+# ===================== CMake / VS =====================
 .vs/
 *.user
 *.suo
@@ -18,9 +34,8 @@ CMakeSettings.json
 cmake_install.cmake
 CMakeCache.txt
 CMakeFiles/
-*.egg-info/
-dist/
-.eggs/
+CTestTestfile.cmake
+Testing/
 .idea/
 .vscode/
 *.swp

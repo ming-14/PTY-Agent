@@ -32,33 +32,33 @@ class TestBenchSingleCapture:
             f = engine.capture_monitor(0, method=CaptureMethod.BITBLT)
             if f:
                 f.release()
-        r = bench("BitBlt 单帧截图", do, iterations=30)
+        r = bench("BitBlt single capture", do, iterations=30)
         assert r["avg"] > 0
 
     def test_bench_dxgi_single(self):
         engine = CaptureEngine()
         f = engine.capture_monitor(0, method=CaptureMethod.DXGI)
         if f is None:
-            pytest.skip("DXGI 不可用")
+            pytest.skip("DXGI unavailable")
         f.release()
         def do():
             f = engine.capture_monitor(0, method=CaptureMethod.DXGI)
             if f:
                 f.release()
-        r = bench("DXGI 单帧截图", do, iterations=30)
+        r = bench("DXGI single capture", do, iterations=30)
         assert r["avg"] > 0
 
     def test_bench_wgc_single(self):
         engine = CaptureEngine()
         f = engine.capture_monitor(0, method=CaptureMethod.WGC)
         if f is None:
-            pytest.skip("WGC 不可用")
+            pytest.skip("WGC unavailable")
         f.release()
         def do():
             f = engine.capture_monitor(0, method=CaptureMethod.WGC)
             if f:
                 f.release()
-        r = bench("WGC 单帧截图", do, iterations=20)
+        r = bench("WGC single capture", do, iterations=20)
         assert r["avg"] > 0
 
     def test_bench_auto_single(self):
@@ -67,7 +67,7 @@ class TestBenchSingleCapture:
             f = engine.capture_monitor(0, method=CaptureMethod.AUTO)
             if f:
                 f.release()
-        r = bench("Auto 单帧截图", do, iterations=30)
+        r = bench("Auto single capture", do, iterations=30)
         assert r["avg"] > 0
 
 
@@ -85,7 +85,7 @@ class TestBenchFrameConversion:
         try:
             import numpy as np
         except ImportError:
-            pytest.skip("numpy 未安装")
+            pytest.skip("numpy not installed")
         engine = CaptureEngine()
         frame = engine.capture_monitor(0, method=CaptureMethod.BITBLT)
         assert frame is not None
@@ -98,7 +98,7 @@ class TestBenchFrameConversion:
         try:
             from PySide6.QtGui import QImage
         except ImportError:
-            pytest.skip("PySide6 未安装")
+            pytest.skip("PySide6 not installed")
         engine = CaptureEngine()
         frame = engine.capture_monitor(0, method=CaptureMethod.BITBLT)
         assert frame is not None
@@ -116,7 +116,7 @@ class TestBenchImageEncode:
         path = str(tmp_path / "bench.png")
         def do():
             frame.save(path, format="png")
-        r = bench("保存 PNG", do, iterations=10)
+        r = bench("save PNG", do, iterations=10)
         frame.release()
 
     def test_bench_save_jpeg(self, tmp_path):
@@ -126,7 +126,7 @@ class TestBenchImageEncode:
         path = str(tmp_path / "bench.jpg")
         def do():
             frame.save(path, format="jpeg")
-        r = bench("保存 JPEG", do, iterations=10)
+        r = bench("save JPEG", do, iterations=10)
         frame.release()
 
     def test_bench_save_bmp(self, tmp_path):
@@ -136,7 +136,7 @@ class TestBenchImageEncode:
         path = str(tmp_path / "bench.bmp")
         def do():
             frame.save(path, format="bmp")
-        r = bench("保存 BMP", do, iterations=10)
+        r = bench("save BMP", do, iterations=10)
         frame.release()
 
 
@@ -154,7 +154,7 @@ class TestBenchContinuous:
         time.sleep(3)
         engine.stop_continuous()
         fps = len(frames) / 3.0
-        print(f"\n[BENCH] 连续捕获 BitBlt 60fps: 收到 {len(frames)} 帧 / 3s = {fps:.1f} fps")
+        print(f"\n[BENCH] continuous BitBlt 60fps: {len(frames)} frames / 3s = {fps:.1f} fps")
         for f in frames:
             try:
                 f.release()
@@ -165,7 +165,7 @@ class TestBenchContinuous:
         engine = CaptureEngine()
         f = engine.capture_monitor(0, method=CaptureMethod.DXGI)
         if f is None:
-            pytest.skip("DXGI 不可用")
+            pytest.skip("DXGI unavailable")
         f.release()
 
         frames = []
@@ -179,7 +179,7 @@ class TestBenchContinuous:
         time.sleep(3)
         engine.stop_continuous()
         fps = len(frames) / 3.0
-        print(f"\n[BENCH] 连续捕获 DXGI 60fps: 收到 {len(frames)} 帧 / 3s = {fps:.1f} fps")
+        print(f"\n[BENCH] continuous DXGI 60fps: {len(frames)} frames / 3s = {fps:.1f} fps")
         for f in frames:
             try:
                 f.release()
@@ -192,10 +192,10 @@ class TestBenchEnumeration:
         engine = CaptureEngine()
         def do():
             _ = engine.enumerate_monitors()
-        r = bench("枚举显示器", do, iterations=20)
+        r = bench("enum monitors", do, iterations=20)
 
     def test_bench_enum_windows(self):
         engine = CaptureEngine()
         def do():
             _ = engine.enumerate_windows()
-        r = bench("枚举窗口", do, iterations=20)
+        r = bench("enum windows", do, iterations=20)

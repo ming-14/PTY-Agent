@@ -3,7 +3,13 @@
 #include "dxgi_capture.h"
 #include <chrono>
 #include <cstdio>
-#include <immintrin.h>
+#if defined(_M_ARM64)
+#include <arm64_neon.h>          // MSVC ARM64
+#elif defined(__aarch64__)
+#include <arm_neon.h>            // Clang/GCC ARM64
+#else
+#include <immintrin.h>           // x86/x64 SSE/AVX
+#endif
 
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d3d11.lib")
@@ -293,7 +299,27 @@ ErrorCode DXGICapture::capture_frame(FrameData& frame) {
     return ErrorCode::OK;
 }
 
-// R8G8B8A8 → BGRA：使用 AVX2 通道重排（pshufb）批量完成 RGBA→BGRA 字节交换。
+// R8G8B8A8 → BGRA：按架构使用最优 SIMD 完成 RGBA→BGRA 字节交换。
+#if defined(_M_ARM64) || defined(__aarch64__)
+// NEON: vqtbl1q_u8 查表重排，每 4 像素（16 字节）批处理。
+static void convert_r8g8b8a8_to_bgra(const uint8_t* src, uint8_t* dst, int pixel_count) {
+    static const uint8_t mask_data[16] = {2,1,0,3, 6,5,4,7, 10,9,8,11, 14,13,12,15};
+    const uint8x16_t shuffle_mask = vld1q_u8(mask_data);
+    int i = 0;
+    const int neon_end = pixel_count & ~3;
+    for (; i < neon_end; i += 4) {
+        uint8x16_t v = vld1q_u8(src + i * 4);
+        vst1q_u8(dst + i * 4, vqtbl1q_u8(v, shuffle_mask));
+    }
+    for (; i < pixel_count; i++) {
+        dst[i * 4 + 0] = src[i * 4 + 2];
+        dst[i * 4 + 1] = src[i * 4 + 1];
+        dst[i * 4 + 2] = src[i * 4 + 0];
+        dst[i * 4 + 3] = src[i * 4 + 3];
+    }
+}
+#else
+// AVX2: pshufb 通道重排，每 8 像素（32 字节）批处理。
 static void convert_r8g8b8a8_to_bgra(const uint8_t* src, uint8_t* dst, int pixel_count) {
     int i = 0;
     const int simd_end = pixel_count & ~7;
@@ -314,6 +340,7 @@ static void convert_r8g8b8a8_to_bgra(const uint8_t* src, uint8_t* dst, int pixel
         dst[i * 4 + 3] = src[i * 4 + 3];
     }
 }
+#endif
 
 // IEEE 754 half-float（16 位）→ float（32 位）位运算转换，供 R16G16B16A16_FLOAT 使用。
 static inline uint16_t half_to_float_bits(uint16_t h) {

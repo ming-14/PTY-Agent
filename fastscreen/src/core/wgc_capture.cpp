@@ -498,6 +498,13 @@ ErrorCode WGCCapture::start_monitor_session(int monitor_index) {
     return ErrorCode::OK;
 }
 
+void WGCCapture::request_stop() {
+    if (!session_active_.load()) return;
+    session_stop_requested_.store(true);
+    frame_cv_.notify_all();
+    session_cv_.notify_all();
+}
+
 ErrorCode WGCCapture::stop_session() {
     if (!session_active_.load()) return ErrorCode::OK;
 
@@ -546,6 +553,13 @@ ErrorCode WGCCapture::capture_from_session(FrameData& frame) {
     auto start = std::chrono::steady_clock::now();
     int attempt = 0;
     while (true) {
+        // Stop 请求后立即退出：释放 session_mutex_，让 STA 线程完成清理，
+        // 避免 stop_session() 等待该线程时此处仍持锁等待帧（x86 下会触发访问违例）。
+        if (session_stop_requested_.load()) {
+            FS_LOG("WGC: capture_from_session aborting (stop requested)");
+            break;
+        }
+
         attempt++;
         auto capture_frame = session_pool_.TryGetNextFrame();
         if (capture_frame) {

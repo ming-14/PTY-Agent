@@ -57,6 +57,14 @@ set_target_properties(fastscreen PROPERTIES
 )
 
 if(MSVC)
-    target_compile_options(fastscreen PRIVATE /O2 /GL /Oi /GS- /arch:AVX2 /await /fp:fast /utf-8)
+    # SIMD 优化选项按架构区分：
+    #   x86/x64  — /arch:AVX2（RGBA→BGRA 通道重排向量化）
+    #   ARM64    — NEON 始终可用，使用默认 armv8 基线，不指定 /arch 指令集
+    # /await:strict 用于 C++/WinRT 协程支持（MSVC 16.11+），替换已弃用的 /await。
+    if(MSVC_ARCHITECTURE_ID MATCHES "ARM64")
+        target_compile_options(fastscreen PRIVATE /O2 /GL /Oi /GS- /fp:fast /utf-8 /await:strict)
+    else()
+        target_compile_options(fastscreen PRIVATE /O2 /GL /Oi /GS- /arch:AVX2 /fp:fast /utf-8 /await:strict)
+    endif()
     target_link_options(fastscreen PRIVATE /LTCG /DEF:${CMAKE_CURRENT_SOURCE_DIR}/fastscreen.def)
 endif()

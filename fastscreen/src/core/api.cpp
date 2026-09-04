@@ -248,6 +248,17 @@ FS_API int64_t fs_create_session(int target_type, int target_id, int method) {
 }
 
 FS_API int fs_destroy_session(int64_t session_id) {
+    // 先停会话并 join capture 线程，再删除回调上下文（与 fs_stop_continuous 同理，
+    // 避免 capture 线程仍在回调 ctx 时被释放）。
+    fs::CaptureSession* session = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_sessions_mutex);
+        auto it = g_sessions.find(session_id);
+        if (it == g_sessions.end()) return -2;
+        session = it->second;
+    }
+    session->stop();
+
     {
         std::lock_guard<std::mutex> lock(g_ctx_mutex);
         auto it = g_ctx_map.find(session_id);
@@ -256,12 +267,15 @@ FS_API int fs_destroy_session(int64_t session_id) {
             g_ctx_map.erase(it);
         }
     }
-    std::lock_guard<std::mutex> lock(g_sessions_mutex);
-    auto it = g_sessions.find(session_id);
-    if (it == g_sessions.end()) return -2;
-    it->second->stop();
-    delete it->second;
-    g_sessions.erase(it);
+
+    {
+        std::lock_guard<std::mutex> lock(g_sessions_mutex);
+        auto it = g_sessions.find(session_id);
+        if (it != g_sessions.end()) {
+            delete it->second;
+            g_sessions.erase(it);
+        }
+    }
     return 0;
 }
 
@@ -500,6 +514,20 @@ FS_API int fs_start_continuous(int64_t session_id, int target_type, int target_i
 }
 
 FS_API int fs_stop_continuous(int64_t session_id) {
+    // 先停会话并 join capture 线程，再删除回调上下文：
+    // capture 线程在回调中访问 ctx（ContinuousCaptureCtx）内的 c_callback，
+    // 若先 delete ctx 再 stop()，capture 线程仍在跑时会解引用已释放内存
+    // （x86 下表现为 access violation）。
+    fs::CaptureSession* session = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_sessions_mutex);
+        auto it = g_sessions.find(session_id);
+        if (it == g_sessions.end()) return -2;
+        session = it->second;
+    }
+
+    int result = (int)session->stop();
+
     {
         std::lock_guard<std::mutex> lock(g_ctx_mutex);
         auto it = g_ctx_map.find(session_id);
@@ -509,14 +537,7 @@ FS_API int fs_stop_continuous(int64_t session_id) {
         }
     }
 
-    fs::CaptureSession* session = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(g_sessions_mutex);
-        auto it = g_sessions.find(session_id);
-        if (it == g_sessions.end()) return -2;
-        session = it->second;
-    }
-    return (int)session->stop();
+    return result;
 }
 
 FS_API int fs_session_is_running(int64_t session_id) {

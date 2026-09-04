@@ -76,6 +76,14 @@ ErrorCode CaptureSession::start(TargetType type, int target_id, CaptureMethod me
 
 ErrorCode CaptureSession::stop() {
     running_.store(false);
+
+    // Signal WGC session to stop first, so capture_from_session can abort
+    // and release session_mutex_, allowing the WGC STA thread to exit cleanly.
+    if (wgc_session_started_) {
+        wgc_.request_stop();
+    }
+
+    // Now join capture thread (it should abort quickly since WGC is stopping)
     if (capture_thread_.joinable()) {
         capture_thread_.join();
     }

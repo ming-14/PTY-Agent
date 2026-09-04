@@ -27,6 +27,7 @@ public:
     ErrorCode start_window_session(void* hwnd);
     ErrorCode start_monitor_session(int monitor_index);
     ErrorCode stop_session();
+    void request_stop();
     ErrorCode capture_from_session(FrameData& frame);
 
     static bool is_supported();
