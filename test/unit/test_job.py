@@ -158,6 +158,46 @@ class TestProcessJobSubprocess:
                 proc.wait()
 
 
+class TestProcessJobNotificationEvent:
+    """通知到达事件（事件驱动消费）测试"""
+
+    def test_wait_timeout_returns_false(self, job):
+        """无通知时等待超时返回 False"""
+        assert job.wait_notification(0.05) is False
+
+    def test_push_sets_event_wait_returns_true(self, job):
+        """推送通知后事件置位，wait 立即返回 True"""
+        from src.pty.windows.job import JobNotification
+        job._push_notif(JobNotification(msg_type=0, pid=100))
+        assert job.wait_notification(0.1) is True
+
+    def test_drain_clears_event(self, job):
+        """drain 消费后事件清除，再次等待超时"""
+        from src.pty.windows.job import JobNotification
+        job._push_notif(JobNotification(msg_type=0, pid=100))
+        items = job.drain_notifications()
+        assert len(items) == 1
+        assert job.wait_notification(0.05) is False
+
+    def test_drain_returns_all_pushed(self, job):
+        """drain 返回所有推送的通知"""
+        from src.pty.windows.job import JobNotification
+        job._push_notif(JobNotification(msg_type=0, pid=100))
+        job._push_notif(JobNotification(msg_type=0, pid=200))
+        items = job.drain_notifications()
+        assert [n.pid for n in items] == [100, 200]
+
+    def test_push_after_drain_sets_event_again(self, job):
+        """drain 后再推送，事件重新置位（无丢失唤醒）"""
+        from src.pty.windows.job import JobNotification
+        job._push_notif(JobNotification(msg_type=0, pid=100))
+        job.drain_notifications()
+        job._push_notif(JobNotification(msg_type=0, pid=200))
+        assert job.wait_notification(0.1) is True
+        items = job.drain_notifications()
+        assert [n.pid for n in items] == [200]
+
+
 class TestProcessJobEdgeCases:
     """边界情况测试"""
 

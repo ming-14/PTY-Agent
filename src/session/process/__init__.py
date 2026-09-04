@@ -4,7 +4,6 @@ from .info import (
     _get_process_name,
     _get_process_path,
     _format_exit_code_message,
-    _signal_name,
     _format_pty_error,
 )
 from .monitor import ProcessMonitor

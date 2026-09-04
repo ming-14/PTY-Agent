@@ -1,4 +1,8 @@
 """调试：子进程退出后 stdin.write() 仍会阻塞"""
+import pytest
+
+pytestmark = pytest.mark.skip(reason="调试脚本，非测试用例")
+
 import sys
 import time
 import subprocess

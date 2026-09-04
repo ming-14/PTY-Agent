@@ -80,8 +80,9 @@ class GuiDetector:
 
     def clear(self) -> None:
         """重置 GUI 检测状态"""
-        self.gui_windows = []
-        self.processes = []
+        with self._lock:
+            self.gui_windows = []
+            self.processes = []
         self._detected_event.clear()
         self._last_poll_ms = 0.0
 
@@ -89,3 +90,13 @@ class GuiDetector:
     def detected_event(self) -> threading.Event:
         """GUI 窗口检测信号（新窗口到达时被设置）"""
         return self._detected_event
+
+    def get_gui_windows(self) -> List[dict]:
+        """线程安全获取 GUI 窗口列表（返回副本）"""
+        with self._lock:
+            return list(self.gui_windows)
+
+    def get_processes(self) -> List[int]:
+        """线程安全获取进程树 PID 列表（返回副本）"""
+        with self._lock:
+            return list(self.processes)

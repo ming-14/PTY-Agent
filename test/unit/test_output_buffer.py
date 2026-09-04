@@ -142,13 +142,6 @@ class TestOutputBufferProperties:
         buf.append(b"hello")
         assert buf.length == 5
 
-    def test_count_byte(self):
-        """统计指定字节出现次数"""
-        buf = OutputBuffer(max_size=1024)
-        buf.append(b"hello\nworld\n")
-        assert buf.count_byte(ord("\n")) == 2
-        assert buf.count_byte(ord("l")) == 3
-
     def test_raw_returns_bytearray(self):
         """raw 属性返回 bytearray"""
         buf = OutputBuffer(max_size=1024)

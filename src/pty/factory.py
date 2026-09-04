@@ -12,13 +12,14 @@
 import logging
 from typing import Optional
 from ..config import IS_WINDOWS
-from .unix import UnixPseudoTerminal
 from .subprocess import SubprocessPseudoTerminal
 
 _logger = logging.getLogger("pty-factory")
 
 if IS_WINDOWS:
     from .windows.kernel32_api import WindowsPseudoTerminal
+else:
+    from .unix import UnixPseudoTerminal
 
 
 def create_pty(command, cols: int = 80, rows: int = 24, shell: Optional[str] = None,
@@ -43,8 +44,7 @@ def create_pty(command, cols: int = 80, rows: int = 24, shell: Optional[str] = N
         RuntimeError: 所有后端均创建失败时抛出。
     """
     if isinstance(command, str):
-        cmd_preview = command[:200] if isinstance(command, str) else command
-        _logger.info("create_pty: string command, using Subprocess shell=%s cwd=%s cmd=%r", shell, cwd, cmd_preview)
+        _logger.info("create_pty: string command, using Subprocess shell=%s cwd=%s cmd=%r", shell, cwd, command[:200])
         return SubprocessPseudoTerminal(command, cols, rows, shell=shell, cwd=cwd)
 
     if IS_WINDOWS:

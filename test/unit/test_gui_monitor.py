@@ -111,8 +111,3 @@ class TestGuiMonitorEdgeCases:
         m = GuiWindowMonitor(job=None)
         m.close()
         assert m.windows == []
-
-    def test_close_process_windows_empty(self, monitor):
-        """close_process_windows 对不存在的 PID 返回 0"""
-        count = monitor.close_process_windows(99999999)
-        assert count == 0

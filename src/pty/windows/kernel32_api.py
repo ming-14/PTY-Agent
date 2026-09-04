@@ -241,6 +241,12 @@ class WindowsPseudoTerminal(PseudoTerminal):
             return []
         return self._job.drain_notifications()
 
+    def wait_for_job_notification(self, timeout: float) -> bool:
+        """等待新通知到达（事件驱动，非忙等）"""
+        if not self._job:
+            return False
+        return self._job.wait_notification(timeout)
+
     def get_gui_windows(self) -> List[dict]:
         """获取已检测到的 GUI 窗口列表
 

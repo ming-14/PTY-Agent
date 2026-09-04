@@ -185,23 +185,6 @@ class GuiWindowMonitor:
             _logger.warning("关闭窗口 hwnd=0x%X 失败: %s", hwnd, e)
             return False
 
-    def close_process_windows(self, pid: int) -> int:
-        """关闭指定进程的所有已检测窗口
-
-        Args:
-            pid: 目标进程 PID。
-
-        Returns:
-            成功发送 WM_CLOSE 的窗口数量。
-        """
-        count = 0
-        with self._lock:
-            for w in list(self._windows):
-                if w.pid == pid:
-                    if self.close_window(w.hwnd):
-                        count += 1
-        return count
-
     def clear(self):
         """清空去重状态和窗口记录
 

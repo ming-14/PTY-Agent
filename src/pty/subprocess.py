@@ -353,3 +353,9 @@ class SubprocessPseudoTerminal(PseudoTerminal):
         if not self._job:
             return []
         return self._job.drain_notifications()
+
+    def wait_for_job_notification(self, timeout: float) -> bool:
+        """等待新通知到达（事件驱动，非忙等）"""
+        if not self._job:
+            return False
+        return self._job.wait_notification(timeout)

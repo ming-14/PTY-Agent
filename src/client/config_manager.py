@@ -115,15 +115,6 @@ class ConfigManager:
                 )
             value = value.lower()
 
-        # send_eol 验证
-        if key == "send_eol":
-            if not isinstance(value, str) or value.lower() not in _EOL_MAP:
-                raise ValueError(
-                    f"无效的 send_eol 值: {value!r}，"
-                    f"可用: {', '.join(sorted(_EOL_MAP.keys()))}",
-                )
-            value = value.lower()
-
         _logger.debug("ConfigManager.set: %s=%r", key, value)
         self._config[key] = value
 

@@ -103,13 +103,15 @@ class ProcessJob:
             name: 可选的 Job Object 名称，用于调试标识。
         """
         self.name = name
-        self._hjob: Optional[int] = None
-        self._iocp: Optional[int] = None
+        self._hjob: Optional[W.HANDLE] = None
+        self._iocp: Optional[W.HANDLE] = None
         self._notif_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         # 线程安全的事件队列（由通知线程写入，外部 drain 读取）
         self._notif_lock = threading.Lock()
         self._notifications: List[JobNotification] = []
+        # 通知到达事件——监控线程可等待此事件实现事件驱动消费
+        self._notif_event = threading.Event()
 
         job_name = None
         if name:
@@ -191,9 +193,10 @@ class ProcessJob:
         """后台线程：监听 Job Object IOCP 通知
 
         Job Object 通知通过 I/O 完成端口实时推送，消息类型：
-          - NEW_PROCESS(3): lpOverlapped = PID
-          - EXIT_PROCESS(4): lpOverlapped = exit code
-          - ABNORMAL_EXIT_PROCESS(5): lpOverlapped = exit code
+          - NEW_PROCESS(6): lpOverlapped = PID
+          - EXIT_PROCESS(7): lpOverlapped = exit code
+          - ABNORMAL_EXIT_PROCESS(8): lpOverlapped = exit code
+        （消息号定义见 convars.py 的 _JOB_OBJECT_MSG_* 常量）
         """
         _logger.info("Job 通知线程启动")
         while not self._stop_event.is_set():
@@ -242,12 +245,15 @@ class ProcessJob:
         _logger.info("Job 通知线程退出")
 
     def _push_notif(self, notif: JobNotification):
-        """线程安全地添加通知"""
+        """线程安全地添加通知，并通知等待方（drain / wait_notification）"""
         with self._notif_lock:
             self._notifications.append(notif)
+            self._notif_event.set()
 
     def drain_notifications(self) -> List[JobNotification]:
         """取出所有待处理的通知（线程安全）
+
+        同时清除通知到达事件，后续有新通知会重新置位。
 
         Returns:
             未处理的通知列表。
@@ -255,7 +261,23 @@ class ProcessJob:
         with self._notif_lock:
             items = list(self._notifications)
             self._notifications.clear()
+            self._notif_event.clear()
         return items
+
+    def wait_notification(self, timeout: float) -> bool:
+        """等待新通知到达（事件驱动，非忙等）
+
+        配合 drain_notifications 使用：wait 返回 True 后立即调用 drain。
+        超时返回 False，以便调用方处理其他周期性任务（如 GUI 检测）。
+
+        Args:
+            timeout: 最长等待秒数。
+
+        Returns:
+            True 表示有通知到达，应尽快 drain。
+            False 表示超时。
+        """
+        return self._notif_event.wait(timeout)
 
     def _get_exit_code(self, pid: int) -> Optional[int]:
         """查询指定 PID 的进程退出码"""
@@ -329,6 +351,8 @@ class ProcessJob:
     def close(self):
         """关闭 Job Object 句柄，停止通知线程"""
         self._stop_event.set()
+        # 唤醒等待通知的消费方（如 Session 监控线程），使其尽快退出
+        self._notif_event.set()
         # 退出通知线程
         if self._notif_thread and self._notif_thread.is_alive():
             # 发送退出信号到 IOCP 以唤醒 GetQueuedCompletionStatus

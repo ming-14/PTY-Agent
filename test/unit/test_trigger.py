@@ -25,12 +25,17 @@ class _MockBuffer:
     def read_cycle(self):
         return self._read_cycle
 
-    def count_byte(self, b):
-        return self._data.count(b)
-
 
 def _decode_utf8(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
+
+
+def _check(tm: TriggerMatcher, buf) -> bool:
+    """模拟 TriggerMatcher 两阶段匹配（替代已移除的 tm.check()）"""
+    snapshot = tm.prepare_snapshot(buf)
+    if snapshot is None:
+        return False
+    return tm.check_snapshot(snapshot)
 
 
 class TestSafeRegexSearch:
@@ -78,7 +83,7 @@ class TestTriggerMatcherSet:
         tm = TriggerMatcher(decode_func=_decode_utf8)
         tm.set(">>>", buffer_length=0)
         buf = _MockBuffer(b">>>")
-        tm.check(buf)
+        _check(tm, buf)
         assert tm.matched is True
         tm.set("xxx", buffer_length=0)
         assert tm.matched is False
@@ -88,7 +93,7 @@ class TestTriggerMatcherSet:
         tm = TriggerMatcher(decode_func=_decode_utf8)
         tm.set(">>>", buffer_length=0)
         buf = _MockBuffer(b">>>")
-        tm.check(buf)
+        _check(tm, buf)
         assert tm.event.is_set()
         tm.set("xxx", buffer_length=0)
         assert not tm.event.is_set()
@@ -120,7 +125,7 @@ class TestTriggerMatcherCheck:
         tm = TriggerMatcher(decode_func=_decode_utf8)
         tm.set(r">>>", buffer_length=0)
         buf = _MockBuffer(b"output\n>>>")
-        assert tm.check(buf) is True
+        assert _check(tm, buf) is True
         assert tm.matched is True
         assert tm.event.is_set()
 
@@ -129,7 +134,7 @@ class TestTriggerMatcherCheck:
         tm = TriggerMatcher(decode_func=_decode_utf8)
         tm.set(r"xxx", buffer_length=0)
         buf = _MockBuffer(b"output\n>>>")
-        assert tm.check(buf) is False
+        assert _check(tm, buf) is False
         assert tm.matched is False
 
     def test_check_already_matched(self):
@@ -137,21 +142,21 @@ class TestTriggerMatcherCheck:
         tm = TriggerMatcher(decode_func=_decode_utf8)
         tm.set(r">>>", buffer_length=0)
         buf = _MockBuffer(b">>>")
-        assert tm.check(buf) is True
-        assert tm.check(buf) is False
+        assert _check(tm, buf) is True
+        assert _check(tm, buf) is False
 
     def test_check_no_pattern(self):
         """无模式时返回 False"""
         tm = TriggerMatcher(decode_func=_decode_utf8)
         buf = _MockBuffer(b"data")
-        assert tm.check(buf) is False
+        assert _check(tm, buf) is False
 
     def test_check_invalid_regex_fallback_substring(self):
         """无效正则回退到子串匹配"""
         tm = TriggerMatcher(decode_func=_decode_utf8)
         tm.set(r"[invalid", buffer_length=0)
         buf = _MockBuffer(b"[invalid data")
-        assert tm.check(buf) is True
+        assert _check(tm, buf) is True
 
     def test_check_newline_blocks(self):
         """换行策略：无新换行且非首次时阻止匹配"""
@@ -160,7 +165,7 @@ class TestTriggerMatcherCheck:
         tm.newline_count = 0
         tm._newline_first_ok = False
         buf = _MockBuffer(b">>>")
-        assert tm.check(buf) is False
+        assert _check(tm, buf) is False
 
     def test_check_newline_allows_after_newline(self):
         """换行策略：新换行后允许匹配"""
@@ -168,7 +173,7 @@ class TestTriggerMatcherCheck:
         tm.set(r">>>", newline=True, buffer_length=0)
         tm.newline_count = 0
         buf = _MockBuffer(b"\n>>>")
-        assert tm.check(buf) is True
+        assert _check(tm, buf) is True
 
     def test_check_newline_first_ok(self):
         """换行策略：首次检查允许通过"""
@@ -177,7 +182,7 @@ class TestTriggerMatcherCheck:
         tm.newline_count = 0
         tm._newline_first_ok = True
         buf = _MockBuffer(b">>>")
-        assert tm.check(buf) is True
+        assert _check(tm, buf) is True
 
     def test_check_fresh_mode_waits(self):
         """新鲜模式：read_cycle 未推进时不匹配"""
@@ -185,7 +190,7 @@ class TestTriggerMatcherCheck:
         tm.set(r">>>", fresh=True, buffer_length=0)
         tm.fresh_cycle = 0
         buf = _MockBuffer(b">>>", read_cycle=0)
-        assert tm.check(buf) is False
+        assert _check(tm, buf) is False
 
     def test_check_fresh_mode_matches_after_cycle(self):
         """新鲜模式：read_cycle 推进后匹配"""
@@ -193,14 +198,14 @@ class TestTriggerMatcherCheck:
         tm.set(r">>>", fresh=True, buffer_length=0)
         tm.fresh_cycle = 0
         buf = _MockBuffer(b">>>", read_cycle=1)
-        assert tm.check(buf) is True
+        assert _check(tm, buf) is True
 
     def test_check_start_offset(self):
         """从指定偏移开始扫描"""
         tm = TriggerMatcher(decode_func=_decode_utf8)
         tm.set(r">>>", start_offset=5, buffer_length=0)
         buf = _MockBuffer(b">>> hello >>>")
-        assert tm.check(buf) is True
+        assert _check(tm, buf) is True
 
 
 class TestTriggerMatcherSnapshot:
@@ -292,8 +297,8 @@ class TestTriggerMatcherSnapshot:
         tm = TriggerMatcher(decode_func=_decode_utf8)
         tm.set(r">>>", buffer_length=0)
         buf = _MockBuffer(b"output\n>>>")
-        assert tm.check(buf) is True
-        assert tm.check(buf) is False  # 已匹配
+        assert _check(tm, buf) is True
+        assert _check(tm, buf) is False  # 已匹配
 
 
 class TestTriggerMatcherIdleTimeout:
@@ -352,7 +357,7 @@ class TestTriggerMatcherClear:
         tm = TriggerMatcher(decode_func=_decode_utf8)
         tm.set(">>>", buffer_length=0)
         buf = _MockBuffer(b">>>")
-        tm.check(buf)
+        _check(tm, buf)
         tm.clear()
         assert tm.matched is False
 

@@ -53,14 +53,6 @@ class UnixProcessTracker:
         descendants = self._find_descendants()
         return [self._root_pid] + descendants
 
-    def get_descendants(self) -> List[int]:
-        """获取所有后代 PID（不含根进程）
-
-        Returns:
-            后代 PID 列表（BFS 顺序）。
-        """
-        return self._find_descendants()
-
     # ── 进程树终止 ──
 
     def kill_tree(self):
@@ -157,7 +149,7 @@ class UnixProcessTracker:
                 return None
             fields = data[idx + 1:].split()
             if len(fields) >= 2:
-                return int(fields[1])  # ppid = 第 4 字段（索引 2）
+                return int(fields[1])  # ppid = 第 4 字段（索引 1，fields 中排第 2 个）
             return None
         except (FileNotFoundError, ValueError, OSError, IndexError):
             return None

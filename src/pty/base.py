@@ -174,6 +174,25 @@ class PseudoTerminal:
         """
         return []
 
+    def wait_for_job_notification(self, timeout: float) -> bool:
+        """等待新通知到达（事件驱动消费，替代轮询）
+
+        与 get_job_notifications 配合：返回 True 后应尽快调用
+        get_job_notifications 排空，实现实时消费；超时返回 False，
+        调用方再处理其他周期性任务。
+
+        - Windows 后端：等待 Job Object 内部通知事件。
+        - Unix / subprocess 后端：无等价机制，返回 False
+          （调用方退化为周期轮询）。
+
+        Args:
+            timeout: 最长等待秒数。
+
+        Returns:
+            True 表示有通知到达；False 表示超时/不支持。
+        """
+        return False
+
     # ---- 进程树追踪 ----
 
     def get_process_list(self) -> List[int]:

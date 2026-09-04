@@ -78,7 +78,8 @@ FORMAT_MESSAGE_ALLOCATE_BUFFER = 0x00000100
 FORMAT_MESSAGE_FROM_SYSTEM = 0x00001000
 FORMAT_MESSAGE_IGNORE_INSERTS = 0x00000200
 
-STILL_ACTIVE = 259  # STILL_ACTIVE (0x103)
+# STILL_ACTIVE 的单一权威来源在 pty/errors.py（跨平台常量）
+from ..errors import STILL_ACTIVE  # noqa: E402
 
 
 def _try_format_message(error_code: int) -> str:

@@ -47,12 +47,6 @@ class EventHistoryManager:
         _logger.debug("add_event: type=%s pid=%s hwnd=0x%X info=%r",
                       ev.type, ev.pid, ev.hwnd, ev.info[:80] if ev.info else "")
 
-    def add_events(self, events: List[PendingEvent]):
-        """批量添加待处理事件"""
-        with self._lock:
-            self._pending.extend(events)
-        _logger.debug("add_events: count=%d", len(events))
-
     # ── 消费/查询 ──
 
     def consume_all(self) -> List[dict]:
@@ -103,6 +97,19 @@ class EventHistoryManager:
         return self._lock
 
 
+def format_timestamp_iso(timestamp: float) -> str:
+    """将 Unix 时间戳转为 ISO 8601 格式（两位毫秒）
+
+    Args:
+        timestamp: Unix 时间戳（time.time()）。
+
+    Returns:
+        ISO 8601 格式字符串，如 "2026-06-22T14:32:15.12"。
+    """
+    dt = datetime.fromtimestamp(timestamp)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 10000:02d}"
+
+
 def _events_to_dicts(events: List[PendingEvent]) -> List[dict]:
     """将 PendingEvent 对象列表转为字典列表
 
@@ -110,8 +117,7 @@ def _events_to_dicts(events: List[PendingEvent]) -> List[dict]:
     """
     result = []
     for e in events:
-        dt = datetime.fromtimestamp(e.timestamp)
-        iso_time = dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 10000:02d}"
+        iso_time = format_timestamp_iso(e.timestamp)
         d = {
             "time": iso_time,
             "type": e.type,

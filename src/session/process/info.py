@@ -93,10 +93,6 @@ def _get_process_path(pid: int) -> str:
 
 
 # ── 错误消息格式化 ──
-#
-# 退出码格式化统一委托 pty/errors.py（跨平台单一实现），
-# 本模块仅保留 Windows 特有的 PTY 创建错误翻译。
-# _format_exit_code_message 和 _signal_name 已在模块级从 errors 导入。
 
 
 def _format_pty_error(exception: Exception) -> str:
@@ -114,7 +110,7 @@ def _format_pty_error(exception: Exception) -> str:
         try:
             # OSError 格式：(error_code, message)
             if len(exception.args) >= 2 and isinstance(exception.args[0], int):
-                from ...pty.windows.error_msg import format_create_process_error
+                from ...pty.errors import format_create_process_error
                 return format_create_process_error(exception.args[0])
         except ImportError:
             pass

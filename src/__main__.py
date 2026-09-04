@@ -259,14 +259,9 @@ def _handle_config_ops(args) -> Optional[dict]:
 
     # 如果只做了配置操作但没有子命令，不需要继续
     handled = default_val is not None
-    if handled and args.subcmd is not None:
-        return overrides
-
-    # 有子命令但没有配置操作 → 返回空覆盖
+    # 有子命令 → 返回覆盖值（可能为空）；无子命令且已处理配置操作 → 退出
     if args.subcmd is not None:
         return overrides
-
-    # 无子命令：已处理了配置操作则退出，否则继续（让 main 打印帮助）
     return None if handled or args.show_config is not None else overrides
 
 
@@ -410,9 +405,6 @@ def main():
             "单独设置无效（当前未启用静默超时检测）"
         )
         print(warn_msg, file=sys.stderr)
-
-    # 修正 argparse 对 kill 的处理：第二个 parser 会覆盖第一个
-    # 已在构建时修正，这里使用 args.id
 
     client = Client(config_overrides=config_overrides or None)
     _logger.info("执行命令: %s id=%s", args.subcmd, getattr(args, "id", "N/A"))

@@ -6,6 +6,7 @@
 import time
 import threading
 import pytest
+from datetime import datetime
 
 from src.session.output.events import EventHistoryManager, PendingEvent, _events_to_dicts
 
@@ -37,7 +38,8 @@ class TestEventsToDicts:
         dicts = _events_to_dicts(events)
         assert len(dicts) == 2
         assert dicts[0]["type"] == "process_spawn"
-        assert dicts[1]["time"] == "1970-01-01T08:00:02.00"
+        expected = datetime.fromtimestamp(2.0).strftime("%Y-%m-%dT%H:%M:%S.") + "00"
+        assert dicts[1]["time"] == expected
 
     def test_empty(self):
         assert _events_to_dicts([]) == []
@@ -52,12 +54,14 @@ class TestEventHistoryManagerAdd:
         assert mgr.pending_count == 1
 
     def test_add_batch(self):
+        """逐个添加多个事件"""
         mgr = EventHistoryManager()
         events = [
             PendingEvent(timestamp=float(i), type="process_spawn", pid=i, info=f"e{i}")
             for i in range(5)
         ]
-        mgr.add_events(events)
+        for ev in events:
+            mgr.add_event(ev)
         assert mgr.pending_count == 5
 
 

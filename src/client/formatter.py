@@ -9,6 +9,7 @@
 import logging
 import sys
 import time
+from datetime import datetime
 
 from .input import safe_print
 
@@ -42,8 +43,14 @@ def _format_event(ev: dict) -> str:
     ev_time = ev.get("time", "")
     if isinstance(ev_time, (int, float)):
         ev_t = time.strftime("%H:%M:%S", time.localtime(ev_time))
+    elif isinstance(ev_time, str):
+        try:
+            # ISO 8601 字符串（如 "2026-06-22T14:32:15.12"）→ 仅显示时间
+            ev_t = datetime.fromisoformat(ev_time).strftime("%H:%M:%S")
+        except ValueError:
+            ev_t = ev_time
     else:
-        ev_t = str(ev_time)[-12:] if len(str(ev_time)) > 12 else str(ev_time)
+        ev_t = str(ev_time)
     ev_type = ev.get("type", "?")
     ev_info = ev.get("info", "")
     if ev_type == "process_crash":

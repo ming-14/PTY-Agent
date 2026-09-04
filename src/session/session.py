@@ -3,7 +3,7 @@
 管理一个交互式子进程的生命周期，通过组合模式将职责委派给：
 - OutputBuffer        线程安全输出缓冲区
 - TriggerMatcher      触发条件匹配与空闲超时检测
-- ProcessMonitor      进程树 diff、IOCP 排空、崩溃检测
+- ProcessMonitor      IOCP 通知排空、崩溃检测
 - EventHistoryManager 事件队列与历史记录管理
 - GuiDetector         GUI 窗口轮询检测
 - SessionThreads      后台读者线程与监控线程管理
@@ -119,22 +119,15 @@ class Session:
         self._evt_hist.clear()
         self._trig_mat.clear()
         self._proc_mon.reset()
-        # 初始化进程快照
-        if self._pty:
-            try:
-                pids = self._pty.get_process_list()
-                self._proc_mon.reset(
-                    initial_pids=set(pids) if pids else set())
-            except Exception:
-                self._proc_mon.reset()
 
         self.running = True
         self.start_time = time.time()
         self._threads.start()
 
-        # Windows ConPTY 后端需要短暂等待读者线程就绪
+        # Windows ConPTY 后端需要等待读者线程就绪后才能安全写输入
+        # （事件同步替代固定 sleep，就绪即返回，无多余等待）
         if IS_WINDOWS:
-            time.sleep(0.1)
+            self._threads.wait_reader_ready(timeout=1.0)
 
     def stop(self, timeout: float = 3.0):
         """停止会话：强杀进程树 + 关闭 PTY + 等待读者线程退出
@@ -253,20 +246,21 @@ class Session:
             idle_timeout:         输出静默超时（秒）。
             idle_after_first_output: 是否在首次输出后才开始检测静默超时。
         """
-        self._trig_mat.set(
-            pattern=pattern, newline=newline, fresh=fresh,
-            start_offset=start_offset,
-            idle_timeout=idle_timeout,
-            idle_after_first_output=idle_after_first_output,
-            buffer_length=self._out_buf.length,
-        )
-        if fresh:
-            self._trig_mat.fresh_cycle = self._out_buf.read_cycle
-            return
-
-        # 锁内：计数换行 + 提取匹配快照（不执行耗时正则）
-        snapshot = None
+        # 触发状态写入与 reader 的 prepare_snapshot 共享 out_buf.lock，
+        # 须在持锁上下文中发布，避免 reader 在状态就绪前提前匹配（竞态）。
         with self._out_buf.lock:
+            self._trig_mat.set(
+                pattern=pattern, newline=newline, fresh=fresh,
+                start_offset=start_offset,
+                idle_timeout=idle_timeout,
+                idle_after_first_output=idle_after_first_output,
+                buffer_length=self._out_buf.length,
+            )
+            if fresh:
+                self._trig_mat.fresh_cycle = self._out_buf.read_cycle
+                return
+
+            # 锁内：计数换行 + 提取匹配快照（不执行耗时正则）
             self._trig_mat.newline_count = self._out_buf.raw.count(b"\n")
             snapshot = self._trig_mat.prepare_snapshot(self._out_buf)
         # 锁外：执行耗时正则匹配
@@ -296,7 +290,7 @@ class Session:
             return False, "crashed"
         if not self.running:
             return False, "ended"
-        if gui_short_circuit and self._gui.gui_windows and self._gui.detected_event.is_set():
+        if gui_short_circuit and self._gui.get_gui_windows() and self._gui.detected_event.is_set():
             self._gui.detected_event.clear()
             return False, "gui_detected"
 
@@ -428,7 +422,7 @@ class Session:
     @property
     def gui_windows(self) -> List[dict]:
         """已检测到的 GUI 窗口列表"""
-        return self._gui.gui_windows
+        return self._gui.get_gui_windows()
 
     @gui_windows.setter
     def gui_windows(self, value: List[dict]):
@@ -437,7 +431,7 @@ class Session:
     @property
     def processes(self) -> List[int]:
         """当前进程树 PID 列表"""
-        return self._gui.processes
+        return self._gui.get_processes()
 
     @processes.setter
     def processes(self, value: List[int]):

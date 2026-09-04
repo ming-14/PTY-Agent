@@ -18,7 +18,7 @@ from ..protocol.shm import (
     _DATA_BODY_OFF,
 )
 from ..protocol.shm_utils import open_shm, close_shm
-from ..config import REQ_SHM_SIZE, RESP_SHM_SIZE, DEFAULT_TRIGGER_TIMEOUT
+from ..config import REQ_SHM_SIZE, RESP_SHM_SIZE, DEFAULT_TRIGGER_TIMEOUT, DAEMON_START_TIMEOUT
 from ..daemon.lifecycle import is_running, start_daemon, stop_daemon
 from ..session.shm_utils import read_auth_token
 from .input import process_input
@@ -65,7 +65,8 @@ class Client:
             _logger.info("守护进程未运行，自动启动")
             start_daemon()
             # 等待守护进程就绪
-            for _ in range(15):
+            deadline = time.monotonic() + DAEMON_START_TIMEOUT
+            while time.monotonic() < deadline:
                 if is_running():
                     return
                 time.sleep(0.2)

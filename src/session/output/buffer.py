@@ -92,11 +92,6 @@ class OutputBuffer:
         with self._lock:
             return self._read_cycle
 
-    def count_byte(self, b: int) -> int:
-        """统计指定字节在缓冲区中的出现次数"""
-        with self._lock:
-            return self._buffer.count(b)
-
     # ── 协调访问（供 Session._reader_loop 在持锁语境下使用）──
 
     @property

@@ -4,6 +4,7 @@
 
 import time
 import threading
+from datetime import datetime
 
 import pytest
 
@@ -48,7 +49,8 @@ class TestPendingEvent:
         assert len(dicts) == 2
         assert dicts[0]["type"] == "process_spawn"
         assert dicts[0]["pid"] == 100
-        assert dicts[1]["time"] == "1970-01-01T08:00:02.00"
+        expected = datetime.fromtimestamp(2.0).strftime("%Y-%m-%dT%H:%M:%S.") + "00"
+        assert dicts[1]["time"] == expected
 
 
 # 使用 mock PTY 避免真实依赖

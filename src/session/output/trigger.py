@@ -16,6 +16,7 @@ OutputBuffer / Session 协作。
 
 import re
 import time
+import atexit
 import logging
 import threading
 import concurrent.futures
@@ -48,6 +49,8 @@ _EXECUTOR = concurrent.futures.ThreadPoolExecutor(
     max_workers=4,
     thread_name_prefix="safe-regex",
 )
+# 进程退出时回收线程（wait=False：不阻塞等待运行中的正则）
+atexit.register(_EXECUTOR.shutdown, wait=False, cancel_futures=True)
 
 
 def safe_regex_search(pattern: re.Pattern, text: str,
@@ -169,22 +172,6 @@ class TriggerMatcher:
             if not self._idle_had_output:
                 self._idle_had_output = True
                 _logger.debug("静默超时检测: 首次输出到达, 开始计时")
-
-    def check(self, output_buffer) -> bool:
-        """检查触发条件是否匹配（**需在持锁状态下调用**）
-
-        需在 OutputBuffer.lock 已获取的线程上下文中调用。
-
-        Args:
-            output_buffer: OutputBuffer 实例（持锁状态下）。
-
-        Returns:
-            True 表示匹配成功并设置了 _event。
-        """
-        snapshot = self.prepare_snapshot(output_buffer)
-        if snapshot is None:
-            return False
-        return self.check_snapshot(snapshot)
 
     def prepare_snapshot(self, output_buffer):
         """锁内阶段：判断是否应匹配并提取待匹配快照（不执行正则）

@@ -54,6 +54,7 @@ class SessionThreads:
     def __init__(self, components: SessionComponents):
         self._comp = components
         self._stop_event = threading.Event()
+        self._reader_ready = threading.Event()  # 读者线程就绪信号
         self._reader_thread: Optional[threading.Thread] = None
         self._monitor_thread: Optional[threading.Thread] = None
 
@@ -62,11 +63,23 @@ class SessionThreads:
         """停止信号（Session.stop 也会设置此事件）"""
         return self._stop_event
 
+    def wait_reader_ready(self, timeout: float = 1.0) -> bool:
+        """等待读者线程就绪（替代固定 sleep 等待）
+
+        Args:
+            timeout: 最长等待秒数。
+
+        Returns:
+            True 表示读者线程已就绪；False 表示超时（线程可能启动失败）。
+        """
+        return self._reader_ready.wait(timeout)
+
     # ── 生命周期 ──────────────────────────────────────────────
 
     def start(self) -> None:
         """启动读者线程和监控线程"""
         self._stop_event.clear()
+        self._reader_ready.clear()
         self._reader_thread = threading.Thread(
             target=self._reader_loop,
             daemon=True,
@@ -111,6 +124,10 @@ class SessionThreads:
         trig_mat = comp.trig_mat
         proc_mon = comp.proc_mon
         gui_detector = comp.gui_detector
+
+        # 就绪信号：读取循环开始前发出（即使 pty 为 None 也发出，
+        # 让等待方尽早返回而非空等）
+        self._reader_ready.set()
 
         while not self._stop_event.is_set() and pty:
             try:
@@ -159,9 +176,9 @@ class SessionThreads:
             # 更新 pty 引用（stop 后可能变为 None）
             pty = comp.pty_provider()
 
-        # 读者退出前：扫描残留 GUI 窗口和进程事件
+        # 读者退出前：扫描残留 GUI 窗口和排空最后的 IOCP 进程事件
         gui_detector.check(pty, session_id)
-        proc_mon.check_events()
+        proc_mon.drain_notifications()
 
         # 获取退出码（pty 可能已被关闭，容错处理）
         exit_code = None
@@ -183,14 +200,22 @@ class SessionThreads:
                 "on_exit 回调异常 (会话 '%s'): %s", session_id, e)
 
     def _monitor_loop(self) -> None:
-        """独立监控线程：检测进程事件和 GUI 窗口"""
+        """独立监控线程：排空 IOCP 进程事件和检测 GUI 窗口
+
+        通知消费采用事件驱动：有通知立即处理，无需等待 2 秒轮询。
+        GUI 窗口检测保持 2 秒节流（GuiDetector 内部有 _last_poll_ms 控制）。
+        """
         comp = self._comp
         while not self._stop_event.is_set():
             pty = comp.pty_provider()
             comp.proc_mon.drain_notifications()
             comp.gui_detector.check(pty, comp.session_id)
-            comp.proc_mon.check_events()
-            self._stop_event.wait(2.0)
+            # 事件驱动：等待通知到达（返回即循环，立即排空）
+            if pty is not None and hasattr(pty, "wait_for_job_notification"):
+                pty.wait_for_job_notification(2.0)
+            else:
+                # 不支持事件驱动的后端（Unix / 无 PTY）退化为固定周期
+                self._stop_event.wait(2.0)
 
 
 # ── 模块级工具函数 ──────────────────────────────────────────────

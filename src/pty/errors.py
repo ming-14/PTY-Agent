@@ -31,6 +31,7 @@ STILL_ACTIVE = 259
 # ── Windows 错误格式化（延迟加载，仅 Windows 平台）──
 _format_exit_code_impl = None
 _translate_impl = None
+_format_create_process_impl = None
 _loading_failed = False  # 缓存失败，避免重复尝试
 
 
@@ -43,16 +44,14 @@ def _ensure_signal_names():
     global _SIGNAL_NAMES
     if _SIGNAL_NAMES is not None:
         return
-    _SIGNAL_NAMES = {}
     try:
         import signal as _sig
-        for name in dir(_sig):
-            if name.startswith("SIG") and not name.startswith("SIG_"):
-                val = getattr(_sig, name, None)
-                if isinstance(val, int) and val != 0:
-                    _SIGNAL_NAMES[val] = name
+        _SIGNAL_NAMES = {
+            s.value: s.name for s in _sig.Signals
+            if s.name.startswith("SIG") and s.value != 0
+        }
     except Exception:
-        pass
+        _SIGNAL_NAMES = {}
 
 
 def signal_name(signum: int) -> str:
@@ -73,7 +72,7 @@ def _load_windows_formatter():
 
     加载失败时缓存失败标志，避免在 Unix 上重复尝试。
     """
-    global _format_exit_code_impl, _translate_impl, _loading_failed
+    global _format_exit_code_impl, _translate_impl, _format_create_process_impl, _loading_failed
     if _loading_failed:
         return False
     if sys.platform != "win32":
@@ -83,9 +82,11 @@ def _load_windows_formatter():
         from .windows.error_msg import (
             format_process_exit_code as _fmt,
             translate_windows_error as _tr,
+            format_create_process_error as _fcp,
         )
         _format_exit_code_impl = _fmt
         _translate_impl = _tr
+        _format_create_process_impl = _fcp
         return True
     except Exception as e:
         _logger.debug("Windows 错误格式化不可用: %s", e)
@@ -93,7 +94,7 @@ def _load_windows_formatter():
         return False
 
 
-def translate_exit_code(exit_code) -> str:
+def translate_exit_code(exit_code: Optional[int]) -> str:
     """返回退出码的简短描述（供崩溃事件 info 使用）
 
     Windows 上返回 NTSTATUS / Win32 错误名描述；
@@ -122,7 +123,29 @@ def translate_exit_code(exit_code) -> str:
     return f"exit code {exit_code}"
 
 
-def format_exit_code_message(exit_code) -> Optional[str]:
+def format_create_process_error(error_code: int) -> str:
+    """格式化 CreateProcessW 失败的错误信息
+
+    Windows 上委托 windows.error_msg.format_create_process_error；
+    非 Windows 平台返回通用描述。
+
+    Args:
+        error_code: GetLastError 返回的错误码。
+
+    Returns:
+        格式化的错误信息字符串。
+    """
+    if _format_create_process_impl is None and not _loading_failed:
+        _load_windows_formatter()
+    if _format_create_process_impl is not None:
+        try:
+            return _format_create_process_impl(error_code)
+        except Exception as e:
+            _logger.debug("Windows 创建进程错误格式化失败: %s", e)
+    return f"create process failed (error={error_code})"
+
+
+def format_exit_code_message(exit_code: Optional[int]) -> Optional[str]:
     """格式化进程退出码为可读的错误消息（session error_message 使用）
 
     None 或 0 返回 None（表示无错误）。

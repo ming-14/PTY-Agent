@@ -43,9 +43,9 @@ class TestSubprocessExitCode:
         )
         pty._proc.wait(timeout=5)
         code = pty.get_exit_code()
-        # exit(-1) → 255 (0xFF) on most platforms
+        # exit(-1) → 255 (0xFF) on most platforms, -1 on Windows
         assert code is not None
-        assert code == 255 or code != 0
+        assert code & 0xFF == 255
         pty.close()
 
     def test_before_process_exits(self):

@@ -27,7 +27,8 @@ from typing import Optional
 
 from ..protocol.ansi import strip_ansi
 from ..session.manager import SessionManager
-from ..session.output import safe_regex_search
+from ..session.output import safe_regex_search, format_timestamp_iso
+from ..session.process import _get_process_path
 from ..config import (
     MAX_SESSION_ID_LEN,
     MAX_COMMAND_LEN,
@@ -194,13 +195,6 @@ class RequestHandler:
             return self._handle_closewin(msg)
         return {"type": "error", "error": f"未知指令类型: {msg_type}"}
 
-    @staticmethod
-    def _format_iso_ms(timestamp: float) -> str:
-        """将 Unix 时间戳转为 ISO 8601 格式（两位毫秒）"""
-        from datetime import datetime
-        dt = datetime.fromtimestamp(timestamp)
-        return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 10000:02d}"
-
     def _build_result(
         self,
         session_id: str,
@@ -230,7 +224,7 @@ class RequestHandler:
             "pty_type": session.pty_type if session else "none",
         }
         if session and session.start_time:
-            program["start_time"] = self._format_iso_ms(session.start_time)
+            program["start_time"] = format_timestamp_iso(session.start_time)
         exit_code = session.exit_code if session else None
         if exit_code is not None:
             program["exit_code"] = exit_code
@@ -247,7 +241,6 @@ class RequestHandler:
                     if pid == 0:
                         continue
                     try:
-                        from ..session.process import _get_process_path
                         path = _get_process_path(pid)
                     except Exception:
                         path = f"PID {pid}"
