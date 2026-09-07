@@ -53,6 +53,8 @@ venv/
 .opencode/
 .mimocode/
 .codeartsdoer/
+.freebuff/
+.workbuddy/
 
 # ===================== 操作系统 =====================
 .DS_Store
@@ -84,6 +86,8 @@ bin/rg/
 bin/win_sandbox/
 bin/openconsole/
 bin/pywezterm/
+bin/nanobind_backend/
+bin/nanobind_backend.libs/
 
 # ===================== 测试临时文件 =====================
 node_modules/
