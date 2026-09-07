@@ -23,7 +23,11 @@ class AgentSpec:
     command: List[str]                   # 基础命令（如 ["cbc"] / ["devin.exe"] / ["opencode.exe"]）
     parser_agent: str                    # parser_loader 的 agent 名
     message_type: str                    # 消息类型（如 codebuddy_exec / devin_exec）
-    permission_args: List[str]           # 权限绕过参数
+    permission_args: List[str]           # 权限绕过参数（交互模式）
+    # oneshot 专用权限参数；None 表示沿用 permission_args。
+    # 部分 agent 的权限 flag 只属交互模式主命令，一次性子命令不接受
+    # （如 Crush 的 --yolo：crush run 报 Unknown flag），此类 agent 置 []。
+    permission_args_oneshot: Optional[List[str]] = None
     supports_oneshot: bool = True        # 是否支持 --oneshot（smartagent 常驻 TUI 不支持）
     command_path_env: str = ""            # 命令行路径的环境变量（如 "OPENCODE_PATH"）；空=仅 PATH 查找
     has_program_path: bool = True         # 是否支持 --program-path（smartagent 用 python 脚本，不适用）
@@ -53,6 +57,14 @@ class AgentSpec:
     # 使 agent 的日志/数据库写入独立路径，实现并发安全、无污染发现。
     # 设置后 discover 从独立日志文件提取 session.id，消息读取传独立 data_dir。
     data_dir_env: str = ""
+    # 数据目录隔离（命令行参数形式，如 crush 的 "--data-dir"）：与 data_dir_env
+    # 二选一，命令行形式优先。用于不支持环境变量、但在命令行接受数据目录的 agent。
+    data_dir_arg: str = ""
+    # 交互模式不把 prompt 拼进启动命令：部分 TUI（如 Crush）不接受命令行位置
+    # 参数，启动后由插件在 TUI 就绪时补发初始 prompt（见 subagent_plugin）。
+    interactive_no_prompt: bool = False
+    # interactive_no_prompt 时，补发 prompt 前等待 TUI 就绪的超时秒数
+    initial_prompt_timeout: float = 30.0
     # 独立数据目录根下 agent 数据子目录（如 opencode 数据在 $XDG_DATA_HOME/opencode/），
     # 消息读取传给 parser 的 data_dir = 根 + 子目录
     data_dir_subdir: str = ""
@@ -62,7 +74,8 @@ class AgentSpec:
     discover_log_regex: str = r"session\.id=(ses_[A-Za-z0-9]+)"
 
     def build_command(self, prompt: str, model: Optional[str] = None,
-                      uid: Optional[str] = None, oneshot: bool = False) -> List[str]:
+                      uid: Optional[str] = None, oneshot: bool = False,
+                      data_dir: str = "") -> List[str]:
         """生成完整 spawn 命令列表
 
         Args:
@@ -70,11 +83,18 @@ class AgentSpec:
             model: 可选模型名
             uid: 显式会话 ID（session_id_arg）或导出文件路径（export_arg）
             oneshot: 一次性模式（阻塞，输出即返回）
+            data_dir: 独立数据目录（data_dir_arg 时作为参数值拼入命令）
         """
         args = []
         if model:
             args += ["--model", model]
-        args += self.permission_args
+        if oneshot and self.permission_args_oneshot is not None:
+            args += self.permission_args_oneshot
+        else:
+            args += self.permission_args
+        # 数据目录隔离（命令行形式，如 crush --data-dir）
+        if self.data_dir_arg and data_dir:
+            args += [self.data_dir_arg, data_dir]
         # session_id_arg：仅 oneshot 生效（opencode --title 不支持 interactive）
         if self.session_id_arg and uid and (not self.session_id_arg_oneshot_only or oneshot):
             args += [self.session_id_arg, uid]
@@ -84,10 +104,11 @@ class AgentSpec:
             # 一次性：flags 后跟 prompt
             args += self.oneshot_flags
             args.append(prompt)
-        else:
+        elif not self.interactive_no_prompt:
             # 交互：prompt 前加分隔符（devin 需要 "--"；codebuddy 直接追加）
             args += self.interactive_prompt_sep
             args.append(prompt)
+        # interactive_no_prompt：命令到此为止，prompt 启动后补发
         return self.command + args
 
 
@@ -199,6 +220,37 @@ AGENTS: dict = {
         data_dir_subdir="opencode",
         discover_log_relpath="opencode/log/opencode.log",
         interactive_prompt_sep=["--prompt"],
+    ),
+    "crush": AgentSpec(
+        agent_id="crush",
+        display_name="Crush",
+        command=["crush"],
+        command_path_env="CRUSH_PATH",
+        parser_agent="crush",
+        message_type="crush_exec",
+        permission_args=["--yolo"],
+        # --yolo 是交互模式主命令的 flag，crush run 子命令不接受（实测报
+        # Unknown flag: --yolo）；一次性执行本身不弹权限，无需该参数
+        permission_args_oneshot=[],
+        oneshot_flags=["run"],
+        # Crush TUI 不接受命令行位置参数（实测报 Unknown command），交互模式
+        # 启动后由插件在 TUI 就绪时补发 prompt
+        interactive_no_prompt=True,
+        # 数据目录隔离走命令行参数（Crush 无对应环境变量）：每次 spawn 独立库
+        data_dir_arg="--data-dir",
+        # 会话 ID 由 Crush 自动分配且无 PID 索引，从独立数据目录反查最新会话
+        discover_fn="find_latest_session",
+        messages_adapter="messages_db",
+        locator_fn="resolve_session_id",
+        msg_loader_fn="load_session_messages_by_id",
+        loader_meta_first=True,
+        live_state_fields=("context_percent", "context_tokens", "cost_display",
+                           "title", "version_display"),
+        startup_error_hints=["No providers configured", "Unknown command"],
+        # 底部状态栏 "tab focus chat" 仅在 TUI 渲染完成且空闲时出现（忙碌时为
+        # "esc cancel ..."），配合 logo 判定就绪；匹配前须剥离 ANSI
+        # （Crush 启动要先初始化 LSP/MCP，仅 logo 出现不代表输入框可用）
+        welcome_marks=["Charm", "tab focus chat"],
     ),
 }
 

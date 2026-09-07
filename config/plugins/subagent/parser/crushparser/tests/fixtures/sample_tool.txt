@@ -1,0 +1,39 @@
+
+ │ hello                                                                                ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱
+                                                                                        ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱
+   Hello! How can I help?                                                                Charm™               v0.90.0
+                                                                                        ▄▀▀▀▀ █▀▀▀▄ █   █ ▄▀▀▀▀ █   █
+   ◇  via SenseNova in 7s ────────────────────────────────────────────────────────────  █     █▀▀▀▄ █   █ ▀▀▀▀█ █▀▀▀█
+                                                                                         ▀▀▀▀ ▀   ▀  ▀▀▀  ▀▀▀▀  ▀   ▀
+ │ list files in current directory                                                      ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱
+
+   ✓ List .                                                                             Untitled Session
+
+      The directory tree is shown up to a depth of 2. Use a higher depth and a spec…    ~\Desktop\crushparser
+
+      - C:/Users/alice/Desktop/crushparser/                                             ◇  via SenseNova
+        - sample_reply.txt                                                                6% (16.5K) $0.00
+
+   There's only one file:                                                               Modified Files ──────────────
+
+   •  sample_reply.txt                                                                  None
+
+   ◇  via SenseNova in 34s ───────────────────────────────────────────────────────────  LSPs ────────────────────────
+
+                                                                                        None
+
+                                                                                        MCPs ────────────────────────
+
+                                                                                        None
+
+                                                                                        Skills ──────────────────────
+
+                                                                                        ● agent-browser
+                                                                                        ● bbdown
+                                                                                        ● crush-config
+                                                                                        ● crush-hooks
+   > Ready for instructions                                                             ● data-analysis
+ :::                                                                                    ● design-taste-frontend
+ :::                                                                                    ● doc-expert
+                                                                                        ● download-by-mirror
+ tab focus chat • / or ctrl+p commands • ctrl+l models • ctrl+j newline • ctrl+c quit • ctrl+g more

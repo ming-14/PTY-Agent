@@ -1,0 +1,39 @@
+
+ │ Use the question tool to ask me what my favorite programming language is.            ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱
+ │ single_choice with options: Python, Go, Rust, TypeScript. Do NOT do project          ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱
+ │ initialization.                                                                       Charm™               v0.90.0
+                                                                                        ▄▀▀▀▀ █▀▀▀▄ █   █ ▄▀▀▀▀ █   █
+   ● Question What's your favorite programming language?                                █     █▀▀▀▄ █   █ ▀▀▀▀█ █▀▀▀█
+                                                                                         ▀▀▀▀ ▀   ▀  ▀▀▀  ▀▀▀▀  ▀   ▀
+   Waiting for tool response...                                                         ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱
+
+                                                                                        Untitled Session
+
+                                                                                        ~\Desktop\crushparser
+
+                                                                                        ◇  via SenseNova
+                                                                                          0% (0) $0.00
+
+                                                                                        Modified Files ──────────────
+
+                                                                                        None
+
+                                                                                        LSPs ────────────────────────
+
+                                                                                        None
+
+  ?  What's your favorite programming language?                                         MCPs ────────────────────────
+
+ Pick the language you enjoy working with the most.                                     None
+
+ ┃ Python                                                                               Skills ──────────────────────
+
+   Go                                                                                   ● agent-browser
+                                                                                        ● bbdown
+   Rust                                                                                 ● crush-config
+                                                                                        ● crush-hooks
+   TypeScript                                                                           ● data-analysis
+                                                                                        ● design-taste-frontend
+   > Something else?                                                                    ● doc-expert
+                                                                                        ● download-by-mirror
+ [ prev tab • ] next tab • ↑ up • ↓ down • enter select • 1-4 quick select • alt+n note • esc exit
