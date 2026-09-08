@@ -15,7 +15,7 @@ config/plugins/
 │   ├── __init__.py
 │   └── config.yaml
 ├── subagent/            # 子代理管理（kind=["cli","process"]：多 agent 子代理）
-│   ├── plugin.json      # 清单：messageTypes=["codebuddy_exec","devin_exec","opencode_exec","claude_exec","smartagent_exec"]、cliCommands=["codebuddy","devin","opencode","claude","smartagent"]
+│   ├── plugin.json      # 清单：messageTypes=["codebuddy_exec","devin_exec","opencode_exec","claude_exec","smartagent_exec","crush_exec"]、cliCommands=["codebuddy","devin","opencode","claude","smartagent","crush"]
 │   ├── subagent_plugin.py  # SubagentPlugin（通用多 agent，数据驱动）
 │   ├── agents.py         # AgentSpec 注册表（声明 agent 差异）
 │   ├── cli_commands.py   # CLI 命令自动生成（all_agent_commands）
@@ -26,7 +26,8 @@ config/plugins/
 │   │   ├── workbuddyparser/  # CodeBuddy (cbc) 会话解析器
 │   │   ├── devinparser/      # Devin CLI 会话解析器
 │   │   ├── opencodeparser/   # OpenCode (sst) 会话解析器
-│   │   └── claudeparser/     # Claude Code 会话解析器
+│   │   ├── claudeparser/     # Claude Code 会话解析器
+│   │   └── crushparser/      # Crush (charmbracelet) 会话解析器（SQLite）
 │   └── subagent.md       # 插件帮助文档
 └── ai/                  # CLI 侧 AI 二次分析插件（kind=cli，自包含 aichat 资产）
     ├── plugin.json      # 清单：commands/权限（无 config：prompt/timeout 在 config.yaml）
@@ -270,7 +271,7 @@ python app.py plugin config <name> [key value]   # 查看/修改配置
 |------|------|------|
 | `state_check` | 多形态（`kind = ["process","cli"]`） | 装饰 list 响应并在 CLI 显示 HEUR 状态标记（纯启发式） |
 | `ai` | CLI 侧（`kind = "cli"`） | 对 exec/send/read/mouse 响应做 AI 二次分析，`exec --plugin ai` 挂载后自动回调 |
-| `subagent` | 多形态（`kind = ["cli","process"]`） | 子代理管理：codebuddy / devin / opencode / claude exec 命令 + smartagent（真人 Smart Chat 聊天窗口），装饰 read/send/list 响应（子代理检测），AgentSpec 注册表扩展，回合状态监控 + 通知 |
+| `subagent` | 多形态（`kind = ["cli","process"]`） | 子代理管理：codebuddy / devin / opencode / claude / crush exec 命令 + smartagent（真人 Smart Chat 聊天窗口），装饰 read/send/list 响应（子代理检测），AgentSpec 注册表扩展，回合状态监控 + 通知 |
 
 ### kind 多形态组合（v2.0+）
 

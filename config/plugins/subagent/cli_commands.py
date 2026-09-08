@@ -107,8 +107,20 @@ class SubagentCommand(Command):
             export_dir = _ensure_export_dir()
             uid = os.path.join(export_dir, f"{uuid.uuid4()}.json")
 
+        env = {"TERM": "xterm-256color"}
+        data_dir = ""
+        # 数据目录隔离：环境变量形式注入 env，命令行形式由 build_command 拼入命令
+        if spec.data_dir_env or spec.data_dir_arg:
+            try:
+                data_dir = tempfile.mkdtemp(prefix="subagent-" + spec.agent_id + "-")
+                if spec.data_dir_env:
+                    env[spec.data_dir_env] = data_dir
+            except Exception as e:
+                _logger.warning("data_dir 隔离创建失败: %s", e)
+
         command = spec.build_command(
             prompt=args.prompt, model=args.model or None, uid=uid, oneshot=False,
+            data_dir=data_dir,
         )
         from .subagent_plugin import _resolve_command
         try:
@@ -117,15 +129,6 @@ class SubagentCommand(Command):
         except FileNotFoundError as e:
             print_response({"type": "error", "message": str(e)})
             return
-
-        env = {"TERM": "xterm-256color"}
-        data_dir = ""
-        if spec.data_dir_env:
-            try:
-                data_dir = tempfile.mkdtemp(prefix="subagent-" + spec.agent_id + "-")
-                env[spec.data_dir_env] = data_dir
-            except Exception as e:
-                _logger.warning("data_dir 隔离创建失败: %s", e)
 
         msg = {
             "type": "exec",

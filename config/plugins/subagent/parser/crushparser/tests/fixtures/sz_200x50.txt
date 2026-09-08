@@ -1,0 +1,49 @@
+
+   ───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────                                             ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱
+    Group size = 5            │ The magic constant. Groups of 3 don't guarantee convergence (1/3 + 5/6 > 1). Groups of 7                                                ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱
+                              │ work but add overhead.                                                                                                                   Charm™               v0.90.0
+    Recursive pivot           │ Uses itself to find the pivot — a self-referential bootstrap.                                                                           ▄▀▀▀▀ █▀▀▀▄ █   █ ▄▀▀▀▀ █   █
+    Worst-case = Average case │ No adversarial input can break it.                                                                                                      █     █▀▀▀▄ █   █ ▀▀▀▀█ █▀▀▀█
+                                                                                                                                                                         ▀▀▀▀ ▀   ▀  ▀▀▀  ▀▀▀▀  ▀   ▀
+   --------                                                                                                                                                             ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱
+
+   ### Practical Trade-off                                                                                                                                              Untitled Session
+
+   Despite being theoretically optimal, BFPRT has a large constant factor (~5× slower than randomized quickselect in                                                    ~\Desktop\crushparser
+   practice). It's used when:
+                                                                                                                                                                        ◇  via SenseNova
+   • You need deterministic guarantees (e.g., real-time systems)                                                                                                          6% (17.4K) $0.00
+   • The input is adversarial (e.g., competitive programming)
+   • It's a subroutine in linear-time graph algorithms (e.g., finding a minimum spanning tree in O(n·α(n)))                                                             Modified Files ──────────────
+
+   The elegance is in the proof: a recursive algorithm proving its own linear bound by showing its recursion shrinks faster                                             None
+   than the work it does.
+                                                                                                                                                                        LSPs ────────────────────────
+   ◇  via SenseNova in 21s ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                                                                                        None
+ │ run a bash command that sleeps 30 seconds and echo done
+                                                                                                                                                                        MCPs ────────────────────────
+   ✓ Job (Start) PID  Sleep 30 seconds then echo done
+                                                                                                                                                                        None
+      Command: sleep 30 && echo done
+                                                                                                                                                                        Skills ──────────────────────
+      "sleep": executable file not found in $PATH
+                                                                                                                                                                        ● agent-browser
+      Exit code 127                                                                                                                                                     ● bbdown
+                                                                                                                                                                        ● crush-config
+      <cwd>/Users/alice/Desktop/crushparser</cwd>                                                                                                                       ● crush-hooks
+                                                                                                                                                                        ● data-analysis
+    sleep  isn't available in this environment. Let me try an alternative.                                                                                              ● design-taste-frontend
+                                                                                                                                                                        ● doc-expert
+   × Bash powershell -Command "Start-Sleep -Seconds 30; Write-Output 'done'" (background=true)                                                                          ● download-by-mirror
+                                                                                                                                                                        ● jq
+    WARN  User denied permission                                                                                                                                        ● pdf
+                                                                                                                                                                        ● ponytail
+   ◇  via SenseNova in 56m24s ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   ● pptx
+                                                                                                                                                                        ● pty-agent
+                                                                                                                                                                        ● ripgrep
+   > Ready...                                                                                                                                                           ● self-improvement
+ :::                                                                                                                                                                    ● trae-code-review
+ :::                                                                                                                                                                    ● trae-debugger
+                                                                                                                                                                        ● trae-security-review
+ tab focus chat • / or ctrl+p commands • ctrl+l models • ctrl+j newline • ctrl+c quit • ctrl+g more

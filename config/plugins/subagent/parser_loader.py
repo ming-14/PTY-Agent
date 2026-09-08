@@ -1,9 +1,9 @@
 """多 parser 包加载器 — 以独立命名空间包加载各 parser，避免包冲突
 
-每个 parser（如 workbuddyparser、devinparser、opencodeparser、claudeparser）内部使用相对导入
-（from ..entities），必须以包形式加载。这里把各 parser 的 src 目录
-挂到不同的独立包名（wb_parser、dv_parser、oc_parser、cl_parser）下，使相对导入正常解析
-且不与 PTY-Agent 的 src 冲突。
+每个 parser（如 workbuddyparser、devinparser、opencodeparser、claudeparser、
+crushparser）内部使用相对导入（from ..entities），必须以包形式加载。这里把各 parser
+的 src 目录挂到不同的独立包名（wb_parser、dv_parser、oc_parser、cl_parser、cr_parser）
+下，使相对导入正常解析且不与 PTY-Agent 的 src 冲突。
 
 新增 parser：在 _PARSER_REGISTRY 注册 agent → (包名, src 目录) 即可。
 """
@@ -37,6 +37,10 @@ _PARSER_REGISTRY = {
     "smartagent": {
         "pkg": "sm_parser",
         "src": os.path.normpath(os.path.join(_BASE, "parser", "smartparser", "src")),
+    },
+    "crush": {
+        "pkg": "cr_parser",
+        "src": os.path.normpath(os.path.join(_BASE, "parser", "crushparser", "src")),
     },
 }
 

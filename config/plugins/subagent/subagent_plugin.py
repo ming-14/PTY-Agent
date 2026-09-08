@@ -35,7 +35,9 @@ from typing import Optional
 
 from src.plugins.base import Plugin
 from src.protocol.response import Response
+from src.protocol.ansi import strip_ansi
 from src.config.common import DATA_DIR
+from src.execution.utils import prepare_input
 
 from .agents import AGENTS, MESSAGE_TYPE_TO_AGENT, AgentSpec
 from .parser_loader import import_parser
@@ -274,7 +276,17 @@ class SubagentPlugin(Plugin):
             # 回合监控立即启动（不等待启动检测/信任确认）：
             # 若等 25s+8s 后才启动，模型快速回复（<33s）已完成，
             # 监控看不到 busy→idle，stuck 检测会误报"程序未反应"
-            self._start_monitor(session, ctx, spec)
+            # TUI 不接受命令行 prompt 的 agent（crush）：初始化阶段（LSP/MCP
+            # 加载）屏幕会出现 busy→idle 转换，monitor 先启动会把首个回合前的
+            # 转换误报为 turn_complete，故等 prompt 补发后再启动监控
+            if spec.interactive_no_prompt and prompt:
+                self._send_initial_prompt(session, prompt, spec)
+                self._start_monitor(session, ctx, spec)
+            else:
+                # 回合监控立即启动（不等待启动检测/信任确认）：
+                # 若等 25s+8s 后才启动，模型快速回复（<33s）已完成，
+                # 监控看不到 busy→idle，stuck 检测会误报"程序未反应"
+                self._start_monitor(session, ctx, spec)
 
             # 异步发现会话 ID（不阻塞 spawn 响应）
             if not uid and (spec.discover_log_relpath or spec.discover_fn):
@@ -325,6 +337,53 @@ class SubagentPlugin(Plugin):
         except Exception:
             log.exception("子代理后台初始化异常: sid=%s agent=%s", sid, spec.agent_id)
 
+    def _send_initial_prompt(self, session, prompt: str, spec: AgentSpec) -> None:
+        """TUI 就绪后补发初始 prompt（interactive_no_prompt 形态）
+
+        Crush 等 TUI 不接受命令行位置参数（实测报 Unknown command），启动后
+        必须把 prompt 写入 PTY。就绪判定复用屏幕解析的 ai_status=idle，避免
+        写入尚未渲染的输入框导致内容丢失；超时仍尝试发送并记录警告。
+        """
+        log = _get_logger()
+        sid = getattr(session, "id", "") or ""
+        ready = False
+        deadline = time.time() + spec.initial_prompt_timeout
+        while time.time() < deadline:
+            if not session.running:
+                log.warning("初始 prompt 放弃（会话已结束）: agent=%s sid=%s",
+                            spec.agent_id, sid)
+                return
+            # 屏幕空白时 LiveState 解析返回默认值（ai_status=idle），不能作为
+            # 就绪依据：TUI 尚未渲染就写入会被整段丢弃（实测 crush 因此收不
+            # 到 prompt），故先等首屏出现再判 idle。
+            try:
+                snapshot = session.get_snapshot(keep_ansi=True)
+            except Exception:
+                snapshot = ""
+            if snapshot and snapshot.strip():
+                # welcome_marks 在剥离 ANSI 的文本上匹配（keep_ansi 快照中
+                # 标记文本常被转义序列切断）；空白屏时 LiveState 返回默认
+                # idle，logo 先行出现也不代表输入框可用
+                clean = strip_ansi(snapshot)
+                marks = spec.welcome_marks
+                if marks and not all(m in clean for m in marks):
+                    time.sleep(0.5)
+                    continue
+                live = self._parse_live_state(session)
+                if live and live.get("ai_status") == "idle":
+                    ready = True
+                    break
+            time.sleep(0.5)
+        if not ready:
+            log.warning("初始 prompt 等待 TUI 就绪超时: agent=%s sid=%s",
+                        spec.agent_id, sid)
+        try:
+            text, pause_offsets = prepare_input(getattr(session, "mode", "pty"), prompt)
+            session.write_input(text, pause_offsets=pause_offsets)
+            log.info("初始 prompt 已补发: agent=%s sid=%s", spec.agent_id, sid)
+        except Exception:
+            log.exception("初始 prompt 补发失败: agent=%s sid=%s", spec.agent_id, sid)
+
     # ── exec（oneshot 专用路径；interactive 走 ExecHandler + on_session_created） ──
 
     def _exec(self, ctx, msg: dict, spec: AgentSpec) -> dict:
@@ -358,7 +417,35 @@ class SubagentPlugin(Plugin):
             export_dir = _ensure_export_dir()
             uid = os.path.join(export_dir, f"{uuid.uuid4()}.json")
 
-        command = spec.build_command(prompt=prompt, model=model, uid=uid, oneshot=oneshot)
+        log = _get_logger()
+
+        if ctx.manager is None:
+            return Response.error("manager not available")
+
+        # check_ended_session：同 sid 已结束则拒绝（与 ExecHandler 通用流程一致）
+        from src.execution.utils import check_ended_session
+        if check_ended_session(ctx.manager, sid):
+            return Response.error(f"Session '{sid}' ended, kill and re-exec to restart")
+
+        # 数据目录隔离（声明 data_dir_env / data_dir_arg 的 agent）：每个 spawn 用
+        # 独立数据目录，日志/数据库天然隔离，并发安全且屏幕无输出污染；discover/
+        # 消息读取用同一 data_dir。须先于 build_command——命令行形式（data_dir_arg，
+        # 如 crush --data-dir）要把目录拼进命令。
+        data_dir = ""
+        env_extra = {"TERM": "xterm-256color"}
+        if spec.data_dir_env or spec.data_dir_arg:
+            try:
+                # 先清理过期隔离目录（ended 会话读消息保留 <1h 后无引用价值）
+                _cleanup_stale_data_dirs(spec.agent_id)
+                data_dir = tempfile.mkdtemp(prefix="subagent-" + spec.agent_id + "-")
+                if spec.data_dir_env:
+                    env_extra[spec.data_dir_env] = data_dir
+            except Exception as e:
+                log.warning("data_dir 隔离创建失败，回退默认目录: %s", e)
+                data_dir = ""
+
+        command = spec.build_command(prompt=prompt, model=model, uid=uid,
+                                     oneshot=oneshot, data_dir=data_dir)
         # 解析命令路径：--program-path > 环境变量 > PATH
         program_path = msg.get("programPath", "") or ""
         try:
@@ -372,32 +459,8 @@ class SubagentPlugin(Plugin):
             if IS_WINDOWS:
                 from src.common.shells import wrap_command
                 command = wrap_command(command, spec.wrap_shell)
-        log = _get_logger()
         log.info("subagent exec: sid=%s agent=%s cmd=%s oneshot=%s",
                  sid, spec.agent_id, command, oneshot)
-
-        if ctx.manager is None:
-            return Response.error("manager not available")
-
-        # check_ended_session：同 sid 已结束则拒绝（与 ExecHandler 通用流程一致）
-        from src.execution.utils import check_ended_session
-        if check_ended_session(ctx.manager, sid):
-            return Response.error(f"Session '{sid}' ended, kill and re-exec to restart")
-
-        # 数据目录隔离（声明 data_dir_env 的 agent，如 opencode）：
-        # 每个 spawn 用独立数据目录（环境变量指向），日志/数据库天然隔离，
-        # 并发安全且屏幕无输出污染；discover/消息读取用同一 data_dir。
-        data_dir = ""
-        env_extra = {"TERM": "xterm-256color"}
-        if spec.data_dir_env:
-            try:
-                # 先清理过期隔离目录（ended 会话读消息保留 <1h 后无引用价值）
-                _cleanup_stale_data_dirs(spec.agent_id)
-                data_dir = tempfile.mkdtemp(prefix="subagent-" + spec.agent_id + "-")
-                env_extra[spec.data_dir_env] = data_dir
-            except Exception as e:
-                log.warning("data_dir 隔离创建失败，回退默认目录: %s", e)
-                data_dir = ""
 
         # 创建 subprocess 会话（oneshot 专用：-p 纯文本输出，无终端，拿全量 stdout）
         try:
@@ -476,7 +539,10 @@ class SubagentPlugin(Plugin):
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
-                sid = fn(prompt)
+                if spec.data_dir_env or spec.data_dir_arg:
+                    sid = fn(prompt, data_dir)
+                else:
+                    sid = fn(prompt)
                 if sid:
                     return sid
             except FileNotFoundError:
@@ -710,7 +776,7 @@ class SubagentPlugin(Plugin):
         else:
             try:
                 locator = import_parser(spec.parser_agent, "adapters.session_locator")
-                if spec.data_dir_env:
+                if spec.data_dir_env or spec.data_dir_arg:
                     path = getattr(locator, spec.locator_fn)(uid, data_dir)
                 else:
                     path = getattr(locator, spec.locator_fn)(uid)
@@ -725,7 +791,7 @@ class SubagentPlugin(Plugin):
         # 解析消息（加载函数返回顺序按 AgentSpec.loader_meta_first 区分：
         # False → (entities, meta)，True → (meta, entities)）
         try:
-            if spec.data_dir_env:
+            if spec.data_dir_env or spec.data_dir_arg:
                 loaded = getattr(msg_parser, spec.msg_loader_fn)(path, data_dir)
             else:
                 loaded = getattr(msg_parser, spec.msg_loader_fn)(path)

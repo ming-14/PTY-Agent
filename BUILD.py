@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """PTY-Agent 发布构建脚本（Python，需 3.8+）。
 
-功能：重建发布目录 pty-agent，构建 rime-plugin / fastscreen / win-sandbox /
-wezterm-py，下载 aichat / ripgrep / UltraVNC / terminal_injector 并统一放入发布目录。
+功能：重建发布目录 pty-agent，构建 rime-plugin，
+下载 wezterm-py / win-sandbox / fastscreen / aichat / ripgrep / UltraVNC / terminal_injector 并统一放入发布目录。
 
 交互行为：任意步骤执行中按 Ctrl+C 只跳过当前步骤并继续后续步骤，
 不会终止整个构建；步骤失败也只告警，不中断后续步骤。
@@ -12,8 +12,8 @@ wezterm-py，下载 aichat / ripgrep / UltraVNC / terminal_injector 并统一放
     GITHUB_MIRROR              - GitHub 下载镜像前缀（如 https://ghproxy.com/）
     GITHUB_API_MIRROR          - GitHub API 镜像（默认 https://api.github.com）
     DOWNLOAD_AICHAT            - 是否下载 aichat（true/false，默认 true）
-    BUILD_FASTSCREEN           - 是否构建 fastscreen.dll（默认 true）
-    BUILD_WINSANDBOX           - 是否构建 win_sandbox_native.pyd（默认 true）
+    BUILD_FASTSCREEN           - 是否下载 fastscreen.dll（默认 true）
+    BUILD_WINSANDBOX           - 是否下载 win-sandbox wheel（默认 true）
     BUILD_WEZTERMPY            - 是否构建 wezterm-py（默认 true）
     DOWNLOAD_ULTRAVNC          - 是否下载 UltraVNC（默认 true）
     DOWNLOAD_TERMINALINJECTOR  - 是否下载 terminal_injector（默认 true）
@@ -61,33 +61,6 @@ logger = logging.getLogger("build")
 CONFIG = {"mirror": "", "api_mirror": "https://api.github.com"}
 
 IS_WINDOWS = sys.platform == "win32"
-
-
-def _find_cargo() -> Optional[Path]:
-    """定位 cargo：优先 PATH，回退 rustup 默认安装位置（~/.cargo/bin）。"""
-    cargo = shutil.which("cargo")
-    if cargo:
-        return Path(cargo)
-    home = Path(os.environ.get("USERPROFILE") or Path.home())
-    exe = "cargo.exe" if IS_WINDOWS else "cargo"
-    cand = home / ".cargo" / "bin" / exe
-    return cand if cand.is_file() else None
-
-
-def _ensure_maturin() -> bool:
-    """检查 python -m maturin 可用；缺失时自动 pip 安装。"""
-    try:
-        rc = run_cmd([sys.executable, "-m", "maturin", "--version"])
-        if rc == 0:
-            return True
-    except Exception:
-        pass
-    logger.info("[wezterm-py] maturin 未安装，正在安装...")
-    try:
-        rc = run_cmd([sys.executable, "-m", "pip", "install", "maturin>=1.0,<2.0"])
-        return rc == 0
-    except Exception:
-        return False
 
 
 def _tool_triple(tool: str) -> str:
@@ -153,51 +126,6 @@ def run_step(name, step):
         logger.warning("[build] 步骤异常: %s - %s", name, exc)
 
 
-def find_vcvars():
-    """定位 vcvars64.bat：优先 vswhere 探测实际安装，回退常见版本/版本目录路径。"""
-    vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / \
-        "Microsoft Visual Studio/Installer/vswhere.exe"
-    if vswhere.is_file():
-        try:
-            result = subprocess.run(
-                [str(vswhere), "-latest", "-products", "*",
-                 "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-                 "-property", "installationPath"],
-                capture_output=True, text=True, timeout=60)
-        except (subprocess.TimeoutExpired, OSError):
-            result = None
-        if result and result.returncode == 0:
-            candidate = Path(result.stdout.strip()) / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
-            if candidate.is_file():
-                return candidate
-    pf = os.environ.get("ProgramFiles", r"C:\Program Files")
-    candidates = []
-    # 版本目录两种命名并存：VS 2019/2022 用年份，VS 2026 用主版本号（18）
-    for version in ("18", "2022", "17", "2019"):
-        for edition in ("Community", "Professional", "Enterprise", "BuildTools", "Preview"):
-            candidates.append(pf / Path("Microsoft Visual Studio") / version / edition /
-                              "VC" / "Auxiliary" / "Build" / "vcvars64.bat")
-    return next((p for p in candidates if p.is_file()), None)
-
-
-def write_cmd_wrapper(prefix, lines):
-    """写临时 .cmd 脚本：vcvars 环境注入/跨进程环境配置只能经 cmd 执行。
-
-    cmd 按 ANSI 代码页（系统 ACP，简中为 GBK）逐行解析 .cmd，UTF-8 写入会让
-    非 ASCII 路径（如中文用户名）乱码；故按 ACP 编码，无法表示时回退 UTF-8 并告警。
-    """
-    cmd_file = Path(tempfile.gettempdir()) / "{}_{}.cmd".format(prefix, uuid.uuid4().hex[:8])
-    content = "@echo off\nchcp 65001 >nul\n" + "\n".join(lines) + "\nexit /b %errorlevel%\n"
-    encoding = "cp{}".format(ctypes.windll.kernel32.GetACP()) if IS_WINDOWS else "utf-8"
-    try:
-        content.encode(encoding)
-    except (UnicodeEncodeError, LookupError):
-        logger.warning("[cmd] 路径含 %s 无法表示的字符，回退 UTF-8 写入 %s", encoding, cmd_file)
-        encoding = "utf-8"
-    cmd_file.write_text(content, encoding=encoding)
-    return cmd_file
-
-
 # ===================== 基础包与清理步骤 =====================
 
 def step_clean_output():
@@ -243,19 +171,15 @@ def step_clean_platform_artifacts():
                 if stale.is_file():
                     stale.unlink()
                     logger.info("已删除跨平台残留: %s", stale)
-    # Windows 专属组件目录：仅删除构建/下载产物，保留 git 跟踪的源文件。
-    # ultravnc/terminal_injector 整体为下载产物；win_sandbox 仅 _native/ 下
-    # 的 pyd 是构建产物（__init__.py 等 py 文件为仓库跟踪的 vendored 包装）
+    # Windows 专属组件目录：仅删除下载产物，保留 git 跟踪的源文件。
+    # ultravnc/terminal_injector 整体为下载产物；win_sandbox 和
+    # nanobind_backend 也是下载产物（wheel 解包，目录整体可删）
     if not IS_WINDOWS:
-        for name in ("ultravnc", "terminal_injector"):
+        for name in ("ultravnc", "terminal_injector", "win_sandbox", "nanobind_backend"):
             stale_dir = SCRIPT_DIR / "bin" / name
             if stale_dir.is_dir():
                 shutil.rmtree(stale_dir)
                 logger.info("已删除 Windows 专属残留目录: %s", stale_dir)
-        native_dir = SCRIPT_DIR / "bin" / "win_sandbox" / "_native"
-        if native_dir.is_dir():
-            shutil.rmtree(native_dir)
-            logger.info("已删除 Windows 专属残留目录: %s", native_dir)
         # Unix 平台删除 bin/ 根残留的 Windows pyd 与 fastscreen.dll
         for f in SCRIPT_DIR.glob("bin/win_sandbox_native*.pyd"):
             f.unlink(missing_ok=True)
@@ -400,90 +324,186 @@ def step_clean_logs():
 
 # ===================== 构建步骤 =====================
 
-def step_build_fastscreen():
-    """编译 fastscreen.dll（cmake + VS 生成器；指定生成器失败时回退默认）。"""
-    fs_source = SCRIPT_DIR / "fastscreen"
-    fs_build = fs_source / "build"
-    fs_build.mkdir(exist_ok=True)
-    cmake = shutil.which("cmake")
-    if not cmake:
-        logger.warning("[fastscreen] cmake 未找到，跳过编译")
-        return
-    rc = run_cmd([cmake, "-S", str(fs_source), "-B", str(fs_build),
-                  "-G", "Visual Studio 18 2026", "-A", "x64"])
-    if rc != 0:
-        logger.info("[fastscreen] 指定 VS 生成器失败，回退默认生成器")
-        rc = run_cmd([cmake, "-S", str(fs_source), "-B", str(fs_build)])
-        if rc != 0:
-            logger.warning("[fastscreen] cmake configure 失败，跳过编译")
-            return
-    rc = run_cmd([cmake, "--build", str(fs_build), "--config", "Release", "-j"])
-    if rc != 0:
-        logger.warning("[fastscreen] 编译失败")
-        return
-    dll = fs_build / "bin" / "Release" / "fastscreen.dll"
-    if not dll.is_file():
-        logger.warning("[fastscreen] 未找到编译产物 fastscreen.dll")
-        return
-    # 产物落入源目录基础包 bin/fastscreencore，由最后的复制基础包步骤统一打包
-    dst = SCRIPT_DIR / "bin" / "fastscreencore" / "fastscreen.dll"
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(str(dll), str(dst))
-    logger.info("[fastscreen] 编译完成")
+def _fastscreen_asset_name():
+    """返回当前平台对应的 fastscreen Release DLL 资产名（fastscreen-win-<arch>.dll）。
+
+    指针宽度优先：32 位 Python 在 64 位系统上 platform.machine() 仍返回 AMD64，
+    需用指针大小区分 x86 与 x64。
+    """
+    if ctypes.sizeof(ctypes.c_void_p) == 4:
+        return "fastscreen-win-x86.dll"
+    machine = platform.machine().lower()
+    if machine in ("arm64", "aarch64"):
+        return "fastscreen-win-arm64.dll"
+    return "fastscreen-win-x86_64.dll"
 
 
-def step_build_win_sandbox():
-    """编译 win_sandbox_native.pyd（pybind11 + Ninja；vcvars 环境经临时 .cmd 注入）。"""
-    ws_source = SCRIPT_DIR / "sandbox" / "src"
-    ws_build = ws_source / "build"
-    # 清理 bin/ 根过期的旧 pyd，避免构建产物与旧文件混用
-    old_pyd = SCRIPT_DIR / "bin" / "win_sandbox_native.cp311-win_amd64.pyd"
-    if old_pyd.is_file():
-        old_pyd.unlink()
-        logger.info("已删除 bin/ 根过期 pyd: %s", old_pyd.name)
-    cmake = shutil.which("cmake")
-    if not cmake:
-        logger.warning("[win-sandbox] cmake 未找到，跳过编译")
+def step_download_fastscreen():
+    """下载 fastscreen.dll（从 GitHub Releases，按平台自动选择架构资产）。
+
+    fastscreen 已作为独立仓库发布三架构 DLL（x86_64 / x86 / arm64），
+    不再本地编译；下载后落入基础包 bin/fastscreencore/，由打包步骤统一收集。
+    """
+    asset_name = _fastscreen_asset_name()
+    if not asset_name:
+        logger.warning("[fastscreen] 不支持的平台架构: %s，跳过下载", platform.machine())
         return
-    vcvars = find_vcvars()
-    if not vcvars:
-        logger.warning("[win-sandbox] 未找到 vcvars64.bat，跳过编译")
-        return
-    # CMakeCache 内嵌旧路径会导致重建失败，发布构建每次全量生成
-    if ws_build.exists():
-        shutil.rmtree(ws_build)
-    cmd_file = write_cmd_wrapper("win_sandbox", [
-        'call "{}" >nul 2>&1'.format(vcvars),
-        'cmake -S "{}" -B "{}" -G Ninja -DCMAKE_BUILD_TYPE=Release'.format(ws_source, ws_build),
-        'cmake --build "{}"'.format(ws_build),
-    ])
+
     try:
-        rc = run_cmd(["cmd", "/c", str(cmd_file)])
+        tag = _latest_release_tag("ming-14/fastscreen")
+    except BaseException as exc:
+        logger.warning("[fastscreen] 查询最新 release 失败: %s", exc)
+        return
+
+    url = "https://github.com/ming-14/fastscreen/releases/download/{}/{}".format(tag, asset_name)
+    dst = SCRIPT_DIR / "bin" / "fastscreencore" / "fastscreen.dll"
+    tmp_path = None
+    try:
+        tmp_path = _download_to_temp(_mirror_url(url), label="fastscreen")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(tmp_path), str(dst))
+        logger.info("[fastscreen] 已下载: %s → %s", asset_name, dst)
+    except BaseException as exc:
+        logger.warning("[fastscreen] 下载失败: %s", exc)
     finally:
-        cmd_file.unlink(missing_ok=True)
-    if rc != 0:
-        logger.warning("[win-sandbox] 编译失败（exit=%s）", rc)
-        return
-    pyd = next((p for p in ws_build.rglob("win_sandbox_native*.pyd") if p.is_file()), None)
-    if not pyd:
-        logger.warning("[win-sandbox] 未找到编译产物 .pyd")
-        return
-    # 产物落入源目录基础包 bin/win_sandbox，由最后的复制基础包步骤统一打包
-    pyd_dst_dir = SCRIPT_DIR / "bin" / "win_sandbox" / "_native"
-    pyd_dst_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(str(pyd), str(pyd_dst_dir))
-    # vendored python 包装：构建产物目录优先，用 sandbox 下的 py 源覆盖保证与 pyd 版本一致
-    py_src = ws_source / "python" / "win_sandbox"
-    if py_src.is_dir():
-        for py_file in py_src.glob("*.py"):
-            shutil.copy2(str(py_file), str(SCRIPT_DIR / "bin" / "win_sandbox" / py_file.name))
-    logger.info("[win-sandbox] 编译完成: %s", pyd.name)
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 
-def _warn_wezterm_py_missing(detail: str) -> None:
-    """wezterm-py 缺失告警：PTY 后端为必备基本包，发布目录必须携带其二进制。"""
+def stage_clean_windows_sandbox_archives():
+    """清理上次构建残留的 win-sandbox 解包目录。"""
+    sandbox_dir = SCRIPT_DIR / "bin" / "win_sandbox"
+    if sandbox_dir.is_dir():
+        shutil.rmtree(sandbox_dir)
+        logger.info("[win-sandbox] 清理旧目录: %s", sandbox_dir)
+    nb_dir = SCRIPT_DIR / "bin" / "nanobind_backend"
+    if nb_dir.is_dir():
+        shutil.rmtree(nb_dir)
+        logger.info("[win-sandbox] 清理旧目录: %s", nb_dir)
+    for f in SCRIPT_DIR.glob("bin/win_sandbox_native*.pyd"):
+        f.unlink(missing_ok=True)
+        logger.info("[win-sandbox] 删除过期 pyd: %s", f)
+
+
+def _win_sandbox_platform():
+    """返回当前平台对应的 wheel 平台标签（win_amd64 / win_arm64）。"""
+    machine = platform.machine().lower()
+    if machine in ("amd64", "x86_64"):
+        return "win_amd64"
+    if machine in ("arm64", "aarch64"):
+        return "win_arm64"
+    return None
+
+
+def _pypi_wheel_url(package, py_tag, plat):
+    """查询 PyPI 上匹配 Python 标签与平台的最新 wheel URL。
+
+    Returns:
+        (url, filename) 或 (None, None)
+    """
+    url = "https://pypi.org/pypi/{}/json".format(package)
+    request = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except BaseException as exc:
+        logger.warning("[%s] PyPI 查询失败: %s", package, exc)
+        return None, None
+    version = data["info"]["version"]
+    for f in data["releases"].get(version, []):
+        fn = f["filename"]
+        if fn.endswith("-{}-{}.whl".format(py_tag, plat)):
+            return f["url"], fn
+    return None, None
+
+
+def step_download_win_sandbox():
+    """下载 win_sandbox wheel（GitHub Releases）+ nanobind-backend wheel（PyPI），按架构自动选。
+
+    二者均为沙箱核心组件：win_sandbox 是 abi3 扩展（Python 3.10+），
+    nanobind-backend 是 split mode 运行期必需的后端模块。
+
+    架构映射：
+      - AMD64 → win_amd64
+      - ARM64 → win_arm64
+      （x86 不支持：nanobind-backend 无 win32 wheel，运行期不可用）
+    """
+    plat = _win_sandbox_platform()
+    if not plat:
+        logger.warning("[win-sandbox] 不支持的平台架构: %s，跳过下载", platform.machine())
+        return
+
+    # —— 0. 清理旧产物 — —
+    stage_clean_windows_sandbox_archives()
+
+    py_tag = "cp{}{}".format(sys.version_info.major, sys.version_info.minor)
+
+    # —— 1. 下载 win_sandbox wheel（从 GitHub Releases） ——
+    try:
+        tag = _latest_release_tag("ming-14/win-sandbox")
+    except BaseException as exc:
+        logger.warning("[win-sandbox] 查询最新 release 失败: %s", exc)
+        return
+    ws_version = tag[1:] if tag.startswith("v") else tag
+    ws_wheel_name = "win_sandbox-{}-cp310-abi3-{}.whl".format(ws_version, plat)
+    ws_url_git = "https://github.com/ming-14/win-sandbox/releases/download/{}/{}".format(tag, ws_wheel_name)
+    archive_path = None
+    extract_dir = None
+    ws_ok = False
+    try:
+        archive_path = _download_to_temp(_mirror_url(ws_url_git), label="win-sandbox")
+        extract_dir = _extract_to_temp(archive_path, "win-sandbox")
+        installed = _install_wheel_packages(extract_dir, SCRIPT_DIR / "bin")
+        if "win_sandbox" not in installed:
+            logger.warning("[win-sandbox] wheel 中未找到 win_sandbox 包目录，结构可能已更改")
+        else:
+            logger.info("[win-sandbox] 已下载: %s → bin/win_sandbox（含 %s）",
+                        ws_wheel_name, ", ".join(installed))
+            ws_ok = True
+    except BaseException as exc:
+        logger.warning("[win-sandbox] 下载失败: %s", exc)
+    finally:
+        if extract_dir is not None:
+            shutil.rmtree(extract_dir, ignore_errors=True)
+        if archive_path is not None:
+            archive_path.unlink(missing_ok=True)
+
+    # —— 2. 下载 nanobind-backend（从 PyPI，split mode 运行期必需） ——
+    nb_ok = False
+    try:
+        nb_url, nb_fn = _pypi_wheel_url("nanobind-backend", py_tag, plat)
+        if not nb_url:
+            logger.warning("[nanobind-backend] PyPI 上无匹配 wheel: %s-%s，跳过", py_tag, plat)
+        else:
+            archive_path = _download_to_temp(nb_url, label="nanobind-backend")
+            extract_dir = _extract_to_temp(archive_path, "nanobind-backend")
+            installed = _install_wheel_packages(extract_dir, SCRIPT_DIR / "bin")
+            if "nanobind_backend" not in installed:
+                logger.warning("[nanobind-backend] wheel 中未找到 nanobind_backend 包")
+            else:
+                logger.info("[nanobind-backend] 已下载: %s → bin/（含 %s）",
+                            nb_fn, ", ".join(installed))
+                nb_ok = True
+            if extract_dir is not None:
+                shutil.rmtree(extract_dir, ignore_errors=True)
+            if archive_path is not None:
+                archive_path.unlink(missing_ok=True)
+    except BaseException as exc:
+        logger.warning("[nanobind-backend] 下载失败: %s", exc)
+
+    # —— 3. 最终状态汇总 ——
+    if ws_ok and nb_ok:
+        logger.info("[win-sandbox] 下载完成: win_sandbox + nanobind-backend 均已就绪")
+    elif ws_ok:
+        logger.warning("[win-sandbox] win_sandbox 已就绪，但 nanobind-backend 缺失（x86 或不支持该 Python 版本）→ 沙箱在运行时可能不可用")
+    else:
+        logger.warning("[win-sandbox] 下载失败，跳过后继打包")
+
+
+def _warn_pywezterm_missing(detail: str) -> None:
+    """pywezterm 缺失告警：PTY 后端为必备基本包，发布目录必须携带其二进制。"""
     logger.warning(
-        "[wezterm-py] %s；wezterm-py 为必备基本包（PTY 后端），"
+        "[pywezterm] %s；pywezterm 为必备基本包（PTY 后端），"
         "发布目录必须携带 bin/pywezterm 二进制", detail)
 
 
@@ -506,89 +526,108 @@ def _files_in_use(directory):
     return locked
 
 
-def step_build_wezterm_py():
-    """编译 wezterm-py：maturin 构建 pywezterm wheel，解包复制 vendored 包。
+def _pywezterm_platform():
+    """返回当前平台对应的 pywezterm wheel 平台标签。
 
-    Windows：vcvars64 环境经临时 .cmd 注入后执行 maturin（MSVC 链接）；
-    Unix：cargo/maturin 直接可用，在原环境执行。
+    映射与 pywezterm 发布矩阵一致：
+      Windows amd64 / x86 / arm64 → win_amd64 / win32 / win_arm64
+      Linux x64 / arm64 → manylinux_2_28_x86_64 / manylinux_2_28_aarch64
+      macOS arm64 → macosx_11_0_arm64
     """
-    wz_source = SCRIPT_DIR / "wezterm-py"
+    machine = platform.machine().lower()
+    if IS_WINDOWS:
+        if machine in ("amd64", "x86_64"):
+            return "win_amd64"
+        if machine in ("arm64", "aarch64"):
+            return "win_arm64"
+        if machine in ("x86", "i386", "i686"):
+            return "win32"
+        return None
+    if sys.platform.startswith("linux"):
+        if machine in ("x86_64", "amd64"):
+            return "manylinux_2_28_x86_64"
+        if machine in ("aarch64", "arm64"):
+            return "manylinux_2_28_aarch64"
+        return None
+    if sys.platform == "darwin":
+        if machine in ("arm64", "aarch64"):
+            return "macosx_11_0_arm64"
+        return None
+    return None
+
+
+def step_download_wezterm_py():
+    """下载 pywezterm wheel（GitHub Releases），按平台自动选对应架构，解包复制 vendored 包。
+
+    wheel 命名：pywezterm-<version>-cp38-abi3-<plat>.whl
+    PTY 后端为必备基本包：缺失时发布目录无法提供 PTY 能力，仅告警不阻断。
+    """
     pkg_dst = SCRIPT_DIR / "bin" / "pywezterm"
-    cargo_ok = _find_cargo() is not None
-    if not cargo_ok:
-        _warn_wezterm_py_missing("cargo 未找到，跳过编译")
+
+    plat = _pywezterm_platform()
+    if not plat:
+        _warn_pywezterm_missing("无法确定当前平台标签（{}-{}），跳过".format(
+            sys.platform, platform.machine()))
         return
+
     if IS_WINDOWS:
         # Windows 上 pyd/dll/exe 被运行中进程占用时不可覆盖：守护进程加载
         # pywezterm.pyd（连带 conpty.dll），PTY 会话宿主持有 OpenConsole.exe。
-        # 编译前先探测占用，避免编译完成后复制失败（编译耗时且产物无法落地）。
+        # 下载前先探测占用，避免下载解压后复制失败。
         locked = _files_in_use(pkg_dst)
         if locked:
             logger.warning(
-                "[wezterm-py] 以下文件被运行中的进程占用（PTY-Agent 守护进程/PTY 会话）: %s",
+                "[pywezterm] 以下文件被运行中的进程占用（守护进程/PTY 会话）: %s",
                 ", ".join(locked),
             )
-            logger.warning("[wezterm-py] 请先停止守护进程与所有 PTY 会话（stop.ps1 / stop.sh）后重新构建")
+            logger.warning("[pywezterm] 请先停止守护进程与所有 PTY 会话（stop.ps1 / stop.sh）后重新构建")
             return
-        vcvars = find_vcvars()
-        if not vcvars:
-            _warn_wezterm_py_missing("未找到 vcvars64.bat，跳过编译")
-            return
-        # maturin 需要 vcvars 环境注入 + cargo PATH，经临时 .cmd 包装；
-        # 在 wezterm-py 根目录执行（pyproject.toml 的 [tool.maturin] 指定 pywezterm crate）
-        cmd_file = write_cmd_wrapper("wezterm_py", [
-            'call "{}" >nul 2>&1'.format(vcvars),
-            'set "PATH={};%PATH%"'.format(_find_cargo().parent),
-            'cd /d "{}"'.format(wz_source),
-            'python -m maturin build --release --out target\\wheels',
-        ])
-        try:
-            rc = run_cmd(["cmd", "/c", str(cmd_file)])
-        finally:
-            cmd_file.unlink(missing_ok=True)
-    else:
-        # Unix：maturin 缺失时自动安装；cargo 从 PATH/rustup 定位
-        if not _ensure_maturin():
-            _warn_wezterm_py_missing("maturin 安装失败，跳过编译")
-            return
-        rc = run_cmd(
-            [sys.executable, "-m", "maturin", "build", "--release",
-             "--out", "target/wheels"],
-            cwd=str(wz_source),
-        )
-    if rc != 0:
-        _warn_wezterm_py_missing("编译失败（exit=%s）" % rc)
-        return
-    wheels_dir = wz_source / "target" / "wheels"
-    whl = max((p for p in wheels_dir.glob("*.whl")), key=lambda p: p.stat().st_mtime, default=None)
-    if not whl:
-        _warn_wezterm_py_missing("未找到编译产物 wheel")
-        return
-    extract_dir = Path(tempfile.gettempdir()) / "wezterm_py_extract_{}".format(uuid.uuid4().hex)
+
+    # 查询最新 release，从资产列表中找到匹配平台标签的 wheel 文件名
+    # 注意：wheel 内的版本号不一定等于 tag 名（如 tag v1.0 但 wheel 版本 0.1.0），
+    # 不能靠拼版本号构造文件名，必须查 API 获取资产列表匹配。
     try:
-        with zipfile.ZipFile(str(whl)) as zf:
-            zf.extractall(str(extract_dir))
+        tag = _latest_release_tag("ming-14/pywezterm")
+    except BaseException as exc:
+        _warn_pywezterm_missing("查询最新 release 失败: %s" % exc)
+        return
+    whl_suffix = "-{}.whl".format(plat)
+    whl_name = _release_asset_name("ming-14/pywezterm", tag, whl_suffix)
+    if not whl_name:
+        _warn_pywezterm_missing("release {} 中未找到匹配的 wheel（后缀 {}）".format(tag, whl_suffix))
+        return
+    whl_url = "https://github.com/ming-14/pywezterm/releases/download/{}/{}".format(tag, whl_name)
+
+    archive_path = None
+    extract_dir = None
+    try:
+        archive_path = _download_to_temp(_mirror_url(whl_url), label="pywezterm")
+        extract_dir = _extract_to_temp(archive_path, "pywezterm")
         pkg_src = extract_dir / "pywezterm"
         if not pkg_src.is_dir():
-            _warn_wezterm_py_missing("wheel 缺少 pywezterm 包")
+            _warn_pywezterm_missing("wheel 中未找到 pywezterm 包（%s），结构可能已更改" % whl_name)
             return
         # pywezterm 落入源目录基础包 bin/pywezterm，由复制基础包步骤统一打包
         pkg_dst.parent.mkdir(parents=True, exist_ok=True)
         try:
-            # Unix 发布物不需要 Windows 侧载文件（maturin include 会把
-            # wezterm-py/pywezterm 下的 conpty.dll/OpenConsole.exe 打进 wheel，
-            # 但 Linux 平台 pty.rs 不会加载它们）
+            # Unix 发布物不需要 Windows 侧载文件（wheel 内的 conpty.dll/OpenConsole.exe）
             if not IS_WINDOWS:
                 for f in ("conpty.dll", "OpenConsole.exe"):
                     (pkg_src / f).unlink(missing_ok=True)
-            shutil.copytree(str(pkg_src), str(pkg_dst), dirs_exist_ok=True)
+            # 顶层目录整体搬（含 pywezterm.libs 若存在），避免 vendored DLL 丢失
+            _install_wheel_packages(extract_dir, SCRIPT_DIR / "bin")
         except PermissionError as exc:
             logger.warning(
-                "[wezterm-py] 复制产物时文件被占用: %s；请停止守护进程后重试", exc)
+                "[pywezterm] 复制产物时文件被占用: %s；请停止守护进程后重试", exc)
             return
-        logger.info("[wezterm-py] 编译完成: %s -> bin\\pywezterm", whl.name)
+        logger.info("[pywezterm] 已下载: %s -> bin\\pywezterm", whl_name)
+    except BaseException as exc:
+        _warn_pywezterm_missing("下载失败: %s" % exc)
     finally:
-        shutil.rmtree(extract_dir, ignore_errors=True)
+        if extract_dir is not None:
+            shutil.rmtree(extract_dir, ignore_errors=True)
+        if archive_path is not None:
+            archive_path.unlink(missing_ok=True)
 
 
 # ===================== 下载步骤 =====================
@@ -610,12 +649,35 @@ def _latest_release_tag(repo):
         return json.loads(resp.read().decode("utf-8"))["tag_name"]
 
 
+def _install_wheel_packages(extract_dir, bin_dir):
+    """把 wheel 解包出的全部顶层包目录复制进 bin/（跳过 dist-info），返回包名列表。
+
+    delvewheel/auditwheel 会把 vendored 运行时 DLL 放在 <包名>.libs/ 兄弟目录
+    （如 nanobind_backend.libs/msvcp140-<hash>.dll），只复制包目录会丢依赖，
+    导致 pyd 加载报 "DLL load failed"，故顶层目录整体搬。
+    """
+    installed = []
+    for item in sorted(extract_dir.iterdir()):
+        if not item.is_dir() or item.name.endswith(".dist-info"):
+            continue
+        dst = bin_dir / item.name
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(str(item), str(dst))
+        installed.append(item.name)
+    return installed
+
+
 def _download_to_temp(url, label):
     """下载到临时文件并返回路径；中断时清理半成品。
 
-    临时文件保留 URL 扩展名（.zip/.tar.gz），供 _extract_to_temp 分流解压。
+    临时文件保留扩展名（.zip/.tar.gz），供 _extract_to_temp 分流解压。
+    wheel（.whl）本质是 zip 容器，统一按 .zip 命名。
     """
-    ext = ".zip" if url.endswith(".zip") else ".tar.gz"
+    if url.endswith(".zip") or url.endswith(".whl"):
+        ext = ".zip"
+    else:
+        ext = ".tar.gz"
     dest = Path(tempfile.gettempdir()) / "{}_{}{}".format(
         label, uuid.uuid4().hex[:8], ext)
     logger.info("[%s] 下载 %s ...", label, url)
@@ -625,6 +687,26 @@ def _download_to_temp(url, label):
         dest.unlink(missing_ok=True)
         raise
     return dest
+
+
+def _release_asset_name(repo, tag, suffix):
+    """查询 GitHub release 中匹配后缀的资产名（走 API 镜像）。
+
+    Returns:
+        第一个匹配的资产文件名，或 None
+    """
+    url = "{}/repos/{}/releases/tags/{}".format(CONFIG["api_mirror"], repo, tag)
+    try:
+        request = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(request, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        for asset in data.get("assets", []):
+            name = asset["name"]
+            if name.endswith(suffix):
+                return name
+    except BaseException:
+        pass
+    return None
 
 
 def _extract_to_temp(archive_path, label):
@@ -878,13 +960,13 @@ def main():
 # 仅 Windows 构建/下载，Unix 平台直接跳过（这些功能依赖 Windows 原生二进制）
     if IS_WINDOWS:
         if _enabled(args.NoFastscreen, "BUILD_FASTSCREEN"):
-            steps.append(("编译 fastscreen.dll", step_build_fastscreen))
+            steps.append(("下载 fastscreen.dll", step_download_fastscreen))
         else:
-            logger.info("[fastscreen] 跳过构建（BUILD_FASTSCREEN=false 或 -NoFastscreen）")
+            logger.info("[fastscreen] 跳过下载（BUILD_FASTSCREEN=false 或 -NoFastscreen）")
         if _enabled(args.NoWinsandbox, "BUILD_WINSANDBOX"):
-            steps.append(("编译 win_sandbox_native.pyd", step_build_win_sandbox))
+            steps.append(("下载 win-sandbox + nanobind-backend", step_download_win_sandbox))
         else:
-            logger.info("[win-sandbox] 跳过编译（BUILD_WINSANDBOX=false 或 -NoWinsandbox）")
+            logger.info("[win-sandbox] 跳过下载（BUILD_WINSANDBOX=false 或 -NoWinsandbox）")
         if _enabled(args.NoUltravnc, "DOWNLOAD_ULTRAVNC"):
             steps.append(("下载 UltraVNC", step_download_ultravnc))
         else:
@@ -897,9 +979,9 @@ def main():
         logger.info("[fastscreen/win-sandbox/ultravnc/terminal_injector] Unix 平台跳过（Windows 专属组件）")
 
     if _enabled(args.NoWeztermPy, "BUILD_WEZTERMPY"):
-        steps.append(("编译 wezterm-py", step_build_wezterm_py))
+        steps.append(("下载 pywezterm（PTY 后端）", step_download_wezterm_py))
     else:
-        _warn_wezterm_py_missing("跳过编译（BUILD_WEZTERMPY=false 或 -NoWeztermPy）")
+        _warn_pywezterm_missing("跳过下载（BUILD_WEZTERMPY=false 或 -NoWeztermPy）")
 
     if _enabled(args.NoAichat, "DOWNLOAD_AICHAT"):
         steps.append(("下载 aichat", step_download_aichat))
@@ -933,3 +1015,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

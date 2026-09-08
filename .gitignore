@@ -27,10 +27,6 @@ build/
 *.egg-info/
 *.egg
 .eggs/
-# C++ 沙箱编译残留（sandbox/src 下非 build/ 目录的产物）
-sandbox/src/*.obj
-sandbox/src/*.exe
-
 # ===================== 虚拟环境 =====================
 venv/
 .env/
@@ -57,6 +53,8 @@ venv/
 .opencode/
 .mimocode/
 .codeartsdoer/
+.freebuff/
+.workbuddy/
 
 # ===================== 操作系统 =====================
 .DS_Store
@@ -88,6 +86,8 @@ bin/rg/
 bin/win_sandbox/
 bin/openconsole/
 bin/pywezterm/
+bin/nanobind_backend/
+bin/nanobind_backend.libs/
 
 # ===================== 测试临时文件 =====================
 node_modules/
@@ -105,3 +105,8 @@ src/assets/fonts/
 
 # 运行时临时数据
 _tmp_pty_data/
+
+# ===================== 外部独立仓库 =====================
+pywezterm/
+sandbox/
+fastscreen/

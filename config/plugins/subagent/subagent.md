@@ -1,6 +1,6 @@
-# subagent 插件 — CodeBuddy (cbc) / Devin / OpenCode / Claude Code / Smart Agent 子代理管理
+# subagent 插件 — CodeBuddy (cbc) / Devin / OpenCode / Claude Code / Smart Agent / Crush 子代理管理
 
-使用 CodeBuddy / Devin / OpenCode / Claude Code / Smart Agent 编码子代理
+使用 CodeBuddy / Devin / OpenCode / Claude Code / Smart Agent / Crush 编码子代理
 
 **请注意，子代理是代理，拥有完整的权限，请尊重子代理**
 
@@ -14,6 +14,7 @@ devin exec <sid> -p <prompt> [--cwd <dir>] [--model <model>] [--program-path <pa
 opencode exec <sid> -p <prompt> [--cwd <dir>] [--model <model>] [--program-path <path>] [--oneshot | --interactive]
 claude exec <sid> -p <prompt> [--cwd <dir>] [--model <model>] [--program-path <path>] [--oneshot | --interactive]
 smartagent exec <sid> -p <prompt> [--cwd <dir>] [--model <model>] [--oneshot | --interactive]
+crush exec <sid> -p <prompt> [--cwd <dir>] [--model <model>] [--program-path <path>] [--oneshot | --interactive]
 ```
 
 - `--program-path <path>`：指定子代理程序路径。不指定时按环境变量（如 `OPENCODE_PATH`）→ PATH 顺序查找，找不到报错
@@ -89,6 +90,14 @@ python app.py read cltask --rf message -l 10           # 看结果（~/.claude j
 
 # 一次性模式（Claude Code）
 python app.py claude exec cltask -p "分析这个仓库" --cwd C:\repo --oneshot
+
+# 交互式多轮（Crush）
+python app.py crush exec crtask -p "分析这个仓库的结构" --cwd C:\repo
+python app.py wait --timeout 300                       # 等回合完成通知
+python app.py read crtask --rf message -l 10           # 看结果（crush.db 消息）
+
+# 一次性模式（Crush）
+python app.py crush exec crtask -p "分析这个仓库" --cwd C:\repo --oneshot
 
 # 状态查看
 python app.py read dev                                  # 屏幕快照 + 实时状态
