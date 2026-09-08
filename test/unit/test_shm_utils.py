@@ -8,7 +8,7 @@ import os
 import time
 import pytest
 
-from src.session.shm_utils import (
+from src.protocol.auth import (
     generate_auth_token,
     read_auth_token,
     write_auth_token,

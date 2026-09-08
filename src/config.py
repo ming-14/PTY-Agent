@@ -8,16 +8,16 @@ import sys
 # 设为 None 则不写日志
 DAEMON_LOG_LEVEL = "DEBUG"
 CLIENT_LOG_LEVEL = "DEBUG"
-CLIENT_DEBUG = True
 
 # ── 文件路径 ──
 DATA_DIR = os.path.join(os.path.expanduser("~"), ".pty-agent")  # Unix 共享内存文件目录
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
 
-# ── 缓冲区 ──
-MAX_OUTPUT_BUFFER = 100 * 1024 * 1024    # 100 MB，会话输出缓冲区上限
-MAX_TRIGGER_SCAN  = 10 * 1024 * 1024     # 10 MB，触发检查最大扫描范围
+# ── 输出缓冲 ──
+MAX_HISTORY_LINES   = 10000           # 滚动历史最大行数（pty 模式 scrollback 上限）
+MAX_OUTPUT_CHARS    = 20 * 1024 * 1024  # 全量输出最大字符数（行缓冲字符预算）
+MAX_TRIGGER_SCAN    = 10 * 1024 * 1024  # 10MB，触发检查最大扫描范围（字符）
 
 # ── 超时 ──
 DEFAULT_TRIGGER_TIMEOUT = 120.0          # 触发等待超时（秒）
@@ -31,13 +31,17 @@ DAEMON_HEARTBEAT_INTERVAL = 1.0          # 守护进程心跳更新间隔（秒�
 DAEMON_HEARTBEAT_FRESH  = 10.0           # 心跳新鲜阈值（秒，超过视为僵死）
 
 # ── 其他 ──
-PTY_READ_SIZE          = 65536
+READ_SIZE              = 65536           # 后端单次读取字节数
 
 # ── 输入长度限制（防资源耗尽）──
 MAX_SESSION_ID_LEN     = 128      # 会话标识符最大长度
 MAX_COMMAND_LEN        = 65536    # 命令字符串最大长度（64 KB）
 MAX_PATTERN_LEN        = 4096     # 触发/过滤正则最大长度（4 KB）
 MAX_INPUT_LEN          = 65536    # send 输入文本最大长度
+
+# ── 终端尺寸（pty 模式 pyte 屏幕）──
+DEFAULT_COLS           = 80       # 终端默认宽度（列）
+DEFAULT_ROWS           = 24       # 终端默认高度（行）
 
 # ── 共享内存 — 守护进程信息区（单实例 + 心跳）─
 # 格式: "PID:状态:心跳时间戳"（如 "5488:1:1234567890.123"）

@@ -13,37 +13,37 @@ import sys
 import errno
 import pytest
 
-from src.pty.base import PseudoTerminal
+from src.backend.base import Backend
 
 
-class TestPseudoTerminalDrain:
-    """PseudoTerminal 基类 drain() 测试"""
+class TestBackendDrain:
+    """Backend 基类 drain() 测试"""
 
     def test_base_drain_returns_empty(self):
         """基类 drain() 默认返回 b"""""
-        pty = PseudoTerminal()
+        pty = Backend()
         assert pty.drain() == b""
         assert pty.drain(1024) == b""
 
     def test_base_drain_has_correct_signature(self):
         """基类 drain() 接受 max_bytes 参数"""
-        pty = PseudoTerminal()
+        pty = Backend()
         result = pty.drain(max_bytes=4096)
         assert result == b""
 
 
-class TestSubprocessPseudoTerminalDrain:
-    """SubprocessPseudoTerminal drain() 测试
+class TestSubprocessBackendDrain:
+    """SubprocessBackend drain() 测试
 
     子进程管道是阻塞式 subprocess.PIPE.stdout.read(n)，
     无法非阻塞排空，因此 drain() 继承基类返回 b""。
     """
 
     def test_subprocess_drain_returns_empty(self):
-        """SubprocessPseudoTerminal.drain() 返回 b""（继承基类）"""
-        from src.pty.subprocess import SubprocessPseudoTerminal
+        """SubprocessBackend.drain() 返回 b""（继承基类）"""
+        from src.backend.subprocess import SubprocessBackend
 
-        pty = SubprocessPseudoTerminal(
+        pty = SubprocessBackend(
             [sys.executable, "-c", "print('hello')"],
         )
         try:
@@ -56,9 +56,9 @@ class TestSubprocessPseudoTerminalDrain:
 
     def test_subprocess_read_still_works(self):
         """drain() 不破坏正常的 read()"""
-        from src.pty.subprocess import SubprocessPseudoTerminal
+        from src.backend.subprocess import SubprocessBackend
 
-        pty = SubprocessPseudoTerminal(
+        pty = SubprocessBackend(
             [sys.executable, "-u", "-c", "print('hello world')"],
         )
         try:
@@ -73,10 +73,10 @@ class TestSubprocessPseudoTerminalDrain:
 
 @pytest.mark.skipif(
     sys.platform not in ("linux", "linux2", "darwin"),
-    reason="UnixPseudoTerminal 仅在 Unix 平台可用",
+    reason="UnixTtyBackend 仅在 Unix 平台可用",
 )
-class TestUnixPseudoTerminalDrain:
-    """UnixPseudoTerminal drain() 测试
+class TestUnixTtyBackendDrain:
+    """UnixTtyBackend drain() 测试
 
     Unix PTY 使用 os.O_NONBLOCK 模式，os.read 立即返回当前可读数据。
     drain() 应循环读取直到无数据，拼接所有 chunk 返回。
@@ -84,19 +84,19 @@ class TestUnixPseudoTerminalDrain:
 
     @staticmethod
     def _make_pty(monkeypatch):
-        """构造不真正 fork 的 UnixPseudoTerminal（供 drain 逻辑测试）
+        """构造不真正 fork 的 UnixTtyBackend（供 drain 逻辑测试）
 
         在 Linux/macOS 上用一对真实管道 fd 模拟 pty master/slave，
         仅 mock openpty/fork/waitpid，避免测试产生真实孤儿进程。
         `os.read` 由各测试单独 mock；fd 由 close() 正常回收。
         """
-        from src.pty.unix import UnixPseudoTerminal
+        from src.backend.unix.pty import UnixTtyBackend
 
         r, w = os.pipe()
         monkeypatch.setattr(os, "openpty", lambda: (r, w))
         monkeypatch.setattr(os, "fork", lambda: 12345)  # 父进程分支
         monkeypatch.setattr(os, "waitpid", lambda pid, opts: (0, 0))
-        return UnixPseudoTerminal(["/bin/true"])
+        return UnixTtyBackend(["/bin/true"])
 
     def test_drain_loops_until_empty(self, monkeypatch):
         """drain() 循环读取直到 os.read 返回 b"""""
@@ -214,8 +214,8 @@ class TestUnixPseudoTerminalDrain:
     sys.platform != "win32",
     reason="Windows ConPTY 仅 Windows 平台",
 )
-class TestWindowsPseudoTerminalDrain:
-    """WindowsPseudoTerminal (kernel32_api) drain() 测试
+class TestWinTtyBackendDrain:
+    """WinTtyBackend (kernel32_api) drain() 测试
 
     使用 PeekNamedPipe 非阻塞查询管道就绪数据量，
     有数据时发起 ReadFile 读取。
@@ -223,16 +223,16 @@ class TestWindowsPseudoTerminalDrain:
 
     def test_drain_type_and_callable(self):
         """drain() 方法存在且可调用"""
-        from src.pty.windows.kernel32_api import WindowsPseudoTerminal
-        assert hasattr(WindowsPseudoTerminal, "drain")
-        assert callable(WindowsPseudoTerminal.drain)
+        from src.backend.windows.kernel32_api import WinTtyBackend
+        assert hasattr(WinTtyBackend, "drain")
+        assert callable(WinTtyBackend.drain)
 
     def test_drain_no_data(self):
         """子进程未输出时 drain() 返回 b"""""
-        from src.pty.windows.kernel32_api import WindowsPseudoTerminal
+        from src.backend.windows.kernel32_api import WinTtyBackend
 
         try:
-            pty = WindowsPseudoTerminal(
+            pty = WinTtyBackend(
                 [sys.executable, "-c", "import time; time.sleep(30)"],
                 cols=80, rows=24,
             )
@@ -255,23 +255,23 @@ class TestDrainInterface:
     """drain() 接口完整性测试（跨平台）"""
 
     def test_base_pty_has_drain(self):
-        """基类 PseudoTerminal 实现了 drain() 方法"""
-        assert hasattr(PseudoTerminal, "drain")
-        assert callable(PseudoTerminal.drain)
+        """基类 Backend 实现了 drain() 方法"""
+        assert hasattr(Backend, "drain")
+        assert callable(Backend.drain)
 
     def test_subprocess_has_drain(self):
-        """SubprocessPseudoTerminal 有 drain()（通过继承）"""
-        from src.pty.subprocess import SubprocessPseudoTerminal
-        assert hasattr(SubprocessPseudoTerminal, "drain")
+        """SubprocessBackend 有 drain()（通过继承）"""
+        from src.backend.subprocess import SubprocessBackend
+        assert hasattr(SubprocessBackend, "drain")
 
     def test_unix_pty_has_drain(self):
-        """UnixPseudoTerminal 有 drain()"""
-        from src.pty.unix import UnixPseudoTerminal
-        assert hasattr(UnixPseudoTerminal, "drain")
+        """UnixTtyBackend 有 drain()"""
+        from src.backend.unix.pty import UnixTtyBackend
+        assert hasattr(UnixTtyBackend, "drain")
 
     def test_drain_returns_bytes(self):
         """基类 drain() 返回 bytes"""
-        pty = PseudoTerminal()
+        pty = Backend()
         result = pty.drain(65536)
         assert isinstance(result, bytes)
         assert result == b""

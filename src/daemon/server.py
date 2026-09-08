@@ -37,10 +37,11 @@ from ..protocol.shm import (
     _DATA_BODY_OFF,
 )
 from ..protocol.shm_utils import open_shm, close_shm
-from ..session.shm_utils import (
+from ..protocol.auth import (
     generate_auth_token,
     write_auth_token,
 )
+from ..protocol.daemon_utils import pid_exists, heartbeat_fresh
 from ..session.manager import SessionManager
 from .handler import RequestHandler
 
@@ -111,8 +112,7 @@ class DaemonServer:
         existing = read_daemon_info()
         if existing is not None:
             existing_pid, existing_running, existing_hb = existing
-            from .lifecycle import _pid_exists, _heartbeat_fresh
-            if existing_running and _pid_exists(existing_pid) and _heartbeat_fresh(existing_hb):
+            if existing_running and pid_exists(existing_pid) and heartbeat_fresh(existing_hb):
                 _logger.error("守护进程已在运行 (PID:%d)，拒绝启动", existing_pid)
                 raise RuntimeError(f"守护进程已在运行 (PID:{existing_pid})")
 
@@ -227,8 +227,7 @@ class DaemonServer:
 
     def _reclaim_orphan_claimed(self):
         """回收孤儿 CLAIMED 槽位（客户端在写字段前崩溃）"""
-        from .lifecycle import _pid_exists
-        reclaimed = self._mailbox.reclaim_orphan_claimed(_pid_exists)
+        reclaimed = self._mailbox.reclaim_orphan_claimed(pid_exists)
         if reclaimed:
             _logger.info("回收了 %d 个孤儿 CLAIMED 槽位", reclaimed)
 

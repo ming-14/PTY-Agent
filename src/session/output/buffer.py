@@ -1,108 +1,248 @@
-"""输出缓冲区 — 线程安全的 PTY 输出数据缓冲
+"""输出缓冲区 — 线程安全的文本行级输出缓冲
 
-管理字节缓冲区的追加、裁剪、查询，并提供锁机制供协调者
-（Session._reader_loop）与 TriggerMatcher 在原子上下文中的协作。
+两种后端模式统一使用文本行语义：
+- history：完整行（pty 模式为滚动历史；subprocess 模式为全部输出行）
+- visible：当前可见屏幕行（仅 pty 模式使用；subprocess 模式为空）
+- tail：当前未完成的行（仅 subprocess 流式输出使用）
+
+游标（cursor）语义：已消费的历史行数。exec/send 的"增量输出"
+= history[cursor:] + visible（+ 未完成 tail），CLI 不暴露 offset。
+
+线程安全：所有读写经 RLock 保护；暴露 lock/raw 供协调者在持锁
+上下文协作（与 TriggerMatcher 配合）。
 """
 
 import logging
 import threading
-from typing import Optional
+from typing import List
 
-from ...config import MAX_OUTPUT_BUFFER
+from ...config import (
+    MAX_HISTORY_LINES,
+    MAX_OUTPUT_CHARS,
+)
 
 _logger = logging.getLogger("pty-session")
 
 
 class OutputBuffer:
-    """线程安全的输出缓冲区
+    """线程安全的文本行级输出缓冲区
 
-    封装原始 bytearray，所有公开的读/写操作均通过内部锁保护。
-    同时暴露 lock 与 raw 属性，供协调者在持锁上下文中直接访问
-    原始缓冲区（例如与 TriggerMatcher 配合时避免二次加锁）。
+    管理完整行列表（history + visible）与未完成尾部，提供全量/可见/
+    游标增量读取。所有公开的读/写操作均通过内部锁保护。
     """
 
-    def __init__(self, max_size: int = MAX_OUTPUT_BUFFER):
-        self._buffer = bytearray()
-        self._lock = threading.RLock()  # RLock 允许同一线程重入（用于 reader_loop 持锁时调用 append）
+    def __init__(self, max_lines: int = MAX_HISTORY_LINES,
+                 max_chars: int = MAX_OUTPUT_CHARS):
+        self._history: List[str] = []   # 完整历史行
+        self._visible: List[str] = []   # 可见屏幕行（pty 模式）
+        self._tail: str = ""            # 未完成行（subprocess 流）
+        self._cursor: int = 0           # 已消费历史行数（mark/reset 显式控制）
+        self._lock = threading.RLock()  # RLock 允许同线程重入
         self._read_cycle = 0
-        self._max_size = max_size
+        self._max_lines = max_lines
+        self._max_chars = max_chars
         self._first_output_event = threading.Event()
 
-    # ── 线程安全方法 ──
+    # ════════════════════════════════════════════════════════════
+    # 写入（reader 线程 / pipeline 调用）
+    # ════════════════════════════════════════════════════════════
 
-    def append(self, data: bytes) -> bool:
-        """追加数据到缓冲区尾部
-
-        当缓冲区超过最大容量时，丢弃前半部分数据并跳过本次追加。
+    def append_text(self, text: str) -> None:
+        """追加流式文本（subprocess 模式）：按 \\n 拆行
 
         Args:
-            data: 待追加的字节数据。
-
-        Returns:
-            True  成功追加；
-            False 缓冲区满已裁剪，本次数据被丢弃。
+            text: 解码后的文本块。
         """
         with self._lock:
-            room = self._max_size - len(self._buffer)
-            if room <= 0:
-                drop = len(self._buffer) // 2
-                del self._buffer[:drop]
-                self._read_cycle += 1
-                self._first_output_event.set()
-                _logger.warning("OutputBuffer: overflow, trimmed %d bytes", drop)
-                return False
-            if len(data) > room:
-                data = data[:room]
-                _logger.debug("OutputBuffer: truncated to %d bytes (room=%d)", len(data), room)
-            self._buffer.extend(data)
+            if not text:
+                return
+            parts = text.split("\n")
+            # 首段与既有未完成行拼接，成为首行
+            parts[0] = self._tail + parts[0]
+            if text.endswith("\n"):
+                # 全部为完整行（含结尾空行）
+                for line in parts:
+                    self._append_line(line)
+                self._tail = ""
+            else:
+                # 除末尾段外均为完整行；末尾段为未完成行
+                for line in parts[:-1]:
+                    self._append_line(line)
+                self._tail = parts[-1]
             self._read_cycle += 1
             self._first_output_event.set()
-            if self._read_cycle % 100 == 0:
-                _logger.debug("OutputBuffer: size=%d cycle=%d", len(self._buffer), self._read_cycle)
-            return True
+            self._trim()
 
-    def get_slice(self, start: int = 0, end: Optional[int] = None) -> bytes:
-        """获取缓冲区切片（线程安全）
+    def append_history(self, rows: List[str]) -> None:
+        """追加滚动历史行（pty 模式）
 
         Args:
-            start: 起始字节偏移。
-            end:   结束字节偏移（不含），None 表示到末尾。
-
-        Returns:
-            切片对应的 bytes 对象。
+            rows: 新滚出屏幕的完整行列表。
         """
         with self._lock:
-            if end is None:
-                end = len(self._buffer)
-            if start < 0:
-                start = 0
-            if start >= len(self._buffer):
-                return b""
-            return bytes(memoryview(self._buffer)[start:end])
+            if not rows:
+                return
+            for line in rows:
+                self._append_line(line)
+            self._read_cycle += 1
+            self._first_output_event.set()
+            self._trim()
+
+    def replace_visible(self, rows: List[str]) -> None:
+        """替换可见屏幕行（pty 模式，每次渲染后调用）
+
+        Args:
+            rows: 屏幕当前可见行（已去除宽度填充）。
+        """
+        with self._lock:
+            if rows == self._visible:
+                return
+            self._visible = list(rows)
+            self._read_cycle += 1
+            self._first_output_event.set()
+
+    # ════════════════════════════════════════════════════════════
+    # 游标
+    # ════════════════════════════════════════════════════════════
+
+    def mark_cursor(self) -> None:
+        """将游标定位到当前历史末尾（下一次增量读取起点）"""
+        with self._lock:
+            self._cursor = len(self._history)
+
+    def reset_cursor(self) -> None:
+        """将游标复位到 0（下一次读取=全量）"""
+        with self._lock:
+            self._cursor = 0
 
     @property
-    def length(self) -> int:
-        """当前缓冲区字节长度"""
+    def cursor(self) -> int:
+        """当前游标（历史行索引）"""
         with self._lock:
-            return len(self._buffer)
+            return self._cursor
+
+    # ════════════════════════════════════════════════════════════
+    # 读取
+    # ════════════════════════════════════════════════════════════
+
+    def get_visible(self) -> str:
+        """可见屏幕文本（pty 模式）；subprocess 模式返回完整缓冲文本"""
+        with self._lock:
+            if self._visible_is_active():
+                return "\n".join(self._visible)
+            return self._full_text()
+
+    def get_full(self) -> str:
+        """全量输出文本（历史 + 可见屏幕；subprocess 含未完成尾部）"""
+        with self._lock:
+            return self._full_text()
+
+    def get_since_cursor(self) -> str:
+        """游标之后的增量文本"""
+        with self._lock:
+            return self._since_text(self._cursor)
+
+    def get_text_since(self, idx: int, max_chars: int = 0) -> str:
+        """从行索引 idx 起取文本（触发扫描用，超长截尾）
+
+        Args:
+            idx:       起始行索引（历史内）。
+            max_chars: 截断上限，0 表示不截断。
+
+        Returns:
+            文本字符串。
+        """
+        with self._lock:
+            text = self._since_text(idx)
+            if max_chars and len(text) > max_chars:
+                return text[-max_chars:]
+            return text
+
+    def get_all_lines(self) -> List[str]:
+        """返回全部完整行（含未完成尾部作为最后一行）"""
+        with self._lock:
+            rows = list(self._history) + list(self._visible)
+            if self._tail:
+                rows.append(self._tail)
+            return rows
+
+    def get_visible_lines(self) -> List[str]:
+        """返回可见屏幕行列表（pty 模式）；subprocess 返回全部行"""
+        with self._lock:
+            if self._visible_is_active():
+                return list(self._visible)
+            return self.get_all_lines()
+
+    @property
+    def line_count(self) -> int:
+        """完整行总数（历史 + 可见屏）"""
+        with self._lock:
+            return len(self._history) + len(self._visible)
 
     @property
     def read_cycle(self) -> int:
-        """读取周期计数（每次 append 递增）"""
+        """读取周期计数（每次内容变化递增）"""
         with self._lock:
             return self._read_cycle
 
-    # ── 协调访问（供 Session._reader_loop 在持锁语境下使用）──
+    @property
+    def first_output_event(self) -> threading.Event:
+        """首个输出事件"""
+        return self._first_output_event
+
+    # ── 协调访问（供 Session/TriggerMatcher 在持锁语境下使用）──
 
     @property
     def lock(self) -> threading.Lock:
         return self._lock
 
     @property
-    def raw(self) -> bytearray:
-        """原始缓冲区引用（**仅在持锁时使用**）"""
-        return self._buffer
+    def raw(self):
+        """仅用于协调名的兼容别名（当前行数据），**仅在持锁时使用**"""
+        return {"history": self._history, "visible": self._visible,
+                "tail": self._tail}
 
-    @property
-    def first_output_event(self) -> threading.Event:
-        return self._first_output_event
+    # ════════════════════════════════════════════════════════════
+    # 内部
+    # ════════════════════════════════════════════════════════════
+
+    def _visible_is_active(self) -> bool:
+        """subprocess 模式无可见屏幕概念（visible 恒为空）"""
+        return bool(self._visible)
+
+    def _append_line(self, line: str) -> None:
+        """追加一条完整行到历史（游标不随之移动，仅由 mark/reset 显式控制）"""
+        self._history.append(line)
+
+    def _full_text(self) -> str:
+        parts = list(self._history) + list(self._visible)
+        if self._tail:
+            parts.append(self._tail)
+        return "\n".join(parts)
+
+    def _since_text(self, idx: int) -> str:
+        idx = max(0, min(idx, len(self._history)))
+        parts = list(self._history[idx:]) + list(self._visible)
+        if self._tail:
+            parts.append(self._tail)
+        return "\n".join(parts)
+
+    def _char_count(self) -> int:
+        return sum(len(x) for x in self._history) + \
+            sum(len(x) for x in self._visible) + len(self._tail)
+
+    def _trim(self) -> None:
+        """超限裁剪：从历史头部丢弃行，游标同步位移"""
+        chars = self._char_count()
+        drop = 0
+        while self._history and (len(self._history) > self._max_lines
+                                 or chars > self._max_chars):
+            dropped = self._history.pop(0)
+            drop += 1
+            chars -= len(dropped)
+            if self._cursor > 0:
+                self._cursor -= 1
+            self._cursor = max(0, self._cursor)
+        if drop:
+            _logger.warning("OutputBuffer: trimmed %d lines from history head",
+                            drop)

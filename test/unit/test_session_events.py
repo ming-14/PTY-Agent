@@ -53,9 +53,9 @@ class TestPendingEvent:
         assert dicts[1]["time"] == expected
 
 
-# 使用 mock PTY 避免真实依赖
+# 使用 mock Backend 避免真实依赖
 class _MockPty:
-    """模拟 PseudoTerminal"""
+    """模拟后端（create_subprocess / create_tty 的存根）"""
 
     def __init__(self):
         self._processes = [100, 200]
@@ -87,21 +87,35 @@ class _MockPty:
     def get_child_process_exit_code(self, pid):
         return 0
 
+    def remove_tree(self):
+        pass
+
+    def get_job_notifications(self):
+        return []
+
+    def wait_for_job_notification(self, timeout):
+        return False
+
+
+def _install_backend_mock(monkeypatch, backend=None):
+    """把 Session 引用的 backend 工厂 mock 为返回给定后端（默认 _MockPty）"""
+    if backend is None:
+        backend = _MockPty()
+    monkeypatch.setattr("src.session.session.create_subprocess",
+                        lambda *a, **k: backend)
+    monkeypatch.setattr("src.session.session.create_tty",
+                        lambda *a, **k: backend)
+
 
 class TestSessionEvents:
     """Session 事件系统测试"""
 
     @pytest.fixture
     def session(self, monkeypatch):
-        """创建一个最小化 Session 实例（使用 mock PTY）"""
+        """创建一个最小化 Session 实例（使用 mock Backend）"""
         from src.session.session import Session
-        from src.pty.factory import create_pty
 
-        # Mock create_pty 返回模拟 PTY
-        def _mock_create_pty(*args, **kwargs):
-            return _MockPty()
-
-        monkeypatch.setattr("src.session.session.create_pty", _mock_create_pty)
+        _install_backend_mock(monkeypatch)
 
         sess = Session("test-sess", "echo hello")
         sess.start()
@@ -280,14 +294,9 @@ class TestSessionDrain:
     def drain_session(self, monkeypatch):
         """创建使用 _DataMockPty 的 Session"""
         from src.session.session import Session
-        from src.pty.factory import create_pty
 
         mock_pty = self._DataMockPty()
-
-        def _mock_create_pty(*args, **kwargs):
-            return mock_pty
-
-        monkeypatch.setattr("src.session.session.create_pty", _mock_create_pty)
+        _install_backend_mock(monkeypatch, mock_pty)
 
         sess = Session("drain-test", "echo test")
         sess.start()
@@ -307,8 +316,7 @@ class TestSessionDrain:
         sess, mock_pty = drain_session
         # 给读者线程足够时间处理
         time.sleep(0.2)
-        with sess.output_buffer.lock:
-            output = bytes(sess.output_buffer.raw)
-        # "hello" + " world" = 11 字节
-        assert len(output) >= 11
-        assert b"hello world" in output
+        output = sess.output_buffer.get_full()
+        # "hello" + " world" = 11 字节（文本行级缓冲）
+        assert "hello" in output
+        assert "world" in output

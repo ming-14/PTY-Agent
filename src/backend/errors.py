@@ -1,6 +1,6 @@
 """跨平台进程退出码 / 错误格式化（统一抽象）
 
-所有 PTY 后端（Windows / Unix / subprocess）共用的退出码语义，以及
+所有后端（Windows / Unix / subprocess）共用的退出码语义，以及
 session 层退出码描述的**唯一实现**（info.py 委托本模块，不再重复）：
 
 - STILL_ACTIVE：Windows 约定 259 表示"进程仍在运行"。
@@ -21,7 +21,7 @@ import logging
 import sys
 from typing import Optional
 
-_logger = logging.getLogger("pty-errors")
+_logger = logging.getLogger("backend-errors")
 
 # Windows 约定：GetExitCodeProcess 返回 259 表示进程仍在运行。
 # 该值在 Windows 上使用；Unix 后端 waitpid 返回 None 表示运行中，

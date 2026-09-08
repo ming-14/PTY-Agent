@@ -1,4 +1,4 @@
-"""SubprocessPseudoTerminal 解释器选择测试
+"""SubprocessBackend 解释器选择测试
 
 验证 --shell 参数能否正确切换命令解释器（cmd/powershell/pwsh/bash）。
 """
@@ -6,29 +6,29 @@
 import sys
 import pytest
 
-from src.pty.subprocess import SubprocessPseudoTerminal, PseudoTerminal
+from src.backend.subprocess import SubprocessBackend
 
 
 class TestSubprocessShellSelection:
-    """SubprocessPseudoTerminal shell 选择测试
+    """SubprocessBackend shell 选择测试
 
     验证 _SHELL_MAP 映射、shell=None 默认行为、指定 shell 的 Popen 构建。
     """
 
     def test_shell_map_contains_expected_keys(self):
         """_SHELL_MAP 包含所有预期的解释器"""
-        assert "cmd" in SubprocessPseudoTerminal._SHELL_MAP
-        assert "powershell" in SubprocessPseudoTerminal._SHELL_MAP
-        assert "pwsh" in SubprocessPseudoTerminal._SHELL_MAP
-        assert "bash" in SubprocessPseudoTerminal._SHELL_MAP
+        assert "cmd" in SubprocessBackend._SHELL_MAP
+        assert "powershell" in SubprocessBackend._SHELL_MAP
+        assert "pwsh" in SubprocessBackend._SHELL_MAP
+        assert "bash" in SubprocessBackend._SHELL_MAP
 
     def test_shell_map_cmd_is_none(self):
         """cmd 映射为 None → 使用 shell=True"""
-        assert SubprocessPseudoTerminal._SHELL_MAP["cmd"] is None
+        assert SubprocessBackend._SHELL_MAP["cmd"] is None
 
     def test_shell_map_powershell_format(self):
         """powershell 映射为 [powershell.exe, -Command]"""
-        spec = SubprocessPseudoTerminal._SHELL_MAP["powershell"]
+        spec = SubprocessBackend._SHELL_MAP["powershell"]
         assert isinstance(spec, list)
         assert len(spec) == 2
         assert "powershell" in spec[0].lower()
@@ -36,7 +36,7 @@ class TestSubprocessShellSelection:
 
     def test_shell_map_pwsh_format(self):
         """pwsh 映射为 [pwsh.exe, -Command]"""
-        spec = SubprocessPseudoTerminal._SHELL_MAP["pwsh"]
+        spec = SubprocessBackend._SHELL_MAP["pwsh"]
         assert isinstance(spec, list)
         assert len(spec) == 2
         assert "pwsh" in spec[0].lower()
@@ -44,7 +44,7 @@ class TestSubprocessShellSelection:
 
     def test_shell_map_bash_format(self):
         """bash 映射为 [bash.exe, -c]"""
-        spec = SubprocessPseudoTerminal._SHELL_MAP["bash"]
+        spec = SubprocessBackend._SHELL_MAP["bash"]
         assert isinstance(spec, list)
         assert len(spec) == 2
         assert "bash" in spec[0].lower()
@@ -52,7 +52,7 @@ class TestSubprocessShellSelection:
 
     def test_default_shell_is_none(self):
         """shell 参数默认为 None → 使用 cmd.exe（shell=True）"""
-        pty = SubprocessPseudoTerminal(
+        pty = SubprocessBackend(
             [sys.executable, "-c", "import sys; sys.exit(0)"],
         )
         try:
@@ -65,7 +65,7 @@ class TestSubprocessShellSelection:
 
     def test_shell_cmd_on_string_command(self):
         """shell='cmd' 且命令为字符串 → 使用 shell=True"""
-        pty = SubprocessPseudoTerminal(
+        pty = SubprocessBackend(
             "echo hello", cols=80, rows=24, shell="cmd",
         )
         try:
@@ -84,7 +84,7 @@ class TestSubprocessShellSelection:
         import shutil
         if not shutil.which("powershell"):
             pytest.skip("powershell.exe 不在 PATH 中")
-        pty = SubprocessPseudoTerminal(
+        pty = SubprocessBackend(
             "echo hello", cols=80, rows=24, shell="powershell",
         )
         try:
@@ -106,7 +106,7 @@ class TestSubprocessShellSelection:
         import shutil
         if not shutil.which("pwsh"):
             pytest.skip("pwsh.exe 不在 PATH 中")
-        pty = SubprocessPseudoTerminal(
+        pty = SubprocessBackend(
             "echo hello", cols=80, rows=24, shell="pwsh",
         )
         try:
@@ -129,7 +129,7 @@ class TestSubprocessShellSelection:
         import shutil
         if not shutil.which("bash"):
             pytest.skip("bash.exe 不在 PATH 中")
-        pty = SubprocessPseudoTerminal(
+        pty = SubprocessBackend(
             "echo hello", cols=80, rows=24, shell="bash",
         )
         try:
@@ -145,7 +145,7 @@ class TestSubprocessShellSelection:
 
     def test_unknown_shell_falls_back_to_cmd(self):
         """不认识的 shell 值回退到 cmd.exe（shell=True）"""
-        pty = SubprocessPseudoTerminal(
+        pty = SubprocessBackend(
             "echo hello", cols=80, rows=24, shell="unknown_shell_name",
         )
         try:
@@ -157,7 +157,7 @@ class TestSubprocessShellSelection:
 
     def test_shell_with_list_command_noop(self):
         """列表命令下 shell 参数被忽略（不走 Subprocess 的 shell 选择）"""
-        pty = SubprocessPseudoTerminal(
+        pty = SubprocessBackend(
             [sys.executable, "-c", "print('test')"],
             shell="powershell",
         )
@@ -170,7 +170,7 @@ class TestSubprocessShellSelection:
 
     def test_exit_code_with_shell_cmd(self):
         """shell='cmd' 时退出码仍正确"""
-        pty = SubprocessPseudoTerminal(
+        pty = SubprocessBackend(
             "exit 42", cols=80, rows=24, shell="cmd",
         )
         try:
@@ -185,42 +185,30 @@ class TestShellConflict:
 
     def test_pty_and_shell_conflict_detected(self, monkeypatch):
         """同时指定 --pty 和 --shell 时返回错误"""
-        from src.client.transport import Client
+        from src.client.api import PtyClient
 
-        responses = []
-        monkeypatch.setattr(
-            "src.client.transport.print_response",
-            lambda r: responses.append(r),
-        )
-
-        client = Client()
-        client.cmd_exec(
+        client = PtyClient()
+        resp = client.cmd_exec(
             session_id="test",
             command='{"data":"echo hello"}',
             pty=True,
             shell="powershell",
         )
 
-        assert len(responses) == 1
-        assert responses[0]["type"] == "error"
-        assert "不能同时使用" in responses[0]["error"]
+        assert resp["type"] == "error"
+        assert "不能同时使用" in resp["error"]
 
     def test_pty_without_shell_ok(self, monkeypatch):
-        """--pty 不带 --shell 时不触发冲突（后续请求由共享内存守护进程处理）"""
-        from src.client.transport import Client
+        """--pty 不带 --shell 时不触发冲突（后续请求交由守护进程处理）"""
+        from src.client.api import PtyClient
 
-        responses = []
+        # 阻止真实的共享内存请求（冲突检测通过后仍会走到 _send）
         monkeypatch.setattr(
-            "src.client.transport.print_response",
-            lambda r: responses.append(r),
-        )
-        # 阻止真实的共享内存请求
-        monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
+            PtyClient, "_send",
             lambda self, msg: (_ for _ in ()).throw(Exception("mock")),
         )
 
-        client = Client()
+        client = PtyClient()
         with pytest.raises(Exception, match="mock"):
             client.cmd_exec(
                 session_id="test",
@@ -228,24 +216,17 @@ class TestShellConflict:
                 pty=True,
                 shell=None,
             )
-        # 不应触发冲突错误
-        assert len(responses) == 0
 
     def test_shell_without_pty_ok(self, monkeypatch):
         """--shell 不带 --pty 时不触发冲突"""
-        from src.client.transport import Client
+        from src.client.api import PtyClient
 
-        responses = []
         monkeypatch.setattr(
-            "src.client.transport.print_response",
-            lambda r: responses.append(r),
-        )
-        monkeypatch.setattr(
-            "src.client.transport.Client._send_recv",
+            PtyClient, "_send",
             lambda self, msg: (_ for _ in ()).throw(Exception("mock")),
         )
 
-        client = Client()
+        client = PtyClient()
         with pytest.raises(Exception, match="mock"):
             client.cmd_exec(
                 session_id="test",
@@ -253,4 +234,3 @@ class TestShellConflict:
                 pty=False,
                 shell="pwsh",
             )
-        assert len(responses) == 0

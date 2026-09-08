@@ -7,7 +7,7 @@
 - remove_tree()       — 移除整个进程树（后代优先，最后杀根）
 
 说明：
-- 退出码查询（get_exit_code）不在本类实现：由 UnixPseudoTerminal 对直接
+- 退出码查询（get_exit_code）不在本类实现：由 UnixTtyBackend 对直接
   子进程 waitpid 一次并缓存，避免重复 waitpid 竞争导致退出码丢失。
   孙进程退出码无法获取（Unix 限制），与 Windows GetExitCodeProcess 的
   行为差异是平台固有的。
@@ -19,7 +19,7 @@ import os
 import signal
 from typing import List, Optional, Set
 
-_logger = logging.getLogger("pty-unix-tracker")
+_logger = logging.getLogger("backend-unix-tracker")
 
 
 class UnixProcessTracker:
@@ -36,7 +36,7 @@ class UnixProcessTracker:
         """初始化追踪器
 
         Args:
-            root_pid: 根进程 PID（通常是 PTY 子进程）。
+            root_pid: 根进程 PID（通常是 TTY 子进程）。
         """
         self._root_pid = root_pid
 

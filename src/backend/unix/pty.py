@@ -1,4 +1,4 @@
-"""UnixPseudoTerminal — 基于 os.openpty + fork + execvpe 的 PTY 实现
+"""UnixTtyBackend — 基于 os.openpty + fork + execvpe 的 PTY 实现
 
 平台对齐能力（与 Windows 后端对称）：
 - get_process_list()  — 通过 /proc BFS 遍历返回全进程树 PID
@@ -13,12 +13,12 @@ import errno
 import signal
 from typing import List, Optional
 
-from ..base import PseudoTerminal, ProcessEvent
+from ..base import Backend, ProcessEvent
 
-_logger = logging.getLogger("pty-unix")
+_logger = logging.getLogger("backend-unix")
 
 
-class UnixPseudoTerminal(PseudoTerminal):
+class UnixTtyBackend(Backend):
     """Unix 伪终端（os.openpty + os.fork + os.execvpe）
 
     使用标准的 Unix PTY 接口创建伪终端，支持终端尺寸设置。
@@ -34,7 +34,7 @@ class UnixPseudoTerminal(PseudoTerminal):
 
         self._master, slave = os.openpty()
         self._child_pid = os.fork()
-        _logger.info("UnixPseudoTerminal: forked pid=%d cmd=%r",
+        _logger.info("UnixTtyBackend: forked pid=%d cmd=%r",
                       self._child_pid, command)
         if self._child_pid == 0:
             # ── 子进程 ──
@@ -56,14 +56,14 @@ class UnixPseudoTerminal(PseudoTerminal):
                     e.update(env)
                 os.execvpe(command[0], command, e)
             except Exception as ex:
-                _logger.error("UnixPseudoTerminal: child exec failed: %s", ex)
+                _logger.error("UnixTtyBackend: child exec failed: %s", ex)
                 os._exit(1)
         # ── 父进程 ──
         os.close(slave)
         # 设置非阻塞
         fcntl.fcntl(self._master, fcntl.F_SETFL,
                     fcntl.fcntl(self._master, fcntl.F_GETFL) | os.O_NONBLOCK)
-        _logger.debug("UnixPseudoTerminal: master_fd=%d", self._master)
+        _logger.debug("UnixTtyBackend: master_fd=%d", self._master)
 
         # ── 进程树追踪器（对齐 Windows Job Object 能力）──
         from .tracker import UnixProcessTracker

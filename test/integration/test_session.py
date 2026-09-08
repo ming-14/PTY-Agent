@@ -122,7 +122,7 @@ class TestSessionExitInfo:
         s.start()
         # 等待"ready"输出
         for _ in range(50):
-            if s.output_offset > 0:
+            if s.get_output_full():
                 break
             time.sleep(0.05)
         assert s.running
@@ -147,7 +147,7 @@ class TestSessionExitInfo:
         s.start()
         # 等待进程退出
         self._wait_ended(s, timeout=5)
-        output = s.get_output()
+        output = s.get_output_full()
         assert "hello from test" in output
         assert s.exit_code == 1
 
@@ -284,7 +284,7 @@ class TestSessionStopInteractive:
         """等待会话产生输出"""
         deadline = time.time() + timeout
         while time.time() < deadline:
-            if session.output_offset > 0:
+            if session.get_output_full():
                 return
             time.sleep(0.05)
         pytest.fail(f"会话 '{session.id}' 在 {timeout}s 内无输出")

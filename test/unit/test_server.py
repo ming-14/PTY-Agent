@@ -65,8 +65,8 @@ class TestDaemonServerRun:
     def test_run_refuses_when_already_running(self):
         with patch("src.daemon.server.read_daemon_info",
                    return_value=(12345, True, time.time())), \
-             patch("src.daemon.lifecycle._pid_exists", return_value=True), \
-             patch("src.daemon.lifecycle._heartbeat_fresh", return_value=True):
+             patch("src.daemon.server.pid_exists", return_value=True), \
+             patch("src.daemon.server.heartbeat_fresh", return_value=True):
             srv = DaemonServer()
             with pytest.raises(RuntimeError):
                 srv.run()

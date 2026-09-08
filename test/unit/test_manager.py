@@ -12,7 +12,7 @@ from src.session.manager import SessionManager
 
 
 class _MockPty:
-    """模拟 PseudoTerminal"""
+    """模拟 Backend（create_subprocess / create_tty 的存根）"""
 
     def __init__(self):
         self._processes = []
@@ -48,16 +48,31 @@ class _MockPty:
     def get_type(self):
         return "mock"
 
+    def remove_tree(self):
+        pass
+
+    def get_job_notifications(self):
+        return []
+
+    def wait_for_job_notification(self, timeout):
+        return False
+
+
+def _install_backend_mock(monkeypatch):
+    """把 Session 引用的 backend 工厂 mock 为返回 _MockPty"""
+    def _mock_create(*args, **kwargs):
+        return _MockPty()
+    monkeypatch.setattr("src.session.session.create_subprocess", _mock_create)
+    monkeypatch.setattr("src.session.session.create_tty", _mock_create)
+
 
 class TestSessionManagerCreate:
     """SessionManager.create_session 测试"""
 
     @pytest.fixture
     def mgr(self, monkeypatch):
-        """创建 SessionManager 并 mock create_pty"""
-        def _mock_create_pty(*args, **kwargs):
-            return _MockPty()
-        monkeypatch.setattr("src.session.session.create_pty", _mock_create_pty)
+        """创建 SessionManager 并 mock 后端工厂"""
+        _install_backend_mock(monkeypatch)
         return SessionManager()
 
     def test_create_session(self, mgr):
@@ -90,9 +105,7 @@ class TestSessionManagerGet:
 
     @pytest.fixture
     def mgr(self, monkeypatch):
-        def _mock_create_pty(*args, **kwargs):
-            return _MockPty()
-        monkeypatch.setattr("src.session.session.create_pty", _mock_create_pty)
+        _install_backend_mock(monkeypatch)
         return SessionManager()
 
     def test_get_existing(self, mgr):
@@ -111,9 +124,7 @@ class TestSessionManagerList:
 
     @pytest.fixture
     def mgr(self, monkeypatch):
-        def _mock_create_pty(*args, **kwargs):
-            return _MockPty()
-        monkeypatch.setattr("src.session.session.create_pty", _mock_create_pty)
+        _install_backend_mock(monkeypatch)
         return SessionManager()
 
     def test_list_empty(self, mgr):
@@ -150,9 +161,7 @@ class TestSessionManagerRemove:
 
     @pytest.fixture
     def mgr(self, monkeypatch):
-        def _mock_create_pty(*args, **kwargs):
-            return _MockPty()
-        monkeypatch.setattr("src.session.session.create_pty", _mock_create_pty)
+        _install_backend_mock(monkeypatch)
         return SessionManager()
 
     def test_remove_existing(self, mgr):

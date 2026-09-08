@@ -16,8 +16,8 @@ pytestmark = [
 @pytest.fixture
 def monitor():
     """创建 GuiWindowMonitor（带空 Job）"""
-    from src.pty.windows.job import ProcessJob
-    from src.pty.windows.gui_monitor import GuiWindowMonitor
+    from src.backend.windows.job import ProcessJob
+    from src.backend.windows.gui_monitor import GuiWindowMonitor
     job = ProcessJob(name="test-gui")
     m = GuiWindowMonitor(job=job)
     yield m
@@ -30,7 +30,7 @@ class TestGuiWindowInfo:
 
     def test_to_dict(self):
         """GuiWindowInfo 可正确转换为字典"""
-        from src.pty.windows.gui_monitor import GuiWindowInfo
+        from src.backend.windows.gui_monitor import GuiWindowInfo
         info = GuiWindowInfo(hwnd=0x12345678, pid=1234,
                              title="Test Window", class_name="TestClass")
         d = info.to_dict()
@@ -45,7 +45,7 @@ class TestGuiWindowMonitor:
 
     def test_create_without_job(self):
         """不传入 Job 创建 Monitor 应不异常"""
-        from src.pty.windows.gui_monitor import GuiWindowMonitor
+        from src.backend.windows.gui_monitor import GuiWindowMonitor
         m = GuiWindowMonitor(job=None)
         assert m is not None
         m.close()
@@ -92,14 +92,14 @@ class TestGuiMonitorEdgeCases:
 
     def test_close_after_close(self):
         """重复 close 应安全"""
-        from src.pty.windows.gui_monitor import GuiWindowMonitor
+        from src.backend.windows.gui_monitor import GuiWindowMonitor
         m = GuiWindowMonitor(job=None)
         m.close()
         m.close()
 
     def test_poll_after_close(self):
         """close 后 poll 应安全返回"""
-        from src.pty.windows.gui_monitor import GuiWindowMonitor
+        from src.backend.windows.gui_monitor import GuiWindowMonitor
         m = GuiWindowMonitor(job=None)
         m.close()
         result = m.poll()
@@ -107,7 +107,7 @@ class TestGuiMonitorEdgeCases:
 
     def test_windows_after_close(self):
         """close 后 windows 应为空"""
-        from src.pty.windows.gui_monitor import GuiWindowMonitor
+        from src.backend.windows.gui_monitor import GuiWindowMonitor
         m = GuiWindowMonitor(job=None)
         m.close()
         assert m.windows == []

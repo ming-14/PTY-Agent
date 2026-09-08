@@ -2,14 +2,14 @@
 
 覆盖本轮审查中修改的所有行为点：
 1. format_timestamp_iso（新公共函数，替代 handler._format_iso_ms 重复实现）
-2. client.formatter._format_event 的 ISO 时间解析（修复 [T14:32:15.12] 乱码）
+2. presenters.cli._format_event 的 ISO 时间解析（修复 [T14:32:15.12] 乱码）
 3. ConfigManager.send_eol 验证（删除重复块后行为保持一致）
 4. Session.set_trigger 锁内发布（修复 fresh_cycle 竞态）
 5. ProcessMonitor._emit_process_end（统一崩溃/退出事件）
 6. RequestHandler._build_result 的 start_time 格式化
-7. Client._ensure_daemon 的 deadline 等待循环
+7. Client 守护进程 ensure 的 deadline 等待循环（controller.ensure_daemon）
 8. __main__._handle_config_ops 的分支合并
-9. pty.factory 平台条件导入
+9. backend.factory 创建入口（create_subprocess / create_tty）
 """
 
 import sys
@@ -95,7 +95,7 @@ class TestFormatTimestampIso:
 
 
 # ============================================================
-# 2. client.formatter._format_event 时间解析
+# 2. presenters.cli._format_event 时间解析
 # ============================================================
 
 
@@ -108,7 +108,7 @@ class TestFormatEventTimestamp:
 
     @pytest.fixture
     def formatter_mod(self):
-        import src.client.formatter as fm
+        import src.client.presenters.cli as fm
         return fm
 
     def test_iso_string_shows_hhmmss(self, formatter_mod, capsys):
@@ -233,57 +233,57 @@ class TestConfigManagerSendEol:
 # ============================================================
 
 
+def _make_session():
+    """构造一个最小 Session（不执行 __init__，仅装配缓冲与触发匹配器）"""
+    from src.session.session import Session
+    s = Session.__new__(Session)
+    from src.session.output.buffer import OutputBuffer
+    from src.session.output.trigger import TriggerMatcher
+    s._out_buf = OutputBuffer()
+    s._trig_mat = TriggerMatcher()
+    return s
+
+
 class TestSessionSetTriggerLock:
     """set_trigger 重构（锁内发布触发状态）回归测试"""
 
-    def _make_session(self):
-        from src.session.session import Session
-        s = Session.__new__(Session)  # 不执行 __init__，纯测锁语义
-        from src.session.output.buffer import OutputBuffer
-        from src.session.output.trigger import TriggerMatcher
-        from src.session.encoding import decode_utf8
-        s._out_buf = OutputBuffer(max_size=1024 * 1024)
-        s._trig_mat = TriggerMatcher(decode_func=decode_utf8)
-        return s
-
     def test_non_fresh_sets_trigger_and_matches(self):
         """非 fresh 模式：设置触发后，新到达数据可被匹配"""
-        s = self._make_session()
-        # 先设置触发（缓冲区为空，start_offset=0，不会误匹配）
+        s = _make_session()
+        # 先设置触发（缓冲区为空，start_idx=0，不会误匹配）
         s.set_trigger(pattern="hello")
         assert s._trig_mat.matched is False
         # 模拟 reader 线程追加数据后执行两阶段匹配
-        s._out_buf.append(b"hello world\n")
+        s._out_buf.append_text("hello world\n")
         snapshot = s._trig_mat.prepare_snapshot(s._out_buf)
         s._trig_mat.check_snapshot(snapshot)
         assert s._trig_mat.matched is True
 
     def test_fresh_mode_waits_for_new_data(self):
         """fresh 模式：初始不匹配旧数据，新数据到达后才匹配"""
-        s = self._make_session()
-        s._out_buf.append(b"hello world\n")
+        s = _make_session()
+        s._out_buf.append_text("hello world\n")
         s.set_trigger(pattern="hello", fresh=True)
         # fresh 模式初始不匹配已有数据
         assert s._trig_mat.matched is False
         # 新数据到达（模拟 reader 追加）后匹配
-        s._out_buf.append(b"hello again\n")
-        s._trig_mat.prepare_snapshot(s._out_buf)
+        s._out_buf.append_text("hello again\n")
         snapshot = s._trig_mat.prepare_snapshot(s._out_buf)
         s._trig_mat.check_snapshot(snapshot)
         assert s._trig_mat.matched is True
 
     def test_fresh_cycle_set_under_lock(self):
         """fresh_cycle 应与当前 read_cycle 一致（在锁内设置）"""
-        s = self._make_session()
-        s._out_buf.append(b"data\n")
-        s._out_buf.append(b"more\n")
+        s = _make_session()
+        s._out_buf.append_text("data\n")
+        s._out_buf.append_text("more\n")
         s.set_trigger(pattern="x", fresh=True)
         # 锁内设置后，fresh_cycle == 当前 read_cycle
         assert s._trig_mat.fresh_cycle == s._out_buf.read_cycle
 
     def test_lock_held_during_set(self):
         """set 期间 out_buf.lock 被持有（与 reader 互斥）"""
-        s = self._make_session()
+        s = _make_session()
         lock_held_during_set = []
 
         # 在持锁线程中调用 set_trigger，验证不会死锁（RLock 可重入）
@@ -294,14 +294,14 @@ class TestSessionSetTriggerLock:
 
     def test_newline_count_set(self):
         """非 fresh 模式：newline_count 从缓冲区统计"""
-        s = self._make_session()
-        s._out_buf.append(b"a\nb\nc\n")
+        s = _make_session()
+        s._out_buf.append_history(["a", "b", "c"])
         s.set_trigger(pattern="c", newline=True)
         assert s._trig_mat.newline_count == 3
 
     def test_idle_timeout_params_passed(self):
         """idle_timeout / idle_after_first_output 参数透传"""
-        s = self._make_session()
+        s = _make_session()
         s.set_trigger(pattern="x", idle_timeout=5.0,
                       idle_after_first_output=True)
         assert s._trig_mat.idle_timeout == 5.0
@@ -316,19 +316,9 @@ class TestSessionSetTriggerLockHeld:
     修复后：set() 与 fresh_cycle 赋值在同一持锁临界区内完成。
     """
 
-    def _make_session(self):
-        from src.session.session import Session
-        s = Session.__new__(Session)
-        from src.session.output.buffer import OutputBuffer
-        from src.session.output.trigger import TriggerMatcher
-        from src.session.encoding import decode_utf8
-        s._out_buf = OutputBuffer(max_size=1024 * 1024)
-        s._trig_mat = TriggerMatcher(decode_func=decode_utf8)
-        return s
-
     def test_fresh_set_runs_entirely_under_lock(self):
         """fresh 模式：TriggerMatcher.set 与 fresh_cycle 赋值均在锁内"""
-        s = self._make_session()
+        s = _make_session()
         lock = s._out_buf.lock
         orig_set = s._trig_mat.set
         lock_held_in_set = []
@@ -347,7 +337,7 @@ class TestSessionSetTriggerLockHeld:
 
     def test_non_fresh_set_runs_entirely_under_lock(self):
         """非 fresh 模式：set() 与快照提取也全程持锁"""
-        s = self._make_session()
+        s = _make_session()
         lock = s._out_buf.lock
         orig_set = s._trig_mat.set
         lock_held_in_set = []
@@ -368,8 +358,8 @@ class TestSessionSetTriggerLockHeld:
         主线程释放锁后 set_trigger 才执行——锁保证其与 reader 互斥。
         """
         import threading
-        s = self._make_session()
-        s._out_buf.append(b"old data\n")  # read_cycle > 0
+        s = _make_session()
+        s._out_buf.append_text("old data\n")  # read_cycle > 0
         lock = s._out_buf.lock
         result = {}
 
@@ -394,8 +384,8 @@ class TestSessionSetTriggerLockHeld:
     def test_stress_concurrent_set_and_read(self):
         """并发压力：reader 持续追加+快照，setter 反复设置 fresh 触发，不崩溃"""
         import threading
-        s = self._make_session()
-        s._out_buf.append(b"seed\n")
+        s = _make_session()
+        s._out_buf.append_text("seed\n")
         stop = threading.Event()
         errors = []
 
@@ -403,7 +393,7 @@ class TestSessionSetTriggerLockHeld:
             try:
                 while not stop.is_set():
                     with s._out_buf.lock:
-                        s._out_buf.append(b"stream data\n")
+                        s._out_buf.append_text("stream data\n")
                         if s._trig_mat.has_pattern:
                             s._trig_mat.prepare_snapshot(s._out_buf)
             except Exception as e:  # pragma: no cover
@@ -444,14 +434,14 @@ class TestSessionThreadsReaderReady:
         )
         from src.session.output.buffer import OutputBuffer
         from src.session.output.trigger import TriggerMatcher
-        from src.session.encoding import decode_utf8
         from src.session.process.monitor import ProcessMonitor
         from src.session.process.gui import GuiDetector
 
         components = SessionComponents(
             pty_provider=lambda: pty,
-            out_buf=OutputBuffer(max_size=1024 * 1024),
-            trig_mat=TriggerMatcher(decode_func=decode_utf8),
+            pipeline_provider=lambda: None,
+            out_buf=OutputBuffer(),
+            trig_mat=TriggerMatcher(),
             proc_mon=ProcessMonitor(pty_provider=lambda: pty,
                                     event_sink=lambda e: None),
             gui_detector=GuiDetector(event_sink=lambda e: None),
@@ -627,8 +617,8 @@ class TestBuildResultStartTime:
         s.start_time = start_time
         s.command = "echo"
         s.running = True
+        s.mode = "subprocess"
         s.pty_type = "subprocess"
-        s.output_offset = 10
         s.exit_code = None
         s.error_message = None
         s.processes = []
@@ -676,60 +666,57 @@ class TestBuildResultStartTime:
 
 
 # ============================================================
-# 7. Client._ensure_daemon deadline 等待
+# 7. controller.ensure_daemon deadline 等待
 # ============================================================
 
 
 class TestEnsureDaemonDeadline:
-    """_ensure_daemon 改为 DAEMON_START_TIMEOUT deadline 后的行为"""
-
-    def _client(self):
-        from src.client.transport import Client
-        return Client()
+    """ensure_daemon 使用 DAEMON_START_TIMEOUT deadline 后的行为"""
 
     def test_uses_deadline_not_fixed_count(self):
         """验证不再使用固定 range(15) 而是 deadline 判断"""
         import inspect
-        from src.client.transport import Client
-        src = inspect.getsource(Client._ensure_daemon)
+        from src.client.controller import ensure_daemon
+        src = inspect.getsource(ensure_daemon)
         assert "range(15)" not in src
         assert "DAEMON_START_TIMEOUT" in src
+        assert "deadline" in src
 
     def test_starts_when_daemon_ready_before_deadline(self):
         """守护进程在 deadline 内就绪 → 正常返回"""
-        client = self._client()
+        from src.client.controller import ensure_daemon
         calls = {"n": 0}
 
         def is_running():
             calls["n"] += 1
             return calls["n"] >= 3  # 第 3 次就绪
 
-        with patch("src.client.transport.is_running", side_effect=is_running), \
-             patch("src.client.transport.start_daemon"), \
-             patch("src.client.transport.time.sleep"):
-            client._ensure_daemon()  # 不应抛异常
+        with patch("src.client.controller.is_running", side_effect=is_running), \
+             patch("src.client.controller.start_daemon"), \
+             patch("src.client.controller.time.sleep"):
+            ensure_daemon()  # 不应抛异常
         assert calls["n"] >= 3
 
     def test_exits_on_timeout(self):
         """deadline 内未就绪 → SystemExit"""
-        client = self._client()
-        with patch("src.client.transport.is_running", return_value=False), \
-             patch("src.client.transport.start_daemon"), \
-             patch("src.client.transport.time.sleep"):
+        from src.client.controller import ensure_daemon
+        with patch("src.client.controller.is_running", return_value=False), \
+             patch("src.client.controller.start_daemon"), \
+             patch("src.client.controller.time.sleep"):
             with pytest.raises(SystemExit):
-                client._ensure_daemon()
+                ensure_daemon()
 
     def test_elapsed_equals_config(self):
         """实际等待总时长与 DAEMON_START_TIMEOUT 一致"""
         from src.config import DAEMON_START_TIMEOUT
-        client = self._client()
+        from src.client.controller import ensure_daemon
         sleeps = []
-        with patch("src.client.transport.is_running", return_value=False), \
-             patch("src.client.transport.start_daemon"), \
-             patch("src.client.transport.time.sleep",
+        with patch("src.client.controller.is_running", return_value=False), \
+             patch("src.client.controller.start_daemon"), \
+             patch("src.client.controller.time.sleep",
                    side_effect=lambda s: sleeps.append(s)):
             with pytest.raises(SystemExit):
-                client._ensure_daemon()
+                ensure_daemon()
         assert sleeps  # 确实等待过
         assert sum(sleeps) >= DAEMON_START_TIMEOUT - 0.5  # 约等于配置值
 
@@ -809,62 +796,42 @@ class TestHandleConfigOps:
 
 
 # ============================================================
-# 9. pty.factory 平台条件导入
+# 9. backend.factory 创建入口（create_subprocess / create_tty）
 # ============================================================
 
 
 class TestFactoryPlatformImport:
-    """factory 平台条件导入（Windows 不加载 Unix 代码）"""
+    """factory 提供 subprocess 与 tty 的显式创建入口"""
 
-    def test_windows_imports_windows_only(self):
-        """Windows 平台：导入 factory 后不引入 UnixPseudoTerminal"""
-        import sys
-        if sys.platform != "win32":
-            pytest.skip("Windows 专用")
-        import src.pty.factory as factory_mod
-        # UnixPseudoTerminal 不应在模块命名空间中（Windows 分支不导入）
-        assert not hasattr(factory_mod, "UnixPseudoTerminal")
-        # WindowsPseudoTerminal 应已导入
-        assert hasattr(factory_mod, "WindowsPseudoTerminal")
-        # 子进程后端始终可用
-        assert factory_mod.SubprocessPseudoTerminal is not None
+    def test_factory_exposes_create_funcs(self):
+        """factory 导出 create_subprocess / create_tty 与后端类"""
+        import src.backend.factory as factory_mod
+        assert hasattr(factory_mod, "create_subprocess")
+        assert hasattr(factory_mod, "create_tty")
+        assert hasattr(factory_mod, "SubprocessBackend")
+        assert hasattr(factory_mod, "TtyBackend")
 
-    def test_non_windows_imports_unix(self):
-        """非 Windows 平台：导入 factory 后不引入 WindowsPseudoTerminal"""
-        import sys
-        if sys.platform == "win32":
-            pytest.skip("Unix 专用")
-        import src.pty.factory as factory_mod
-        assert not hasattr(factory_mod, "WindowsPseudoTerminal")
-        assert hasattr(factory_mod, "UnixPseudoTerminal")
+    def test_no_pty_create_entry(self):
+        """不再有 create_pty 单点入口"""
+        import src.backend.factory as factory_mod
+        assert not hasattr(factory_mod, "create_pty")
 
-    def test_create_pty_string_command(self):
-        """字符串命令 → SubprocessPseudoTerminal"""
-        import src.pty.factory as factory_mod
-        with patch.object(factory_mod, "SubprocessPseudoTerminal") as mock_sub:
-            factory_mod.create_pty("echo hello")
+    def test_create_subprocess_uses_subprocess_backend(self):
+        """create_subprocess 委托给 SubprocessBackend"""
+        import src.backend.factory as factory_mod
+        with patch.object(factory_mod, "SubprocessBackend") as mock_sub:
+            factory_mod.create_subprocess("echo hello")
             mock_sub.assert_called_once()
 
-    def test_create_pty_windows_list_command(self):
-        """Windows 平台列表命令 → WindowsPseudoTerminal，失败回退 subprocess"""
-        import sys
-        if sys.platform != "win32":
-            pytest.skip("Windows 专用")
-        import src.pty.factory as factory_mod
-        with patch.object(factory_mod, "SubprocessPseudoTerminal") as mock_sub:
-            with patch.object(factory_mod, "WindowsPseudoTerminal",
-                              side_effect=Exception("boom")):
-                factory_mod.create_pty(["echo", "hi"])
-            mock_sub.assert_called_once()
+    def test_create_tty_uses_tty_backend(self):
+        """create_tty 委托给 TtyBackend"""
+        import src.backend.factory as factory_mod
+        with patch.object(factory_mod, "TtyBackend") as mock_tty:
+            factory_mod.create_tty(["echo", "hi"])
+            mock_tty.assert_called_once()
 
-    def test_create_pty_windows_list_success(self):
-        """Windows 平台列表命令 → WindowsPseudoTerminal 成功"""
-        import sys
-        if sys.platform != "win32":
-            pytest.skip("Windows 专用")
-        import src.pty.factory as factory_mod
-        with patch.object(factory_mod, "SubprocessPseudoTerminal") as mock_sub:
-            with patch.object(factory_mod, "WindowsPseudoTerminal") as mock_win:
-                factory_mod.create_pty(["echo", "hi"])
-            mock_win.assert_called_once()
-            mock_sub.assert_not_called()
+    def test_platform_backends_not_in_factory_namespace(self):
+        """factory 命名空间不直接引入平台后端类"""
+        import src.backend.factory as factory_mod
+        assert not hasattr(factory_mod, "UnixTtyBackend")
+        assert not hasattr(factory_mod, "WinTtyBackend")

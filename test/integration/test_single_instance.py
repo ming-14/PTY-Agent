@@ -16,10 +16,8 @@ from src.protocol.shm import (
     cleanup_daemon_info,
 )
 from src.protocol.shm_utils import open_shm, close_shm
-from src.daemon.lifecycle import (
-    _heartbeat_fresh,
-    is_running,
-)
+from src.protocol.daemon_utils import heartbeat_fresh
+from src.client.controller import is_running
 from src.config import (
     DATA_DIR, IS_WINDOWS,
     MMAP_DAEMON_INFO_NAME, MMAP_DAEMON_INFO_SIZE,
@@ -82,8 +80,8 @@ class TestSingleInstanceIntegration:
 
     def test_heartbeat_fresh_check(self):
         """心跳新鲜检查"""
-        assert _heartbeat_fresh(time.time()) is True
-        assert _heartbeat_fresh(time.time() - 60) is False
+        assert heartbeat_fresh(time.time()) is True
+        assert heartbeat_fresh(time.time() - 60) is False
 
     def test_info_overwrite_with_new_daemon(self, _held_handle):
         write_daemon_info_handle(_held_handle, 11111, True, 1000.0)

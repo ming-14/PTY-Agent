@@ -13,7 +13,7 @@
 import sys
 import logging
 
-_logger = logging.getLogger("pty-windows-error")
+_logger = logging.getLogger("backend-windows-error")
 
 # ── 在 Windows 上延迟加载 ctypes ──
 _IS_WINDOWS = sys.platform == "win32"

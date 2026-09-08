@@ -1,4 +1,4 @@
-"""共享内存工具 — 认证令牌
+"""共享内存工具 — 认证令牌（协议层）
 
 提供守护进程与客户端之间的认证令牌共享内存读写操作。
 底层共享内存访问统一委托 protocol/shm_utils.py（跨平台 mmap），
@@ -15,7 +15,7 @@ from ..config import (
     AUTH_TOKEN_NAME,
     AUTH_TOKEN_SIZE,
 )
-from ..protocol.shm_utils import (
+from .shm_utils import (
     open_shm,
     close_shm,
     read_bytes,
@@ -23,7 +23,7 @@ from ..protocol.shm_utils import (
     cleanup_shm,
 )
 
-_logger = logging.getLogger("pty-session")
+_logger = logging.getLogger("pty-protocol")
 
 
 def generate_auth_token() -> str:

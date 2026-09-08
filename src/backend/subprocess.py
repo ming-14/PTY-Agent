@@ -1,4 +1,7 @@
-"""SubprocessPseudoTerminal — 基于 subprocess 管道的 PTY 回退实现"""
+"""SubprocessBackend — 基于 subprocess 管道的子进程后端
+
+纯 stdin/stdout/stderr 管道模式，不涉及任何伪终端概念。
+"""
 
 import ctypes
 import os
@@ -8,7 +11,7 @@ import logging
 from typing import Optional, List
 from ctypes import wintypes as W
 
-from .base import PseudoTerminal, ProcessEvent
+from .base import Backend, ProcessEvent
 from ..config import IS_WINDOWS
 
 if IS_WINDOWS:
@@ -24,7 +27,7 @@ _CREATE_NO_WINDOW           = 0x08000000  # 禁止为控制台程序创建可见
 _STARTF_USESHOWWINDOW       = 0x00000001
 _SW_HIDE                    = 0
 
-_logger = logging.getLogger("pty-subprocess")
+_logger = logging.getLogger("backend-subprocess")
 
 
 def detect_available_shells() -> dict:
@@ -39,7 +42,7 @@ def detect_available_shells() -> dict:
     if IS_WINDOWS:
         cmd_path = shutil.which("cmd.exe")
         result["cmd"] = cmd_path or "cmd.exe"
-    for name, spec in SubprocessPseudoTerminal._SHELL_MAP.items():
+    for name, spec in SubprocessBackend._SHELL_MAP.items():
         if name == "cmd":
             continue
         if spec is None:
@@ -65,12 +68,12 @@ def format_shell_info() -> str:
     return "可用 shell: " + ", ".join(parts)
 
 
-class SubprocessPseudoTerminal(PseudoTerminal):
+class SubprocessBackend(Backend):
     """subprocess 管道模式
 
     使用 subprocess.Popen 的 stdin/stdout/stderr 管道进行交互。
-    不支持真正的终端功能，作为最终保底方案。
-    默认优先使用 powershell，不可用时回退至 cmd.exe，可通过 shell 参数切换解释器。
+    纯管道进程，不涉及伪终端。默认优先使用 powershell，不可用时
+    回退至 cmd.exe，可通过 shell 参数切换解释器。
     """
 
     # 可选解释器映射：解释器名 → [可执行文件, 命令参数]
@@ -297,7 +300,7 @@ class SubprocessPseudoTerminal(PseudoTerminal):
             self._gui_monitor.close()
 
     def get_type(self) -> str:
-        """返回 PTY 后端类型标识"""
+        """返回后端类型标识"""
         return "subprocess"
 
     def get_child_pid(self):

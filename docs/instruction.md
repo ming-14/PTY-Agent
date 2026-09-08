@@ -14,7 +14,8 @@
 pty-agent/
 ├── docs/          # 设计文档（架构/规范/命令参考）
 ├── src/          # 主包（模块化架构：protocol/ client/ daemon/ session/ pty/）
-│   └── session/  # 已拆分为 output/ process/ 三个子包 + encoding/ 子包
+│   ├── backend/  # 运行后端（subprocess / pty 分离，无回退）
+│   └── session/    # output/ process/ encoding/ 子包
 ├── test/         # 测试套件
 │   ├── conftest.py                   # pytest 配置
 │   ├── unit/                         # 单元测试（隔离测试单一模块）
@@ -27,7 +28,7 @@ pty-agent/
 
 | 组件 | 要求 |
 |------|------|
-| Python | 3.11+，纯标准库，无第三方依赖 |
+| Python | 3.11+，运行时依赖 pyte（测试需 pytest） |
 | Windows | 10+（ConPTY）|
 | Unix | 支持 `os.openpty()` |
 

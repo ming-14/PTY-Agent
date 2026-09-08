@@ -1,9 +1,9 @@
-"""响应格式化输出
+"""CLI 呈现层 — 自然语言响应格式化
 
-提供守护进程响应的格式化与打印功能。
-适配 v2 规范化 result 格式（trigger/program/debug 三层）。
+把守护进程返回的 result/ok/error 响应格式化为人类可读文本输出。
+与传输/业务解耦（client.api 返回 dict，本模块只负责"展示"）。
 
-输出为**自然语言模式**：对 stdout（输出内容）和 stderr（元数据/调试信息）做人类可读格式化。
+输出为**自然语言模式**：程序输出到 stdout，元数据/调试信息到 stdout。
 """
 
 import logging
@@ -11,24 +11,24 @@ import sys
 import time
 from datetime import datetime
 
-from .input import safe_print
+from ..input import safe_print
 
 _logger = logging.getLogger("pty-client")
 
-# ── 全局标志 ──
 
-# Debug 输出：True=输出 debug 段（进程树/GUI 窗口/事件），False=隐藏
-_SHOW_DEBUG = True
-
-
-def set_debug_mode(enabled: bool):
-    """设置 debug 输出模式
+class CliPresenter:
+    """CLI 呈现器（自然语言模式）
 
     Args:
-        enabled: True=输出 debug 段，False=隐藏。
+        show_debug: True 显示 debug 段（进程树/GUI 窗口/事件）。
     """
-    global _SHOW_DEBUG
-    _SHOW_DEBUG = enabled
+
+    def __init__(self, show_debug: bool = True):
+        self._show_debug = show_debug
+
+    def present(self, resp: dict) -> None:
+        """呈现一个响应 dict（副作用：打印）"""
+        print_response(resp, show_debug=self._show_debug)
 
 
 def _format_event(ev: dict) -> str:
@@ -65,11 +65,12 @@ def _format_event(ev: dict) -> str:
     return f"# [?]  [{ev_t}] {ev_type}: {ev_info}"
 
 
-def print_response(resp: dict):
+def print_response(resp: dict, *, show_debug: bool = True):
     """打印守护进程响应（自然语言模式）
 
     Args:
-        resp: 守护进程返回的响应字典。
+        resp:       守护进程返回的响应字典。
+        show_debug: 是否输出 debug 段（进程树/GUI 窗口/事件）。
     """
     resp_type = resp.get("type", "?") if resp else "None"
     _logger.debug("print_response: type=%s", resp_type)
@@ -85,21 +86,11 @@ def print_response(resp: dict):
         return
 
     if resp_type in ("result", "exec", "send", "read"):
-        _print_result(resp)
+        _print_result(resp, show_debug=show_debug)
         return
 
     if resp_type == "ok":
-        _print_ok(resp)
-        return
-
-    if resp_type == "triggered":
-        output = resp.get("output", "")
-        matched = resp.get("matched", False)
-        if output:
-            output = output.rstrip("\r\n")
-            safe_print(output)
-        if not matched:
-            safe_print("\n[trigger not matched]")
+        _print_ok(resp, show_debug=show_debug)
         return
 
     safe_print(f"response: {resp}")
@@ -116,7 +107,7 @@ _REASON_LABELS = {
 }
 
 
-def _print_result(resp: dict):
+def _print_result(resp: dict, *, show_debug: bool = True):
     """打印 result 类型响应
 
     格式:
@@ -124,7 +115,7 @@ def _print_result(resp: dict):
         "output": "...",
         "trigger_matched": bool,
         "reason": str,
-        "program": {"running": bool, "pty_type": str, ...},
+        "program": {"mode": str, "running": bool, "pty_type": str, ...},
         "debug": {"processes": [{pid, path}, ...], "gui_windows": [...]}
     }
     """
@@ -173,6 +164,9 @@ def _print_result(resp: dict):
             safe_print(f"# {first_line}")
         if session_id:
             safe_print(f"# session id: {session_id}")
+        mode = program.get("mode")
+        if mode:
+            safe_print(f"# mode: {mode}")
         pty_type = program.get("pty_type")
         if pty_type:
             safe_print(f"# pty type: {pty_type}")
@@ -194,8 +188,8 @@ def _print_result(resp: dict):
         safe_print(f"# current time: {now_str}")
 
     # ── debug ──
-    processes = debug.get("processes") if _SHOW_DEBUG else None
-    gui_windows = debug.get("gui_windows") if _SHOW_DEBUG else None
+    processes = debug.get("processes") if show_debug else None
+    gui_windows = debug.get("gui_windows") if show_debug else None
 
     has_debug = processes or gui_windows
     if has_debug:
@@ -230,7 +224,7 @@ def _print_result(resp: dict):
                 )
 
     # ── pending events（exec/send 返回的 debug.pending_events）──
-    pending_events = debug.get("pending_events") if _SHOW_DEBUG else None
+    pending_events = debug.get("pending_events") if show_debug else None
     if pending_events:
         has_crash = any(ev.get("type") == "process_crash" for ev in pending_events)
         if has_crash:
@@ -246,15 +240,9 @@ def _print_result(resp: dict):
         for line in error_message.split("\n"):
             safe_print(f"# {line}")
 
-    # ── offset ──
-    output_offset = resp.get("output_offset")
-    if output_offset is not None and output_offset > 0:
-        safe_print("\n# ── offset ────────────────────────")
-        safe_print(f"# {output_offset}")
 
-
-def _print_ok(resp: dict):
-    """print ok response"""
+def _print_ok(resp: dict, *, show_debug: bool = True):
+    """打印 ok 类型响应"""
 
     # ── session list (list command) ──
     sessions = resp.get("sessions")

@@ -48,7 +48,7 @@ from .convars import (
     K,
 )
 
-_logger = logging.getLogger("pty-job")
+_logger = logging.getLogger("backend-job")
 
 # ── IOCP 超时（毫秒）──
 _IOCP_TIMEOUT = 1000  # 每秒检查停止标志

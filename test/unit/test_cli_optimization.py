@@ -146,27 +146,32 @@ class TestConfigManager:
 class TestFormatter:
     """响应格式化输出单元测试"""
 
-    @pytest.fixture(autouse=True)
-    def reset_mode(self):
-        """每个测试后重置输出模式"""
-        from src.client.formatter import set_debug_mode
-
-        yield
-        set_debug_mode(True)
-
-    def test_result_output(self, capsys):
-        """测试 result 输出"""
-        from src.client.formatter import print_response
-
+    def _result_resp(self, **overrides):
+        """构造基础 result 响应"""
         resp = {
             "type": "result",
             "session_id": "test-sess",
-            "output": "Hello World",
-            "output_offset": 100,
-            "trigger": {"matched": True, "reason": "matched"},
-            "program": {"running": True, "exit_code": None, "error_message": None},
-            "debug": {"processes": [1234], "gui_windows": [], "pending_events": []},
+            "output": "hello",
+            "trigger_matched": True,
+            "reason": "matched",
+            "program": {"mode": "subprocess", "running": True},
+            "debug": {
+                "processes": [{"pid": 1234, "path": "python.exe"}],
+                "gui_windows": [],
+                "pending_events": [],
+            },
         }
+        resp.update(overrides)
+        return resp
+
+    def test_result_output(self, capsys):
+        """测试 result 输出"""
+        from src.client.presenters import print_response
+
+        resp = self._result_resp(
+            output="Hello World",
+            debug={"processes": [1234], "gui_windows": [], "pending_events": []},
+        )
         print_response(resp)
         captured = capsys.readouterr()
 
@@ -175,7 +180,7 @@ class TestFormatter:
 
     def test_error_output(self, capsys):
         """测试错误输出"""
-        from src.client.formatter import print_response
+        from src.client.presenters import print_response
 
         resp = {"type": "error", "error": "会话不存在"}
         print_response(resp)
@@ -185,7 +190,7 @@ class TestFormatter:
 
     def test_none_response(self, capsys):
         """测试 None 响应"""
-        from src.client.formatter import print_response
+        from src.client.presenters import print_response
 
         print_response(None)
         captured = capsys.readouterr()
@@ -195,24 +200,11 @@ class TestFormatter:
     # ---- debug 模式测试 ----
 
     def test_debug_enabled(self, capsys):
-        """测试 debug 开启时显示 debug 段"""
-        from src.client.formatter import print_response, set_debug_mode
+        """测试 show_debug=True 时显示 debug 段"""
+        from src.client.presenters import print_response
 
-        set_debug_mode(True)
-        resp = {
-            "type": "result",
-            "session_id": "test-sess",
-            "output": "hello",
-            "trigger_matched": True,
-            "reason": "matched",
-            "program": {"running": True},
-            "debug": {
-                "processes": [{"pid": 1234, "path": "python.exe"}],
-                "gui_windows": [],
-                "pending_events": [],
-            },
-        }
-        print_response(resp)
+        resp = self._result_resp()
+        print_response(resp, show_debug=True)
         captured = capsys.readouterr()
 
         combined = captured.out + captured.err
@@ -220,24 +212,11 @@ class TestFormatter:
         assert "1234" in combined
 
     def test_debug_disabled(self, capsys):
-        """测试 debug 关闭时隐藏 debug 段"""
-        from src.client.formatter import print_response, set_debug_mode
+        """测试 show_debug=False 时隐藏 debug 段"""
+        from src.client.presenters import print_response
 
-        set_debug_mode(False)
-        resp = {
-            "type": "result",
-            "session_id": "test-sess",
-            "output": "hello",
-            "trigger_matched": True,
-            "reason": "matched",
-            "program": {"running": True},
-            "debug": {
-                "processes": [{"pid": 1234, "path": "python.exe"}],
-                "gui_windows": [],
-                "pending_events": [],
-            },
-        }
-        print_response(resp)
+        resp = self._result_resp()
+        print_response(resp, show_debug=False)
         captured = capsys.readouterr()
 
         combined = captured.out + captured.err
@@ -245,31 +224,22 @@ class TestFormatter:
         assert "process tree" not in combined
 
     def test_debug_disabled_hides_events(self, capsys):
-        """测试 debug 关闭时隐藏 pending_events"""
-        from src.client.formatter import print_response, set_debug_mode
+        """测试 show_debug=False 时隐藏 pending_events"""
+        from src.client.presenters import print_response
 
-        set_debug_mode(False)
-        resp = {
-            "type": "result",
-            "session_id": "test-sess",
-            "output": "hello",
-            "trigger_matched": True,
-            "reason": "matched",
-            "program": {"running": True},
-            "debug": {
-                "processes": [],
-                "gui_windows": [],
-                "pending_events": [
-                    {
-                        "time": 1000000.0,
-                        "type": "process_spawn",
-                        "pid": 1234,
-                        "info": "PID 1234 created",
-                    },
-                ],
-            },
-        }
-        print_response(resp)
+        resp = self._result_resp(debug={
+            "processes": [],
+            "gui_windows": [],
+            "pending_events": [
+                {
+                    "time": 1000000.0,
+                    "type": "process_spawn",
+                    "pid": 1234,
+                    "info": "PID 1234 created",
+                },
+            ],
+        })
+        print_response(resp, show_debug=False)
         captured = capsys.readouterr()
 
         combined = captured.out + captured.err
@@ -277,38 +247,36 @@ class TestFormatter:
         assert "process_spawn" not in combined
 
     def test_debug_disabled_hides_gui(self, capsys):
-        """测试 debug 关闭时隐藏 GUI 窗口"""
-        from src.client.formatter import print_response, set_debug_mode
+        """测试 show_debug=False 时隐藏 GUI 窗口"""
+        from src.client.presenters import print_response
 
-        set_debug_mode(False)
-        resp = {
-            "type": "result",
-            "session_id": "test-sess",
-            "output": "hello",
-            "trigger_matched": True,
-            "reason": "matched",
-            "program": {"running": True},
-            "debug": {
-                "processes": [],
-                "gui_windows": [
-                    {"hwnd": 0x1234, "pid": 5678, "title": "test", "class_name": "cls"},
-                ],
-                "pending_events": [],
-            },
-        }
-        print_response(resp)
+        resp = self._result_resp(debug={
+            "processes": [],
+            "gui_windows": [
+                {"hwnd": 0x1234, "pid": 5678, "title": "test", "class_name": "cls"},
+            ],
+            "pending_events": [],
+        })
+        print_response(resp, show_debug=False)
         captured = capsys.readouterr()
 
         combined = captured.out + captured.err
         assert "window" not in combined
         assert "0x1234" not in combined
 
-    def test_set_debug_mode(self):
-        """测试 set_debug_mode 切换"""
-        from src.client.formatter import set_debug_mode
+    def test_show_debug_flag_controls_output(self, capsys):
+        """测试 print_response 的 show_debug 参数控制 debug 段"""
+        from src.client.presenters import print_response
 
-        set_debug_mode(True)
-        set_debug_mode(False)
+        resp = self._result_resp()
+        # show_debug=True（默认）显示 debug，False 隐藏
+        print_response(resp, show_debug=True)
+        shown = capsys.readouterr()
+        assert "process tree" in (shown.out + shown.err)
+
+        print_response(resp, show_debug=False)
+        hidden = capsys.readouterr()
+        assert "process tree" not in (hidden.out + hidden.err)
 
 
 class TestConfigParserIntegration:
@@ -321,5 +289,3 @@ class TestConfigParserIntegration:
         assert _parse_default_key("idle-timeout") == "idle_timeout"
         assert _format_config_key("idle_timeout") == "idle-timeout"
         assert _parse_default_key("timeout") == "timeout"
-
-

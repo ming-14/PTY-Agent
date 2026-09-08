@@ -17,7 +17,7 @@ import threading
 from threading import Event
 from typing import Callable, Dict, Optional
 
-from ...pty.errors import STILL_ACTIVE, translate_exit_code
+from ...backend.errors import STILL_ACTIVE, translate_exit_code
 from .info import _get_process_name
 from ..output.events import PendingEvent
 

@@ -1,6 +1,6 @@
 """会话管理器 — SessionManager
 
-管理所有 PTY 会话的创建、获取、列出、移除和批量停止。
+管理所有会话的后端模式创建、获取、列出、移除和批量停止。
 """
 
 import logging
@@ -28,14 +28,16 @@ class SessionManager:
         command,
         shell: Optional[str] = None,
         cwd: Optional[str] = None,
+        pty: bool = False,
     ) -> Session:
         """创建并启动新会话
 
         Args:
             session_id: 会话唯一标识符。
-            command:    要执行的命令。
-            shell:      指定解释器（cmd/powershell/pwsh/bash），默认 cmd。
+            command:    要执行的命令（subprocess 为字符串；pty 为列表）。
+            shell:      指定解释器（cmd/powershell/pwsh/bash），仅 subprocess 模式。
             cwd:        子进程工作目录（默认守护进程当前目录）。
+            pty:        True 为真实终端模式（--pty），False 为纯管道子进程（默认）。
 
         Returns:
             新创建的 Session 实例。
@@ -49,7 +51,7 @@ class SessionManager:
         with self._lock:
             if session_id in self._sessions:
                 raise KeyError(f"会话 '{session_id}' 已存在")
-            s = Session(session_id, command, shell=shell, cwd=cwd)
+            s = Session(session_id, command, shell=shell, cwd=cwd, pty=pty)
             self._sessions[session_id] = s
         s.start()
         return s
@@ -93,6 +95,7 @@ class SessionManager:
                         if isinstance(s.command, str)
                         else " ".join(s.command)
                     ),
+                    "mode": s.mode,
                     "running": s.running,
                 }
                 for s in self._sessions.values()

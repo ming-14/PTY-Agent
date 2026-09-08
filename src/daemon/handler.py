@@ -2,30 +2,26 @@
 
 处理单个请求消息的派发与业务逻辑。
 每条命令对应一个 _handle_* 方法，新增命令时在此添加。
-不再依赖 socket 连接，输入为请求 dict，输出为响应 dict。
+输入为请求 dict，输出为响应 dict。
 
-result 响应格式（v4 规范化）:
+result 响应格式（v5 规范化）:
     {
         "type": "result",
         "session_id": "xxx",
-        "output_offset": N,
         "output": "...",
         "trigger_matched": bool,
         "reason": str,
-        "program": {"running": bool, "exit_code": int/None, ...},
+        "program": {"mode": "subprocess|pty", "running": bool, "exit_code": int/None, ...},
         "debug": {"processes": [...], "gui_windows": [...], "pending_events": [...]}
     }
 """
 
 import re
-import json
 import time
 import logging
 import threading
 import traceback
-from typing import Optional
 
-from ..protocol.ansi import strip_ansi
 from ..session.manager import SessionManager
 from ..session.output import safe_regex_search, format_timestamp_iso
 from ..session.process import _get_process_path
@@ -125,8 +121,6 @@ class RequestHandler:
             parts.append(f"cmd={cmd[:60]!r}")
         if msg.get("trigger"):
             parts.append(f"trigger={msg['trigger']!r}")
-        if msg.get("offset"):
-            parts.append(f"offset={msg['offset']}")
         return ", ".join(parts) if parts else ""
 
     def handle(self, msg: dict) -> dict:
@@ -172,13 +166,8 @@ class RequestHandler:
                 return {"type": "error", "error": "缺少会话 id"}
             return {"type": "error", "error": f"未知指令类型: {msg_type}"}
 
-        except json.JSONDecodeError:
-            _logger.error("JSON 解析失败")
-            return {"type": "error", "error": "请求格式错误: JSON 解析失败"}
-        except Exception as e:
-            tb = traceback.format_exc()
-            _logger.error("请求处理异常: %s", e)
-            _logger.error(tb)
+        except Exception:
+            _logger.error("请求处理异常", exc_info=True)
             return {"type": "error", "error": "服务器内部错误"}
 
     def _dispatch_session_cmd(self, msg_type: str, msg: dict) -> dict:
@@ -204,15 +193,14 @@ class RequestHandler:
         consume_events: bool = False,
         has_trigger: bool = True,
         result_type: str = "result",
-        warning: Optional[str] = None,
+        warning=None,
     ) -> dict:
-        """构建规范化的 result 响应（v4）"""
+        """构建规范化的 result 响应（v5）"""
         session = self.manager.get_session(session_id)
         result: dict = {
             "type": result_type,
             "session_id": session_id,
             "output": output,
-            "output_offset": session.output_offset if session else 0,
         }
         if has_trigger:
             result["trigger_matched"] = matched
@@ -220,6 +208,7 @@ class RequestHandler:
 
         program: dict = {
             "command": session.command if session else None,
+            "mode": session.mode if session else "subprocess",
             "running": session.running if session else False,
             "pty_type": session.pty_type if session else "none",
         }
@@ -266,23 +255,36 @@ class RequestHandler:
         self,
         session,
         msg: dict,
-        trigger_offset: int,
         trigger: str,
         newline: bool,
         fresh: bool,
         timeout: float,
-        start_offset=None,
         result_type: str = "exec",
+        armed: bool = False,
     ) -> dict:
-        """执行 设置触发→等待→输出→响应 通用流程"""
+        """执行 设置触发→等待→输出→响应 通用流程（游标增量语义）
+
+        Args:
+            armed: True 表示触发条件已由调用方写入（send 需要在写输入前
+                   武装触发，避免 fresh 模式下输出先于触发设置而漏匹配）。
+        """
         idle_timeout = msg.get("idle_timeout")
         idle_after_first = msg.get("idle_after_first_output", False)
-        session.set_trigger(trigger, newline=newline, fresh=fresh,
-                            start_offset=start_offset,
-                            idle_timeout=idle_timeout,
-                            idle_after_first_output=idle_after_first)
+
+        if not armed:
+            # 游标：--full 从 0 起（全量），否则标记当前末尾（增量）
+            if msg.get("full"):
+                session.reset_cursor()
+            else:
+                session.mark_cursor()
+
+            session.set_trigger(trigger, newline=newline, fresh=fresh,
+                                start_idx=session.cursor,
+                                idle_timeout=idle_timeout,
+                                idle_after_first_output=idle_after_first)
+
         matched, reason = session.wait_for_trigger(timeout, gui_short_circuit=False)
-        output = strip_ansi(session.get_output(from_offset=trigger_offset))
+        output = session.get_output_since_cursor()
         result = self._build_result(
             session.id, output, matched, reason,
             consume_events=True,
@@ -298,6 +300,11 @@ class RequestHandler:
         idle_timeout = msg.get("idle_timeout")
         idle_after_first = msg.get("idle_after_first_output", False)
 
+        if msg.get("full"):
+            session.reset_cursor()
+        else:
+            session.mark_cursor()
+
         session.wait_for_initial_output(timeout=0.5)
 
         if idle_timeout is not None:
@@ -305,7 +312,7 @@ class RequestHandler:
                 pattern=r"(?!x)x",
                 newline=False,
                 fresh=True,
-                start_offset=session.output_offset,
+                start_idx=session.cursor,
                 idle_timeout=idle_timeout,
                 idle_after_first_output=idle_after_first,
             )
@@ -314,7 +321,7 @@ class RequestHandler:
         else:
             matched, reason = False, "ok"
 
-        output = strip_ansi(session.get_output())
+        output = session.get_output_since_cursor()
         return self._build_result(
             session.id, output, matched, reason,
             consume_events=True,
@@ -352,17 +359,19 @@ class RequestHandler:
         if err:
             return err
 
-        _logger.info("_handle_exec: id=%r cmd=%r trigger=%r timeout=%r "
+        _logger.info("_handle_exec: id=%r cmd=%r pty=%r trigger=%r timeout=%r "
                      "idle_timeout=%r",
                      session_id,
                      command[:200] if isinstance(command, str) else command,
-                     trigger, msg.get("timeout"), msg.get("idle_timeout"))
+                     msg.get("pty"), trigger,
+                     msg.get("timeout"), msg.get("idle_timeout"))
 
         if not session_id:
             return {"type": "error", "error": "缺少会话 id"}
         if not command:
             return {"type": "error", "error": "缺少 command 参数"}
 
+        pty_mode = bool(msg.get("pty"))
         existing = self.manager.get_session(session_id)
         if existing:
             if not existing.running:
@@ -377,12 +386,14 @@ class RequestHandler:
                 session = self.manager.create_session(
                     session_id, command,
                     shell=msg.get("shell"), cwd=msg.get("cwd"),
+                    pty=pty_mode,
                 )
                 log_cmd = (
                     command if isinstance(command, str)
                     else " ".join(command)
                 )
-                _logger.info("创建会话 '%s': %s", session_id, log_cmd)
+                _logger.info("创建会话 '%s': %s (mode=%s)", session_id,
+                             log_cmd, "pty" if pty_mode else "subprocess")
             except KeyError:
                 return {"type": "error", "error": f"会话 '{session_id}' 已存在"}
             except Exception as e:
@@ -390,13 +401,9 @@ class RequestHandler:
                 return {"type": "error", "error": "启动会话失败"}
 
         if trigger:
-            trigger_offset = 0 if msg.get("full") else session.output_offset
-            start_offset = 0 if not existing else None
             return self._run_trigger_flow(
-                session, msg, trigger_offset,
-                trigger, msg.get("newline", False),
+                session, msg, trigger, msg.get("newline", False),
                 msg.get("fresh", False), msg.get("timeout", 120),
-                start_offset=start_offset,
                 result_type="exec",
             )
         else:
@@ -428,7 +435,7 @@ class RequestHandler:
             }
 
         if not session.running:
-            output = strip_ansi(session.get_output())
+            output = session.get_output_full()
             return self._build_result(
                 session_id, output, False, "ended",
                 consume_events=True,
@@ -437,12 +444,22 @@ class RequestHandler:
                 warning="会话已结束（旧会话数据）",
             )
 
+        # 游标：--full 从 0 起（全量），否则标记当前末尾（增量）
+        if msg.get("full"):
+            session.reset_cursor()
+        else:
+            session.mark_cursor()
+
         if trigger:
-            trigger_offset = 0 if msg.get("full") else session.output_offset
+            # 必须在写输入前武装触发，避免 fresh 模式漏匹配
             session.set_trigger(trigger, newline=msg.get("newline", False),
-                                fresh=msg.get("fresh", False))
-            _logger.info("send trigger: id=%r trigger=%r offset=%d bufsize=%d",
-                         session_id, trigger, trigger_offset, session.output_offset)
+                                fresh=msg.get("fresh", False),
+                                start_idx=session.cursor,
+                                idle_timeout=msg.get("idle_timeout"),
+                                idle_after_first_output=msg.get(
+                                    "idle_after_first_output", False))
+            _logger.info("send trigger: id=%r trigger=%r cursor=%d",
+                         session_id, trigger, session.cursor)
 
         try:
             session.write_input(input_text)
@@ -453,20 +470,23 @@ class RequestHandler:
 
         if trigger:
             return self._run_trigger_flow(
-                session, msg, trigger_offset,
-                trigger, msg.get("newline", False),
-                msg.get("fresh", False), msg.get("timeout", 120),
-                result_type="send",
+                session, msg, trigger,
+                msg.get("newline", False), msg.get("fresh", False),
+                msg.get("timeout", 120), result_type="send", armed=True,
             )
         else:
             return self._run_no_trigger_flow(session, msg, result_type="send")
 
     def _handle_read(self, msg: dict) -> dict:
-        """处理 read 指令：直接读取会话终端输出"""
+        """处理 read 指令：读取会话输出（新语义）
+
+        - pty 模式：默认返回可见屏幕；--full/--lines/--grep 基于全量输出
+        - subprocess 模式：默认返回完整缓冲（无可见屏幕概念）
+        - 已删除 --offset 增量读取
+        """
         session_id = msg.get("id", "")
         lines_param = msg.get("lines")
         grep = msg.get("grep")
-        offset = msg.get("offset")
 
         err = self._validate_request(msg, [
             ("id", MAX_SESSION_ID_LEN),
@@ -484,20 +504,20 @@ class RequestHandler:
 
         ended_warning = "会话已结束（旧会话数据）" if not session.running else None
 
-        read_offset = offset
-        if msg.get("full"):
-            read_offset = 0
+        full = bool(msg.get("full"))
+        has_filters = lines_param is not None or grep is not None
 
-        output = strip_ansi(session.get_output(from_offset=read_offset))
-
-        if read_offset is not None and not lines_param and not grep:
+        # pty 模式且未给任何参数：默认可见屏幕
+        if session.mode == "pty" and not full and not has_filters:
+            output = session.get_output_visible()
             return self._build_result(
                 session_id, output, False, "ok",
                 has_trigger=False, result_type="read",
                 warning=ended_warning,
             )
 
-        lines = output.splitlines()
+        # 其余情况：基于全量行列表处理
+        lines = session.get_output_lines()
 
         if lines_param is not None:
             if isinstance(lines_param, int):
@@ -564,4 +584,3 @@ class RequestHandler:
         except Exception as e:
             _logger.warning("关闭窗口异常: %s", e)
             return {"type": "error", "error": "关闭窗口失败"}
-

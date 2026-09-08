@@ -24,15 +24,21 @@ class _MockSession:
         self.running = running
         self.command = "echo test"
         self.start_time = time.time()
+        self.mode = "subprocess"
         self.exit_code = None
         self.error_message = None
         self.pty_type = "subprocess"
-        self.output_offset = 10
         self.pending_event_count = 0
         self.gui_windows = []
         self.processes = []
 
-    def get_output(self, **kwargs):
+    def get_output_visible(self):
+        return "test output"
+
+    def get_output_lines(self):
+        return ["test output"]
+
+    def get_output_since_cursor(self):
         return "test output"
 
     def write_input(self, data):

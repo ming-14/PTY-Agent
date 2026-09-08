@@ -1,8 +1,8 @@
 """后台线程管理 — 读者线程与监控线程
 
-管理 Session 的后台读者线程（持续读取 PTY 输出）和独立监控线程
-（进程事件、GUI 窗口检测），通过 SessionComponents 数据类接收所有
-子组件引用，避免循环依赖。
+管理 Session 的后台读者线程（持续读取后端输出 → 输出管线 → 缓冲）
+和独立监控线程（进程事件、GUI 窗口检测），通过 SessionComponents
+数据类接收所有子组件引用，避免循环依赖。
 """
 
 import errno
@@ -12,6 +12,7 @@ import threading
 from dataclasses import dataclass
 from typing import Optional, Callable
 
+from ..config import READ_SIZE
 from .output import OutputBuffer, TriggerMatcher
 from .process import ProcessMonitor, GuiDetector
 
@@ -23,16 +24,17 @@ class SessionComponents:
     """后台线程所需的所有子组件引用容器
 
     Attributes:
-        pty_provider:  返回当前 PTY 实例的可调用对象（lambda: session._pty）。
-        out_buf:       线程安全输出缓冲区。
-        trig_mat:      触发条件匹配器。
-        proc_mon:      进程树监控器。
-        gui_detector:  GUI 窗口检测器。
-        session_id:    会话 ID（用于日志）。
-        on_exit:       读者线程退出回调，签名 (exit_code: Optional[int], error_message: Optional[str]) -> None。
-                       用于通知 Session 更新 running/exit_code/error_message 并关闭 PTY。
+        pty_provider:      返回当前后端实例的可调用对象（lambda: session._pty）。
+        pipeline_provider: 返回当前输出管线的可调用对象（lambda: session._pipeline）。
+        out_buf:           线程安全输出缓冲区。
+        trig_mat:          触发条件匹配器。
+        proc_mon:          进程树监控器。
+        gui_detector:      GUI 窗口检测器。
+        session_id:        会话 ID（用于日志）。
+        on_exit:           读者线程退出回调，签名 (exit_code, error_message) -> None。
     """
     pty_provider: Callable
+    pipeline_provider: Callable
     out_buf: OutputBuffer
     trig_mat: TriggerMatcher
     proc_mon: ProcessMonitor
@@ -46,7 +48,7 @@ class SessionThreads:
 
     负责：
     - 启动/停止读者线程和监控线程
-    - 读者线程持续读取 PTY 输出并追加到 OutputBuffer
+    - 读者线程持续读取后端输出，经输出管线写入 OutputBuffer
     - 监控线程独立检测进程事件和 GUI 窗口
     - 读者线程退出时通过 on_exit 回调通知 Session
     """
@@ -116,7 +118,7 @@ class SessionThreads:
     # ── 后台线程实现 ──────────────────────────────────────────
 
     def _reader_loop(self) -> None:
-        """后台读者线程：持续读取 PTY 输出 → 缓冲 → 触发检测"""
+        """后台读者线程：读取后端输出 → 管线 → 缓冲 → 触发检测"""
         comp = self._comp
         pty = comp.pty_provider()
         session_id = comp.session_id
@@ -131,16 +133,16 @@ class SessionThreads:
 
         while not self._stop_event.is_set() and pty:
             try:
-                data = pty.read(65536)
+                data = pty.read(READ_SIZE)
             except OSError as e:
                 if e.errno == errno.EBADF:
                     break
                 _logger.warning(
-                    "读取 PTY 异常 (会话 '%s'): %s", session_id, e)
+                    "读取后端异常 (会话 '%s'): %s", session_id, e)
                 break
             except Exception as e:
                 _logger.warning(
-                    "读取 PTY 异常 (会话 '%s'): %s", session_id, e)
+                    "读取后端异常 (会话 '%s'): %s", session_id, e)
                 break
             if not data:
                 _logger.info(
@@ -148,8 +150,8 @@ class SessionThreads:
                     session_id)
                 break
 
-            # ── 排空管道 ──
-            drained = pty.drain(65536)
+            # ── 排空管道并推送管线 ──
+            drained = pty.drain(READ_SIZE)
             if drained:
                 data = data + drained
                 _logger.debug(
@@ -160,11 +162,15 @@ class SessionThreads:
                 "会话 '%s': reader got %d bytes: %r",
                 session_id, len(data), data[:80])
 
-            # 锁内：追加 → 计时 → 提取触发匹配快照（不执行耗时正则）
+            pipeline = comp.pipeline_provider()
+            if pipeline is None:
+                pty = comp.pty_provider()
+                continue
+            pipeline.push(data)
+
+            # 锁内：记录追加计时 → 提取触发匹配快照（不执行耗时正则）
             snapshot = None
             with out_buf.lock:
-                if not out_buf.append(data):
-                    continue
                 trig_mat.on_data_appended(time.monotonic())
                 if trig_mat.has_pattern:
                     snapshot = trig_mat.prepare_snapshot(out_buf)
@@ -192,7 +198,7 @@ class SessionThreads:
             from .process import _format_exit_code_message
             error_message = _format_exit_code_message(exit_code)
 
-        # 通知 Session：更新 running/exit_code/error_message 并关闭 PTY
+        # 通知 Session：更新 running/exit_code/error_message 并关闭后端
         try:
             comp.on_exit(exit_code, error_message)
         except Exception as e:
@@ -224,10 +230,10 @@ class SessionThreads:
 def _capture_exit_code_retry(pty, retries: int = 10) -> Optional[int]:
     """带重试地获取子进程退出码（模块级工具函数）
 
-    某些 PTY 后端在进程刚退出时可能尚未更新退出码，通过短暂重试提高成功率。
+    某些后端在进程刚退出时可能尚未更新退出码，通过短暂重试提高成功率。
 
     Args:
-        pty:     PTY 后端实例（提供 get_exit_code 方法）。
+        pty:     后端实例（提供 get_exit_code 方法）。
         retries: 最大重试次数（默认 10 次，每次间隔 50ms）。
 
     Returns:

@@ -1,4 +1,4 @@
-"""WindowsPseudoTerminal — 基于 kernel32.CreatePseudoConsole API 的 PTY 实现"""
+"""WinTtyBackend — 基于 kernel32.CreatePseudoConsole API 的 PTY 实现"""
 
 import logging
 import subprocess
@@ -6,9 +6,9 @@ import ctypes
 from ctypes import wintypes as W
 from typing import Optional, List
 
-from ..base import PseudoTerminal, ProcessEvent
+from ..base import Backend, ProcessEvent
 
-_logger = logging.getLogger("pty-windows")
+_logger = logging.getLogger("backend-windows")
 from .convars import (
     K,
     _CreatePseudoConsole,
@@ -32,7 +32,7 @@ from .job import ProcessJob
 from .gui_monitor import GuiWindowMonitor
 
 
-class WindowsPseudoTerminal(PseudoTerminal):
+class WinTtyBackend(Backend):
     """ConPTY — 基于 kernel32.CreatePseudoConsole API
 
     使用 CreatePseudoConsole + 双 CreatePipe 匿名管道。
@@ -46,10 +46,10 @@ class WindowsPseudoTerminal(PseudoTerminal):
         self._hpc = None
         self._ph = None
         self._child_pid = None
-        self._job = ProcessJob(name=f"pty-{id(self)}")
+        self._job = ProcessJob(name=f"tty-{id(self)}")
         self._gui_monitor = GuiWindowMonitor(job=self._job)
 
-        _logger.info("WindowsPseudoTerminal: creating pipes for cmd=%r", command)
+        _logger.info("WinTtyBackend: creating pipes for cmd=%r", command)
         K.CreatePipe(ctypes.byref(self._inR), ctypes.byref(self._inW), None, 0)
         K.CreatePipe(ctypes.byref(self._outR), ctypes.byref(self._outW), None, 0)
 
@@ -193,7 +193,7 @@ class WindowsPseudoTerminal(PseudoTerminal):
         self._gui_monitor.close()
 
     def get_type(self) -> str:
-        """返回 PTY 后端类型标识"""
+        """返回后端类型标识"""
         return "win-conpty"
 
     def get_child_pid(self):

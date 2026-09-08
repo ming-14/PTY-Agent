@@ -1,17 +1,15 @@
-"""触发条件匹配器 — 正则匹配 + 输出静默超时检测
+"""触发条件匹配器 — 正则匹配（文本） + 输出静默超时检测
 
-职责独立于 Session，不持有 PTY 或缓冲区引用，通过回调与
+职责独立于 Session，不持有后端或缓冲区引用，通过回调与
 OutputBuffer / Session 协作。
 
-关键设计:
-- 匹配分为两个阶段：prepare_snapshot()（持锁，仅状态判断+字节切片快照）
-  与 check_snapshot()（锁外，解码+正则搜索）。耗时正则完全移出锁，
-  避免阻塞缓冲区的读写操作。
+关键设计：
+- 匹配分两阶段：prepare_snapshot()（持锁，仅状态判断 + 提取文本快照）
+  与 check_snapshot()（锁外，正则搜索）。耗时正则完全移出锁。
+- 匹配对象为**文本**（pty：渲染文本；subprocess：原始流文本），
+  不再有字节解码回调（decode 由输出管线完成）。
 - 快照对象固化预编译正则与原始模式，避免锁外匹配期间模式被并发修改。
-- 解码依赖外部的 decode_func 回调（Session._decode_only），
-  避免引入编码探测的循环依赖。
-- ReDoS 防护: safe_regex_search 在独立 daemon 线程中执行，
-  超时自动降级返回 False。
+- ReDoS 防护：safe_regex_search 在独立线程中执行，超时降级返回 False。
 """
 
 import re
@@ -21,7 +19,7 @@ import logging
 import threading
 import concurrent.futures
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Optional
 
 from ...config import MAX_TRIGGER_SCAN
 
@@ -36,13 +34,14 @@ class _TriggerSnapshot:
     """触发匹配快照 — 锁内提取、锁外匹配的载体
 
     Attributes:
-        raw:     待匹配的字节切片（从 _start_offset 到 MAX_TRIGGER_SCAN 范围）。
+        text:    待匹配的文本（自 start_idx 到扫描上限）。
         regex:   提取快照时的预编译正则（可能为 None）。
         pattern: 原始模式字符串（正则无效时用于子串匹配）。
     """
-    raw: bytes
+    text: str
     regex: Optional[re.Pattern]
     pattern: str
+
 
 # 共享线程池（最多 4 个 worker，线程名前缀 safe-regex）
 _EXECUTOR = concurrent.futures.ThreadPoolExecutor(
@@ -74,26 +73,19 @@ def safe_regex_search(pattern: re.Pattern, text: str,
 
 
 class TriggerMatcher:
-    """触发条件匹配器
+    """触发条件匹配器（文本快照）
 
     管理一组触发条件（正则/子串匹配 + 换行策略 + 新鲜模式 + 静默超时）。
     不直接持有 IO 资源，通过回调与 OutputBuffer 协作。
     """
 
-    def __init__(self, decode_func: Callable[[bytes], str]):
-        """
-        Args:
-            decode_func: 解码回调，接收 bytes 返回 str。
-                         通常为 Session._decode_only。
-        """
-        self._decode_func = decode_func
-
+    def __init__(self):
         # 触发条件状态
         self._pattern: Optional[str] = None
         self._regex: Optional[re.Pattern] = None  # 预编译正则
         self._matched = False
         self._event = threading.Event()
-        self._start_offset = 0
+        self._start_idx = 0
         self._on_newline = False
         self._newline_count = 0
         self._newline_first_ok = False
@@ -109,20 +101,20 @@ class TriggerMatcher:
     # ── 公开接口 ──
 
     def set(self, pattern: str, newline: bool = False, fresh: bool = False,
-            start_offset: Optional[int] = None,
+            start_idx: Optional[int] = None,
             idle_timeout: Optional[float] = None,
             idle_after_first_output: bool = False,
-            buffer_length: int = 0):
+            line_count: int = 0):
         """设置触发条件
 
         Args:
             pattern:              正则表达式模式。
-            newline:              仅在换行后才检查触发条件。
+            newline:              仅在出现新行后才检查触发条件。
             fresh:                新鲜模式 — 跳过即时匹配等待新数据。
-            start_offset:         扫描起始偏移。None 表示从末尾开始。
+            start_idx:            扫描起始行索引。None 表示从缓冲末尾开始。
             idle_timeout:         输出静默超时秒数。
             idle_after_first_output: 是否在首次输出后才开始检测。
-            buffer_length:        当前缓冲区长度（用于计算 start_offset）。
+            line_count:           当前缓冲完整行数（用于计算 start_idx）。
         """
         self._pattern = pattern
         try:
@@ -131,8 +123,8 @@ class TriggerMatcher:
             self._regex = None
         self._matched = False
         self._event.clear()
-        self._start_offset = (start_offset if start_offset is not None
-                              else buffer_length)
+        self._start_idx = (start_idx if start_idx is not None
+                           else line_count)
         self._on_newline = newline
 
         # 初始化静默超时
@@ -142,15 +134,14 @@ class TriggerMatcher:
         if idle_timeout is not None:
             if idle_after_first_output:
                 self._idle_had_output = False
-                self._idle_last_activity = now
             else:
                 self._idle_had_output = True
-                self._idle_last_activity = now
+            self._idle_last_activity = now
 
         _logger.info(
             "TriggerMatcher.set: pattern=%r newline=%s fresh=%s "
-            "offset=%d idle_timeout=%s idle_after_first=%s",
-            pattern, newline, fresh, self._start_offset,
+            "start_idx=%d idle_timeout=%s idle_after_first=%s",
+            pattern, newline, fresh, self._start_idx,
             idle_timeout, idle_after_first_output)
 
         if fresh:
@@ -174,18 +165,17 @@ class TriggerMatcher:
                 _logger.debug("静默超时检测: 首次输出到达, 开始计时")
 
     def prepare_snapshot(self, output_buffer):
-        """锁内阶段：判断是否应匹配并提取待匹配快照（不执行正则）
+        """锁内阶段：判断是否应匹配并提取待匹配文本快照（不执行正则）
 
         仅在 OutputBuffer.lock 已获取的线程上下文中调用。此阶段只做
-        状态判断和字节切片，将耗时的解码+正则搜索推迟到锁外的
+        状态判断与文本切片，将耗时的正则搜索推迟到锁外的
         check_snapshot()，避免长正则阻塞所有依赖该锁的操作。
 
         Args:
             output_buffer: OutputBuffer 实例（持锁状态下）。
 
         Returns:
-            快照对象（含字节数据、预编译正则、原始模式），
-            无需匹配时返回 None。
+            快照对象（含文本、预编译正则、原始模式），无需匹配时返回 None。
         """
         if not self._pattern or self._matched:
             return None
@@ -197,7 +187,7 @@ class TriggerMatcher:
             self._fresh = False
 
         if self._on_newline:
-            cur = output_buffer.raw.count(b"\n")
+            cur = output_buffer.line_count
             if cur > self._newline_count:
                 self._newline_count = cur
             elif self._newline_first_ok:
@@ -205,14 +195,11 @@ class TriggerMatcher:
             else:
                 return None
 
-        # 从 offset 开始扫描，限制最大范围
-        start = min(self._start_offset, len(output_buffer.raw))
-        end = min(start + MAX_TRIGGER_SCAN, len(output_buffer.raw))
-        raw = bytes(output_buffer.raw[start:end])
-        return _TriggerSnapshot(raw, self._regex, self._pattern)
+        text = output_buffer.get_text_since(self._start_idx, MAX_TRIGGER_SCAN)
+        return _TriggerSnapshot(text, self._regex, self._pattern)
 
     def check_snapshot(self, snapshot) -> bool:
-        """锁外阶段：对 prepare_snapshot 的快照执行解码+正则匹配
+        """锁外阶段：对 prepare_snapshot 的快照执行正则匹配
 
         可在任意线程上下文调用（通常为 reader 线程或请求处理线程），
         不持有 OutputBuffer 锁，因此耗时的正则搜索不会阻塞缓冲读写。
@@ -223,7 +210,7 @@ class TriggerMatcher:
         Returns:
             True 表示匹配成功并设置了 _event。
         """
-        text = self._decode_func(snapshot.raw)
+        text = snapshot.text
 
         if snapshot.regex:
             if safe_regex_search(snapshot.regex, text):

@@ -11,8 +11,8 @@ import os
 import logging
 
 from ...config import IS_WINDOWS
-from ...pty.errors import format_exit_code_message as _format_exit_code_message
-from ...pty.errors import signal_name as _signal_name
+from ...backend.errors import format_exit_code_message as _format_exit_code_message
+from ...backend.errors import signal_name as _signal_name
 
 _logger = logging.getLogger("pty-session")
 
@@ -110,7 +110,7 @@ def _format_pty_error(exception: Exception) -> str:
         try:
             # OSError 格式：(error_code, message)
             if len(exception.args) >= 2 and isinstance(exception.args[0], int):
-                from ...pty.errors import format_create_process_error
+                from ...backend.errors import format_create_process_error
                 return format_create_process_error(exception.args[0])
         except ImportError:
             pass

@@ -32,7 +32,7 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
 |`start/stop`| 手动启动/停止守护进程；启动守护进程`exec`可实现，一般无需手动 | | |
 | `exec <new-session-id> <options>` | 执行命令以启动会话 | `-c "<command>"`(req), `-t "<regex>"`, `--timeout <seconds>`, `--cwd <path>` | `exec id_py -c "python -i" -t ">>>"` |
 | `send <session-id> "<content>" [options]` | 发送输入到运行中的会话 | `-t "<regex>"`, `--timeout <seconds>` | `send id_py "print(1)" -t ">>>"` |
-| `read <session-id> [options]` | 读取会话输出 | `--lines`, `--grep` | `read myid --lines 10` |
+| `read <session-id> [options]` | 读取会话输出 | `--lines`, `--grep`, `--full` | `read myid --lines 10` |
 | `list` | 列出所有会话 | | |
 | `remove <session-id>` | 移除会话 | | |
 | `closewin <session-id> <window-handle>` | 关闭 GUI 窗口；`<window-handle>`支持十进制或 0x十六进制| |
@@ -59,7 +59,7 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
 特殊选项：
 - `-c "<command>"`(req) 执行的命令，必填
 - `--shell <shell>` 支持`cmd/powershell/pwsh/bash`（默认PowerShell，环境不支持自动回退CMD）；只有在`exec`启动时才能配置终端
-- `--pty` 启用完整伪终端（不支持 `|`、`&&` 等shell语法）
+- `--pty` 启用真实终端（ConPTY/openpty + pyte 终端仿真；不支持 `|`、`&&` 等shell语法；失败不回退 subprocess）
     - `--force-pty-mode` 忽略`--pty`下的shell操作符检测
 - `--cwd <path>` 子进程工作目录，不填则默认为调用者（客户端）的工作目录；如果与期望工作目录不一致，建议指定
 
@@ -93,7 +93,7 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
 - `--lines <N>` 最后 N 行
 - `--lines start:end` 范围行
 - `--grep "<regex>"` 正则过滤
-- `--offset <bytes>` 增量读取
+- ~~`--offset`~~ 增量读取已删除（默认返回可见屏幕（pty）/完整缓冲（subprocess），`--full`/`--lines`/`--grep` 基于全量输出）
 - `--full` 返回终端全部数据（数据大，尽量用`--lines N`）
 
 ## 全局/通用选项
@@ -123,7 +123,7 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
 ```bash
 app.py exec srv -c "python server.py" --idle-timeout 3 # 启动，idle-timeout 使首次输出后快速返回
 app.py read srv --lines 20 # 中途查看最近20行输出
-app.py read srv --offset 1024 # 增量读取（从上次 offset 继续）
+app.py read srv --full # 全量输出（滚动历史+可见屏幕）
 app.py read srv --grep "ERROR" # 只看错误行
 app.py remove srv # 不再需要时移除
 ```

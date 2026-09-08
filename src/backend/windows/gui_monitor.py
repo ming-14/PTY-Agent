@@ -29,7 +29,7 @@ from .convars import (
 )
 from .job import ProcessJob
 
-_logger = logging.getLogger("pty-gui-monitor")
+_logger = logging.getLogger("backend-gui-monitor")
 
 _WINDOW_TITLE_MAX = 256
 _WINDOW_CLASS_MAX = 256

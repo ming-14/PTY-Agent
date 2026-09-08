@@ -1,10 +1,10 @@
-"""PseudoTerminal 抽象基类与跨平台数据结构
+"""Backend 抽象基类与跨平台数据结构
 
-定义统一的接口契约，所有 PTY 后端（Windows / Unix / subprocess）必须
+定义统一的接口契约，所有后端实现（Tty / Subprocess）必须
 实现全部方法。平台实现放在对等的包结构中：
 
-- src/pty/windows/  — Windows 实现（ConPTY）
-- src/pty/unix/     — Unix 实现（os.openpty + fork）
+- src/backend/windows/  — Windows 实现（ConPTY）
+- src/backend/unix/     — Unix 实现（os.openpty + fork）
 
 能力对齐原则：
 - 接口签名统一：两平台提供相同的方法集合。
@@ -15,7 +15,9 @@
 import logging
 from typing import List, Optional
 
-_logger = logging.getLogger("pty-base")
+from ..config import READ_SIZE
+
+_logger = logging.getLogger("backend-base")
 
 
 class ProcessEvent:
@@ -64,8 +66,8 @@ class ProcessEvent:
                 f"exit_code={self.exit_code})")
 
 
-class PseudoTerminal:
-    """伪终端抽象基类 — 统一接口契约
+class Backend:
+    """后端抽象基类 — 统一接口契约
 
     所有具体实现必须实现以下方法：
     - read(n) → bytes
@@ -88,18 +90,18 @@ class PseudoTerminal:
     """
 
     def get_type(self) -> str:
-        """返回 PTY 后端类型标识
+        """返回后端类型标识
 
         Returns:
             字符串标识，如 "win-conpty"、"unix-pty"、"subprocess"。
         """
         return "unknown"
 
-    def read(self, n: int = 65536) -> bytes:
-        """从 PTY 读取最多 n 字节"""
+    def read(self, n: int = READ_SIZE) -> bytes:
+        """从后端读取最多 n 字节"""
         raise NotImplementedError
 
-    def drain(self, max_bytes: int = 65536) -> bytes:
+    def drain(self, max_bytes: int = READ_SIZE) -> bytes:
         """排空管道缓冲区中所有当前已就绪的数据（非阻塞）
 
         在 read() 返回数据后调用，把同一批次中剩余的 pipe 数据全部取回。
@@ -115,11 +117,11 @@ class PseudoTerminal:
         return b""
 
     def write(self, data):
-        """写入数据到 PTY"""
+        """写入数据到后端"""
         raise NotImplementedError
 
     def close(self):
-        """关闭 PTY 并清理资源"""
+        """关闭并清理资源"""
         raise NotImplementedError
 
     def remove_tree(self):

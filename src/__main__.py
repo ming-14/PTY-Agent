@@ -1,24 +1,21 @@
 r"""PTY-Agent — 命令行交互式程序交互代理
 
-通过 subprocess 或伪终端（PTY）与交互式 CLI 程序双向通信。
+通过 subprocess 管道或真实终端（TTY）与交互式 CLI 程序双向通信。
 守护进程以独立子进程运行，首次执行命令时自动启动。
+
+架构：CLI（参数解析）→ client.api.PtyClient（构建请求 → 共享内存往返）
+      → client.presenters（呈现）
 
 子命令: start | stop | list | exec | send | read | remove | closewin
 """
 
-import logging
 import sys
 import argparse
-import ctypes
-import ctypes.wintypes
-from typing import Optional
 
-from .client.transport import Client
-from .client.formatter import set_debug_mode
+from .client.api import PtyClient
 from .client.config_manager import ConfigManager
-from .daemon.lifecycle import setup_client_logging
-
-_logger = logging.getLogger("pty-client")
+from .client.controller import setup_client_logging
+from .client.presenters import print_response
 
 
 def _parse_default_key(key: str) -> str:
@@ -67,16 +64,6 @@ class _HintParser(argparse.ArgumentParser):
         super().error(message)
 
 
-class _TimeoutHintAction(argparse.Action):
-    """提示 read 不支持 --timeout 的自定义 Action"""
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        parser.error(
-            "read 命令不支持 --timeout（读取输出是即时操作，无需等待）\n"
-            "若需等待特定输出，请使用: pty-agent send <id> <输入> -t <正则>"
-        )
-
-
 class _InputHintAction(argparse.Action):
     """提示 send/exec 中 -i/--input 不是合法选项，输入应作为位置参数"""
 
@@ -112,8 +99,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="查看配置值（不指定 KEY 则显示全部）")
     parser.add_argument("--default", nargs=2, metavar=("KEY", "VALUE"),
                         default=None,
-                         help="临时覆盖默认配置 "
-                              "(timeout/newline/debug)")
+                        help="临时覆盖默认配置 "
+                             "(timeout/newline/debug)")
     parser.add_argument("--no-debug", action="store_true", default=False,
                         help="禁用响应中的 debug 输出（进程树/GUI 窗口/事件）")
 
@@ -135,7 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_exec.add_argument("--command", "-c", default=None,
                         help="要执行的命令字符串（默认经 shell 执行，支持 | && > 等语法）")
     p_exec.add_argument("--pty", action="store_true", default=False,
-                        help="启用完整伪终端（自动拆分命令为列表，不支持 shell 语法 | && 等）")
+                        help="启用真实终端（命令拆为列表执行，不支持 shell 语法 | && 等）")
     p_exec.add_argument("--force-pty-mode", action="store_true", default=False,
                         help="强制模式：忽略 --pty 的 shell 操作符检测，原样执行")
     p_exec.add_argument("--trigger", "-t", default=None,
@@ -149,10 +136,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_exec.add_argument("--idle-after-first-output", action="store_true", default=False,
                         help="仅在程序首次输出后才开始检测静默超时（初始不检测）")
     p_exec.add_argument("--full", action="store_true", default=False,
-                        help="返回全部累积输出而非仅新输出")
+                        help="返回全量输出而非仅增量输出")
     p_exec.add_argument("--shell", default=None,
                         choices=["cmd", "powershell", "pwsh", "bash"],
-                        help="指定命令解释器（默认 powershell，不可用时回退 cmd；与 --pty 互斥）")
+                        help="指定命令解释器（默认 powershell，不可用时回退 cmd；仅 subprocess 模式，与 --pty 互斥）")
     p_exec.add_argument("--cwd", default=None,
                         help="指定子进程工作目录（默认为守护进程当前目录）")
 
@@ -174,25 +161,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_send.add_argument("--idle-after-first-output", action="store_true", default=False,
                         help="仅在程序首次输出后才开始检测静默超时（初始不检测）")
     p_send.add_argument("--full", action="store_true", default=False,
-                        help="返回全部累积输出而非仅新输出")
+                        help="返回全量输出而非仅增量输出")
     p_send.add_argument("--send-eol", default=None,
                         choices=["lf", "cr", "crlf"],
                         help="行尾样式：lf(\\n 默认) / cr(\\r) / crlf(\\r\\n)")
 
     # read
-    p_read = sub.add_parser("read", help="读取会话终端输出（无需触发条件）")
+    p_read = sub.add_parser("read", help="读取会话终端输出")
     _add_common_args(p_read)
     p_read.add_argument("id", help="会话标识")
-    p_read.add_argument("--timeout", type=float, action=_TimeoutHintAction,
-                        help=argparse.SUPPRESS)
     p_read.add_argument("--lines", default=None,
-                        help="行数过滤: N=最后N行, start:end=范围")
+                        help="行数过滤(基于全量输出): N=最后N行, start:end=范围")
     p_read.add_argument("--grep", default=None,
-                        help="正则匹配过滤行")
-    p_read.add_argument("--offset", type=int, default=None,
-                        help="增量读取：从指定字节偏移开始")
+                        help="正则匹配过滤行(基于全量输出)")
     p_read.add_argument("--full", action="store_true", default=False,
-                        help="返回全部累积输出而非仅新输出")
+                        help="返回全量输出（默认返回可见屏幕（pty 模式）/完整缓冲（subprocess 模式））")
 
     # remove
     p_remove = sub.add_parser("remove", help="移除指定会话")
@@ -209,16 +192,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _handle_config_ops(args) -> Optional[dict]:
+def _handle_config_ops(args) -> dict | None:
     """处理配置管理操作（--default / --show-config）
-
-    这些操作在子命令之前或独立执行。
 
     Args:
         args: 解析后的命令行参数。
 
     Returns:
-        None — 无需继续执行子命令（--show-config 或无子命令时配置操作）。
+        None — 无需继续执行子命令。
         dict  — 本次调用中通过 --default 设置的覆盖值（可能为空）。
     """
     cfg = ConfigManager()
@@ -246,22 +227,18 @@ def _handle_config_ops(args) -> Optional[dict]:
     if args.show_config is not None:
         internal_key = _parse_default_key(args.show_config) if args.show_config else None
         show_text = cfg.show(internal_key)
-        # 无子命令时追加上下文说明
         if args.subcmd is None:
             show_text += (
                 "\n  # 注: 这些默认值仅在有子命令（如 exec/send）时生效，"
                 "仅作查询参考"
             )
         print(show_text)
-        # --show-config 单独使用时直接退出
         if args.subcmd is None:
             return None
 
-    # 如果只做了配置操作但没有子命令，不需要继续
-    handled = default_val is not None
-    # 有子命令 → 返回覆盖值（可能为空）；无子命令且已处理配置操作 → 退出
     if args.subcmd is not None:
         return overrides
+    handled = default_val is not None
     return None if handled or args.show_config is not None else overrides
 
 
@@ -269,12 +246,12 @@ def _fix_windows_exec_quoting() -> None:
     """修复 Windows 下嵌套引号导致 exec -c 参数被截断的问题
 
     当用户从 cmd.exe 执行:
-      python app.py exec test -c "python -c \"import time; print(1)\"" ...
-    cmd.exe 原样传递 \"，Python 3.12+ 的自定义命令行解析器可能错误拆分，
+      python app.py exec test -c "python -c \\"import time; print(1)\\"" ...
+    cmd.exe 原样传递 \\"，Python 3.12+ 的自定义命令行解析器可能错误拆分，
     导致 -c 只被部分解析。这里使用 Windows 原生 CommandLineToArgvW
     重新解析原始命令行，确保参数正确。
 
-    注意：本修复仅覆盖 cmd.exe 场景。PowerShell 的 \" 不转义（\\为字面量），
+    注意：本修复仅覆盖 cmd.exe 场景。PowerShell 的 \\" 不转义（\\\\为字面量），
     -c 的参数值会被 PowerShell 自身拆分，此时 sys.argv 中 -c 后的值
     已经丢失了嵌套引号内容，CommandLineToArgvW 无法还原。
     PowerShell/pwsh 用户应使用外层单引号 '...' + 内层双引号。
@@ -283,7 +260,6 @@ def _fix_windows_exec_quoting() -> None:
     if sys.platform != "win32":
         return
 
-    # 快速判断：只有 exec 子命令且有 -c 参数时可能需要修复
     argv = sys.argv
     exec_idx = None
     c_idx = None
@@ -311,7 +287,8 @@ def _fix_windows_exec_quoting() -> None:
         return
 
     try:
-        # 获取原始命令行字符串
+        import ctypes
+        import ctypes.wintypes
         kernel32 = ctypes.windll.kernel32
         GetCommandLineW = kernel32.GetCommandLineW
         GetCommandLineW.argtypes = []
@@ -320,7 +297,6 @@ def _fix_windows_exec_quoting() -> None:
         if not raw_cmdline:
             return
 
-        # 用 Windows 标准 API 重新解析
         shell32 = ctypes.windll.shell32
         CommandLineToArgvW = shell32.CommandLineToArgvW
         CommandLineToArgvW.argtypes = [
@@ -342,8 +318,6 @@ def _fix_windows_exec_quoting() -> None:
             LocalFree.argtypes = [ctypes.wintypes.HLOCAL]
             LocalFree(argv_ptr)
 
-        # 只有当重新解析后的参数中 -c 的值与当前 sys.argv 不同时才替换
-        # （避免无谓的覆盖）
         new_c_idx = None
         for i, arg in enumerate(parsed_argv):
             if arg in ("-c", "--command"):
@@ -353,7 +327,6 @@ def _fix_windows_exec_quoting() -> None:
         if new_c_idx is not None and new_c_idx + 1 < len(parsed_argv):
             new_cmd_val = parsed_argv[new_c_idx + 1]
             if new_cmd_val != cmd_val and len(new_cmd_val) > len(cmd_val):
-                # 新解析的值更长（包含被截断的部分），说明修复成功
                 sys.argv = parsed_argv
     except Exception:
         # 任何异常都不影响主流程，降级使用原始 argv
@@ -363,7 +336,6 @@ def _fix_windows_exec_quoting() -> None:
 def main():
     """CLI 入口"""
     setup_client_logging()
-    _logger.info("pty-agent CLI 启动, argv=%s", sys.argv)
     # 修复 Windows 下 exec -c 嵌套引号问题（必须在 argparse 之前执行）
     _fix_windows_exec_quoting()
 
@@ -373,21 +345,19 @@ def main():
     # 处理配置管理操作，获取 --default 设置的临时覆盖值
     config_overrides = _handle_config_ops(args)
     if config_overrides is None:
-        # 单独使用 --show-config 或无子命令时退出
         return
 
-    # --no-debug 等价于 --default debug off（全局和子命令级别均可设置）
+    # --no-debug 等价于 --default debug off
     if getattr(args, "no_debug", False):
         if "debug" not in config_overrides:
             config_overrides["debug"] = False
 
-    # 设置 debug 输出模式
+    # 计算 debug 呈现开关
     debug_enabled = True
     if config_overrides and "debug" in config_overrides:
         debug_enabled = config_overrides["debug"]
     elif getattr(args, "no_debug", False):
         debug_enabled = False
-    set_debug_mode(debug_enabled)
 
     # 无子命令时显示帮助
     if args.subcmd is None:
@@ -406,8 +376,10 @@ def main():
         )
         print(warn_msg, file=sys.stderr)
 
-    client = Client(config_overrides=config_overrides or None)
-    _logger.info("执行命令: %s id=%s", args.subcmd, getattr(args, "id", "N/A"))
+    client = PtyClient(config_overrides=config_overrides or None)
+
+    def _present(resp: dict):
+        print_response(resp, show_debug=debug_enabled)
 
     try:
         if args.subcmd == "start":
@@ -415,9 +387,9 @@ def main():
         elif args.subcmd == "stop":
             client.cmd_stop()
         elif args.subcmd == "list":
-            client.cmd_list()
+            _present(client.cmd_list())
         elif args.subcmd == "exec":
-            client.cmd_exec(
+            _present(client.cmd_exec(
                 session_id=args.id,
                 command=args.command,
                 trigger=args.trigger,
@@ -431,9 +403,9 @@ def main():
                 force=args.force_pty_mode,
                 shell=args.shell,
                 cwd=args.cwd,
-            )
+            ))
         elif args.subcmd == "send":
-            client.cmd_send(
+            _present(client.cmd_send(
                 session_id=args.id,
                 input_text=args.input,
                 trigger=args.trigger,
@@ -444,23 +416,24 @@ def main():
                 idle_timeout=args.idle_timeout,
                 idle_after_first_output=args.idle_after_first_output,
                 send_eol=args.send_eol,
-            )
+            ))
         elif args.subcmd == "read":
-            client.cmd_read(
+            _present(client.cmd_read(
                 session_id=args.id,
                 lines=args.lines,
                 grep=args.grep,
-                offset=args.offset,
                 full=args.full,
-            )
+            ))
         elif args.subcmd == "remove":
-            client.cmd_remove(args.id)
+            _present(client.cmd_remove(args.id))
         elif args.subcmd == "closewin":
-            client.cmd_closewin(args.id, args.hwnd)
+            _present(client.cmd_closewin(args.id, args.hwnd))
     except KeyboardInterrupt:
         print("\n操作被用户中断", file=sys.stderr)
         sys.exit(130)
     except Exception as e:
+        import logging
+        logging.getLogger("pty-client").exception("命令执行异常")
         print(f"错误: {e}", file=sys.stderr)
         sys.exit(1)
 
