@@ -161,7 +161,7 @@ class WindowsPseudoTerminal(PseudoTerminal):
         wr = W.DWORD(0)
         _WriteFile(self._inW, data, len(data), ctypes.byref(wr), None)
 
-    def kill_tree(self):
+    def remove_tree(self):
         """强杀整个进程树：关闭 Job（KILL_ON_JOB_CLOSE）"""
         if self._job:
             try:

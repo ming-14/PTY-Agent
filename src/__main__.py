@@ -3,7 +3,7 @@ r"""PTY-Agent — 命令行交互式程序交互代理
 通过 subprocess 或伪终端（PTY）与交互式 CLI 程序双向通信。
 守护进程以独立子进程运行，首次执行命令时自动启动。
 
-子命令: start | stop | list | exec | send | read | kill | closewin
+子命令: start | stop | list | exec | send | read | remove | closewin
 """
 
 import logging
@@ -194,10 +194,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_read.add_argument("--full", action="store_true", default=False,
                         help="返回全部累积输出而非仅新输出")
 
-    # kill
-    p_kill = sub.add_parser("kill", help="终止指定会话")
-    _add_common_args(p_kill)
-    p_kill.add_argument("id", help="会话标识")
+    # remove
+    p_remove = sub.add_parser("remove", help="移除指定会话")
+    _add_common_args(p_remove)
+    p_remove.add_argument("id", help="会话标识")
 
     # closewin
     p_closewin = sub.add_parser("closewin", help="关闭指定 GUI 窗口")
@@ -453,8 +453,8 @@ def main():
                 offset=args.offset,
                 full=args.full,
             )
-        elif args.subcmd == "kill":
-            client.cmd_kill(args.id)
+        elif args.subcmd == "remove":
+            client.cmd_remove(args.id)
         elif args.subcmd == "closewin":
             client.cmd_closewin(args.id, args.hwnd)
     except KeyboardInterrupt:

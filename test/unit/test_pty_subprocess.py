@@ -334,7 +334,7 @@ class TestSubprocessCloseDeadlock:
     def test_close_with_interactive_process(self):
         """close() 处理交互式进程（等 stdin 输入）不死锁
 
-        模拟实际 kill 场景：python -i 启动后等输入，
+        模拟实际移除会话场景：python -i 启动后等输入，
         session.stop() → pty.close() 必须正常返回。
         """
         pty = SubprocessPseudoTerminal(

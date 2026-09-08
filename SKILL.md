@@ -34,7 +34,7 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
 | `send <session-id> "<content>" [options]` | 发送输入到运行中的会话 | `-t "<regex>"`, `--timeout <seconds>` | `send id_py "print(1)" -t ">>>"` |
 | `read <session-id> [options]` | 读取会话输出 | `--lines`, `--grep` | `read myid --lines 10` |
 | `list` | 列出所有会话 | | |
-| `kill <session-id>` | 终止会话 | | |
+| `remove <session-id>` | 移除会话 | | |
 | `closewin <session-id> <window-handle>` | 关闭 GUI 窗口；`<window-handle>`支持十进制或 0x十六进制| |
 
 ### 命令 send 的返回条件
@@ -125,7 +125,7 @@ app.py exec srv -c "python server.py" --idle-timeout 3 # 启动，idle-timeout �
 app.py read srv --lines 20 # 中途查看最近20行输出
 app.py read srv --offset 1024 # 增量读取（从上次 offset 继续）
 app.py read srv --grep "ERROR" # 只看错误行
-app.py kill srv # 不再需要时终止
+app.py remove srv # 不再需要时移除
 ```
 
 ### 进程崩溃检测

@@ -146,7 +146,7 @@ class Session:
 
         if self._pty:
             try:
-                self._pty.kill_tree()
+                self._pty.remove_tree()
             except Exception as e:
                 _logger.warning("强杀进程树时异常: %s", e)
             try:

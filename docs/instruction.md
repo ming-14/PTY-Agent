@@ -79,7 +79,7 @@ python app.py send test "print(100*100)" -t ">>>"
 # 预期: >>> 10000\n>>>
 python app.py send test "for i in range(3):\n    print(i)" -t ">>>"
 # 预期: >>> 0\n1\n2\n>>>
-python app.py kill test
+python app.py remove test
 python app.py stop
 ```
 

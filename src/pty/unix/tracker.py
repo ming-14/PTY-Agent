@@ -4,7 +4,7 @@
 对齐的进程树管理能力：
 
 - get_process_list()  — 全进程树 PID 列表
-- kill_tree()         — 终止整个进程树（后代优先，最后杀根）
+- remove_tree()       — 移除整个进程树（后代优先，最后杀根）
 
 说明：
 - 退出码查询（get_exit_code）不在本类实现：由 UnixPseudoTerminal 对直接
@@ -55,8 +55,8 @@ class UnixProcessTracker:
 
     # ── 进程树终止 ──
 
-    def kill_tree(self):
-        """终止整个进程树（后代优先，最后杀根）
+    def remove_tree(self):
+        """移除整个进程树（后代优先，最后杀根）
 
         策略：
         1. 通过 /proc BFS 找到所有后代 PID

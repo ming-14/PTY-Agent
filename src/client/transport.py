@@ -44,7 +44,7 @@ class Client:
     """前端客户端，封装与守护进程的共享内存通信
 
     提供 cmd_start / cmd_stop / cmd_list / cmd_exec / cmd_send /
-    cmd_read / cmd_kill / cmd_closewin 方法，
+    cmd_read / cmd_remove / cmd_closewin 方法，
     每个方法构建请求 dict → _send_recv → print_response。
 
     请求/响应通过命名共享内存 + 信箱传递，无 socket 依赖。
@@ -300,17 +300,17 @@ class Client:
         else:
             print_response(resp)
 
-    def cmd_kill(self, session_id: str):
-        _logger.info("cmd_kill: id=%r", session_id)
+    def cmd_remove(self, session_id: str):
+        _logger.info("cmd_remove: id=%r", session_id)
         if not session_id or not isinstance(session_id, str):
             print_response({"type": "error", "error": "invalid session id"})
             return
         try:
-            resp = self._send_recv({"type": "kill", "id": session_id})
+            resp = self._send_recv({"type": "remove", "id": session_id})
         except Exception as e:
             resp = {"type": "ok", "note": f"daemon not running ({e})"}
         if resp.get("type") == "ok":
-            resp.setdefault("note", f"会话 {session_id} 已终止")
+            resp.setdefault("note", f"会话 {session_id} 已移除")
             print_response(resp)
         else:
             print_response(resp)

@@ -180,7 +180,7 @@ class TestSessionExitInfo:
 class TestSessionStopInteractive:
     """Session.stop() 交互式会话测试
 
-    回归测试：kill 卡死 bug。当子进程是交互式程序（如 python -i），
+    回归测试：remove 卡死 bug。当子进程是交互式程序（如 python -i），
     reader 线程阻塞在 stdout.read() 等待输出。旧版 close() 先调用
     stdout.close()，与 reader 的 read() 争抢 BufferedReader 内部锁
     导致死锁，stop() 永不返回。

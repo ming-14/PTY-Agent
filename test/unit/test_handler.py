@@ -211,18 +211,18 @@ class TestRequestHandlerHandle:
         assert resp["type"] == "ok"
         assert len(resp["sessions"]) == 1
 
-    def test_handle_kill(self):
-        """kill 终止会话"""
+    def test_handle_remove(self):
+        """remove 移除会话"""
         s = _MockSession("s1")
         handler, _ = _setup_handler(sessions={"s1": s})
-        resp = handler.handle(_with_token({"type": "kill", "id": "s1"}))
+        resp = handler.handle(_with_token({"type": "remove", "id": "s1"}))
         assert resp["type"] == "ok"
-        assert "已终止" in resp.get("note", "")
+        assert "已移除" in resp.get("note", "")
 
-    def test_handle_kill_nonexistent(self):
-        """kill 不存在的会话返回 error"""
+    def test_handle_remove_nonexistent(self):
+        """remove 不存在的会话返回 error"""
         handler, _ = _setup_handler()
-        resp = handler.handle(_with_token({"type": "kill", "id": "nonexistent"}))
+        resp = handler.handle(_with_token({"type": "remove", "id": "nonexistent"}))
         assert resp["type"] == "error"
 
     def test_handle_exec_missing_id(self):

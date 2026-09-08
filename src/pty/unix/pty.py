@@ -3,7 +3,7 @@
 平台对齐能力（与 Windows 后端对称）：
 - get_process_list()  — 通过 /proc BFS 遍历返回全进程树 PID
 - get_child_process_exit_code() — 直接子进程退出码查询（孙进程返回 None）
-- kill_tree()         — 后代优先逐个 SIGKILL，最后杀根进程
+- remove_tree()       — 后代优先逐个 SIGKILL，最后杀根进程
 - get_job_notifications() / get_gui_windows() — 返回空（无等价机制）
 """
 
@@ -115,13 +115,13 @@ class UnixPseudoTerminal(PseudoTerminal):
 
     # ── 生命周期 ──
 
-    def kill_tree(self):
-        """强杀进程树：通过 UnixProcessTracker 杀整个进程树（后代优先）"""
+    def remove_tree(self):
+        """强杀进程树：通过 UnixProcessTracker 移除整个进程树（后代优先）"""
         if self._tracker:
             try:
-                self._tracker.kill_tree()
+                self._tracker.remove_tree()
             except Exception as e:
-                _logger.warning("kill_tree tracker error: %s", e)
+                _logger.warning("remove_tree tracker error: %s", e)
         else:
             try:
                 os.kill(self._child_pid, signal.SIGKILL)

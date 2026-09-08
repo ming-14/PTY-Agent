@@ -14,8 +14,8 @@ python app.py send py "print(100*100)" -t ">>>"
 # 读取输出
 python app.py read py --lines 10
 
-# 终止会话
-python app.py kill py
+# 移除会话
+python app.py remove py
 ```
 
 ## 安装
@@ -35,7 +35,7 @@ cd pty-agent
 | `send <id> "<input>"` | 发送输入到运行中的会话 |
 | `read <id>` | 读取会话输出 |
 | `list` | 列出所有会话 |
-| `kill <id>` | 终止会话 |
+| `remove <id>` | 移除会话 |
 | `start` / `stop` | 手动启停守护进程 |
 | `closewin <id> <hwnd>` | 关闭 GUI 窗口 |
 

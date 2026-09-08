@@ -265,7 +265,7 @@ def _stop_via_mailbox() -> bool:
 def stop_daemon():
     """停止守护进程
 
-    依次尝试：共享内存 stop 请求 → 强制 kill PID。
+    依次尝试：共享内存 stop 请求 → 强制终止 PID。
     """
     pid = _find_daemon_pid()
     if pid is None:

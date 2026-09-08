@@ -72,11 +72,11 @@ class TestBuildParser:
         args = parser.parse_args(["list"])
         assert args.subcmd == "list"
 
-    def test_parse_kill(self):
-        """解析 kill 子命令"""
+    def test_parse_remove(self):
+        """解析 remove 子命令"""
         parser = build_parser()
-        args = parser.parse_args(["kill", "test-id"])
-        assert args.subcmd == "kill"
+        args = parser.parse_args(["remove", "test-id"])
+        assert args.subcmd == "remove"
         assert args.id == "test-id"
 
     def test_parse_closewin(self):

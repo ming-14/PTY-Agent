@@ -40,7 +40,7 @@ from ..config import (
 _logger = logging.getLogger("pty-daemon")
 
 # 会话级命令（需要 per-session 锁串行化）
-_SESSION_CMDS = frozenset({"exec", "send", "read", "kill", "closewin"})
+_SESSION_CMDS = frozenset({"exec", "send", "read", "remove", "closewin"})
 
 
 def _validate_field(value, name: str, max_len: int) -> dict:
@@ -163,7 +163,7 @@ class RequestHandler:
             elif msg_type == "stop":
                 return {"type": "ok"}
 
-            # 会话级命令（exec/send/read/kill/closewin）：
+            # 会话级命令（exec/send/read/remove/closewin）：
             # 对同一会话加锁串行化，防止并发请求互踩触发状态/输入缓冲。
             if msg_type in _SESSION_CMDS:
                 if session_id:
@@ -189,8 +189,8 @@ class RequestHandler:
             return self._handle_send(msg)
         elif msg_type == "read":
             return self._handle_read(msg)
-        elif msg_type == "kill":
-            return self._handle_kill(msg)
+        elif msg_type == "remove":
+            return self._handle_remove(msg)
         elif msg_type == "closewin":
             return self._handle_closewin(msg)
         return {"type": "error", "error": f"未知指令类型: {msg_type}"}
@@ -368,7 +368,7 @@ class RequestHandler:
             if not existing.running:
                 return {
                     "type": "error",
-                    "error": f"会话 '{session_id}' 已结束，请先 kill 后重新 exec",
+                    "error": f"会话 '{session_id}' 已结束，请先 remove 后重新 exec",
                 }
             session = existing
             _logger.info("会话 '%s' 已存在，直接附加", session_id)
@@ -531,10 +531,10 @@ class RequestHandler:
             warning=ended_warning,
         )
 
-    def _handle_kill(self, msg: dict) -> dict:
-        """处理 kill 指令：终止指定会话"""
+    def _handle_remove(self, msg: dict) -> dict:
+        """处理 remove 指令：移除指定会话"""
         session_id = msg.get("id", "")
-        _logger.info("_handle_kill: id=%r", session_id)
+        _logger.info("_handle_remove: id=%r", session_id)
         if not session_id:
             return {"type": "error", "error": "缺少会话 id"}
         session = self.manager.get_session(session_id)
@@ -542,10 +542,10 @@ class RequestHandler:
             return {"type": "error", "error": f"会话 '{session_id}' 不存在"}
         try:
             self.manager.remove_session(session_id)
-            _logger.info("会话 '%s' 已终止", session_id)
+            _logger.info("会话 '%s' 已移除", session_id)
         except Exception:
-            _logger.warning("终止会话 '%s' 时发生异常", session_id, exc_info=True)
-        return {"type": "ok", "note": f"会话 {session_id} 已终止"}
+            _logger.warning("移除会话 '%s' 时发生异常", session_id, exc_info=True)
+        return {"type": "ok", "note": f"会话 {session_id} 已移除"}
 
     def _handle_closewin(self, msg: dict) -> dict:
         """处理 closewin 指令：关闭指定 GUI 窗口"""
