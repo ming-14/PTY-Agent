@@ -328,10 +328,23 @@ class SubprocessBackend(Backend):
         return self._job.query_process_list()
 
     def poll_gui_windows(self) -> List[dict]:
-        """轮询检测 Job 进程树中新增的 GUI 窗口"""
+        """轮询检测 Job 进程树中新增的 GUI 窗口（含取走事件路径结果）"""
         if not self._gui_monitor:
             return []
         return [w.to_dict() for w in self._gui_monitor.poll()]
+
+    def take_pending_gui_windows(self) -> List[dict]:
+        """取走 WinEvent hook 已检出的窗口（事件驱动，无节流）"""
+        if not self._gui_monitor:
+            return []
+        return [w.to_dict() for w in self._gui_monitor.take_pending()]
+
+    def set_gui_listener(self, callback) -> None:
+        """注册新窗口回调，用于即时唤醒等待循环"""
+        if not self._gui_monitor:
+            return None
+        self._gui_monitor.set_listener(callback)
+        return None
 
     def close_gui_window(self, hwnd: int) -> bool:
         """通过 WM_CLOSE 关闭指定 GUI 窗口"""

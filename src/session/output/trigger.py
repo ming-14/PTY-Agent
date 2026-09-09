@@ -79,12 +79,18 @@ class TriggerMatcher:
     不直接持有 IO 资源，通过回调与 OutputBuffer 协作。
     """
 
-    def __init__(self):
+    def __init__(self, wake=None):
+        """
+        Args:
+            wake: 共享唤醒锚（WakeSignal）。命中时先置内部事件，再 notify，
+                  使等待循环无需轮询即可发现触发命中。None 时仅内部事件生效。
+        """
         # 触发条件状态
         self._pattern: Optional[str] = None
         self._regex: Optional[re.Pattern] = None  # 预编译正则
         self._matched = False
         self._event = threading.Event()
+        self._wake = wake
         self._start_idx = 0
         self._on_newline = False
         self._newline_count = 0
@@ -216,18 +222,27 @@ class TriggerMatcher:
             if safe_regex_search(snapshot.regex, text):
                 _logger.info("TriggerMatcher.check_snapshot: MATCHED pattern=%r",
                              snapshot.pattern)
-                self._matched = True
-                self._event.set()
+                self._mark_matched()
                 return True
         else:
             # 正则无效时回退到子串匹配
             if snapshot.pattern in text:
                 _logger.info("TriggerMatcher.check_snapshot: substring MATCHED "
                              "pattern=%r", snapshot.pattern)
-                self._matched = True
-                self._event.set()
+                self._mark_matched()
                 return True
         return False
+
+    def _mark_matched(self) -> None:
+        """发布命中状态并唤醒等待方
+
+        顺序不可颠倒：必须先置 `_matched`，再 notify —— 等待循环复位唤醒锚
+        后重新判定的是状态本身，反向会让本轮判定读不到命中。
+        """
+        self._matched = True
+        self._event.set()
+        if self._wake is not None:
+            self._wake.notify()
 
     def check_idle_timeout(self) -> bool:
         """检查输出静默是否超时

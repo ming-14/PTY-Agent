@@ -232,6 +232,29 @@ class Backend:
         """
         return []
 
+    def take_pending_gui_windows(self) -> List[dict]:
+        """取走事件驱动路径已检出的窗口（一次性）
+
+        事件驱动后端（Windows + WinEvent hook）在窗口显示的瞬间就把结果
+        排入内部队列，此方法即时取空；不支持事件驱动的后端恒返回空列表。
+
+        Returns:
+            待取窗口字典列表，取后队列清空。
+        """
+        return []
+
+    def set_gui_listener(self, callback) -> None:
+        """注册"有新 GUI 窗口待取"回调（在检测线程上被调用）
+
+        用于即时唤醒等待循环，使 GUI 返回条件获得与触发匹配同级的响应延迟。
+        注册时若已有待取窗口会立即回调一次，避免订阅前丢事件。
+        非事件驱动后端为无操作。
+
+        Args:
+            callback: 无参可调用对象；None 表示注销。
+        """
+        return None
+
     def close_gui_window(self, hwnd: int) -> bool:
         """关闭指定 GUI 窗口
 

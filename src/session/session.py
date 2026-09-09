@@ -36,6 +36,7 @@ from .output import (
     ScreenPipeline,
 )
 from .session_threads import SessionThreads, SessionComponents, _capture_exit_code_retry
+from .wake import WakeSignal
 
 _logger = logging.getLogger("pty-session")
 
@@ -76,14 +77,19 @@ class Session:
         self.error_message = None
 
         # ── 子组件（使用不冲突的内部名，避免 __getattr__ 名称干扰）──
+        # 共享唤醒锚：触发命中 / GUI 新窗口 / 崩溃 / 退出 均经它唤醒等待循环，
+        # 使这些平级返回条件获得同量级的响应延迟（而非各自等下一个轮询周期）。
+        self._wake = WakeSignal()
         self._out_buf = OutputBuffer()
-        self._trig_mat = TriggerMatcher()
+        self._trig_mat = TriggerMatcher(wake=self._wake)
         self._evt_hist = EventHistoryManager()
         self._proc_mon = ProcessMonitor(
             pty_provider=lambda: self._pty,
             event_sink=self._evt_hist.add_event,
+            wake=self._wake,
         )
-        self._gui = GuiDetector(event_sink=self._evt_hist.add_event)
+        self._gui = GuiDetector(event_sink=self._evt_hist.add_event,
+                                wake=self._wake)
         self._pipeline = None
         self._threads = SessionThreads(SessionComponents(
             pty_provider=lambda: self._pty,
@@ -155,6 +161,8 @@ class Session:
         self._threads.stop_event.set()
         self._trig_mat.event.set()
         self._proc_mon.crash_event.set()
+        # 状态已发布，唤醒可能正阻塞在等待循环里的请求线程
+        self._wake.notify()
 
         # 关闭前获取退出码
         if self._pty and self.exit_code is None:
@@ -280,6 +288,11 @@ class Session:
         # 触发状态写入与 reader 的 prepare_snapshot 共享 out_buf.lock，
         # 须在持锁上下文中发布，避免 reader 在状态就绪前提前匹配（竞态）。
         with self._out_buf.lock:
+            # GUI 返回条件与触发条件在同一时刻建立基线：丢弃后台监控线程
+            # 在上一轮遗留的"新窗口"边沿，使本轮只响应基线之后弹出的窗口。
+            # 与 -t 只看游标之后的新输出完全对称 —— 两者平级竞争，谁先命中
+            # 谁先返回，不存在任何一方让位。
+            self._gui.arm()
             self._trig_mat.set(
                 pattern=pattern, newline=newline, fresh=fresh,
                 start_idx=start_idx,
@@ -301,18 +314,23 @@ class Session:
     def wait_for_trigger(
         self,
         timeout: Optional[float] = None,
-        gui_short_circuit: bool = True,
     ):
-        """等待触发条件命中（GUI 窗口检测和崩溃检测持续生效）
+        """等待任一返回条件命中
+
+        返回条件彼此平级、共同竞争，**谁先命中谁先返回**，不存在让位关系：
+
+        - ``matched``        ：``-t`` 正则命中本轮基线之后的新输出
+        - ``gui_detected``   ：基线之后子进程弹出新 GUI 窗口
+        - ``crashed``        ：进程树检测到崩溃
+        - ``ended``          ：子进程正常退出
+        - ``idle_timeout``   ：输出静默超时
+        - ``timeout``        ：等待超时
 
         Args:
-            timeout:           等待超时（秒）。None 表示无限等待。
-            gui_short_circuit: 是否在检测到 GUI 窗口时提前返回。
-                               设为 False 可禁用 GUI 检测的提前中断，
-                               事件仍会记录到事件历史。
+            timeout: 等待超时（秒）。None 表示无限等待。
 
         Returns:
-            (matched, reason) 元组。
+            (matched, reason) 元组；``matched`` 仅在触发条件命中时为 True。
         """
         if self._trig_mat.matched:
             return True, "matched"
@@ -321,8 +339,7 @@ class Session:
             return False, "crashed"
         if not self.running:
             return False, "ended"
-        if gui_short_circuit and self._gui.get_gui_windows() and self._gui.detected_event.is_set():
-            self._gui.detected_event.clear()
+        if self._gui.consume_detection():
             return False, "gui_detected"
 
         deadline = time.time() + (timeout if timeout is not None else 999999.0)
@@ -335,6 +352,15 @@ class Session:
                              self._trig_mat.pattern, timeout)
                 return False, "timeout"
 
+            # 复位必须在判定之前：生产者遵循"先发布状态再 notify"，故复位后
+            # 读到的即是最新状态；复位与等待之间到达的 notify 会让等待立即返回。
+            self._wake.reset()
+
+            if self._trig_mat.matched:
+                _logger.info("wait_for_trigger: MATCHED id=%r pattern=%r",
+                             self.id, self._trig_mat.pattern)
+                return True, "matched"
+
             if self._trig_mat.check_idle_timeout():
                 _logger.info("wait_for_trigger: IDLE_TIMEOUT id=%r "
                              "idle_timeout=%s",
@@ -345,29 +371,31 @@ class Session:
                 self._proc_mon.clear_crash()
                 return False, "crashed"
 
-            self._trig_mat.event.wait(min(0.1, remaining))
-            if self._trig_mat.matched:
-                _logger.info("wait_for_trigger: MATCHED id=%r pattern=%r",
-                             self.id, self._trig_mat.pattern)
-                return True, "matched"
             if not self.running:
                 return False, "ended"
 
+            # GUI：事件通道无节流取走（hook 检出即发现），兜底扫描按 1s 门控
+            self._gui.drain_events(self._pty)
             now = time.time()
             if now - _last_gui_check >= 1.0:
                 _last_gui_check = now
                 self._gui.check(self._pty, self.id)
-            if gui_short_circuit and self._gui.detected_event.is_set():
-                self._gui.detected_event.clear()
+            if self._gui.consume_detection():
+                _logger.info("wait_for_trigger: GUI_DETECTED id=%r windows=%d",
+                             self.id, len(self._gui.get_gui_windows()))
                 return False, "gui_detected"
 
+            # 0.1s 仅是漏醒安全网；任一生产者 notify 都会立刻唤醒本等待
+            self._wake.wait(min(0.1, remaining))
+
     def clear_trigger(self):
-        """清除触发条件"""
+        """清除本轮返回条件（触发正则 + 崩溃/GUI 边沿）"""
         _logger.info("clear_trigger: id=%r pattern=%r matched=%s",
                      self.id, self._trig_mat.pattern,
                      self._trig_mat.matched)
         self._trig_mat.clear()
         self._proc_mon.clear_crash()
+        self._gui.arm()
 
     # ── 读者退出回调 ─────────────────────────────────────────
 
@@ -383,6 +411,8 @@ class Session:
         self.running = False
         self._out_buf.first_output_event.set()
         self._trig_mat.event.set()
+        # running=False 已发布：唤醒阻塞中的等待循环，立刻以 "ended" 返回
+        self._wake.notify()
         if self._pty:
             try:
                 self._pty.close()

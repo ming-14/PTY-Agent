@@ -63,7 +63,7 @@ pip install -r requirements.txt
 - **触发返回机制**：`--trigger/-t` 指定正则，匹配到特定输出后立即返回（pty 模式在渲染文本上匹配）
 - **静默超时**：`--idle-timeout` 在程序持续无输出时触发返回
 - **进程崩溃检测**：实时感知崩溃事件（Windows Job Object IOCP）
-- **GUI 窗口检测**：自动检测子进程弹出的 GUI 窗口
+- **GUI 窗口检测**：WinEvent hook 事件驱动（毫秒级，EnumWindows 兜底扫描），与 `-t` **平级**参与等待竞争，谁先命中谁先返回（仅 Windows）
 - **真实终端解析**：pty 模式使用 pyte 终端仿真（光标/清屏/滚动均正确渲染）
 - **配置临时覆盖**：`--default timeout 30` 临时修改默认配置
 
@@ -130,6 +130,7 @@ pty-agent/
 │   └── session/           # 会话管理（文本行输出缓冲 + 输出管线）
 │       ├── manager.py     # SessionManager
 │       ├── session.py     # Session 协调器（模式/管线/游标）
+│       ├── wake.py        # WakeSignal 多路唤醒锚（GUI/触发/崩溃/退出同级响应）
 │       ├── session_threads.py # 读者/监控线程
 │       ├── output/        # buffer(文本行级) / screen(pyte 滚动屏) / pipeline(双管线) / trigger / events
 │       ├── encoding/      # UTF-8 解码（subprocess 流）

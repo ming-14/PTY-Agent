@@ -234,13 +234,19 @@ class TestConfigManagerSendEol:
 
 
 def _make_session():
-    """构造一个最小 Session（不执行 __init__，仅装配缓冲与触发匹配器）"""
+    """构造一个最小 Session（不执行 __init__，仅装配缓冲与触发匹配器）
+
+    set_trigger 会同时建立 GUI 返回条件的轮次基线（_gui.arm），
+    故工装需装配真实 GuiDetector（无后端，检测不会触发）。
+    """
     from src.session.session import Session
     s = Session.__new__(Session)
     from src.session.output.buffer import OutputBuffer
     from src.session.output.trigger import TriggerMatcher
+    from src.session.process.gui import GuiDetector
     s._out_buf = OutputBuffer()
     s._trig_mat = TriggerMatcher()
+    s._gui = GuiDetector(event_sink=lambda e: None)
     return s
 
 

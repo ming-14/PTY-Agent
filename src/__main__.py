@@ -102,7 +102,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="临时覆盖默认配置 "
                              "(timeout/newline/debug)")
     parser.add_argument("--no-debug", action="store_true", default=False,
-                        help="禁用响应中的 debug 输出（进程树/GUI 窗口/事件）")
+                        help="禁用响应中的 debug 输出（进程树/GUI 窗口/事件；"
+                             "本轮因 GUI 窗口返回时窗口信息仍输出）")
 
     sub = parser.add_subparsers(dest="subcmd", help="可用命令")
 

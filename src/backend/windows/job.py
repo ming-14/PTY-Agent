@@ -18,7 +18,7 @@
 import ctypes
 import logging
 import threading
-from typing import List, Optional
+from typing import Callable, List, Optional
 from ctypes import wintypes as W
 
 from ..base import ProcessEvent
@@ -112,6 +112,9 @@ class ProcessJob:
         self._notifications: List[JobNotification] = []
         # 通知到达事件——监控线程可等待此事件实现事件驱动消费
         self._notif_event = threading.Event()
+        # 进程树 PID 监听器（GUI 事件 hook 的装载/卸载由它驱动）
+        self._pid_listener: Optional[Callable[[int], None]] = None
+        self._exit_listener: Optional[Callable[[int], None]] = None
 
         job_name = None
         if name:
@@ -228,6 +231,7 @@ class ProcessJob:
                     pid = raw_value
                     _logger.info("Job NEW_PROCESS: pid=%d", pid)
                     self._push_notif(JobNotification(msg_type, pid=pid))
+                    self._fire(self._pid_listener, pid, "pid")
                 elif msg_type in (_JOB_OBJECT_MSG_EXIT_PROCESS, _JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS):
                     pid = raw_value
                     exit_code = self._get_exit_code(pid)
@@ -237,12 +241,35 @@ class ProcessJob:
                     self._push_notif(JobNotification(
                         msg_type, pid=pid, exit_code=exit_code,
                     ))
+                    self._fire(self._exit_listener, pid, "exit pid")
                 else:
                     _logger.debug("Job 通知: type=%d data=%d", msg_type, raw_value)
             except Exception as e:
                 if not self._stop_event.is_set():
                     _logger.warning("Job 通知循环异常: %s", e)
         _logger.info("Job 通知线程退出")
+
+    def set_pid_listener(self, fn: Optional[Callable[[int], None]]) -> None:
+        """注册新进程监听器：Job 内出现新 PID 时以该 PID 调用。
+
+        GUI 检测据此为每个进程树成员装载窗口事件 hook（事件驱动，免轮询）。
+        在 Job 通知线程上调用，实现方须自行保证线程安全且不做阻塞操作。
+        """
+        self._pid_listener = fn
+
+    def set_exit_listener(self, fn: Optional[Callable[[int], None]]) -> None:
+        """注册进程退出监听器：Job 内 PID 退出时调用（用于回收其 hook）。"""
+        self._exit_listener = fn
+
+    @staticmethod
+    def _fire(listener, pid: int, what: str) -> None:
+        """安全调用 PID 监听器（异常不外泄，绝不影响通知循环）"""
+        if listener is None:
+            return
+        try:
+            listener(pid)
+        except Exception as e:
+            _logger.debug("Job %s 监听器异常 (pid=%d): %s", what, pid, e)
 
     def _push_notif(self, notif: JobNotification):
         """线程安全地添加通知，并通知等待方（drain / wait_notification）"""

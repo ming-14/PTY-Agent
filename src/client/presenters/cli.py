@@ -107,6 +107,20 @@ _REASON_LABELS = {
 }
 
 
+def _format_gui_window_lines(gui_windows) -> list:
+    """GUI 窗口列表 → 呈现行列表（session 段正载荷与 debug 段共用）"""
+    lines = []
+    for w in gui_windows:
+        hwnd = w.get("hwnd", 0)
+        pid = w.get("pid", 0)
+        title = w.get("title", "")
+        cls = w.get("class_name", "")
+        lines.append(
+            f"# window: [0x{hwnd:08X}] PID={pid} \"{title}\" ({cls})",
+        )
+    return lines
+
+
 def _print_result(resp: dict, *, show_debug: bool = True):
     """打印 result 类型响应
 
@@ -189,7 +203,15 @@ def _print_result(resp: dict, *, show_debug: bool = True):
 
     # ── debug ──
     processes = debug.get("processes") if show_debug else None
-    gui_windows = debug.get("gui_windows") if show_debug else None
+    all_windows = debug.get("gui_windows") or []
+
+    # GUI 是与 `-t` 平级的返回条件：本轮返回原因就是它时，窗口信息属于
+    # 正载荷而非调试附件 —— 即使 --no-debug 也必须给出（closewin 依赖 hwnd）。
+    if all_windows and not show_debug and reason == "gui_detected":
+        for line in _format_gui_window_lines(all_windows):
+            safe_print(line)
+        all_windows = []          # 已作为正载荷呈现，不在 debug 段重复
+    gui_windows = all_windows if show_debug else None
 
     has_debug = processes or gui_windows
     if has_debug:
@@ -214,14 +236,8 @@ def _print_result(resp: dict, *, show_debug: bool = True):
 
         # GUI windows
         if gui_windows:
-            for w in gui_windows:
-                hwnd = w.get("hwnd", 0)
-                pid = w.get("pid", 0)
-                title = w.get("title", "")
-                cls = w.get("class_name", "")
-                safe_print(
-                    f"# window: [0x{hwnd:08X}] PID={pid} \"{title}\" ({cls})",
-                )
+            for line in _format_gui_window_lines(gui_windows):
+                safe_print(line)
 
     # ── pending events（exec/send 返回的 debug.pending_events）──
     pending_events = debug.get("pending_events") if show_debug else None

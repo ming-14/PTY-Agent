@@ -35,14 +35,17 @@ class ProcessMonitor:
         self,
         pty_provider: Callable,
         event_sink: Callable[[PendingEvent], None],
+        wake=None,
     ):
         """
         Args:
             pty_provider: 返回当前 PTY 实例的可调用对象（lambda: self._pty）。
             event_sink:   添加 PendingEvent 的回调（EventHistoryManager.add_event）。
+            wake:         共享唤醒锚（WakeSignal）；检测到崩溃时唤醒等待循环。
         """
         self._pty_provider = pty_provider
         self._event_sink = event_sink
+        self._wake = wake
 
         # 进程名称缓存（多线程访问，用锁保护）
         self._process_names: Dict[int, str] = {}
@@ -83,6 +86,8 @@ class ProcessMonitor:
                 ),
             ))
             self._crash_event.set()
+            if self._wake is not None:
+                self._wake.notify()
         else:
             exit_str = (
                 f"exited (exit={exit_code})"

@@ -262,10 +262,13 @@ class RequestHandler:
         result_type: str = "exec",
         armed: bool = False,
     ) -> dict:
-        """执行 设置触发→等待→输出→响应 通用流程（游标增量语义）
+        """执行 设置返回条件→等待→输出→响应 通用流程（游标增量语义）
+
+        等待期间 GUI 新窗口与 ``-t`` 触发正则平级竞争，谁先命中谁先返回
+        （基线由 set_trigger 统一建立）。
 
         Args:
-            armed: True 表示触发条件已由调用方写入（send 需要在写输入前
+            armed: True 表示返回条件已由调用方写入（send 需要在写输入前
                    武装触发，避免 fresh 模式下输出先于触发设置而漏匹配）。
         """
         idle_timeout = msg.get("idle_timeout")
@@ -283,7 +286,7 @@ class RequestHandler:
                                 idle_timeout=idle_timeout,
                                 idle_after_first_output=idle_after_first)
 
-        matched, reason = session.wait_for_trigger(timeout, gui_short_circuit=False)
+        matched, reason = session.wait_for_trigger(timeout)
         output = session.get_output_since_cursor()
         result = self._build_result(
             session.id, output, matched, reason,

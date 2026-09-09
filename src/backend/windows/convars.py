@@ -228,7 +228,110 @@ _GetWindowTextW = _uapi("GetWindowTextW", ctypes.c_int,
 _GetClassNameW = _uapi("GetClassNameW", ctypes.c_int,
     [W.HANDLE, ctypes.c_wchar_p, ctypes.c_int])
 _IsWindowVisible = _uapi("IsWindowVisible", W.BOOL, [W.HANDLE])
+try:
+    # 64 位首选 GetWindowLongPtrW；32 位下该导出名不存在，回退 GetWindowLongW
+    _GetWindowStyle = _uapi("GetWindowLongPtrW", ctypes.c_ssize_t,
+                           [W.HANDLE, ctypes.c_int])
+except AttributeError:      # pragma: no cover - 32 位 Python
+    _GetWindowStyle = _uapi("GetWindowLongW", ctypes.c_long,
+                            [W.HANDLE, ctypes.c_int])
 _SendMessageW = _uapi("SendMessageW", ctypes.c_size_t,
     [W.HANDLE, W.UINT, ctypes.c_size_t, ctypes.c_size_t])
 
 WM_CLOSE = 0x0010
+WM_GETTEXT = 0x000D        # 跨进程发送消息取标题（故需超时保护）
+
+# ============================================================
+#  WinEvent Hook —— GUI 窗口事件驱动检测（替代纯轮询）
+#
+#  SetWinEventHook(WINEVENT_OUTOFCONTEXT) 由系统主动推送"窗口显示"事件，
+#  回调投递到装载 hook 的线程，故该线程必须持续抽取消息队列。
+#  按 PID 装载（idProcess=目标 PID）：只接收被追踪进程的窗口事件，
+#  不会收到全系统的窗口洪水。
+# ============================================================
+
+# WinEvent 事件号（winuser.h）
+EVENT_MIN = 0x00000000
+EVENT_MAX = 0xFFFFFFFF
+EVENT_OBJECT_CREATE = 0x80000000
+EVENT_OBJECT_DESTROY = 0x80010000
+EVENT_OBJECT_SHOW = 0x80020000
+EVENT_OBJECT_HIDE = 0x80030000
+# 实测（Win11/Python3.11 ctypes）：object 事件的 event 参数以 `常量 >> 16`
+# 的形式送达（如 SHOW 到达为 0x8002），且把 eventMin/Max 限定在
+# 0x80000000+ 区间会一条都收不到。故装载一律用全范围，回调内**不依赖
+# event 号**，改为直接校验 hwnd 的可见性与样式 —— 见 gui_monitor 的注释。
+
+# WinEvent Hook 标志
+WINEVENT_OUTOFCONTEXT = 0x0000   # 回调在本进程执行（唯一安全选项）
+WINEVENT_SKIPOWNPROCESS = 0x0002 # 忽略本进程自己的窗口
+
+# 回调参数过滤常量
+OBJID_WINDOW = 0x00000000        # idObject == 窗口本身（非菜单/滚动条等）
+CHILDID_SELF = 0                 # idChild == 元素自身（非子项）
+
+# 顶层窗口判定：**不要**用 GetAncestor(GA_PARENT) —— 实测它对 Tk 的 TkTopLevel
+# 也返回非零父，会把真窗口全判成子窗口。改用 WS_CHILD 样式位（见下）。
+# 因此本模块不再导出 GetAncestor，避免这个错误判据被再次采用。
+
+# 窗口样式（顶层窗口判定）
+GWL_STYLE = -16
+WS_CHILD = 0x40000000
+
+# 消息泵相关（OUTOFCONTEXT 回调只投递给装载 hook 的线程，
+# 且在该线程抽取消息队列时才被调用 —— 故需要一条专用泵线程）
+WM_QUIT = 0x0012
+WM_APP_INSTALL_HOOK = 0x8001   # WM_APP+1：本模块私有，通知泵线程装载新 PID 的 hook
+WM_APP_REMOVE_HOOK = 0x8002    # WM_APP+2：进程退出后卸载其 hook，避免长时间会话累积
+
+# SendMessageTimeoutW 标志：目标窗口线程挂死时不无限等待
+SMTO_ABORTIFHUNG = 0x0002
+SMTO_NORMAL = 0x0000
+
+# WINEVENTPROC: void (HWINEVENTHOOK, DWORD event, HWND, LONG idObject,
+#                  LONG idChild, DWORD dwEventThread, DWORD dwmsEventTime)
+WINEVENTPROC = ctypes.WINFUNCTYPE(
+    None, W.HANDLE, W.UINT, W.HWND, W.LONG, W.LONG, W.DWORD, W.DWORD)
+
+
+class MSG(ctypes.Structure):
+    """user32 消息结构（消息泵抽取队列用）"""
+    _fields_ = [
+        ("hwnd", W.HWND),
+        ("message", W.UINT),
+        ("wParam", W.WPARAM),
+        ("lParam", W.LPARAM),
+        ("time", W.DWORD),
+        ("pt_x", W.LONG),
+        ("pt_y", W.LONG),
+    ]
+
+
+_SetWinEventHook = _uapi("SetWinEventHook", W.HANDLE, [
+    W.UINT, W.UINT, W.HINSTANCE, WINEVENTPROC,
+    W.DWORD, W.DWORD, W.UINT,
+])
+_UnhookWinEvent = _uapi("UnhookWinEvent", W.BOOL, [W.HANDLE])
+_SendMessageTimeoutW = _uapi("SendMessageTimeoutW", ctypes.c_ssize_t, [
+    W.HWND, W.UINT, ctypes.c_size_t, ctypes.c_ssize_t, W.UINT, W.UINT,
+    ctypes.POINTER(ctypes.c_size_t),
+])
+_GetMessageW = _uapi("GetMessageW", ctypes.c_int, [
+    ctypes.POINTER(MSG), W.HWND, W.UINT, W.UINT,
+])
+# 队列在首次 GetMessage/PeekMessage 时才创建；PostThreadMessage 打到无队列
+# 线程会静默失败，故泵线程需先用 PeekMessage(PM_NOREMOVE) 把队列建起来。
+_PeekMessageW = _uapi("PeekMessageW", W.BOOL, [
+    ctypes.POINTER(MSG), W.HWND, W.UINT, W.UINT, W.UINT,
+])
+PM_NOREMOVE = 0x0000
+_TranslateMessage = _uapi("TranslateMessage", W.BOOL, [ctypes.POINTER(MSG)])
+_DispatchMessageW = _uapi("DispatchMessageW", ctypes.c_ssize_t,
+                          [ctypes.POINTER(MSG)])
+
+_GetCurrentThreadId = _api("GetCurrentThreadId", W.DWORD, [])
+# PostThreadMessage 属于 user32（kernel32 中不存在，误绑会在导入期抛
+# AttributeError: function 'PostThreadMessageW' not found）
+_PostThreadMessageW = _uapi("PostThreadMessageW", W.BOOL, [
+    W.DWORD, W.UINT, W.WPARAM, W.LPARAM,
+])
