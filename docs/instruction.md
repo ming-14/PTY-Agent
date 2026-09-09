@@ -76,9 +76,9 @@ python -m src stop
 # 手动集成测试（当前无需构建，纯 Python）
 python app.py start
 python app.py exec test -c "python -u -i" -t ">>>" --timeout 5
-python app.py send test "print(100*100)" -t ">>>"
+python app.py send test -i "print(100*100)" -t ">>>"
 # 预期: >>> 10000\n>>>
-python app.py send test "for i in range(3):\n    print(i)" -t ">>>"
+python app.py send test -i "for i in range(3):\n    print(i)" -t ">>>"
 # 预期: >>> 0\n1\n2\n>>>
 python app.py remove test
 python app.py stop

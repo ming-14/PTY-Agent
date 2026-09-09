@@ -5,6 +5,7 @@
 > 2026-09 重构：一次性大重构，无兼容残留。通信层统一为共享内存请求门面（`protocol/request.py`）；
 > 后端拆分为 **subprocess（纯管道，默认）** 与 **pty（真实终端 + pyte 终端仿真）** 两种互不回退的模式；
 > 客户端与守护进程仅共享 `protocol/` 层；呈现与传输解耦（`client/presenters`）。
+> `send` 的输入文本统一由 `-i/--input` 选项给出，已删除位置参数写法。
 
 ## 快速开始
 
@@ -13,7 +14,7 @@
 python app.py exec py -c "python -u -i" -t ">>>"
 
 # 发送命令并等待提示符
-python app.py send py "print(100*100)" -t ">>>"
+python app.py send py -i "print(100*100)" -t ">>>"
 
 # 读取输出（subprocess 模式默认返回完整缓冲）
 python app.py read py --full
@@ -35,7 +36,7 @@ pip install -r requirements.txt
 | 命令 | 用途 |
 |------|------|
 | `exec <id> -c "<cmd>"` | 启动会话（`--pty` 启用真实终端，默认 subprocess 管道） |
-| `send <id> "<input>"` | 发送输入到运行中的会话 |
+| `send <id> -i "<input>"` | 发送输入到运行中的会话 |
 | `read <id>` | 读取会话输出 |
 | `list` | 列出所有会话 |
 | `remove <id>` | 移除会话 |
@@ -80,10 +81,14 @@ python app.py exec gdb -c "gdb -q test.exe" -t "(gdb)" --pty
 ### send — 发送输入
 
 ```powershell
-python app.py send myid "print(1)" -t ">>>"
-python app.py send myid "c" --timeout 10                  # 无触发条件，等待超时返回
-python app.py send myid "print(2)" -t ">>>" --send-eol crlf
+python app.py send myid -i "print(1)" -t ">>>"
+python app.py send myid -i "c" --timeout 10                  # 无触发条件，等待超时返回
+python app.py send myid -i "print(2)" -t ">>>" --send-eol crlf
+python app.py send myid -i "" --timeout 3                    # 空输入：只提交一个行尾
 ```
+
+- 输入文本**必须**由 `-i/--input` 给出（无位置参数写法）：`send myid "print(1)"` 直接报错。
+- 内容以 `-` 开头时用 `=` 形式：`--input="--help"` 或 `-i="--help"`。
 
 ### read — 读取输出
 

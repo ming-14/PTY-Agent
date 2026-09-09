@@ -31,7 +31,7 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
 |------|------|----------|------|
 |`start/stop`| 手动启动/停止守护进程；启动守护进程`exec`可实现，一般无需手动 | | |
 | `exec <new-session-id> <options>` | 执行命令以启动会话 | `-c "<command>"`(req), `-t "<regex>"`, `--timeout <seconds>`, `--cwd <path>` | `exec id_py -c "python -i" -t ">>>"` |
-| `send <session-id> "<content>" [options]` | 发送输入到运行中的会话 | `-t "<regex>"`, `--timeout <seconds>` | `send id_py "print(1)" -t ">>>"` |
+| `send <session-id> -i "<content>" [options]` | 发送输入到运行中的会话 | `-i "<content>"`(req), `-t "<regex>"`, `--timeout <seconds>` | `send id_py -i "print(1)" -t ">>>"` |
 | `read <session-id> [options]` | 读取会话输出 | `--lines`, `--grep`, `--full` | `read myid --lines 10` |
 | `list` | 列出所有会话 | | |
 | `remove <session-id>` | 移除会话 | | |
@@ -79,9 +79,13 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
 
 ## send 用法
 
-`python app.py send <session-id> "<content>" [options]`
+`python app.py send <session-id> -i "<content>" [options]`
 
 选项
+- `-i/--input "<content>"` **必填**，要发送的输入文本（raw 原样发送，不转义）
+    - 无位置参数写法：`send myid "print(1)"` 直接报错，必须写 `-i "print(1)"`
+    - 内容以 `-` 开头时用 `=` 形式：`-i="--help"` 或 `--input="--help"`
+    - `-i ""` 合法：只提交一个行尾（相当于按下回车）
 - `-t/--trigger "<regex>"` 匹配正则
     - `--newline` — 换行后才检查正则触发条件, 与`-t`搭配
 - `--timeout <seconds>` 等待超时（默认120s）
@@ -91,13 +95,14 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
 - `--full` 返回终端全部数据（数据大，尽量用`--lines N`）
 - `--send-eol <lf|cr|crlf>` 行尾样式（默认 `lf`=`\n`）。终端模式（ConPTY）下某些程序需要 `\r`（回车）或 `\r\n` 才能正确提交输入行
 
-`<content>`末尾自动追加行尾（默认 `\n`，可用 `--send-eol` 或 `--default send-eol crlf` 修改）
-没有`--input`参数
+`-i` 的文本末尾自动追加行尾（默认 `\n`，可用 `--send-eol` 或 `--default send-eol crlf` 修改）
+输入文本只能经 `-i/--input` 传入：无位置参数写法，无其他别名
 
 ### 引号处理规则（命令行层）
 
 - cmd 写 `\"` 嵌套： `-c "python -c \"print(1)\""`
 - PowerShell/Pwsh 外层单引号，内层双引号： `-c 'python -c "print(1)"'`
+- 同一套规则适用于 `send -i`：`-i 'print("hi")'`（PowerShell）/ `-i "print(\"hi\")"`（cmd）
 
 ## read 用法
 

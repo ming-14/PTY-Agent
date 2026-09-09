@@ -64,17 +64,6 @@ class _HintParser(argparse.ArgumentParser):
         super().error(message)
 
 
-class _InputHintAction(argparse.Action):
-    """提示 send/exec 中 -i/--input 不是合法选项，输入应作为位置参数"""
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        parser.error(
-            f"{option_string} 不是合法选项。发送的文本应作为位置参数直接给出。\n"
-            "用法: pty-agent send <会话ID> \"<输入文本>\" [选项]\n"
-            "示例: pty-agent send gomoku \"/help\" -t \"提示符>\""
-        )
-
-
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
     """为子命令解析器添加通用参数（默认配置）"""
     # SUPPRESS：子解析器不覆盖全局 --default（否则放在子命令前的 --default 会丢失）
@@ -148,9 +137,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_send = sub.add_parser("send", help="向运行中的会话发送输入")
     _add_common_args(p_send)
     p_send.add_argument("id", help="会话标识")
-    p_send.add_argument("input", help="要发送的输入文本")
-    p_send.add_argument("-i", "--input", action=_InputHintAction,
-                        help=argparse.SUPPRESS)
+    p_send.add_argument("--input", "-i", default=None, metavar="<content>",
+                        help="要发送的输入文本（必填，原样发送不转义；"
+                             "以 - 开头时用 --input=<content> 形式）")
     p_send.add_argument("--trigger", "-t", default=None,
                         help="触发条件（正则表达式），命中后返回输出")
     p_send.add_argument("--newline", action="store_true", default=None,
@@ -368,6 +357,10 @@ def main():
     # 验证 exec 命令的参数
     if args.subcmd == "exec" and not args.command:
         parser.error("'exec' 命令需要 --command/-c 参数")
+
+    # 验证 send 命令的参数（空字符串是合法输入：只提交一个行尾）
+    if args.subcmd == "send" and args.input is None:
+        parser.error("'send' 命令需要 --input/-i 参数")
 
     # 验证 idle-after-first-output 的依赖：必须同时有 idle-timeout
     if args.subcmd in ("exec", "send") and args.idle_after_first_output and args.idle_timeout is None:
