@@ -11,7 +11,7 @@ import pytest
 from src.session.manager import SessionManager
 
 
-class _MockPty:
+class _MockBackend:
     """模拟 Backend（create_subprocess / create_tty 的存根）"""
 
     def __init__(self):
@@ -59,9 +59,9 @@ class _MockPty:
 
 
 def _install_backend_mock(monkeypatch):
-    """把 Session 引用的 backend 工厂 mock 为返回 _MockPty"""
+    """把 Session 引用的 backend 工厂 mock 为返回 _MockBackend"""
     def _mock_create(*args, **kwargs):
-        return _MockPty()
+        return _MockBackend()
     monkeypatch.setattr("src.session.session.create_subprocess", _mock_create)
     monkeypatch.setattr("src.session.session.create_tty", _mock_create)
 

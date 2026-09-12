@@ -54,7 +54,7 @@ class TestPendingEvent:
 
 
 # 使用 mock Backend 避免真实依赖
-class _MockPty:
+class _MockBackend:
     """模拟后端（create_subprocess / create_tty 的存根）"""
 
     def __init__(self):
@@ -98,9 +98,9 @@ class _MockPty:
 
 
 def _install_backend_mock(monkeypatch, backend=None):
-    """把 Session 引用的 backend 工厂 mock 为返回给定后端（默认 _MockPty）"""
+    """把 Session 引用的 backend 工厂 mock 为返回给定后端（默认 _MockBackend）"""
     if backend is None:
-        backend = _MockPty()
+        backend = _MockBackend()
     monkeypatch.setattr("src.session.session.create_subprocess",
                         lambda *a, **k: backend)
     monkeypatch.setattr("src.session.session.create_tty",
@@ -272,7 +272,7 @@ class TestSessionEvents:
 class TestSessionDrain:
     """Session _reader_loop 的 drain() 集成测试"""
 
-    class _DataMockPty(_MockPty):
+    class _DataMockBackend(_MockBackend):
         """返回模拟数据并记录 drain 调用"""
         def __init__(self):
             super().__init__()
@@ -292,28 +292,28 @@ class TestSessionDrain:
 
     @pytest.fixture
     def drain_session(self, monkeypatch):
-        """创建使用 _DataMockPty 的 Session"""
+        """创建使用 _DataMockBackend 的 Session"""
         from src.session.session import Session
 
-        mock_pty = self._DataMockPty()
-        _install_backend_mock(monkeypatch, mock_pty)
+        mock_backend = self._DataMockBackend()
+        _install_backend_mock(monkeypatch, mock_backend)
 
         sess = Session("drain-test", "echo test")
         sess.start()
         time.sleep(0.3)
-        yield sess, mock_pty
+        yield sess, mock_backend
         sess.stop()
 
     def test_drain_called_after_read(self, drain_session):
         """_reader_loop 在 read() 后调用 drain()"""
-        sess, mock_pty = drain_session
+        sess, mock_backend = drain_session
         # 读者线程至少执行了一次 read → drain 链
-        assert mock_pty.drain_call_count >= 1
-        assert mock_pty.read_count >= 1
+        assert mock_backend.drain_call_count >= 1
+        assert mock_backend.read_count >= 1
 
     def test_drain_data_appended_to_buffer(self, drain_session):
         """drain() 返回的数据被追加到输出缓冲区"""
-        sess, mock_pty = drain_session
+        sess, mock_backend = drain_session
         # 给读者线程足够时间处理
         time.sleep(0.2)
         output = sess.output_buffer.get_full()
