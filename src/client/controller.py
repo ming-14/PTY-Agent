@@ -169,22 +169,30 @@ def stop_daemon():
 
     # 停止失败时，尝试通过 PID 强制终止
     if not stopped and pid_exists(pid):
+        failure = None
         try:
             if IS_WINDOWS:
                 # 不经 shell：直接调 taskkill，输出丢弃（等价旧式的 >nul 2>&1）
-                subprocess.run(
+                rc = subprocess.run(
                     ["taskkill", "/PID", str(pid), "/F"],
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     check=False,
-                )
+                ).returncode
+                # 非零码最常见的原因是"进程已经不在了"——那正是我们要的结果，
+                # 只有进程确实还活着才算失败，不能谎报已停止。
+                if rc != 0 and pid_exists(pid):
+                    failure = f"taskkill 退出码 {rc}"
             else:
                 os.kill(pid, signal.SIGKILL)
+        except Exception as e:
+            failure = str(e)
+        if failure is None:
             safe_print(f"[pty-agent] 已强制终止守护进程 (PID {pid})")
             stopped = True
-        except Exception as e:
-            safe_print(f"[pty-agent] 强制终止失败: {e}")
+        else:
+            safe_print(f"[pty-agent] 强制终止失败: {failure}")
 
     cleanup_shm_resources()
 

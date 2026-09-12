@@ -10,6 +10,7 @@
 
 import logging
 import os
+import pytest
 import re
 import sys
 import time
@@ -272,8 +273,53 @@ class TestControllerStop:
                    return_value=True), \
              patch(kill_target) as mock_kill, \
              patch("src.client.controller.cleanup_shm_resources"):
+            mock_kill.return_value = MagicMock(returncode=0)
             stop_daemon()
         mock_kill.assert_called_once()
+        assert any("已强制终止" in p for p in printed)
+        assert any("已停止" in p for p in printed)
+
+    def test_force_kill_reports_failure_when_kill_fails(self, monkeypatch):
+        """taskkill 非零退出且进程仍在 → 报失败，绝不谎报"已停止"""
+        printed = []
+        monkeypatch.setattr(
+            "src.client.controller.safe_print",
+            lambda *a, **k: printed.append(a[0]),
+        )
+        with patch("src.client.controller.find_daemon_pid",
+                   return_value=os.getpid()), \
+             patch("src.client.controller.roundtrip",
+                   return_value={"type": "error"}), \
+             patch("src.client.controller.pid_exists",
+                   return_value=True), \
+             patch("src.client.controller.subprocess.run",
+                   return_value=MagicMock(returncode=1)), \
+             patch("src.client.controller.cleanup_shm_resources"):
+            if sys.platform != "win32":
+                pytest.skip("taskkill 退出码分支仅 Windows")
+            stop_daemon()
+        assert any("强制终止失败" in p for p in printed)
+        assert not any("已停止" in p for p in printed)
+
+    def test_force_kill_treats_vanished_process_as_success(self, monkeypatch):
+        """taskkill 非零退出但进程已消失 → 目标达成，按成功处理"""
+        printed = []
+        monkeypatch.setattr(
+            "src.client.controller.safe_print",
+            lambda *a, **k: printed.append(a[0]),
+        )
+        with patch("src.client.controller.find_daemon_pid",
+                   return_value=os.getpid()), \
+             patch("src.client.controller.roundtrip",
+                   return_value={"type": "error"}), \
+             patch("src.client.controller.pid_exists",
+                   side_effect=[True, False]), \
+             patch("src.client.controller.subprocess.run",
+                   return_value=MagicMock(returncode=1)), \
+             patch("src.client.controller.cleanup_shm_resources"):
+            if sys.platform != "win32":
+                pytest.skip("taskkill 退出码分支仅 Windows")
+            stop_daemon()
         assert any("已强制终止" in p for p in printed)
         assert any("已停止" in p for p in printed)
 

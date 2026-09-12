@@ -49,7 +49,7 @@ class TestProcessMonitorInit:
 class TestProcessMonitorDrainNotifications:
     """ProcessMonitor.drain_notifications 测试"""
 
-    def test_no_pty(self):
+    def test_no_backend(self):
         """无 PTY 时不产生事件"""
         events = []
         mon = ProcessMonitor(
@@ -59,30 +59,30 @@ class TestProcessMonitorDrainNotifications:
         mon.drain_notifications()
         assert len(events) == 0
 
-    def test_pty_without_job_notifications(self):
+    def test_backend_without_job_notifications(self):
         """PTY 无 get_job_notifications 方法"""
         events = []
 
-        class _MockPty:
+        class _MockBackend:
             pass
 
         mon = ProcessMonitor(
-            backend_provider=lambda: _MockPty(),
+            backend_provider=lambda: _MockBackend(),
             event_sink=lambda e: events.append(e),
         )
         mon.drain_notifications()
         assert len(events) == 0
 
-    def test_pty_with_empty_notifications(self):
+    def test_backend_with_empty_notifications(self):
         """PTY 返回空通知列表"""
         events = []
 
-        class _MockPty:
+        class _MockBackend:
             def get_job_notifications(self):
                 return []
 
         mon = ProcessMonitor(
-            backend_provider=lambda: _MockPty(),
+            backend_provider=lambda: _MockBackend(),
             event_sink=lambda e: events.append(e),
         )
         mon.drain_notifications()
@@ -116,7 +116,7 @@ class TestGuiDetectorInit:
 class TestGuiDetectorCheck:
     """GuiDetector.check 测试"""
 
-    def test_no_pty(self):
+    def test_no_backend(self):
         """无 PTY 时跳过"""
         events = []
         det = GuiDetector(event_sink=lambda e: events.append(e))
@@ -128,7 +128,7 @@ class TestGuiDetectorCheck:
         events = []
         det = GuiDetector(event_sink=lambda e: events.append(e))
 
-        class _MockPty:
+        class _MockBackend:
             _call_count = 0
             def poll_gui_windows(self):
                 self._call_count += 1
@@ -136,10 +136,10 @@ class TestGuiDetectorCheck:
             def get_process_list(self):
                 return []
 
-        pty = _MockPty()
-        det.check(pty, "test")
-        det.check(pty, "test")
-        assert pty._call_count == 1
+        backend = _MockBackend()
+        det.check(backend, "test")
+        det.check(backend, "test")
+        assert backend._call_count == 1
 
     def test_new_window_publishes_event(self):
         """检测到新窗口发布事件"""
@@ -147,13 +147,13 @@ class TestGuiDetectorCheck:
         det = GuiDetector(event_sink=lambda e: events.append(e))
         det._last_poll_ms = 0
 
-        class _MockPty:
+        class _MockBackend:
             def poll_gui_windows(self):
                 return [{"hwnd": 0x1234, "pid": 100, "title": "Test"}]
             def get_process_list(self):
                 return [100]
 
-        det.check(_MockPty(), "test")
+        det.check(_MockBackend(), "test")
         assert len(events) == 1
         assert events[0].type == "gui_window"
         assert events[0].hwnd == 0x1234

@@ -431,7 +431,7 @@ class TestSessionSetTriggerLockHeld:
 class TestSessionThreadsReaderReady:
     """wait_reader_ready 事件同步测试（替代原 time.sleep(0.1)）"""
 
-    def _make_threads(self, pty):
+    def _make_threads(self, backend):
         from src.session.session_threads import (
             SessionThreads, SessionComponents,
         )
@@ -441,11 +441,11 @@ class TestSessionThreadsReaderReady:
         from src.session.process.gui import GuiDetector
 
         components = SessionComponents(
-            backend_provider=lambda: pty,
+            backend_provider=lambda: backend,
             pipeline_provider=lambda: None,
             out_buf=OutputBuffer(),
             trig_mat=TriggerMatcher(),
-            proc_mon=ProcessMonitor(backend_provider=lambda: pty,
+            proc_mon=ProcessMonitor(backend_provider=lambda: backend,
                                     event_sink=lambda e: None),
             gui_detector=GuiDetector(event_sink=lambda e: None),
             session_id="test",
@@ -455,10 +455,10 @@ class TestSessionThreadsReaderReady:
 
     def test_wait_returns_true_when_ready(self):
         """读者线程启动后 wait_reader_ready 立即返回 True（无需固定 sleep）"""
-        class _Pty:
+        class _BackendStub:
             def read(self, n):
                 return b""
-        threads = self._make_threads(_Pty())
+        threads = self._make_threads(_BackendStub())
         started = time.monotonic()
         threads.start()
         assert threads.wait_reader_ready(timeout=1.0) is True
@@ -468,10 +468,10 @@ class TestSessionThreadsReaderReady:
 
     def test_wait_returns_true_immediately_after_ready(self):
         """就绪事件已置位后再次等待立即返回 True"""
-        class _Pty:
+        class _BackendStub:
             def read(self, n):
                 return b""
-        threads = self._make_threads(_Pty())
+        threads = self._make_threads(_BackendStub())
         threads.start()
         assert threads.wait_reader_ready(timeout=1.0) is True
         # 第二次等待应瞬时返回（事件已置位）
@@ -488,10 +488,10 @@ class TestSessionThreadsReaderReady:
 
     def test_start_resets_ready_event(self):
         """start() 重置就绪事件（重启会话时重新等待）"""
-        class _Pty:
+        class _BackendStub:
             def read(self, n):
                 return b""
-        threads = self._make_threads(_Pty())
+        threads = self._make_threads(_BackendStub())
         threads.start()
         assert threads.wait_reader_ready(timeout=1.0) is True
         threads.stop()
@@ -502,10 +502,10 @@ class TestSessionThreadsReaderReady:
 
     def test_ready_event_signals_from_reader_thread(self):
         """就绪事件由读者线程自身置位（验证是真正的线程就绪而非固定延时）"""
-        class _Pty:
+        class _BackendStub:
             def read(self, n):
                 return b""
-        threads = self._make_threads(_Pty())
+        threads = self._make_threads(_BackendStub())
         threads.start()
         # 读者线程运行中 → 事件已置位
         assert threads._reader_ready.is_set()
