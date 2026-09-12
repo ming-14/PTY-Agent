@@ -1,0 +1,15 @@
+# PTY-Agent lint 基线（与 docs/编码规范.md 一致）
+#
+# 选用 ruff 默认规则集：pyflakes(F) + pycodestyle E4/E7/E9。
+# 刻意不开 E501（行长）：仓库现有中文注释较多，字符宽度并不等于显示宽度；
+# 也不开格式类规则，避免为了排版产生大面积改动。
+#
+# 用法：
+#   python -m ruff check .        # 应无任何告警
+#   python -m ruff check --fix .  # 可自动修的部分
+
+line-length = 88
+target-version = "py311"
+
+[lint]
+select = ["F", "E4", "E7", "E9"]
