@@ -6,6 +6,7 @@
 
 import sys
 import subprocess
+import threading
 import time
 import pytest
 
@@ -358,3 +359,39 @@ class TestSubprocessCloseDeadlock:
         t.start()
         t.join(timeout=10)
         assert done.is_set(), "close() 交互式进程死锁"
+
+
+class TestWriteAfterExit:
+    """子进程退出后写入的行为（由旧调试脚本 test_debug_subprocess.py 转正）
+
+    要锁定的性质：向已退出的子进程写入必须**立刻失败**，绝不能阻塞 ——
+    一旦卡在这里，读者线程与请求线程都拿不到响应，整个会话就废了。
+    """
+
+    def test_write_after_child_exit_raises_promptly(self):
+        """退出后 write() → 抛 OSError，且在限定时间内返回（不阻塞）"""
+        pty = SubprocessBackend(
+            [sys.executable, "-c", "import sys; sys.exit(42)"],
+        )
+        outcome = {}
+
+        def attempt():
+            try:
+                pty.write("print(1)\n")
+                outcome["result"] = "returned-without-error"
+            except BaseException as e:
+                outcome["error"] = e
+
+        try:
+            pty._proc.wait(timeout=5)
+            assert pty._proc.returncode == 42
+            thread = threading.Thread(target=attempt, daemon=True)
+            thread.start()
+            thread.join(timeout=5)
+            assert not thread.is_alive(), "写入已退出进程时发生阻塞"
+        finally:
+            pty.close()
+
+        assert isinstance(outcome.get("error"), OSError), (
+            f"期望 OSError（管道已断），实际: {outcome}"
+        )

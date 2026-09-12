@@ -166,7 +166,7 @@ class TestSessionManagerRemove:
 
     def test_remove_existing(self, mgr):
         """移除存在的会话"""
-        s = mgr.create_session("rm-1", [sys.executable, "-c", "pass"])
+        mgr.create_session("rm-1", [sys.executable, "-c", "pass"])
         mgr.remove_session("rm-1")
         assert mgr.get_session("rm-1") is None
 
@@ -176,8 +176,8 @@ class TestSessionManagerRemove:
 
     def test_stop_all(self, mgr):
         """停止所有会话"""
-        s1 = mgr.create_session("sa-1", [sys.executable, "-c", "import time; time.sleep(30)"])
-        s2 = mgr.create_session("sa-2", [sys.executable, "-c", "import time; time.sleep(30)"])
+        mgr.create_session("sa-1", [sys.executable, "-c", "import time; time.sleep(30)"])
+        mgr.create_session("sa-2", [sys.executable, "-c", "import time; time.sleep(30)"])
         mgr.stop_all()
         assert mgr.get_session("sa-1") is None
         assert mgr.get_session("sa-2") is None

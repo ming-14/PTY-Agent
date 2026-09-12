@@ -17,6 +17,9 @@ from .client.config_manager import ConfigManager
 from .client.controller import setup_client_logging
 from .client.presenters import print_response
 
+# 值可能被 shell 嵌套引号截断的带值选项（Windows 下需原生解析纠偏）
+_QUOTED_VALUE_OPTIONS = ("-c", "--command", "-i", "--input")
+
 
 def _parse_default_key(key: str) -> str:
     """将 CLI 中的配置键名转为内部存储键名
@@ -64,13 +67,31 @@ class _HintParser(argparse.ArgumentParser):
         super().error(message)
 
 
-def _add_common_args(parser: argparse.ArgumentParser) -> None:
-    """为子命令解析器添加通用参数（默认配置）"""
-    # SUPPRESS：子解析器不覆盖全局 --default（否则放在子命令前的 --default 会丢失）
+def _add_common_args(parser: argparse.ArgumentParser,
+                     top_level: bool = False) -> None:
+    """为顶层与子命令解析器添加同一组通用选项（放子命令前后均可）
+
+    三处 help 文案只在此定义一次，顶层与子命令不会各说各话。
+    子命令侧一律 `default=SUPPRESS`：未显式给出时不写命名空间，
+    因此放在子命令前面的同名选项值不会被覆盖。
+
+    Args:
+        parser:    目标解析器（顶层或子命令）。
+        top_level: True 表示顶层解析器（提供真实默认值）。
+    """
+    sup = argparse.SUPPRESS
+    parser.add_argument("--show-config", nargs="?", const="",
+                        default=None if top_level else sup,
+                        metavar="KEY",
+                        help="查看配置值（不指定 KEY 则显示全部）")
     parser.add_argument("--default", nargs=2, metavar=("KEY", "VALUE"),
-                        default=argparse.SUPPRESS,
-                        help="设置默认配置 "
+                        default=None if top_level else sup,
+                        help="临时覆盖默认配置 "
                              "(timeout/newline/debug/send-eol)")
+    parser.add_argument("--no-debug", action="store_true",
+                        default=False if top_level else sup,
+                        help="禁用响应中的 debug 输出（进程树/GUI 窗口/事件；"
+                             "本轮因 GUI 窗口返回时窗口信息仍输出）")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -82,17 +103,8 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=__doc__,
     )
 
-    # 全局选项（顶层，放子命令前后均可）
-    parser.add_argument("--show-config", nargs="?", const="", default=None,
-                        metavar="KEY",
-                        help="查看配置值（不指定 KEY 则显示全部）")
-    parser.add_argument("--default", nargs=2, metavar=("KEY", "VALUE"),
-                        default=None,
-                        help="临时覆盖默认配置 "
-                             "(timeout/newline/debug)")
-    parser.add_argument("--no-debug", action="store_true", default=False,
-                        help="禁用响应中的 debug 输出（进程树/GUI 窗口/事件；"
-                             "本轮因 GUI 窗口返回时窗口信息仍输出）")
+    # 全局选项（与每个子命令共用同一组定义，放子命令前后均可）
+    _add_common_args(parser, top_level=True)
 
     sub = parser.add_subparsers(dest="subcmd", help="可用命令")
 
@@ -128,8 +140,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_exec.add_argument("--full", action="store_true", default=False,
                         help="返回全量输出而非仅增量输出")
     p_exec.add_argument("--shell", default=None,
-                        choices=["cmd", "powershell", "pwsh", "bash"],
-                        help="指定命令解释器（默认 powershell，不可用时回退 cmd；仅 subprocess 模式，与 --pty 互斥）")
+                        choices=["cmd", "sh", "powershell", "pwsh", "bash"],
+                        help="指定命令解释器（仅 subprocess 模式，与 --pty 互斥；"
+                             "取值按平台校验，平台不支持时报错。"
+                             "默认：Windows powershell（不可用回退 cmd）/ POSIX /bin/sh）")
     p_exec.add_argument("--cwd", default=None,
                         help="指定子进程工作目录（默认为守护进程当前目录）")
 
@@ -232,48 +246,75 @@ def _handle_config_ops(args) -> dict | None:
     return None if handled or args.show_config is not None else overrides
 
 
-def _fix_windows_exec_quoting() -> None:
-    """修复 Windows 下嵌套引号导致 exec -c 参数被截断的问题
+def _find_quoted_option(argv, options=_QUOTED_VALUE_OPTIONS):
+    """返回 argv 中第一个目标选项的下标（`--opt=value` 内联形式同样命中）
+
+    Args:
+        argv:    参数列表。
+        options: 目标选项名集合。
+
+    Returns:
+        下标；未找到返回 None。
+    """
+    for i, token in enumerate(argv):
+        if token.partition("=")[0] in options:
+            return i
+    return None
+
+
+def _option_value(argv, index):
+    """取 argv[index] 处选项的值：内联 `--opt=v` 取等号后部分，否则取下一个 token"""
+    if index is None or index >= len(argv):
+        return None
+    token = argv[index]
+    if "=" in token:
+        return token.partition("=")[2]
+    return argv[index + 1] if index + 1 < len(argv) else None
+
+
+def _adopt_native_argv(argv, parsed_argv, options=_QUOTED_VALUE_OPTIONS):
+    """判断是否应采用原生解析结果替代 Python 解析的 argv
+
+    判据：目标选项的值在原生解析中**不同且更长**——shell 引号处理差异只会把
+    值截短，不会变长，因此"更长"即原 argv 被截断的特征。
+    命中时返回 parsed_argv（整体替换：被错误拆开的多余 token 也随之消失）。
+
+    Args:
+        argv:       Python 收到的 argv。
+        parsed_argv: CommandLineToArgvW 解析出的 argv。
+        options:    受关注的带值选项名集合。
+
+    Returns:
+        需要采用时返回 parsed_argv，否则 None。
+    """
+    if len(parsed_argv) < 2:
+        return None
+    old_val = _option_value(argv, _find_quoted_option(argv, options))
+    new_val = _option_value(parsed_argv, _find_quoted_option(parsed_argv, options))
+    if not old_val or not new_val:
+        return None
+    if new_val == old_val or len(new_val) <= len(old_val):
+        return None
+    return parsed_argv
+
+
+def _fix_windows_quoting() -> None:
+    """修复 Windows 下嵌套引号导致 exec -c / send -i 参数值被截断的问题
 
     当用户从 cmd.exe 执行:
       python app.py exec test -c "python -c \\"import time; print(1)\\"" ...
-    cmd.exe 原样传递 \\"，Python 3.12+ 的自定义命令行解析器可能错误拆分，
-    导致 -c 只被部分解析。这里使用 Windows 原生 CommandLineToArgvW
-    重新解析原始命令行，确保参数正确。
+    cmd.exe 原样传递 \\"，Python 的命令行解析器可能错误拆分，导致 -c/-i 只被
+    部分解析。这里使用 Windows 原生 CommandLineToArgvW 重新解析原始命令行，
+    必要时整体采用其结果（见 _adopt_native_argv 的判据）。
 
     注意：本修复仅覆盖 cmd.exe 场景。PowerShell 的 \\" 不转义（\\\\为字面量），
-    -c 的参数值会被 PowerShell 自身拆分，此时 sys.argv 中 -c 后的值
-    已经丢失了嵌套引号内容，CommandLineToArgvW 无法还原。
-    PowerShell/pwsh 用户应使用外层单引号 '...' + 内层双引号。
-    详见 docs/Skill文档/引号处理规则.md。
+    参数值会被 PowerShell 自身拆分，此时 sys.argv 中的值已经丢失了嵌套引号
+    内容，CommandLineToArgvW 无法还原。PowerShell/pwsh 用户应使用外层单引号
+    '...' + 内层双引号。详见 docs/Skill文档/引号处理规则.md。
     """
     if sys.platform != "win32":
         return
-
-    argv = sys.argv
-    exec_idx = None
-    c_idx = None
-
-    for i, arg in enumerate(argv):
-        if arg == "exec":
-            exec_idx = i
-            break
-    if exec_idx is None:
-        return
-
-    for i in range(exec_idx + 1, len(argv)):
-        if argv[i] in ("-c", "--command"):
-            c_idx = i
-            break
-    if c_idx is None or c_idx + 1 >= len(argv):
-        return
-
-    cmd_val = argv[c_idx + 1]
-
-    # 检测是否疑似引号被截断：
-    # 1) 命令值以反斜杠结尾
-    # 2) 命令值包含 "python -c"（嵌套引用的常见模式）
-    if not cmd_val.rstrip().endswith('\\') and 'python -c' not in cmd_val:
+    if _find_quoted_option(sys.argv) is None:
         return
 
     try:
@@ -308,16 +349,9 @@ def _fix_windows_exec_quoting() -> None:
             LocalFree.argtypes = [ctypes.wintypes.HLOCAL]
             LocalFree(argv_ptr)
 
-        new_c_idx = None
-        for i, arg in enumerate(parsed_argv):
-            if arg in ("-c", "--command"):
-                new_c_idx = i
-                break
-
-        if new_c_idx is not None and new_c_idx + 1 < len(parsed_argv):
-            new_cmd_val = parsed_argv[new_c_idx + 1]
-            if new_cmd_val != cmd_val and len(new_cmd_val) > len(cmd_val):
-                sys.argv = parsed_argv
+        adopted = _adopt_native_argv(sys.argv, parsed_argv)
+        if adopted is not None:
+            sys.argv = adopted
     except Exception:
         # 任何异常都不影响主流程，降级使用原始 argv
         pass
@@ -326,8 +360,8 @@ def _fix_windows_exec_quoting() -> None:
 def main():
     """CLI 入口"""
     setup_client_logging()
-    # 修复 Windows 下 exec -c 嵌套引号问题（必须在 argparse 之前执行）
-    _fix_windows_exec_quoting()
+    # 修复 Windows 下 -c / -i 嵌套引号被截断的问题（必须在 argparse 之前执行）
+    _fix_windows_quoting()
 
     parser = build_parser()
     args = parser.parse_args()
@@ -357,6 +391,19 @@ def main():
     # 验证 exec 命令的参数
     if args.subcmd == "exec" and not args.command:
         parser.error("'exec' 命令需要 --command/-c 参数")
+
+    # --shell 只对 subprocess 后端有意义：pty 模式下命令不经 shell 执行，
+    # 静默忽略会让用户以为命令跑在指定 shell 里，故直接报错（文档声明互斥）。
+    if args.subcmd == "exec" and args.pty and args.shell:
+        parser.error("--pty 与 --shell 互斥：真实终端模式不经 shell 执行命令")
+
+    # --force-pty-mode 仅在 --pty 下生效，单独使用无意义（与 idle-after-first-output
+    # 一样只提示不报错：不会导致错误行为，只是选项被忽略）
+    if args.subcmd == "exec" and args.force_pty_mode and not args.pty:
+        print(
+            "--force-pty-mode 需要配合 --pty 使用，subprocess 模式下无效（已忽略）",
+            file=sys.stderr,
+        )
 
     # 验证 send 命令的参数（空字符串是合法输入：只提交一个行尾）
     if args.subcmd == "send" and args.input is None:

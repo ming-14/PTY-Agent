@@ -3,11 +3,9 @@
 测试进程监控器的状态管理、崩溃检测、IOCP 通知排空，以及 GUI 检测器的节流和事件发布。
 """
 
-import pytest
 
 from src.session.process.monitor import ProcessMonitor
 from src.session.process.gui import GuiDetector
-from src.session.output.events import PendingEvent
 
 
 class TestProcessMonitorInit:

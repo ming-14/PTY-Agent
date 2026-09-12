@@ -113,6 +113,7 @@ _CreateProcess = _api("CreateProcessW", W.BOOL,
      ctypes.c_void_p, W.LPCWSTR, ctypes.c_void_p, ctypes.c_void_p])
 _GetExitCodeProcess = _api("GetExitCodeProcess", W.BOOL,
     [W.HANDLE, ctypes.POINTER(W.DWORD)])
+_GetProcessId = _api("GetProcessId", W.DWORD, [W.HANDLE])
 
 # ---- Job Object ----
 _CreateJobObjectW = _api("CreateJobObjectW", W.HANDLE,

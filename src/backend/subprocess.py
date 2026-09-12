@@ -7,17 +7,18 @@ import ctypes
 import os
 import shutil
 import subprocess
+import threading
 import logging
 from typing import Optional, List
 from ctypes import wintypes as W
 
 from .base import Backend, ProcessEvent
-from ..config import IS_WINDOWS
+from ..config import IS_WINDOWS, READ_SIZE
 
 if IS_WINDOWS:
     from .windows.job import ProcessJob
     from .windows.gui_monitor import GuiWindowMonitor
-    from .windows.convars import K, _CloseHandle, _SetThreadErrorMode
+    from .windows.convars import K, _SetThreadErrorMode
 
 # ── Windows 错误模式常量（禁止子进程弹出崩溃对话框）──
 _SEM_FAILCRITICALERRORS     = 0x0001   # 禁止 critical-error-handler 消息框
@@ -29,26 +30,48 @@ _SW_HIDE                    = 0
 
 _logger = logging.getLogger("backend-subprocess")
 
+# ── 进程级错误模式（全进程只设一次）──
+_ERR_MODE_LOCK = threading.Lock()
+_ERR_MODE_DONE = False
+
+
+def _silence_process_error_dialogs() -> None:
+    """进程级屏蔽崩溃对话框（新建的子进程会继承该设置）
+
+    SetErrorMode 是**进程全局**的：若放在"每次创建后端"的路径上做
+    保存/恢复，并发启动多个 Session 时两个线程会交错 —— 后恢复的一方拿到
+    的是已被对方改过的"旧值"，错误模式可能永久停在被改后的状态。
+    因此这里只做一次、永不回滚。线程级设置（SetThreadErrorMode）仍按
+    每次创建单独保存/恢复，线程之间互不影响。
+    """
+    global _ERR_MODE_DONE
+    if _ERR_MODE_DONE:
+        return
+    with _ERR_MODE_LOCK:
+        if _ERR_MODE_DONE:
+            return
+        try:
+            K.SetErrorMode(_SEM_NOGPFAULTERRORBOX | _SEM_FAILCRITICALERRORS
+                           | _SEM_NOOPENFILEERRORBOX)
+            _ERR_MODE_DONE = True
+        except Exception:
+            pass
+
 
 def detect_available_shells() -> dict:
-    """检测当前环境可用的 shell 解释器
+    """检测当前环境可用的 shell 解释器（按平台映射逐项检测）
 
     Returns:
         字典，键为 shell 名称，值为可执行文件路径（不可用则为 None）。
-        例如: {"cmd": "C:\\Windows\\System32\\cmd.exe", "powershell": None, ...}
+        例如（Windows）: {"cmd": "C:\\Windows\\System32\\cmd.exe",
+                         "powershell": None, ...}
     """
+    # 映射值为 None 的解释器由 shell=True 承担，检测其隐含的可执行文件
+    shell_true_exe = "cmd.exe" if IS_WINDOWS else "sh"
     result = {}
-    # cmd 在 Windows 上始终可用
-    if IS_WINDOWS:
-        cmd_path = shutil.which("cmd.exe")
-        result["cmd"] = cmd_path or "cmd.exe"
-    for name, spec in SubprocessBackend._SHELL_MAP.items():
-        if name == "cmd":
-            continue
-        if spec is None:
-            continue
-        exe = spec[0]
-        result[name] = shutil.which(exe)
+    for name, spec in SubprocessBackend.shell_map().items():
+        exe = shell_true_exe if spec is None else spec[0]
+        result[name] = shutil.which(exe) or (exe if spec is None else None)
     return result
 
 
@@ -76,13 +99,57 @@ class SubprocessBackend(Backend):
     回退至 cmd.exe，可通过 shell 参数切换解释器。
     """
 
-    # 可选解释器映射：解释器名 → [可执行文件, 命令参数]
-    _SHELL_MAP = {
+    # 可选解释器映射：解释器名 → [可执行文件, 命令参数]；None 表示交给 shell=True。
+    # Windows：cmd → shell=True（即 cmd.exe）
+    _WINDOWS_SHELL_MAP = {
         "cmd":        None,                         # subprocess shell=True → cmd.exe
         "powershell": ["powershell.exe", "-Command"],
         "pwsh":       ["pwsh.exe",      "-Command"],
         "bash":       ["bash.exe",      "-c"],
     }
+    # POSIX：无 cmd 概念，默认 shell=True 即 /bin/sh；显式 sh 同义
+    _POSIX_SHELL_MAP = {
+        "sh":         None,                         # subprocess shell=True → /bin/sh
+        "bash":       ["bash",         "-c"],
+        "pwsh":       ["pwsh",         "-Command"],
+        "powershell": ["powershell",   "-Command"],
+    }
+
+    @classmethod
+    def shell_map(cls) -> dict:
+        """当前平台支持的 解释器名 → spec 映射"""
+        return cls._WINDOWS_SHELL_MAP if IS_WINDOWS else cls._POSIX_SHELL_MAP
+
+    @classmethod
+    def shell_choices(cls) -> tuple:
+        """当前平台支持的 `--shell` 取值"""
+        return tuple(cls.shell_map().keys())
+
+    @classmethod
+    def _resolve_shell_spec(cls, shell: Optional[str]):
+        """把 --shell 取值解析为 [可执行文件, 参数]；None 表示走 shell=True
+
+        Args:
+            shell: 用户指定的解释器名，None 表示未指定（用平台默认）。
+
+        Returns:
+            [可执行文件, 命令参数] 或 None。
+
+        Raises:
+            RuntimeError: 指定了当前平台不支持的解释器。
+        """
+        shell_map = cls.shell_map()
+        if shell:
+            if shell not in shell_map:
+                raise RuntimeError(
+                    f"当前平台不支持 shell '{shell}'"
+                    f"（可用: {', '.join(shell_map)}）"
+                )
+            return shell_map[shell]
+        if IS_WINDOWS:
+            # 未指定：优先 powershell，不可用时回退 cmd（shell=True）
+            return shell_map[cls._resolve_default_shell()]
+        return None
 
     @classmethod
     def _resolve_default_shell(cls) -> str:
@@ -104,11 +171,11 @@ class SubprocessBackend(Backend):
         # 显式继承环境变量，确保 PATH 等关键变量的传递
         # subprocess.Popen(env=None) 在部分平台/场景下行为有差异
         child_env = os.environ.copy() if env is None else env
-        # 禁止进程崩溃弹出对话框（如 as.exe 的"应用程序错误"）
-        # 使崩溃进程直接退出并返回 NTSTATUS 退出码
-        # SetThreadErrorMode 和 SetErrorMode 同时调用确保子进程继承
+        # 禁止子进程崩溃时弹出对话框（如 as.exe 的"应用程序错误"），使崩溃
+        # 进程直接退出并返回 NTSTATUS 退出码。CreateProcess 由本线程发起，
+        # 子进程继承本线程的错误模式，故线程级设置用完即恢复；进程级设置
+        # 一次性完成（见 _silence_process_error_dialogs 的说明）。
         old_mode_thread = None
-        old_mode_process = None
         if IS_WINDOWS:
             try:
                 err_flags = (_SEM_NOGPFAULTERRORBOX | _SEM_FAILCRITICALERRORS
@@ -116,8 +183,7 @@ class SubprocessBackend(Backend):
                 prev_t = W.DWORD(0)
                 if _SetThreadErrorMode(err_flags, ctypes.byref(prev_t)):
                     old_mode_thread = prev_t.value
-                # SetErrorMode 是进程级设置，子进程会继承
-                old_mode_process = K.SetErrorMode(err_flags)
+                _silence_process_error_dialogs()
             except Exception:
                 pass
         try:
@@ -126,87 +192,80 @@ class SubprocessBackend(Backend):
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= _STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = _SW_HIDE
-            if use_shell and IS_WINDOWS:
-                # 处理 --shell 参数：选择指定的解释器
-                # 默认优先使用 powershell，不可用时回退至 cmd.exe
-                effective_shell = shell if shell else self._resolve_default_shell()
-                shell_spec = self._SHELL_MAP.get(effective_shell)
-                if shell_spec is None:
-                    # cmd.exe：shell=True
-                    _logger.info("Popen(shell=True) command=%r", command[:200])
-                    self._proc = subprocess.Popen(
-                        command,
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        shell=True,
-                        env=child_env,
-                        cwd=cwd,
-                        bufsize=0,
-                        creationflags=_CREATE_NO_WINDOW,
-                        startupinfo=startupinfo,
-                    )
-                else:
-                    # 指定解释器（powershell/pwsh/bash）：构建命令行列表，shell=False
-                    shell_exe, shell_arg = shell_spec
-                    full_cmd = [shell_exe, shell_arg, command]
-                    _logger.info("Popen(shell=%s) cmd=%r", effective_shell, full_cmd)
-                    self._proc = subprocess.Popen(
-                        full_cmd,
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        shell=False,
-                        env=child_env,
-                        cwd=cwd,
-                        bufsize=0,
-                        creationflags=_CREATE_NO_WINDOW,
-                        startupinfo=startupinfo,
-                    )
+
+            # 三种情形（shell=True / 指定解释器列表 / 列表命令）共用一次 Popen 调用，
+            # 避免此前"Windows 分支 + 通用分支"两份近似代码各说各话
+            popen_kwargs = {
+                "stdin": subprocess.PIPE,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.STDOUT,
+                "env": child_env,
+                "cwd": cwd,
+                "bufsize": 0,
+                "startupinfo": startupinfo,
+            }
+            if IS_WINDOWS:
+                popen_kwargs["creationflags"] = _CREATE_NO_WINDOW
+
+            if not use_shell:
+                # 列表命令：直接执行，不经过任何 shell
+                target = command
+                popen_kwargs["shell"] = False
             else:
-                _logger.info("Popen(shell=%s) command=%r", use_shell, command)
-                self._proc = subprocess.Popen(
-                    command,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    shell=use_shell,
-                    env=child_env,
-                    cwd=cwd,
-                    bufsize=0,
-                    creationflags=_CREATE_NO_WINDOW if IS_WINDOWS else 0,
-                    startupinfo=startupinfo,
-                )
+                shell_spec = self._resolve_shell_spec(shell)
+                if shell_spec is None:
+                    # cmd（Windows）/ /bin/sh（POSIX）：交给 shell=True
+                    target = command
+                    popen_kwargs["shell"] = True
+                    _logger.info("Popen(shell=True) command=%r", command[:200])
+                else:
+                    # 指定解释器：构建命令行列表，shell=False
+                    shell_exe, shell_arg = shell_spec
+                    target = [shell_exe, shell_arg, command]
+                    popen_kwargs["shell"] = False
+                    _logger.info("Popen(shell=%r) cmd=%r", shell, target)
+
+            self._proc = subprocess.Popen(target, **popen_kwargs)
             _logger.info("Popen OK pid=%d", self._proc.pid)
         finally:
-            # 恢复原始错误模式
-            if IS_WINDOWS:
+            # 只恢复本线程的错误模式；进程级设置是一次性的，不在此回滚
+            if IS_WINDOWS and old_mode_thread is not None:
                 try:
-                    if old_mode_thread is not None:
-                        _SetThreadErrorMode(old_mode_thread, None)
-                    if old_mode_process is not None:
-                        K.SetErrorMode(old_mode_process)
+                    _SetThreadErrorMode(old_mode_thread, None)
                 except Exception:
                     pass
         self._child_pid = self._proc.pid
 
         # Job Object：追踪整个进程树，检测子/孙进程崩溃
         self._job = ProcessJob(name=f"subproc-{id(self)}") if IS_WINDOWS else None
-        if self._job and self._proc.pid:
-            try:
-                PROCESS_ALL_ACCESS = 0x1F0FFF
-                hproc = K.OpenProcess(PROCESS_ALL_ACCESS, False, self._proc.pid)
-                _logger.info("OpenProcess(pid=%d) hproc=%s", self._proc.pid, hproc)
-                if hproc:
-                    self._job.assign(hproc)
-                    _logger.info("Job assign OK")
-                    _CloseHandle(hproc)
-            except Exception as e:
-                _logger.warning("Job assign failed: %s", e)
+        if self._job:
+            self._assign_to_job()
         # GUI 窗口检测器（基于 Job 进程树）
         self._gui_monitor = GuiWindowMonitor(job=self._job) if IS_WINDOWS else None
 
-    def read(self, n: int = 65536) -> bytes:
+    def _assign_to_job(self):
+        """把子进程放进 Job Object（KILL_ON_JOB_CLOSE + IOCP 通知）
+
+        必须使用 CreateProcess 返回的原生句柄（Popen._handle），**不能**按 PID
+        再 OpenProcess：子进程可能已经退出且 PID 被系统复用，那样会把一个无关
+        进程拉进带 KILL_ON_JOB_CLOSE 的 Job —— Job 句柄关闭时就会杀掉那个无辜
+        进程（轻则误伤用户程序，重则连带宿主/CI runner 一起没了）。
+        句柄由 Popen 自己关闭，这里绝不 CloseHandle。
+        """
+        handle = getattr(self._proc, "_handle", None)
+        # MagicMock 之类的替身（测试里 Popen 被 patch）不是真句柄，直接跳过
+        if not isinstance(handle, int) or handle <= 0:
+            _logger.debug("Job assign 跳过：无可用原生句柄")
+            return
+        try:
+            if self._job.assign(handle, expected_pid=self._proc.pid):
+                _logger.info("Job assign OK pid=%d", self._proc.pid)
+            else:
+                _logger.warning("Job assign 失败 pid=%d", self._proc.pid)
+        except Exception as e:
+            _logger.warning("Job assign 异常 pid=%d: %s", self._proc.pid, e)
+
+    def read(self, n: int = READ_SIZE) -> bytes:
         """读取子进程输出
 
         close() 会先关闭 stdout 管道，导致此处阻塞的 read() 立即返回 b""（EOF），
@@ -226,7 +285,7 @@ class SubprocessBackend(Backend):
             # 管道在读取过程中被关闭（如 close() 在另一线程调用）
             return b""
 
-    def drain(self, max_bytes: int = 65536) -> bytes:
+    def drain(self, max_bytes: int = READ_SIZE) -> bytes:
         """排空管道缓冲区
 
         阻塞模式下无法实现真正的非阻塞排空，使用基类默认实现。

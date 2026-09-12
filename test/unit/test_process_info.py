@@ -1,17 +1,20 @@
 """进程信息工具函数单元测试
 
-测试 _get_process_name、_format_exit_code_message、_signal_name、_format_pty_error。
+测试 session.process.info 的 _get_process_name / _get_process_path /
+_format_backend_error，以及（经进程子包转出的）backend.errors 退出码与信号格式化。
 """
 
 import sys
 import pytest
 
+from src.backend.errors import (
+    format_exit_code_message as _format_exit_code_message,
+    signal_name as _signal_name,
+)
 from src.session.process.info import (
     _get_process_name,
     _get_process_path,
-    _format_exit_code_message,
-    _signal_name,
-    _format_pty_error,
+    _format_backend_error,
 )
 
 
@@ -88,11 +91,11 @@ class TestSignalName:
 
 
 class TestFormatPtyError:
-    """_format_pty_error 测试"""
+    """_format_backend_error 测试"""
 
     def test_generic_exception(self):
         """通用异常返回字符串"""
-        msg = _format_pty_error(RuntimeError("test error"))
+        msg = _format_backend_error(RuntimeError("test error"))
         assert "test error" in msg
 
     def test_oserror_on_windows(self):
@@ -100,5 +103,5 @@ class TestFormatPtyError:
         if sys.platform != "win32":
             pytest.skip("Windows 专用测试")
         err = OSError(2, "No such file")
-        msg = _format_pty_error(err)
+        msg = _format_backend_error(err)
         assert isinstance(msg, str)

@@ -5,12 +5,16 @@
 
 重要：KILL_ON_JOB_CLOSE 是自动设置的，因此不要在 Job 中添加当前进程！
 所有测试只将子进程分配到 Job 中。
+
+分配一律用 `Popen._handle`（CreateProcess 亲手返回的句柄）+ `expected_pid`
+校验，**不要** `OpenProcess(PROCESS_ALL_ACCESS, pid)`：子进程若已退出且 PID
+被系统复用，就会把无关进程放进 kill-Job，关 Job 时误杀它（可能是别的用户程序、
+甚至跑测试的宿主/CI runner）。
 """
 
 import sys
 import ctypes
 import pytest
-from typing import List
 
 pytestmark = [
     pytest.mark.skipif(sys.platform != "win32",
@@ -71,7 +75,6 @@ class TestProcessJobAssign:
         """分配子进程后可在 Job 进程列表中查到"""
         import subprocess
         from src.backend.windows.job import ProcessJob
-        from src.backend.windows.convars import K, _CloseHandle
 
         j = ProcessJob(name="test-assign-subproc")
         try:
@@ -80,12 +83,8 @@ class TestProcessJobAssign:
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
             try:
-                PROCESS_ALL_ACCESS = 0x1F0FFF
-                hproc = K.OpenProcess(PROCESS_ALL_ACCESS, False, proc.pid)
-                assert hproc, f"OpenProcess 失败: err={ctypes.get_last_error()}"
-                ok = j.assign(hproc)
+                ok = j.assign(proc._handle, expected_pid=proc.pid)
                 assert ok, f"AssignProcessToJobObject 失败: err={ctypes.get_last_error()}"
-                _CloseHandle(hproc)
 
                 pids = j.query_process_list()
                 assert proc.pid in pids, f"PID {proc.pid} 不在列表中: {pids}"
@@ -100,6 +99,32 @@ class TestProcessJobAssign:
         ok = job.assign(0)
         assert ok is False
 
+    def test_assign_rejects_pid_mismatch(self):
+        """expected_pid 与句柄实际归属不符 → 拒绝分配
+
+        守的是最坏事故：子进程已退出、PID 被复用后，句柄指向无关进程；
+        放进 KILL_ON_JOB_CLOSE 的 Job 再关句柄就会误杀那个进程。
+        这里用"自己的子进程句柄 + 故意写错的 PID"触发校验分支。
+        """
+        import subprocess
+        from src.backend.windows.job import ProcessJob
+
+        j = ProcessJob(name="test-pid-mismatch")
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(5)"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        try:
+            assert j.assign(proc._handle, expected_pid=proc.pid + 1) is False
+            # 关键：被拒绝的进程没有进 Job，因此关 Job 不会动它
+            assert proc.pid not in j.query_process_list()
+            # 对照：期望 PID 正确时能分配成功
+            assert j.assign(proc._handle, expected_pid=proc.pid) is True
+        finally:
+            j.close()          # 这里只会杀掉我们自己放进 Job 的子进程
+            proc.terminate()
+            proc.wait()
+
 
 class TestProcessJobSubprocess:
     """涉及子进程的 Job Object 测试"""
@@ -108,7 +133,6 @@ class TestProcessJobSubprocess:
         """启动子进程后可在 Job 进程列表中查到（独立 Job 实例）"""
         import subprocess
         from src.backend.windows.job import ProcessJob
-        from src.backend.windows.convars import K, _CloseHandle
 
         j = ProcessJob(name="test-spawn-query")
         proc = subprocess.Popen(
@@ -116,11 +140,7 @@ class TestProcessJobSubprocess:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         try:
-            PROCESS_ALL_ACCESS = 0x1F0FFF
-            hproc = K.OpenProcess(PROCESS_ALL_ACCESS, False, proc.pid)
-            if hproc:
-                j.assign(hproc)
-                _CloseHandle(hproc)
+            j.assign(proc._handle, expected_pid=proc.pid)
             pids = j.query_process_list()
             assert proc.pid in pids
         finally:
@@ -132,7 +152,6 @@ class TestProcessJobSubprocess:
         """KILL_ON_JOB_CLOSE：关闭 Job 后子进程应被终止"""
         import subprocess
         from src.backend.windows.job import ProcessJob
-        from src.backend.windows.convars import K, _CloseHandle
 
         j = ProcessJob(name="test-kill-on-close")
         proc = subprocess.Popen(
@@ -140,11 +159,7 @@ class TestProcessJobSubprocess:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         try:
-            PROCESS_ALL_ACCESS = 0x1F0FFF
-            hproc = K.OpenProcess(PROCESS_ALL_ACCESS, False, proc.pid)
-            if hproc:
-                j.assign(hproc)
-                _CloseHandle(hproc)
+            assert j.assign(proc._handle, expected_pid=proc.pid)
             j.close()  # 关闭 Job → 子进程应被终止
             proc.wait(timeout=5)
             assert proc.returncode is not None

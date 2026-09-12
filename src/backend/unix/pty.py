@@ -14,6 +14,7 @@ import signal
 from typing import List, Optional
 
 from ..base import Backend, ProcessEvent
+from ...config import READ_SIZE
 
 _logger = logging.getLogger("backend-unix")
 
@@ -73,7 +74,7 @@ class UnixTtyBackend(Backend):
 
     # ── I/O ──
 
-    def read(self, n: int = 65536) -> bytes:
+    def read(self, n: int = READ_SIZE) -> bytes:
         try:
             data = os.read(self._master, n)
             if data:
@@ -85,7 +86,7 @@ class UnixTtyBackend(Backend):
             _logger.warning("read error: %s", e)
             raise
 
-    def drain(self, max_bytes: int = 65536) -> bytes:
+    def drain(self, max_bytes: int = READ_SIZE) -> bytes:
         """排空 PTY master 中当前所有就绪数据（非阻塞 os.read 循环）"""
         chunks = []
         total = 0

@@ -5,7 +5,6 @@
 
 import time
 import threading
-import pytest
 from datetime import datetime
 
 from src.session.output.events import EventHistoryManager, PendingEvent, _events_to_dicts

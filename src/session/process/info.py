@@ -1,18 +1,16 @@
 """进程信息查询与错误消息格式化
 
 提供按 PID 查询进程可执行文件名/路径的工具函数，
-以及进程退出码和 PTY 创建失败的错误消息格式化。
+以及 PTY 创建失败的错误消息格式化。
 
-退出码格式化统一委托 pty/errors.py（跨平台单一实现），
-本模块仅保留 Windows 特有的 PTY 创建错误翻译。
+退出码 / 信号的格式化统一委托 backend/errors.py（跨平台单一实现），
+不经本模块中转；本模块只保留 Windows 特有的创建错误翻译。
 """
 
 import os
 import logging
 
 from ...config import IS_WINDOWS
-from ...backend.errors import format_exit_code_message as _format_exit_code_message
-from ...backend.errors import signal_name as _signal_name
 
 _logger = logging.getLogger("pty-session")
 
@@ -95,13 +93,14 @@ def _get_process_path(pid: int) -> str:
 # ── 错误消息格式化 ──
 
 
-def _format_pty_error(exception: Exception) -> str:
-    """格式化 PTY 创建失败的异常为可读的错误消息
+def _format_backend_error(exception: Exception) -> str:
+    """格式化后端创建失败的异常为可读错误消息
 
-    在 Windows 上尝试翻译 OSError 中的错误码。
+    两种后端共用（subprocess 管道 / TTY 真实终端）：Windows 上尝试把
+    OSError 里的系统错误码翻译成可读文案，其余情况原样返回异常文本。
 
     Args:
-        exception: PTY 创建时抛出的异常。
+        exception: 创建后端时抛出的异常。
 
     Returns:
         可读的错误描述字符串。

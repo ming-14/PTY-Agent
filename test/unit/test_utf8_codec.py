@@ -3,7 +3,6 @@
 测试 decode_utf8 和 _utf8_trim_tail 纯函数。
 """
 
-import pytest
 
 from src.session.encoding.codec import decode_utf8, _utf8_trim_tail
 

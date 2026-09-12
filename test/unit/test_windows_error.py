@@ -6,8 +6,6 @@
 这些测试是跨平台的——所有映射基于静态符号名称表，不依赖 Windows API。
 """
 
-import sys
-import pytest
 
 from src.backend.windows.error_msg import (
     translate_windows_error,

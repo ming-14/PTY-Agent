@@ -7,8 +7,7 @@ from ctypes import wintypes as W
 from typing import Optional, List
 
 from ..base import Backend, ProcessEvent
-
-_logger = logging.getLogger("backend-windows")
+from ...config import READ_SIZE
 from .convars import (
     K,
     _CreatePseudoConsole,
@@ -30,6 +29,8 @@ from .convars import (
 from .error_msg import STILL_ACTIVE
 from .job import ProcessJob
 from .gui_monitor import GuiWindowMonitor
+
+_logger = logging.getLogger("backend-windows")
 
 
 class WinTtyBackend(Backend):
@@ -104,8 +105,10 @@ class WinTtyBackend(Backend):
         self._ph = pi.hProcess
         _logger.info("CreateProcessW OK pid=%d", self._child_pid)
         _CloseHandle(pi.hThread)
-        # 将子进程分配到 Job Object
-        self._job.assign(pi.hProcess)
+        # 将子进程分配到 Job Object（带 expected_pid 校验：这个 Job 是
+        # KILL_ON_JOB_CLOSE 的，误放别的进程进去关 Job 就会杀掉它）
+        if not self._job.assign(pi.hProcess, expected_pid=pi.dwProcessId):
+            _logger.warning("Job assign 失败 pid=%d", pi.dwProcessId)
 
         # CreatePseudoConsole 内部持有 self._inR 和 self._outW 的副本。
         # 关闭父进程中的副本，使子进程退出时管道写端全部关闭。
@@ -118,7 +121,7 @@ class WinTtyBackend(Backend):
             _ClosePseudoConsole(self._hpc)
             self._hpc = None
 
-    def read(self, n: int = 65536) -> bytes:
+    def read(self, n: int = READ_SIZE) -> bytes:
         buf = ctypes.create_string_buffer(n)
         br = W.DWORD(0)
         if not _ReadFile(self._outR, buf, n, ctypes.byref(br), None):
@@ -132,7 +135,7 @@ class WinTtyBackend(Backend):
             _logger.debug("read: %d bytes", br.value)
         return buf.raw[:br.value]
 
-    def drain(self, max_bytes: int = 65536) -> bytes:
+    def drain(self, max_bytes: int = READ_SIZE) -> bytes:
         """排空管道输出缓冲区中当前所有就绪数据（基于 PeekNamedPipe 非阻塞检查）"""
         chunks = []
         total = 0

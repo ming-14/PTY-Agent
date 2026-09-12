@@ -1,57 +1,81 @@
 """SubprocessBackend 解释器选择测试
 
-验证 --shell 参数能否正确切换命令解释器（cmd/powershell/pwsh/bash）。
+验证 --shell 参数能否正确切换命令解释器（按平台提供的映射）。
 """
 
+import functools
+import shutil
+import subprocess
 import sys
 import pytest
 
 from src.backend.subprocess import SubprocessBackend
 
 
+@functools.lru_cache(maxsize=None)
+def _shell_executable(exe: str, arg: str) -> bool:
+    """解释器是否存在且确实能跑一条命令（每个解释器只探测一次）
+
+    "在 PATH 里"不等于"可用"：例如 WSL 未初始化时 bash.exe 存在但会挂住。
+    探测失败/超时 → False，让相关用例 skip 而非让套件变红。
+    """
+    if not shutil.which(exe):
+        return False
+    try:
+        proc = subprocess.run(
+            [exe, arg, "echo ok"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
 class TestSubprocessShellSelection:
     """SubprocessBackend shell 选择测试
 
-    验证 _SHELL_MAP 映射、shell=None 默认行为、指定 shell 的 Popen 构建。
+    验证平台映射（shell_map / shell_choices）、shell=None 默认行为、
+    指定 shell 的 Popen 构建。
     """
 
-    def test_shell_map_contains_expected_keys(self):
-        """_SHELL_MAP 包含所有预期的解释器"""
-        assert "cmd" in SubprocessBackend._SHELL_MAP
-        assert "powershell" in SubprocessBackend._SHELL_MAP
-        assert "pwsh" in SubprocessBackend._SHELL_MAP
-        assert "bash" in SubprocessBackend._SHELL_MAP
+    # 解释器名 → 期望的命令参数（None 表示交给 shell=True）
+    KNOWN_SHELLS = {"cmd": None, "sh": None, "powershell": "-Command",
+                    "pwsh": "-Command", "bash": "-c"}
 
-    def test_shell_map_cmd_is_none(self):
-        """cmd 映射为 None → 使用 shell=True"""
-        assert SubprocessBackend._SHELL_MAP["cmd"] is None
+    def test_shell_map_non_empty_and_known(self):
+        """当前平台映射非空，且只含已知解释器"""
+        shell_map = SubprocessBackend.shell_map()
+        assert shell_map
+        assert set(shell_map) <= set(self.KNOWN_SHELLS)
 
-    def test_shell_map_powershell_format(self):
-        """powershell 映射为 [powershell.exe, -Command]"""
-        spec = SubprocessBackend._SHELL_MAP["powershell"]
+    def test_shell_true_entry_maps_to_none(self):
+        """cmd（Windows）/ sh（POSIX）映射为 None → 由 shell=True 承担"""
+        shell_true = "cmd" if sys.platform == "win32" else "sh"
+        assert SubprocessBackend.shell_map()[shell_true] is None
+
+    @pytest.mark.parametrize("name", ["powershell", "pwsh", "bash"])
+    def test_explicit_shell_spec_format(self, name):
+        """显式解释器映射为 [可执行文件, 参数]，参数按平台约定"""
+        spec = SubprocessBackend.shell_map()[name]
         assert isinstance(spec, list)
         assert len(spec) == 2
-        assert "powershell" in spec[0].lower()
-        assert spec[1] == "-Command"
+        assert name in spec[0].lower()
+        assert spec[1] == self.KNOWN_SHELLS[name]
 
-    def test_shell_map_pwsh_format(self):
-        """pwsh 映射为 [pwsh.exe, -Command]"""
-        spec = SubprocessBackend._SHELL_MAP["pwsh"]
-        assert isinstance(spec, list)
-        assert len(spec) == 2
-        assert "pwsh" in spec[0].lower()
-        assert spec[1] == "-Command"
+    def test_shell_choices_match_map(self):
+        """shell_choices 与 shell_map 一致（CLI 提示与实际支持同源）"""
+        assert SubprocessBackend.shell_choices() == tuple(
+            SubprocessBackend.shell_map())
 
-    def test_shell_map_bash_format(self):
-        """bash 映射为 [bash.exe, -c]"""
-        spec = SubprocessBackend._SHELL_MAP["bash"]
-        assert isinstance(spec, list)
-        assert len(spec) == 2
-        assert "bash" in spec[0].lower()
-        assert spec[1] == "-c"
+    def test_unsupported_shell_raises_not_silently_switches(self):
+        """平台不支持的解释器名 → 明确报错，绝不静默换成别的解释器"""
+        with pytest.raises(RuntimeError):
+            SubprocessBackend("echo hi", shell="definitely-not-a-shell")
 
-    def test_default_shell_is_none(self):
-        """shell 参数默认为 None → 使用 cmd.exe（shell=True）"""
+    def test_list_command_never_uses_shell(self):
+        """列表命令 → shell=False，原样执行"""
         pty = SubprocessBackend(
             [sys.executable, "-c", "import sys; sys.exit(0)"],
         )
@@ -63,10 +87,11 @@ class TestSubprocessShellSelection:
         finally:
             pty.close()
 
-    def test_shell_cmd_on_string_command(self):
-        """shell='cmd' 且命令为字符串 → 使用 shell=True"""
+    def test_shell_true_name_on_string_command(self):
+        """平台自带的 shell=True 解释器（Windows cmd / POSIX sh）→ 命令保持字符串"""
+        shell_true = "cmd" if sys.platform == "win32" else "sh"
         pty = SubprocessBackend(
-            "echo hello", cols=80, rows=24, shell="cmd",
+            "echo hello", cols=80, rows=24, shell=shell_true,
         )
         try:
             pty._proc.wait(timeout=5)
@@ -75,83 +100,28 @@ class TestSubprocessShellSelection:
         finally:
             pty.close()
 
-    @pytest.mark.skipif(
-        sys.platform != "win32",
-        reason="非 cmd 的 shell 映射仅 Windows 生效",
-    )
-    def test_shell_powershell_constructs_list(self):
-        """shell='powershell' 时构建 [powershell.exe, -Command, command] 列表"""
-        import shutil
-        if not shutil.which("powershell"):
-            pytest.skip("powershell.exe 不在 PATH 中")
-        pty = SubprocessBackend(
-            "echo hello", cols=80, rows=24, shell="powershell",
-        )
+    @pytest.mark.parametrize("name,fragment,flag", [
+        ("powershell", "powershell", "-Command"),
+        ("pwsh", "pwsh", "-Command"),
+        ("bash", "bash", "-c"),
+    ])
+    def test_explicit_shell_constructs_list(self, name, fragment, flag):
+        """显式解释器 → 构建 [可执行文件, 参数, command] 列表（shell=False）
+
+        只校验构建出的命令行，不等待解释器真的跑完；本机解释器缺失或
+        坏掉（如 WSL 未初始化时 bash.exe 会挂住）时跳过，而不是让套件红。
+        """
+        spec = SubprocessBackend.shell_map()[name]
+        if not _shell_executable(spec[0], spec[1]):
+            pytest.skip(f"{spec[0]} 在本机不可执行")
+        pty = SubprocessBackend("echo hello", cols=80, rows=24, shell=name)
         try:
             args = pty._proc.args
             assert isinstance(args, list)
             assert len(args) == 3
-            assert "powershell" in args[0].lower()
-            assert args[1] == "-Command"
+            assert fragment in args[0].lower()
+            assert args[1] == flag
             assert args[2] == "echo hello"
-        finally:
-            pty.close()
-
-    @pytest.mark.skipif(
-        sys.platform != "win32",
-        reason="非 cmd 的 shell 映射仅 Windows 生效",
-    )
-    def test_shell_pwsh_constructs_list(self):
-        """shell='pwsh' 时构建 [pwsh.exe, -Command, command] 列表"""
-        import shutil
-        if not shutil.which("pwsh"):
-            pytest.skip("pwsh.exe 不在 PATH 中")
-        pty = SubprocessBackend(
-            "echo hello", cols=80, rows=24, shell="pwsh",
-        )
-        try:
-            pty._proc.wait(timeout=5)
-            args = pty._proc.args
-            assert isinstance(args, list)
-            assert len(args) == 3
-            assert "pwsh" in args[0].lower()
-            assert args[1] == "-Command"
-            assert args[2] == "echo hello"
-        finally:
-            pty.close()
-
-    @pytest.mark.skipif(
-        sys.platform != "win32",
-        reason="非 cmd 的 shell 映射仅 Windows 生效",
-    )
-    def test_shell_bash_constructs_list(self):
-        """shell='bash' 时构建 [bash.exe, -c, command] 列表"""
-        import shutil
-        if not shutil.which("bash"):
-            pytest.skip("bash.exe 不在 PATH 中")
-        pty = SubprocessBackend(
-            "echo hello", cols=80, rows=24, shell="bash",
-        )
-        try:
-            pty._proc.wait(timeout=5)
-            args = pty._proc.args
-            assert isinstance(args, list)
-            assert len(args) == 3
-            assert "bash" in args[0].lower()
-            assert args[1] == "-c"
-            assert args[2] == "echo hello"
-        finally:
-            pty.close()
-
-    def test_unknown_shell_falls_back_to_cmd(self):
-        """不认识的 shell 值回退到 cmd.exe（shell=True）"""
-        pty = SubprocessBackend(
-            "echo hello", cols=80, rows=24, shell="unknown_shell_name",
-        )
-        try:
-            pty._proc.wait(timeout=5)
-            # 不在 _SHELL_MAP 中 → shell_spec=None → shell=True
-            assert pty._proc.args == "echo hello"
         finally:
             pty.close()
 

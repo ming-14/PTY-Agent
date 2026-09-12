@@ -4,17 +4,21 @@
 client/controller.py，本模块只承载守护进程自身的入口逻辑：
 
 - main()                 守护进程主入口
-- _setup_logging()       文件日志（UTF-8），无控制台输出
+- _setup_logging()       文件日志（UTF-8，RotatingFileHandler 限体积），无控制台输出
 - _hide_console_window() Windows 隐藏控制台窗口
 """
 
 import os
 import sys
 import logging
+from logging.handlers import RotatingFileHandler
 
 from ..config import (
     LOG_DIR,
+    LOG_MAX_BYTES,
+    LOG_BACKUP_COUNT,
     DAEMON_LOG_LEVEL,
+    MANAGED_LOGGERS,
 )
 from ..protocol.daemon_utils import cleanup_shm_resources
 
@@ -22,7 +26,11 @@ _logger = logging.getLogger("pty-daemon")
 
 
 def _safe_print(text: str):
-    """安全打印 UTF-8 文本到 stdout"""
+    """安全打印 UTF-8 文本到 stdout
+
+    与 client/input.py 的 safe_print 同构，但守护进程是独立进程、
+    且不得 import client 层，故保留这份进程内自有的最小实现。
+    """
     try:
         sys.stdout.buffer.write(text.encode("utf-8") + b"\n")
         sys.stdout.buffer.flush()
@@ -42,14 +50,14 @@ def _hide_console_window():
 
 
 def _setup_logging():
-    """配置日志：仅文件输出（UTF-8），无控制台输出"""
+    """配置日志：仅文件输出（UTF-8），无控制台输出
+
+    守护进程是单一长驻写入者，因此用 RotatingFileHandler 控制体积
+    （LOG_MAX_BYTES × (1 + LOG_BACKUP_COUNT)）。
+    """
     level_name = DAEMON_LOG_LEVEL
     if level_name is None:
-        for name in ("pty-daemon", "pty-session", "pty-protocol",
-                     "backend-subprocess", "backend-tty", "backend-factory",
-                     "backend-windows", "backend-unix",
-                     "backend-windows-error", "backend-job",
-                     "backend-gui-monitor", "backend-unix-tracker"):
+        for name in MANAGED_LOGGERS:
             logger = logging.getLogger(name)
             logger.handlers.clear()
             logger.addHandler(logging.NullHandler())
@@ -58,17 +66,15 @@ def _setup_logging():
         return
     os.makedirs(LOG_DIR, exist_ok=True)
     log_file = os.path.join(LOG_DIR, "daemon.log")
-    fh = logging.FileHandler(log_file, encoding="utf-8", mode="a")
+    fh = RotatingFileHandler(log_file, encoding="utf-8", mode="a",
+                             maxBytes=LOG_MAX_BYTES,
+                             backupCount=LOG_BACKUP_COUNT)
     fh.setFormatter(logging.Formatter(
         "[pty-agent:daemon] %(asctime)s [%(levelname)s] %(message)s",
         datefmt="%H:%M:%S",
     ))
     level = getattr(logging, level_name.upper(), logging.DEBUG)
-    for name in ("pty-daemon", "pty-session", "pty-protocol",
-                 "backend-subprocess", "backend-tty", "backend-factory",
-                 "backend-windows", "backend-unix",
-                 "backend-windows-error", "backend-job",
-                 "backend-gui-monitor", "backend-unix-tracker"):
+    for name in MANAGED_LOGGERS:
         logger = logging.getLogger(name)
         logger.handlers.clear()
         logger.addHandler(fh)

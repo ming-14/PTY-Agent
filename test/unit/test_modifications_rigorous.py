@@ -12,16 +12,13 @@
 9. backend.factory 创建入口（create_subprocess / create_tty）
 """
 
-import sys
 import time
-import threading
 from datetime import datetime
 
 import pytest
 from unittest.mock import patch, MagicMock
 
 from src.session.output.events import (
-    EventHistoryManager,
     PendingEvent,
     format_timestamp_iso,
     _events_to_dicts,
@@ -664,7 +661,7 @@ class TestBuildResultStartTime:
 
     def test_process_tree_uses_module_level_import(self):
         """processes 路径查询使用模块级 _get_process_path（循环内不再惰性导入）"""
-        from src.daemon.handler import RequestHandler, _get_process_path
+        from src.daemon.handler import RequestHandler
         import inspect
         src = inspect.getsource(RequestHandler._build_result)
         # 循环内不应再有 from ... import（已移到模块顶部）
@@ -689,7 +686,7 @@ class TestEnsureDaemonDeadline:
         assert "deadline" in src
 
     def test_starts_when_daemon_ready_before_deadline(self):
-        """守护进程在 deadline 内就绪 → 正常返回"""
+        """start_daemon 未报告就绪，但 deadline 内 is_running 变真 → 正常返回"""
         from src.client.controller import ensure_daemon
         calls = {"n": 0}
 
@@ -698,16 +695,27 @@ class TestEnsureDaemonDeadline:
             return calls["n"] >= 3  # 第 3 次就绪
 
         with patch("src.client.controller.is_running", side_effect=is_running), \
-             patch("src.client.controller.start_daemon"), \
+             patch("src.client.controller.start_daemon", return_value=False), \
              patch("src.client.controller.time.sleep"):
             ensure_daemon()  # 不应抛异常
         assert calls["n"] >= 3
+
+    def test_returns_immediately_when_start_daemon_reports_ready(self):
+        """start_daemon 返回 True → 不再二次轮询，立即返回"""
+        from src.client.controller import ensure_daemon
+        with patch("src.client.controller.is_running",
+                   side_effect=[False]) as mock_running, \
+             patch("src.client.controller.start_daemon",
+                   return_value=True) as mock_start:
+            ensure_daemon()  # is_running 只被调用一次，多调用会 StopIteration
+        mock_start.assert_called_once()
+        assert mock_running.call_count == 1
 
     def test_exits_on_timeout(self):
         """deadline 内未就绪 → SystemExit"""
         from src.client.controller import ensure_daemon
         with patch("src.client.controller.is_running", return_value=False), \
-             patch("src.client.controller.start_daemon"), \
+             patch("src.client.controller.start_daemon", return_value=False), \
              patch("src.client.controller.time.sleep"):
             with pytest.raises(SystemExit):
                 ensure_daemon()
@@ -718,13 +726,16 @@ class TestEnsureDaemonDeadline:
         from src.client.controller import ensure_daemon
         sleeps = []
         with patch("src.client.controller.is_running", return_value=False), \
-             patch("src.client.controller.start_daemon"), \
+             patch("src.client.controller.start_daemon", return_value=False), \
              patch("src.client.controller.time.sleep",
                    side_effect=lambda s: sleeps.append(s)):
             with pytest.raises(SystemExit):
                 ensure_daemon()
         assert sleeps  # 确实等待过
         assert sum(sleeps) >= DAEMON_START_TIMEOUT - 0.5  # 约等于配置值
+        # 等待间隔统一取配置值，不再有第二套硬编码间隔
+        from src.config import DAEMON_START_POLL_INTERVAL
+        assert set(sleeps) == {DAEMON_START_POLL_INTERVAL}
 
 
 # ============================================================

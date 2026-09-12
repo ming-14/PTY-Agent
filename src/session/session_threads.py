@@ -12,7 +12,7 @@ import threading
 from dataclasses import dataclass
 from typing import Optional, Callable
 
-from ..config import READ_SIZE
+from ..config import READ_SIZE, EXIT_CODE_POLL_INTERVAL
 from .output import OutputBuffer, TriggerMatcher
 from .process import ProcessMonitor, GuiDetector
 
@@ -234,7 +234,7 @@ def _capture_exit_code_retry(pty, retries: int = 10) -> Optional[int]:
 
     Args:
         pty:     后端实例（提供 get_exit_code 方法）。
-        retries: 最大重试次数（默认 10 次，每次间隔 50ms）。
+        retries: 最大重试次数（默认 10 次，间隔取 EXIT_CODE_POLL_INTERVAL）。
 
     Returns:
         退出码；获取失败时返回 None。
@@ -247,5 +247,5 @@ def _capture_exit_code_retry(pty, retries: int = 10) -> Optional[int]:
         if code is not None:
             return code
         if attempt < retries - 1:
-            time.sleep(0.05)
+            time.sleep(EXIT_CODE_POLL_INTERVAL)
     return None

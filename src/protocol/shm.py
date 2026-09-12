@@ -10,7 +10,7 @@
      PTYAgentResp_{pid}_{seq}），存放 JSON 消息字节
 
 槽位状态机:
-    EMPTY(0) → PENDING(1) → PROCESSING(2) → DONE(3) → EMPTY(0)
+    EMPTY(0) → CLAIMED(4) → PENDING(1) → PROCESSING(2) → DONE(3) → EMPTY(0)
 
 响应数据布局（请求同构）:
     [0:8]   数据长度（ASCII 十进制，8 字节）
@@ -30,6 +30,8 @@ from ..config import (
     MAILBOX_SLOT_COUNT,
     MAILBOX_SLOT_SIZE,
     MAILBOX_SIZE,
+    CLIENT_POLL_INTERVAL,
+    DEFAULT_TRIGGER_TIMEOUT,
 )
 from .shm_utils import (
     open_shm, close_shm, read_bytes, write_bytes,
@@ -197,8 +199,11 @@ class Mailbox:
                 if self._shm is None:
                     close_shm(shm)
 
-    def wait_done(self, slot: int, timeout: float = 120.0) -> bool:
+    def wait_done(self, slot: int,
+                  timeout: float = DEFAULT_TRIGGER_TIMEOUT) -> bool:
         """轮询等待槽位变为 DONE
+
+        轮询间隔取 `config.CLIENT_POLL_INTERVAL`。
 
         Args:
             slot:    槽位索引。
@@ -215,7 +220,7 @@ class Mailbox:
             while time.monotonic() < deadline:
                 if _slot_state(shm, slot) == SLOT_DONE:
                     return True
-                time.sleep(0.01)
+                time.sleep(CLIENT_POLL_INTERVAL)
             return False
         finally:
             if self._shm is None:

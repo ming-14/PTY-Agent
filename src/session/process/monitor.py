@@ -110,7 +110,9 @@ class ProcessMonitor:
             return
         try:
             notifs = pty.get_job_notifications()
-        except (AttributeError, Exception):
+        except Exception as e:
+            # 后端不支持 Job Object（subprocess / Unix）或句柄已关闭：无事件可取
+            _logger.debug("drain_notifications: %s", e)
             return
         if not notifs:
             return

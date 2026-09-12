@@ -6,6 +6,7 @@
 import argparse
 
 import pytest
+from unittest.mock import patch, MagicMock
 
 from src.__main__ import (
     _parse_default_key,
@@ -265,3 +266,179 @@ class TestSendInputOption:
             main()
         assert exc.value.code == 2
         assert "--input/-i" in capsys.readouterr().err
+
+
+class TestCommonOptionsPlacement:
+    """通用选项（--no-debug / --show-config / --default）位置无关性测试"""
+
+    ALL_SUBCMDS = ("start", "stop", "list", "exec", "send", "read",
+                   "remove", "closewin")
+    COMMON_OPTS = ("--no-debug", "--show-config", "--default")
+
+    def _subparsers(self):
+        parser = build_parser()
+        sub = next(a for a in parser._actions
+                   if isinstance(a, argparse._SubParsersAction))
+        return parser, sub.choices
+
+    def test_every_subcommand_accepts_common_options(self):
+        """每个子命令都注册了全部通用选项（与顶层同一组定义）"""
+        parser, choices = self._subparsers()
+        top_opts = {a for a in parser._option_string_actions
+                    if a in self.COMMON_OPTS}
+        assert top_opts == set(self.COMMON_OPTS)
+        for name, sp in choices.items():
+            missing = [o for o in self.COMMON_OPTS
+                       if o not in sp._option_string_actions]
+            assert not missing, f"{name} 缺少通用选项 {missing}"
+
+    def test_no_debug_after_subcommand(self):
+        """--no-debug 放子命令后生效"""
+        parser = build_parser()
+        args = parser.parse_args(["send", "s1", "-i", "x", "--no-debug"])
+        assert args.no_debug is True
+
+    def test_no_debug_before_subcommand_not_clobbered(self):
+        """--no-debug 放子命令前不被子命令默认值覆盖"""
+        parser = build_parser()
+        args = parser.parse_args(["--no-debug", "send", "s1", "-i", "x"])
+        assert args.no_debug is True
+        args = parser.parse_args(["send", "s1", "-i", "x"])
+        assert args.no_debug is False
+
+    def test_show_config_after_subcommand(self):
+        """--show-config 放子命令后可用（不带 KEY 取空串）"""
+        parser = build_parser()
+        args = parser.parse_args(["read", "s1", "--show-config"])
+        assert args.show_config == ""
+        assert args.subcmd == "read"
+        args = parser.parse_args(["read", "s1", "--show-config", "timeout"])
+        assert args.show_config == "timeout"
+
+    def test_default_both_positions_yield_same_key(self):
+        """--default 前后放置结果一致（子命令侧为 SUPPRESS，不覆盖顶层）"""
+        parser = build_parser()
+        before = parser.parse_args(
+            ["--default", "timeout", "30", "send", "s1", "-i", "x"])
+        after = parser.parse_args(
+            ["send", "s1", "-i", "x", "--default", "timeout", "30"])
+        assert before.default == after.default == ["timeout", "30"]
+
+    def test_common_option_help_text_matches_top_level(self):
+        """顶层与子命令的通用选项 help 文案一致（单一来源，不会各说各话）"""
+        parser, choices = self._subparsers()
+        send_parser = choices["send"]
+        for opt in self.COMMON_OPTS:
+            top_help = parser._option_string_actions[opt].help
+            sub_help = send_parser._option_string_actions[opt].help
+            assert top_help == sub_help, f"{opt} 顶层/子命令 help 不一致"
+
+
+class TestExecModeGuards:
+    """exec 的模式相关选项校验"""
+
+    def test_pty_with_shell_rejected(self, monkeypatch, capsys):
+        """--pty 与 --shell 互斥：与文档一致，不再静默忽略 --shell"""
+        monkeypatch.setattr(
+            "sys.argv",
+            ["app.py", "exec", "e", "-c", "python", "--pty", "--shell", "pwsh"],
+        )
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 2
+        assert "互斥" in capsys.readouterr().err
+
+    def test_force_pty_mode_without_pty_warns(self, monkeypatch, capsys):
+        """--force-pty-mode 未配 --pty -> 提示被忽略，但命令照常执行"""
+        client = MagicMock()
+        client.cmd_exec.return_value = {"type": "result"}
+        monkeypatch.setattr(
+            "sys.argv",
+            ["app.py", "exec", "e", "-c", "python", "--force-pty-mode"],
+        )
+        with patch("src.__main__.PtyClient", return_value=client), \
+             patch("src.__main__.print_response"):
+            main()
+        err = capsys.readouterr().err
+        assert "--force-pty-mode" in err
+        client.cmd_exec.assert_called_once()
+
+    def test_force_pty_mode_with_pty_no_warning(self, monkeypatch, capsys):
+        """--pty --force-pty-mode 组合合法，不应出现提示"""
+        client = MagicMock()
+        client.cmd_exec.return_value = {"type": "result"}
+        monkeypatch.setattr(
+            "sys.argv",
+            ["app.py", "exec", "e", "-c", "python", "--pty", "--force-pty-mode"],
+        )
+        with patch("src.__main__.PtyClient", return_value=client), \
+             patch("src.__main__.print_response"):
+            main()
+        assert "--force-pty-mode" not in capsys.readouterr().err
+
+
+class TestNativeArgvAdoption:
+    """Windows 引号截断纠偏的纯函数测试（跨平台可跑）"""
+
+    def test_find_quoted_option_plain_and_inline(self):
+        from src.__main__ import _find_quoted_option
+        assert _find_quoted_option(["app.py", "exec", "t", "-c", "x"]) == 3
+        assert _find_quoted_option(["app.py", "send", "t", "--input=x"]) == 3
+        assert _find_quoted_option(["app.py", "read", "t"]) is None
+        # 非目标选项不算命中
+        assert _find_quoted_option(["app.py", "exec", "t", "-t", "x"]) is None
+
+    def test_find_quoted_option_prefers_first(self):
+        from src.__main__ import _find_quoted_option
+        argv = ["app.py", "exec", "t", "-c", "python", "-c", "x"]
+        assert _find_quoted_option(argv) == 3
+
+    def test_option_value_inline_and_next_token(self):
+        from src.__main__ import _option_value
+        assert _option_value(["app.py", "-i", "print(1)"], 1) == "print(1)"
+        assert _option_value(["app.py", "--input=print(1)"], 1) == "print(1)"
+        assert _option_value(["app.py", "-i"], 1) is None
+        assert _option_value(["app.py", "-i"], None) is None
+
+    def test_adopt_when_truncated_command(self):
+        """exec -c 值被截短 → 采用原生解析"""
+        from src.__main__ import _adopt_native_argv
+        argv = ["app.py", "exec", "t", "-c", "python"]
+        parsed = ["app.py", "exec", "t", "-c", 'python -c "print(1)"']
+        assert _adopt_native_argv(argv, parsed) is parsed
+
+    def test_adopt_when_truncated_send_input(self):
+        """send -i 值被截短 → 采用原生解析（新输入选项同样受保护）"""
+        from src.__main__ import _adopt_native_argv
+        argv = ["app.py", "send", "t", "-i", "print("]
+        parsed = ["app.py", "send", "t", "-i", 'print("hi")']
+        assert _adopt_native_argv(argv, parsed) is parsed
+
+    def test_adopt_inline_form(self):
+        """--input=<value> 内联形式同样可纠偏"""
+        from src.__main__ import _adopt_native_argv
+        argv = ["app.py", "send", "t", "--input=print("]
+        parsed = ["app.py", "send", "t", "--input=print(\"hi\")"]
+        assert _adopt_native_argv(argv, parsed) is parsed
+
+    def test_reject_equal_or_shorter_or_missing(self):
+        from src.__main__ import _adopt_native_argv
+        same = (["app.py", "exec", "t", "-c", "echo"],
+                ["app.py", "exec", "t", "-c", "echo"])
+        assert _adopt_native_argv(*same) is None
+        shorter = (["app.py", "exec", "t", "-c", "python -c x"],
+                   ["app.py", "exec", "t", "-c", "py"])
+        assert _adopt_native_argv(*shorter) is None
+        no_opt = (["app.py", "list"], ["app.py", "list"])
+        assert _adopt_native_argv(*no_opt) is None
+        assert _adopt_native_argv(["app.py"], ["app.py", "list"]) is None
+
+    def test_windows_repair_is_noop_off_windows(self, monkeypatch):
+        """非 Windows 平台不触碰 sys.argv"""
+        import sys as _sys
+        from src.__main__ import _fix_windows_quoting
+        argv = ["app.py", "exec", "t", "-c", "python"]
+        monkeypatch.setattr(_sys, "argv", list(argv))
+        monkeypatch.setattr(_sys, "platform", "linux")
+        _fix_windows_quoting()
+        assert _sys.argv == argv

@@ -4,12 +4,10 @@
 handler.handle(msg) 直接返回 dict，无需 TCP 连接。
 """
 
-import json
 import time
 import sys
 import os
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 

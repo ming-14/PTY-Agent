@@ -4,7 +4,6 @@
 """
 
 import os
-import pytest
 
 from src.config import (
     MMAP_DAEMON_INFO_NAME,
@@ -15,7 +14,6 @@ from src.config import (
     REQ_SHM_SIZE,
     RESP_SHM_SIZE,
     DATA_DIR,
-    IS_WINDOWS,
 )
 
 

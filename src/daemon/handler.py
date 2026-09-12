@@ -20,7 +20,6 @@ import re
 import time
 import logging
 import threading
-import traceback
 
 from ..session.manager import SessionManager
 from ..session.output import safe_regex_search, format_timestamp_iso
@@ -31,12 +30,26 @@ from ..config import (
     MAX_PATTERN_LEN,
     MAX_INPUT_LEN,
     AUTH_TOKEN_GRACE_PERIOD,
+    DEFAULT_TRIGGER_TIMEOUT,
 )
 
 _logger = logging.getLogger("pty-daemon")
 
 # 会话级命令（需要 per-session 锁串行化）
 _SESSION_CMDS = frozenset({"exec", "send", "read", "remove", "closewin"})
+
+# 永不匹配的正则：send/exec 未给 -t 但给了 --idle-timeout 时，用它占住触发位，
+# 使等待循环只由"静默超时 / 崩溃 / 退出 / GUI"决定，而不被任何文本命中。
+_NEVER_MATCH_PATTERN = r"(?!x)x"
+
+# 无触发条件流程里等待首个输出的最长时间（秒）：超时即按当前缓冲返回
+_INITIAL_OUTPUT_WAIT = 0.5
+
+
+def _request_timeout(msg: dict) -> float:
+    """取请求的等待超时（秒）；协议未携带时回退 DEFAULT_TRIGGER_TIMEOUT"""
+    value = msg.get("timeout")
+    return float(value) if value is not None else DEFAULT_TRIGGER_TIMEOUT
 
 
 def _validate_field(value, name: str, max_len: int) -> dict:
@@ -56,6 +69,15 @@ def _validate_field(value, name: str, max_len: int) -> dict:
             "error": f"参数 '{name}' 过长（最多 {max_len} 字符）",
         }
     return None
+
+
+def _session_missing_error(session_id: str) -> dict:
+    """会话不存在时的统一错误响应（各命令共用，措辞/建议只写一处）"""
+    return {
+        "type": "error",
+        "error": f"会话 '{session_id}' 不存在",
+        "suggest": "使用 'app.py list' 查看可用会话",
+    }
 
 
 class RequestHandler:
@@ -114,7 +136,7 @@ class RequestHandler:
             return True
 
     def _get_detail(self, msg: dict) -> str:
-        """从请求消息中提取描述性字段"""
+        """从请求消息中提取描述性字段（统一截断，长正则不整条进日志）"""
         parts = []
         if msg.get("command"):
             cmd = str(msg["command"])
@@ -308,18 +330,18 @@ class RequestHandler:
         else:
             session.mark_cursor()
 
-        session.wait_for_initial_output(timeout=0.5)
+        session.wait_for_initial_output(timeout=_INITIAL_OUTPUT_WAIT)
 
         if idle_timeout is not None:
             session.set_trigger(
-                pattern=r"(?!x)x",
+                pattern=_NEVER_MATCH_PATTERN,
                 newline=False,
                 fresh=True,
                 start_idx=session.cursor,
                 idle_timeout=idle_timeout,
                 idle_after_first_output=idle_after_first,
             )
-            matched, reason = session.wait_for_trigger(timeout=msg.get("timeout", 120))
+            matched, reason = session.wait_for_trigger(timeout=_request_timeout(msg))
             session.clear_trigger()
         else:
             matched, reason = False, "ok"
@@ -406,7 +428,7 @@ class RequestHandler:
         if trigger:
             return self._run_trigger_flow(
                 session, msg, trigger, msg.get("newline", False),
-                msg.get("fresh", False), msg.get("timeout", 120),
+                msg.get("fresh", False), _request_timeout(msg),
                 result_type="exec",
             )
         else:
@@ -431,11 +453,7 @@ class RequestHandler:
 
         session = self.manager.get_session(session_id)
         if not session:
-            return {
-                "type": "error",
-                "error": f"会话 '{session_id}' 不存在",
-                "suggest": "使用 'app.py list' 查看可用会话",
-            }
+            return _session_missing_error(session_id)
 
         if not session.running:
             output = session.get_output_full()
@@ -466,7 +484,9 @@ class RequestHandler:
 
         try:
             session.write_input(input_text)
-            _logger.info("会话 '%s' 输入: %s", session_id, repr(input_text[:100]))
+            # 只记长度，不记内容：发送的文本可能含口令/密钥等敏感数据，
+            # 不应落到 logs/daemon.log（与 backend 层 "write: N bytes" 一致）
+            _logger.debug("会话 '%s' 输入: len=%d", session_id, len(input_text))
         except Exception as e:
             _logger.error("会话 '%s' 写入失败: %s", session_id, e, exc_info=True)
             return {"type": "error", "error": "写入输入失败"}
@@ -475,7 +495,7 @@ class RequestHandler:
             return self._run_trigger_flow(
                 session, msg, trigger,
                 msg.get("newline", False), msg.get("fresh", False),
-                msg.get("timeout", 120), result_type="send", armed=True,
+                _request_timeout(msg), result_type="send", armed=True,
             )
         else:
             return self._run_no_trigger_flow(session, msg, result_type="send")
@@ -503,7 +523,7 @@ class RequestHandler:
 
         session = self.manager.get_session(session_id)
         if not session:
-            return {"type": "error", "error": f"会话 '{session_id}' 不存在"}
+            return _session_missing_error(session_id)
 
         ended_warning = "会话已结束（旧会话数据）" if not session.running else None
 
@@ -543,7 +563,7 @@ class RequestHandler:
         if grep:
             try:
                 pat = re.compile(grep)
-                lines = [l for l in lines if safe_regex_search(pat, l)]
+                lines = [ln for ln in lines if safe_regex_search(pat, ln)]
             except re.error:
                 return {"type": "error", "error": f"无效的正则表达式: {grep}"}
 
@@ -562,7 +582,7 @@ class RequestHandler:
             return {"type": "error", "error": "缺少会话 id"}
         session = self.manager.get_session(session_id)
         if not session:
-            return {"type": "error", "error": f"会话 '{session_id}' 不存在"}
+            return _session_missing_error(session_id)
         try:
             self.manager.remove_session(session_id)
             _logger.info("会话 '%s' 已移除", session_id)
@@ -580,7 +600,7 @@ class RequestHandler:
             return {"type": "error", "error": "缺少 hwnd 参数"}
         session = self.manager.get_session(session_id)
         if not session:
-            return {"type": "error", "error": f"会话 '{session_id}' 不存在"}
+            return _session_missing_error(session_id)
         try:
             ok = session.close_window(hwnd)
             return {"type": "ok", "closed": ok, "hwnd": hwnd}

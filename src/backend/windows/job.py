@@ -10,7 +10,7 @@
 
 典型用法:
     with ProcessJob("my-session") as job:
-        job.assign(hProcess)
+        job.assign(hProcess, expected_pid=pid)
         # ... 运行子进程 ...
         pids = job.query_process_list()
 """
@@ -29,6 +29,7 @@ from .convars import (
     _QueryInformationJobObject,
     _CloseHandle,
     _GetExitCodeProcess,
+    _GetProcessId,
     _JobObjectExtendedLimitInformation,
     _JobObjectBasicProcessIdList,
     _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
@@ -323,19 +324,37 @@ class ProcessJob:
         except Exception:
             return None
 
-    def assign(self, hprocess: int) -> bool:
+    def assign(self, hprocess: int,
+               expected_pid: Optional[int] = None) -> bool:
         """将进程分配到 Job Object（子进程自动继承）
 
+        本 Job 带 KILL_ON_JOB_CLOSE：误把别的进程放进来，关 Job 时就会杀掉它。
+        因此强烈建议同时传 `expected_pid` —— 分配前用 GetProcessId 反查句柄真实
+        归属，不一致直接拒绝（防"按 PID 打开句柄时 PID 已被复用"这类事故）。
+
         Args:
-            hprocess: 进程句柄（必须有效，None 或 0 返回 False）。
+            hprocess:     进程句柄（必须有效，None 或 0 返回 False）。
+            expected_pid: 该句柄应当属于的 PID；None 表示不做校验。
 
         Returns:
-            True 分配成功，False 句柄无效或分配失败。
+            True 分配成功，False 句柄无效、归属不符或分配失败。
         """
         if not self._hjob:
             return False
         if not hprocess:
             return False
+        if expected_pid is not None:
+            try:
+                real_pid = _GetProcessId(hprocess)
+            except Exception as e:
+                _logger.warning("获取句柄 PID 失败，拒绝分配: %s", e)
+                return False
+            if real_pid != expected_pid:
+                _logger.error(
+                    "拒绝分配进 Job：句柄实际 PID=%s 与期望 PID=%s 不符"
+                    "（PID 可能已被复用），否则会误杀无关进程",
+                    real_pid, expected_pid)
+                return False
         ok = _AssignProcessToJobObject(self._hjob, hprocess)
         if not ok:
             _logger.warning("AssignProcessToJobObject 失败: handle=%s err=%d",

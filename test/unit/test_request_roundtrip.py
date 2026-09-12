@@ -124,7 +124,8 @@ class TestEnsureDaemon:
     def test_exits_when_start_fails(self):
         with patch("src.client.controller.is_running",
                    return_value=False), \
-             patch("src.client.controller.start_daemon"), \
+             patch("src.client.controller.start_daemon",
+                   return_value=False), \
              patch("src.client.controller.time.sleep"):
             with pytest.raises(SystemExit):
                 self._client_ensure()()
@@ -140,6 +141,5 @@ class TestNoLockFiles:
         assert "import socket" not in source
 
     def test_api_has_no_print_coupling(self):
-        import inspect
         import src.client.api as mod
         assert "print_response" not in dir(mod)

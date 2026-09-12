@@ -24,7 +24,7 @@ from ..backend.base import Backend
 from ..config import IS_WINDOWS, DEFAULT_COLS, DEFAULT_ROWS
 from .process import (
     _format_exit_code_message,
-    _format_pty_error,
+    _format_backend_error,
     ProcessMonitor,
     GuiDetector,
 )
@@ -133,7 +133,7 @@ class Session:
                 self._pipeline = StreamPipeline(out_buf=self._out_buf)
         except Exception as e:
             self.running = False
-            self.error_message = _format_pty_error(e)
+            self.error_message = _format_backend_error(e)
             raise RuntimeError(f"创建后端失败: {e}") from e
 
         # 重置各组件状态

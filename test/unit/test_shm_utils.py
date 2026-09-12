@@ -25,7 +25,7 @@ from src.protocol.shm import (
 )
 from src.protocol.shm_utils import open_shm, close_shm
 from src.config import (
-    IS_WINDOWS, REQ_SHM_SIZE, RESP_SHM_SIZE, MAILBOX_SLOT_COUNT,
+    REQ_SHM_SIZE, RESP_SHM_SIZE, MAILBOX_SLOT_COUNT,
     MMAP_DAEMON_INFO_NAME, MMAP_DAEMON_INFO_SIZE,
 )
 
@@ -300,7 +300,6 @@ class TestMailbox:
         # 直接模拟 CLAIMED 状态（手动设置）
         req_name, resp_name = make_channel_names(os.getpid(), 40)
         from src.protocol.shm import SLOT_CLAIMED, SLOT_EMPTY, _set_slot_state, _slot_state
-        import mmap
         from src.protocol.shm_utils import open_shm
         from src.config import MMAP_MAILBOX_NAME, MAILBOX_SIZE
         shm = open_shm(MMAP_MAILBOX_NAME, MAILBOX_SIZE)

@@ -1,4 +1,6 @@
 # 运行时依赖：pyte（终端仿真，pty 模式）、Python 3.11+ 标准库
-# 测试依赖：pytest
+# 测试依赖：pytest；pytest-timeout 给会起真实子进程的用例兜底超时
+#   用法：python -m pytest test/ -q --timeout=60
 pyte>=0.8.2
 pytest
+pytest-timeout
