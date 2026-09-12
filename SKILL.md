@@ -72,7 +72,7 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
 选项基本与 send 一致
 特殊选项：
 - `-c "<command>"`(req) 执行的命令，必填
-- `--shell <shell>` 支持`cmd/powershell/pwsh/bash`（默认PowerShell，环境不支持自动回退CMD）；只有在`exec`启动时才能配置终端
+- `--shell <shell>` 按平台校验：Windows `cmd/powershell/pwsh/bash`（默认 PowerShell，不可用时回退 cmd）；POSIX `sh/bash/pwsh/powershell`（默认 /bin/sh）。给了当前平台不支持的值直接报错，不静默换解释器；与 `--pty` 互斥；只有在`exec`启动时才能配置终端
 - `--pty` 启用真实终端（ConPTY/openpty + pyte 终端仿真；不支持 `|`、`&&` 等shell语法；失败不回退 subprocess）
     - `--force-pty-mode` 忽略`--pty`下的shell操作符检测
 - `--cwd <path>` 子进程工作目录，不填则默认为调用者（客户端）的工作目录；如果与期望工作目录不一致，建议指定
@@ -117,10 +117,12 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
 
 ## 全局/通用选项
 
+以下三项在**每个子命令上都可用，放子命令前后均可**：
+
 - `--no-debug` 禁用响应中的 debug 输出（进程树/GUI 窗口/事件）；例外：本轮返回原因
   就是 GUI 窗口时，窗口信息（含 hwnd）仍会输出——它是正载荷，`closewin` 依赖它
 - `--show-config [KEY]` 查看当前调用配置
-- `--default <KEY> <VALUE>` 临时覆盖默认配置（可用键：`timeout`/`newline`/`debug`，`<VALUE>`是配置值或者`on`/`off`）
+- `--default <KEY> <VALUE>` 临时覆盖本次调用的默认配置（可用键：`timeout`/`newline`/`debug`/`send-eol`，`<VALUE>` 是配置值或者 `on`/`off`；不持久化）
 
 ## 输出格式
 
@@ -134,7 +136,6 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
 - debug 段：`# ── debug ────────` 包含进程树、GUI 窗口信息（`--no-debug` 隐藏）
 - events 段：`# ── events ────────` 包含进程创建/退出/崩溃等事件
 - error 段：`# ── error ────────` 错误信息
-- offset 段：`# ── offset ────────` 输出字节偏移量
 
 ## 示例场景
 
@@ -152,6 +153,6 @@ app.py remove srv # 不再需要时移除
 
 ```bash
 app.py exec job -c "python worker.py" --idle-timeout 5 # 启动，idle-timeout 等待输出
-# 若进程崩溃，返回中 trigger.reason="ended"，program.exit_code 非零，error_message 含崩溃信息
+# 若进程崩溃，返回首行显示 crashed（reason="crashed"），program.exit_code 非零，error_message 含崩溃信息
 # 崩溃详情在 exec/send 返回的 debug.pending_events 中自动附带
 ```

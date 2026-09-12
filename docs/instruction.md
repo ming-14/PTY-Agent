@@ -1,6 +1,6 @@
 # pty-agent 开发与使用指南
 
-> 开发指南，面向**开发者**。用户命令参考见 [`命令行交互.md`](命令行交互.md)，架构设计见 [`设计架构.md`](设计架构.md)。
+> 开发指南，面向**开发者**。用户命令参考见 [`命令行交互.md`](Skill文档/命令行交互.md)，引号写法见 [`引号处理规则.md`](Skill文档/引号处理规则.md)，架构设计见 [`设计架构.md`](设计架构.md)。
 
 ---
 
@@ -13,7 +13,7 @@
 ```
 pty-agent/
 ├── docs/          # 设计文档（架构/规范/命令参考）
-├── src/          # 主包（模块化架构：protocol/ client/ daemon/ session/ pty/）
+├── src/          # 主包（分层：protocol/ client/ daemon/ session/ backend/）
 │   ├── backend/  # 运行后端（subprocess / pty 分离，无回退）
 │   └── session/    # output/ process/ encoding/ 子包
 ├── test/         # 测试套件
@@ -50,7 +50,8 @@ python -m src stop
 
 ```
 用户 → CLI (src/__main__.py)
-         → Client (client/transport) — 共享内存请求 → 守护进程 (daemon/server + handler)
+         → PtyClient (client/api) — protocol.request.roundtrip 共享内存往返
+           → 守护进程 (daemon/server 信箱轮询 + daemon/handler 业务派发)
                                                           → Session 协调器 (session/session)
                                                               ├─ output/buffer       输出缓冲
                                                               ├─ output/trigger      触发匹配
@@ -59,7 +60,8 @@ python -m src stop
                                                               ├─ encoding/codec      UTF-8 解码
                                                               ├─ process/gui         GUI 检测
                                                               ├─ session_threads     后台线程
-                                                              └─ PTY 后端 (pty/factory: create_pty)
+                                                              └─ 运行后端 (backend/factory:
+                                                                   create_subprocess / create_tty)
 ```
 
 通信方式：**纯共享内存**（Windows 命名 mmap / Unix 文件 mmap），无 socket、无端口、无锁文件。

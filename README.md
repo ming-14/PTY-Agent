@@ -50,7 +50,7 @@ pip install -r requirements.txt
 | **subprocess**（默认） | 不传 `--pty` | `subprocess.Popen` stdin/stdout/stderr 管道 | 原始文本流，原样透传 |
 | **pty** | `--pty` | Windows ConPTY / Unix openpty | pyte 终端仿真：滚动历史 + 可见屏幕 |
 
-- **subprocess**：纯管道进程，不涉及终端概念。支持 `--shell`（cmd/powershell/pwsh/bash），字符串命令可经 shell 执行。
+- **subprocess**：纯管道进程，不涉及终端概念。支持 `--shell`（Windows: cmd/powershell/pwsh/bash；POSIX: sh/bash/pwsh/powershell），字符串命令可经 shell 执行；取值按平台校验，不支持直接报错。
 - **pty**：命令自动拆为列表执行（无 shell 语法，含操作符时需 `--force-pty-mode`），创建失败**直接报错，不回退 subprocess**。
 
 ## read 语义（重构后）
@@ -74,6 +74,7 @@ pip install -r requirements.txt
 
 ```powershell
 python app.py exec myid -c "python -u -i" -t ">>>" --timeout 30
+python app.py exec sh -c "ls -la | head" --shell bash   # 显式解释器（与 --pty 互斥）
 python app.py exec build -c "nmake" --idle-timeout 5
 python app.py exec gdb -c "gdb -q test.exe" -t "(gdb)" --pty
 ```
