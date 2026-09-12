@@ -441,11 +441,11 @@ class TestSessionThreadsReaderReady:
         from src.session.process.gui import GuiDetector
 
         components = SessionComponents(
-            pty_provider=lambda: pty,
+            backend_provider=lambda: pty,
             pipeline_provider=lambda: None,
             out_buf=OutputBuffer(),
             trig_mat=TriggerMatcher(),
-            proc_mon=ProcessMonitor(pty_provider=lambda: pty,
+            proc_mon=ProcessMonitor(backend_provider=lambda: pty,
                                     event_sink=lambda e: None),
             gui_detector=GuiDetector(event_sink=lambda e: None),
             session_id="test",
@@ -524,7 +524,7 @@ class TestProcessMonitorEmitProcessEnd:
         events = []
         from src.session.process.monitor import ProcessMonitor
         mon = ProcessMonitor(
-            pty_provider=lambda: None,
+            backend_provider=lambda: None,
             event_sink=lambda e: events.append(e),
         )
         return mon, events

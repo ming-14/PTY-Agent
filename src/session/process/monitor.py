@@ -33,17 +33,17 @@ class ProcessMonitor:
 
     def __init__(
         self,
-        pty_provider: Callable,
+        backend_provider: Callable,
         event_sink: Callable[[PendingEvent], None],
         wake=None,
     ):
         """
         Args:
-            pty_provider: 返回当前 PTY 实例的可调用对象（lambda: self._pty）。
-            event_sink:   添加 PendingEvent 的回调（EventHistoryManager.add_event）。
-            wake:         共享唤醒锚（WakeSignal）；检测到崩溃时唤醒等待循环。
+            backend_provider: 返回当前后端实例的可调用对象（lambda: self._backend）。
+            event_sink:       添加 PendingEvent 的回调（EventHistoryManager.add_event）。
+            wake:             共享唤醒锚（WakeSignal）；检测到崩溃时唤醒等待循环。
         """
-        self._pty_provider = pty_provider
+        self._backend_provider = backend_provider
         self._event_sink = event_sink
         self._wake = wake
 
@@ -105,11 +105,11 @@ class ProcessMonitor:
         唯一的事件来源：Windows 后端通过 Job Object IOCP 实时推送
         进程创建/退出/崩溃事件；Unix / subprocess 后端返回空列表。
         """
-        pty = self._pty_provider()
-        if not pty:
+        backend = self._backend_provider()
+        if not backend:
             return
         try:
-            notifs = pty.get_job_notifications()
+            notifs = backend.get_job_notifications()
         except Exception as e:
             # 后端不支持 Job Object（subprocess / Unix）或句柄已关闭：无事件可取
             _logger.debug("drain_notifications: %s", e)

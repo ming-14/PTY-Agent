@@ -84,7 +84,7 @@ class Session:
         self._trig_mat = TriggerMatcher(wake=self._wake)
         self._evt_hist = EventHistoryManager()
         self._proc_mon = ProcessMonitor(
-            pty_provider=lambda: self._pty,
+            backend_provider=lambda: self._backend,
             event_sink=self._evt_hist.add_event,
             wake=self._wake,
         )
@@ -92,7 +92,7 @@ class Session:
                                 wake=self._wake)
         self._pipeline = None
         self._threads = SessionThreads(SessionComponents(
-            pty_provider=lambda: self._pty,
+            backend_provider=lambda: self._backend,
             pipeline_provider=lambda: self._pipeline,
             out_buf=self._out_buf,
             trig_mat=self._trig_mat,
@@ -103,7 +103,7 @@ class Session:
         ))
 
         # 后端
-        self._pty: Optional[Backend] = None
+        self._backend: Optional[Backend] = None
 
         # 终端尺寸
         self._cols = cols
@@ -120,13 +120,13 @@ class Session:
         try:
             if self._mode == "pty":
                 # 真实终端：命令必须为列表（无 shell 语法），失败不回退
-                self._pty = create_tty(
+                self._backend = create_tty(
                     self.command, self._cols, self._rows, cwd=self._cwd)
                 self._pipeline = ScreenPipeline(
                     cols=self._cols, rows=self._rows, out_buf=self._out_buf)
             else:
                 # 纯管道子进程：字符串命令可经 shell 执行
-                self._pty = create_subprocess(
+                self._backend = create_subprocess(
                     self.command, shell=self._shell, cwd=self._cwd,
                     cols=self._cols, rows=self._rows,
                 )
@@ -165,19 +165,19 @@ class Session:
         self._wake.notify()
 
         # 关闭前获取退出码
-        if self._pty and self.exit_code is None:
+        if self._backend and self.exit_code is None:
             self._update_exit_info()
 
-        if self._pty:
+        if self._backend:
             try:
-                self._pty.remove_tree()
+                self._backend.remove_tree()
             except Exception as e:
                 _logger.warning("强杀进程树时异常: %s", e)
             try:
-                self._pty.close()
+                self._backend.close()
             except Exception as e:
                 _logger.warning("关闭后端时异常: %s", e)
-            self._pty = None
+            self._backend = None
         self._threads.stop(timeout)
 
     # ════════════════════════════════════════════════════════════
@@ -196,7 +196,7 @@ class Session:
             RuntimeError: 会话未运行或写入失败。
             TypeError:    data 类型不正确。
         """
-        if not self._pty or not self.running:
+        if not self._backend or not self.running:
             raise RuntimeError(f"会话 '{self.id}' 未运行")
         if not isinstance(data, (str, bytes)):
             raise TypeError(
@@ -205,7 +205,7 @@ class Session:
         if isinstance(data, str):
             data = data.encode("utf-8")
         try:
-            self._pty.write(data)
+            self._backend.write(data)
         except Exception as e:
             _logger.error("写入输入失败 (会话 '%s'): %s", self.id, e)
             raise RuntimeError(f"写入输入失败: {e}") from e
@@ -249,7 +249,7 @@ class Session:
     @property
     def pty_type(self) -> str:
         """当前会话使用的后端类型标识"""
-        return self._pty.get_type() if self._pty else "none"
+        return self._backend.get_type() if self._backend else "none"
 
     # ════════════════════════════════════════════════════════════
     # 触发条件
@@ -375,11 +375,11 @@ class Session:
                 return False, "ended"
 
             # GUI：事件通道无节流取走（hook 检出即发现），兜底扫描按 1s 门控
-            self._gui.drain_events(self._pty)
+            self._gui.drain_events(self._backend)
             now = time.time()
             if now - _last_gui_check >= 1.0:
                 _last_gui_check = now
-                self._gui.check(self._pty, self.id)
+                self._gui.check(self._backend, self.id)
             if self._gui.consume_detection():
                 _logger.info("wait_for_trigger: GUI_DETECTED id=%r windows=%d",
                              self.id, len(self._gui.get_gui_windows()))
@@ -413,9 +413,9 @@ class Session:
         self._trig_mat.event.set()
         # running=False 已发布：唤醒阻塞中的等待循环，立刻以 "ended" 返回
         self._wake.notify()
-        if self._pty:
+        if self._backend:
             try:
-                self._pty.close()
+                self._backend.close()
             except Exception as e:
                 _logger.warning("关闭后端异常 (会话 '%s'): %s", self.id, e)
 
@@ -423,9 +423,9 @@ class Session:
 
     def _update_exit_info(self):
         """获取子进程退出信息（退出码和错误消息）"""
-        if not self._pty:
+        if not self._backend:
             return
-        code = _capture_exit_code_retry(self._pty)
+        code = _capture_exit_code_retry(self._backend)
         if code is not None:
             self.exit_code = code
             if code != 0:
@@ -435,9 +435,9 @@ class Session:
 
     def close_window(self, hwnd: int) -> bool:
         """关闭指定 GUI 窗口"""
-        if not self._pty:
+        if not self._backend:
             return False
-        return self._pty.close_gui_window(hwnd)
+        return self._backend.close_gui_window(hwnd)
 
     # ════════════════════════════════════════════════════════════
     # 事件管理（委托给 EventHistoryManager）

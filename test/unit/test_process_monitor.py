@@ -15,7 +15,7 @@ class TestProcessMonitorInit:
         """初始状态无崩溃"""
         events = []
         mon = ProcessMonitor(
-            pty_provider=lambda: None,
+            backend_provider=lambda: None,
             event_sink=lambda e: events.append(e),
         )
         assert not mon.crash_event.is_set()
@@ -25,7 +25,7 @@ class TestProcessMonitorInit:
         """重置状态"""
         events = []
         mon = ProcessMonitor(
-            pty_provider=lambda: None,
+            backend_provider=lambda: None,
             event_sink=lambda e: events.append(e),
         )
         mon.crash_event.set()
@@ -38,7 +38,7 @@ class TestProcessMonitorInit:
         """清除崩溃事件"""
         events = []
         mon = ProcessMonitor(
-            pty_provider=lambda: None,
+            backend_provider=lambda: None,
             event_sink=lambda e: events.append(e),
         )
         mon.crash_event.set()
@@ -53,7 +53,7 @@ class TestProcessMonitorDrainNotifications:
         """无 PTY 时不产生事件"""
         events = []
         mon = ProcessMonitor(
-            pty_provider=lambda: None,
+            backend_provider=lambda: None,
             event_sink=lambda e: events.append(e),
         )
         mon.drain_notifications()
@@ -67,7 +67,7 @@ class TestProcessMonitorDrainNotifications:
             pass
 
         mon = ProcessMonitor(
-            pty_provider=lambda: _MockPty(),
+            backend_provider=lambda: _MockPty(),
             event_sink=lambda e: events.append(e),
         )
         mon.drain_notifications()
@@ -82,7 +82,7 @@ class TestProcessMonitorDrainNotifications:
                 return []
 
         mon = ProcessMonitor(
-            pty_provider=lambda: _MockPty(),
+            backend_provider=lambda: _MockPty(),
             event_sink=lambda e: events.append(e),
         )
         mon.drain_notifications()

@@ -56,10 +56,10 @@ def _make_session(windows=None):
     s._captured_events = []
     s._gui = GuiDetector(event_sink=lambda e: s._captured_events.append(e),
                          wake=s._wake)
-    s._proc_mon = ProcessMonitor(pty_provider=lambda: s._pty,
+    s._proc_mon = ProcessMonitor(backend_provider=lambda: s._backend,
                                  event_sink=lambda e: None,
                                  wake=s._wake)
-    s._pty = _PtyStub(windows)
+    s._backend = _PtyStub(windows)
     return s
 
 
@@ -125,7 +125,7 @@ class TestRoundBaselineFairness:
     def test_window_list_survives_arm(self):
         """arm 只清边沿，窗口列表必须保留（debug 呈现 + closewin 依赖它）"""
         s = _make_session(windows=[_WINDOW])
-        s._gui.check(s._pty, s.id)
+        s._gui.check(s._backend, s.id)
         assert s._gui.get_gui_windows(), "前置：应已记录窗口"
 
         s._gui.arm()

@@ -30,7 +30,7 @@ _POLL_INTERVAL = 2.0
 class GuiDetector:
     """GUI 窗口检测器
 
-    轮询 PTY 后端检测 Job 进程树中新增的 GUI 窗口，
+    检测后端 Job 进程树中新增的 GUI 窗口，
     兜底扫描按 `_POLL_INTERVAL` 节流。检测到新窗口时通过 event_sink
     发布事件、置位检测边沿，并经 wake 唤醒等待循环。
 
@@ -94,25 +94,25 @@ class GuiDetector:
 
     # ── 事件通道 ────────────────────────────────────────────────
 
-    def _ensure_listener(self, pty) -> None:
+    def _ensure_listener(self, backend) -> None:
         """向后端注册"有新窗口"回调（幂等；后端实例变化时重挂）"""
-        if pty is None or self._attached is pty:
+        if backend is None or self._attached is backend:
             return
         try:
-            pty.set_gui_listener(self._on_push)
+            backend.set_gui_listener(self._on_push)
         except Exception as e:      # 不支持事件驱动的后端：仅靠兜底扫描
             _logger.debug("注册 GUI 事件监听失败: %s", e)
-            self._attached = pty
+            self._attached = backend
             return
-        self._attached = pty
+        self._attached = backend
 
     @staticmethod
-    def _take_pending(pty) -> List[dict]:
+    def _take_pending(backend) -> List[dict]:
         """取走事件队列中已检出的窗口（不支持时返回空）"""
-        if pty is None:
+        if backend is None:
             return []
         try:
-            return pty.take_pending_gui_windows() or []
+            return backend.take_pending_gui_windows() or []
         except Exception:
             return []
 
@@ -120,44 +120,44 @@ class GuiDetector:
         """（GUI 消息泵线程）事件到达即时通道：取走 + 发布 + 唤醒"""
         self._publish(self._take_pending(self._attached))
 
-    def drain_events(self, pty) -> bool:
+    def drain_events(self, backend) -> bool:
         """无节流地取走事件队列（等待循环每轮调用）
 
         Returns:
             True 表示本轮并入新窗口。
         """
-        self._ensure_listener(pty)
-        return self._publish(self._take_pending(pty))
+        self._ensure_listener(backend)
+        return self._publish(self._take_pending(backend))
 
     # ── 综合检测 ────────────────────────────────────────────────
 
-    def check(self, pty, session_id: str, force: bool = False) -> bool:
+    def check(self, backend, session_id: str, force: bool = False) -> bool:
         """检测新 GUI 窗口：事件通道（即时）+ 兜底扫描（节流）
 
         Args:
-            pty:        PTY 后端实例（提供 poll_gui_windows / get_process_list）。
+            backend:    后端实例（提供 poll_gui_windows / get_process_list）。
             session_id: 会话 ID，用于日志。
             force:      忽略兜底扫描节流，立即全量扫描一次。
 
         Returns:
             True 表示本轮发现新窗口。
         """
-        if not pty:
+        if not backend:
             return False
 
-        found = self.drain_events(pty)
+        found = self.drain_events(backend)
 
         now = time.monotonic()
         if force or (now - self._last_poll_ms) >= self._poll_interval:
             self._last_poll_ms = now
             try:
-                found |= self._publish(pty.poll_gui_windows())
+                found |= self._publish(backend.poll_gui_windows())
             except Exception as e:
                 _logger.debug(
                     "GUI 窗口检测异常 (会话 '%s'): %s", session_id, e)
             # 更新进程树信息
             try:
-                pids = pty.get_process_list()
+                pids = backend.get_process_list()
             except Exception:
                 pids = None
             if pids:

@@ -24,7 +24,7 @@ class SessionComponents:
     """后台线程所需的所有子组件引用容器
 
     Attributes:
-        pty_provider:      返回当前后端实例的可调用对象（lambda: session._pty）。
+        backend_provider:  返回当前后端实例的可调用对象（lambda: session._backend）。
         pipeline_provider: 返回当前输出管线的可调用对象（lambda: session._pipeline）。
         out_buf:           线程安全输出缓冲区。
         trig_mat:          触发条件匹配器。
@@ -33,7 +33,7 @@ class SessionComponents:
         session_id:        会话 ID（用于日志）。
         on_exit:           读者线程退出回调，签名 (exit_code, error_message) -> None。
     """
-    pty_provider: Callable
+    backend_provider: Callable
     pipeline_provider: Callable
     out_buf: OutputBuffer
     trig_mat: TriggerMatcher
@@ -120,7 +120,7 @@ class SessionThreads:
     def _reader_loop(self) -> None:
         """后台读者线程：读取后端输出 → 管线 → 缓冲 → 触发检测"""
         comp = self._comp
-        pty = comp.pty_provider()
+        backend = comp.backend_provider()
         session_id = comp.session_id
         out_buf = comp.out_buf
         trig_mat = comp.trig_mat
@@ -131,9 +131,9 @@ class SessionThreads:
         # 让等待方尽早返回而非空等）
         self._reader_ready.set()
 
-        while not self._stop_event.is_set() and pty:
+        while not self._stop_event.is_set() and backend:
             try:
-                data = pty.read(READ_SIZE)
+                data = backend.read(READ_SIZE)
             except OSError as e:
                 if e.errno == errno.EBADF:
                     break
@@ -151,7 +151,7 @@ class SessionThreads:
                 break
 
             # ── 排空管道并推送管线 ──
-            drained = pty.drain(READ_SIZE)
+            drained = backend.drain(READ_SIZE)
             if drained:
                 data = data + drained
                 _logger.debug(
@@ -164,7 +164,7 @@ class SessionThreads:
 
             pipeline = comp.pipeline_provider()
             if pipeline is None:
-                pty = comp.pty_provider()
+                backend = comp.backend_provider()
                 continue
             pipeline.push(data)
 
@@ -180,18 +180,18 @@ class SessionThreads:
                 trig_mat.check_snapshot(snapshot)
 
             # 更新 pty 引用（stop 后可能变为 None）
-            pty = comp.pty_provider()
+            backend = comp.backend_provider()
 
         # 读者退出前：扫描残留 GUI 窗口和排空最后的 IOCP 进程事件
-        gui_detector.check(pty, session_id)
+        gui_detector.check(backend, session_id)
         proc_mon.drain_notifications()
 
         # 获取退出码（pty 可能已被关闭，容错处理）
         exit_code = None
         error_message = None
         try:
-            if pty:
-                exit_code = _capture_exit_code_retry(pty)
+            if backend:
+                exit_code = _capture_exit_code_retry(backend)
         except Exception:
             pass
         if exit_code is not None and exit_code != 0:
@@ -213,12 +213,12 @@ class SessionThreads:
         """
         comp = self._comp
         while not self._stop_event.is_set():
-            pty = comp.pty_provider()
+            backend = comp.backend_provider()
             comp.proc_mon.drain_notifications()
-            comp.gui_detector.check(pty, comp.session_id)
+            comp.gui_detector.check(backend, comp.session_id)
             # 事件驱动：等待通知到达（返回即循环，立即排空）
-            if pty is not None and hasattr(pty, "wait_for_job_notification"):
-                pty.wait_for_job_notification(2.0)
+            if backend is not None and hasattr(backend, "wait_for_job_notification"):
+                backend.wait_for_job_notification(2.0)
             else:
                 # 不支持事件驱动的后端（Unix / 无 PTY）退化为固定周期
                 self._stop_event.wait(2.0)
@@ -227,13 +227,13 @@ class SessionThreads:
 # ── 模块级工具函数 ──────────────────────────────────────────────
 
 
-def _capture_exit_code_retry(pty, retries: int = 10) -> Optional[int]:
+def _capture_exit_code_retry(backend, retries: int = 10) -> Optional[int]:
     """带重试地获取子进程退出码（模块级工具函数）
 
     某些后端在进程刚退出时可能尚未更新退出码，通过短暂重试提高成功率。
 
     Args:
-        pty:     后端实例（提供 get_exit_code 方法）。
+        backend: 后端实例（提供 get_exit_code 方法）。
         retries: 最大重试次数（默认 10 次，间隔取 EXIT_CODE_POLL_INTERVAL）。
 
     Returns:
@@ -241,7 +241,7 @@ def _capture_exit_code_retry(pty, retries: int = 10) -> Optional[int]:
     """
     for attempt in range(retries):
         try:
-            code = pty.get_exit_code()
+            code = backend.get_exit_code()
         except Exception:
             code = None
         if code is not None:
