@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="664" height="185" viewBox="0 0 664 185">
+<rect width="100%" height="100%" fill="#0c0c0c"/>
+<style>text{font-family:Consolas,"Microsoft YaHei",monospace;font-size:15px;dominant-baseline:text-before-edge;white-space:pre}</style>
+<text x="16" y="16" fill="#e5e5e5" textLength="632" lengthAdjust="spacingAndGlyphs">┌─ PTY-Agent ─────────────────────────────────────────────────────────────────┐</text>
+<text x="16" y="33" fill="#e5e5e5" textLength="632" lengthAdjust="spacingAndGlyphs">│ $ app.py exec dbg -c "cdb.exe myapp.exe" -t "0:000" --timeout 5             │</text>
+<text x="16" y="50" fill="#e5e5e5" textLength="632" lengthAdjust="spacingAndGlyphs">│                                                                             │</text>
+<text x="16" y="67" fill="#e5e5e5" textLength="632" lengthAdjust="spacingAndGlyphs">│ ─────────────────────────────── matched ───────────────────────────────     │</text>
+<text x="16" y="84" fill="#e5e5e5" textLength="632" lengthAdjust="spacingAndGlyphs">│ Microsoft (R) Windows Debugger Version 10.0.11451.4                         │</text>
+<text x="16" y="101" fill="#e5e5e5" textLength="632" lengthAdjust="spacingAndGlyphs">│ 0:000&gt;                                                                      │</text>
+<text x="16" y="118" fill="#e5e5e5" textLength="632" lengthAdjust="spacingAndGlyphs">│ ───────────────────────────────────────────────────────────────────────     │</text>
+<text x="16" y="135" fill="#e5e5e5" textLength="632" lengthAdjust="spacingAndGlyphs">│ [exec · matched · 0.42s]  dbg  running  pty                                 │</text>
+<text x="16" y="152" fill="#e5e5e5" textLength="632" lengthAdjust="spacingAndGlyphs">└─────────────────────────────────────────────────────────────────────────────┘</text>
+</svg>

@@ -16,7 +16,7 @@
 
 <div align="center">
 
-<font size="4">**Let AI use <u>terminals</u> like a <u>real user</u>.**</font>
+**Let AI use <ins>terminals</ins> like a <ins>real user</ins>.**
 
 Drive REPLs, debuggers, TUIs, installers, long-running services, and coding agents — getting **what the user actually sees on screen**, not just a raw stdout byte stream.
 
@@ -28,21 +28,9 @@ Drive REPLs, debuggers, TUIs, installers, long-running services, and coding agen
 ![Tests](https://img.shields.io/badge/tests-2191%20cases-2EA043)
 ![Web](https://img.shields.io/badge/Web-xterm.js%20%C2%B7%20FastAPI-009688)
 
-```
-┌─ PTY-Agent ─────────────────────────────────────────────────────────────────┐
-│ $ app.py exec dbg -c "cdb.exe myapp.exe" -t "0:000" --timeout 5             │
-│                                                                             │
-│ ─────────────────────────────── matched ───────────────────────────────     │
-│ Microsoft (R) Windows Debugger Version 10.0.11451.4                         │
-│ 0:000>                                                                      │
-│ ───────────────────────────────────────────────────────────────────────     │
-│ [exec · matched · 0.42s]  dbg  running  pty                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<p align="center"><img src="docs/assets/hero-terminal.svg" alt="PTY-Agent drives cdb.exe and returns as soon as the 0:000 prompt matches"></p>
 
 </div>
-
-click <a href="#v">here</a> to view demo video
 
 ---
 
