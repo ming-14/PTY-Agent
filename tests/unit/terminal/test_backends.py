@@ -158,7 +158,7 @@ def test_screen_mode_restore_seq():
     assert "\x1b[?1006h" in seq
     assert "\x1b[?25l" in seq
 
-    s.feed(b"\x1b[?1002l\x1b[?25h\x1b[?1049l")
+    s.feed(b"\x1b[?1002l\x1b[?1006l\x1b[?25h\x1b[?1049l")
     assert s.is_mouse_tracking() is False
     assert s.is_alt_screen() is False
     assert s.mode_restore_seq() == ""
