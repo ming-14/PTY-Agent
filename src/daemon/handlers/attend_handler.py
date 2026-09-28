@@ -12,6 +12,7 @@
 """
 
 import collections
+import socket
 import threading
 
 from ...logging import get_logger
@@ -223,12 +224,27 @@ class _AttendSession:
             if self._ended.is_set():
                 self._send({"type": "attend_ended", **self._ended_info})
                 self._stop.set()
-                try:
-                    self._conn.close()
-                except OSError:
-                    pass
+                self._close_conn()
         except (ConnectionError, OSError):
             self._stop.set()
+
+    def _close_conn(self):
+        """结束帧发完后关闭连接
+
+        必须先 shutdown 再 close：此时连接线程仍阻塞在 recv 上，直接 close
+        会让 Windows 向对端回 RST（而非 FIN），RST 会丢弃对端接收缓冲里尚未
+        交付的字节 —— 客户端连 attend_ended 一起丢，表现为 recv 报
+        ECONNRESET。shutdown 把末帧与 FIN 按序送出，并唤醒本端阻塞的 recv，
+        之后 close 只做资源回收，对端能完整读到末帧与 EOF。
+        """
+        try:
+            self._conn.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
+            self._conn.close()
+        except OSError:
+            pass
 
     def _send_ready(self):
         s = self._session
@@ -394,7 +410,12 @@ class _AttendSession:
     def _input_loop(self):
         conn = self._conn
         while not self._stop.is_set() and not self._ended.is_set():
-            msg = Message.recv(conn)
+            try:
+                msg = Message.recv(conn)
+            except (ConnectionError, OSError):
+                # 会话结束路径会主动关闭本连接，此时阻塞中的 recv 可能以
+                # Windows 下的 10038（socket 已失效）等错误退出，属正常断线
+                break
             if msg is None:
                 break
             try:
