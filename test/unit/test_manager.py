@@ -8,7 +8,7 @@ import time
 import threading
 import pytest
 
-from src.session.manager import SessionManager
+from pty_agent.session.manager import SessionManager
 
 
 class _MockBackend:
@@ -62,8 +62,8 @@ def _install_backend_mock(monkeypatch):
     """把 Session 引用的 backend 工厂 mock 为返回 _MockBackend"""
     def _mock_create(*args, **kwargs):
         return _MockBackend()
-    monkeypatch.setattr("src.session.session.create_subprocess", _mock_create)
-    monkeypatch.setattr("src.session.session.create_tty", _mock_create)
+    monkeypatch.setattr("pty_agent.session.session.create_subprocess", _mock_create)
+    monkeypatch.setattr("pty_agent.session.session.create_tty", _mock_create)
 
 
 class TestSessionManagerCreate:

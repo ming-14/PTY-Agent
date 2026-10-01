@@ -19,7 +19,7 @@ LOG_BACKUP_COUNT = 3                 # daemon.log 保留的历史份数
 # 受管 logger 名：客户端与守护进程共用同一份（两处配置各取所需 handler）。
 # 新模块若引入新的 logger 名，必须在此登记 —— 否则该 logger 会落到 root /
 # lastResort（守护进程里等于丢失，客户端里等于污染 stderr）。
-# test/unit/test_lifecycle.py::TestLoggerCoverage 扫描 src 断言这一条。
+# test/unit/test_lifecycle.py::TestLoggerCoverage 扫描 pty_agent 包断言这一条。
 MANAGED_LOGGERS = (
     "pty-client", "pty-daemon", "pty-session", "pty-protocol",
     "backend-subprocess", "backend-tty", "backend-factory", "backend-base",
@@ -29,7 +29,9 @@ MANAGED_LOGGERS = (
 
 # ── 文件路径 ──
 DATA_DIR = os.path.join(os.path.expanduser("~"), ".pty-agent")  # Unix 共享内存文件目录
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 项目根目录：config.py 位于 src/pty_agent/config.py，向上 3 层为源码树根
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))
 LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
 
 # ── 输出缓冲 ──

@@ -13,9 +13,11 @@
 ```
 pty-agent/
 ├── docs/          # 设计文档（架构/规范/命令参考）
-├── src/          # 主包（分层：protocol/ client/ daemon/ session/ backend/）
-│   ├── backend/  # 运行后端（subprocess / pty 分离，无回退）
-│   └── session/    # output/ process/ encoding/ 子包
+├── pyproject.toml # 打包配置（pip install -e . → pty-agent 命令）
+├── src/
+│   └── pty_agent/ # 主包（分层：protocol/ client/ daemon/ session/ backend/）
+│       ├── backend/  # 运行后端（subprocess / pty 分离，无回退）
+│       └── session/    # output/ process/ encoding/ 子包
 ├── test/         # 测试套件
 │   ├── conftest.py                   # pytest 配置
 │   ├── unit/                         # 单元测试（隔离测试单一模块）
@@ -33,15 +35,19 @@ pty-agent/
 | Unix | 支持 `os.openpty()` |
 
 ```powershell
-# 直接运行
+# 环境准备：可编辑安装（得到 pty-agent 命令，含测试/开发依赖）
+pip install -e ".[dev]"
+
+# 直接运行（无需安装）
 python app.py start
 python app.py exec myid -c "python -i -u" -t ">>>"
 python app.py stop
 
-# 或通过模块方式
-python -m src start
-python -m src exec myid -c "python -i -u" -t ">>>"
-python -m src stop
+# 安装后可用命令或模块方式
+pty-agent start
+pty-agent exec myid -c "python -i -u" -t ">>>"
+pty-agent stop
+python -m pty_agent start
 ```
 
 ## 3. 架构简述
@@ -49,7 +55,7 @@ python -m src stop
 **不重复设计架构.md**。核心脉络：
 
 ```
-用户 → CLI (src/__main__.py)
+用户 → CLI (src/pty_agent/__main__.py)
          → PtyClient (client/api) — protocol.request.roundtrip 共享内存往返
            → 守护进程 (daemon/server 信箱轮询 + daemon/handler 业务派发)
                                                           → Session 协调器 (session/session)

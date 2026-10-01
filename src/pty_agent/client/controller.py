@@ -4,7 +4,7 @@
 只依赖 protocol 层（统一封装）、config 与同层的 input.safe_print，
 不 import 任何 daemon 代码。
 
-- 启动：以独立子进程方式运行 `python -m src.daemon`
+- 启动：以独立子进程方式运行 `python -m pty_agent.daemon`
 - 检测：protocol.daemon_utils（共享内存 PID + 心跳）
 - 停止：protocol.request.roundtrip 发送 stop 请求，失败回退强杀 PID
 """
@@ -103,8 +103,19 @@ def start_daemon() -> bool:
     os.makedirs(LOG_DIR, exist_ok=True)
     log_file = os.path.join(LOG_DIR, "daemon.log")
 
-    src_parent = os.path.dirname(os.path.dirname(os.path.dirname(
+    # 含 pty_agent 包的目录（源码树的 src/ 或已安装的 site-packages）
+    pkg_dir = os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))))
+    # 源码树（上层有 pyproject.toml）时以项目根为守护进程 cwd，会话默认 cwd 保持不变；
+    # 已安装环境无项目根概念，退化为调用方当前目录。
+    project_root = os.path.dirname(pkg_dir)
+    cwd = (project_root
+           if os.path.isfile(os.path.join(project_root, "pyproject.toml"))
+           else os.getcwd())
+    # cwd 下解析不到 pty_agent 包（包在 src/ 内），显式补 PYTHONPATH 保证 `-m` 可用
+    env = os.environ.copy()
+    env["PYTHONPATH"] = pkg_dir + (
+        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
 
     if IS_WINDOWS:
         DETACHED_PROCESS = 0x00000008
@@ -117,24 +128,26 @@ def start_daemon() -> bool:
         startupinfo.wShowWindow = SW_HIDE
         with open(log_file, "a", encoding="utf-8") as err_log:
             subprocess.Popen(
-                [sys.executable, "-m", "src.daemon"],
+                [sys.executable, "-m", "pty_agent.daemon"],
                 close_fds=True,
                 creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=err_log,
-                cwd=src_parent,
+                cwd=cwd,
+                env=env,
                 startupinfo=startupinfo,
             )
     else:
         # Unix：Popen 独立进程 + setsid 会话分离（守护化）
         with open(log_file, "a", encoding="utf-8") as err_log:
             subprocess.Popen(
-                [sys.executable, "-m", "src.daemon"],
+                [sys.executable, "-m", "pty_agent.daemon"],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=err_log,
-                cwd=src_parent,
+                cwd=cwd,
+                env=env,
                 start_new_session=True,
             )
 

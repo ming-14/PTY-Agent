@@ -8,13 +8,13 @@ import os
 import time
 import pytest
 
-from src.protocol.auth import (
+from pty_agent.protocol.auth import (
     generate_auth_token,
     read_auth_token,
     write_auth_token,
     cleanup_auth_shm,
 )
-from src.protocol.shm import (
+from pty_agent.protocol.shm import (
     write_daemon_info_handle,
     read_daemon_info,
     cleanup_daemon_info,
@@ -23,8 +23,8 @@ from src.protocol.shm import (
     write_message,
     read_message,
 )
-from src.protocol.shm_utils import open_shm, close_shm
-from src.config import (
+from pty_agent.protocol.shm_utils import open_shm, close_shm
+from pty_agent.config import (
     REQ_SHM_SIZE, RESP_SHM_SIZE, MAILBOX_SLOT_COUNT,
     MMAP_DAEMON_INFO_NAME, MMAP_DAEMON_INFO_SIZE,
 )
@@ -299,9 +299,9 @@ class TestMailbox:
         mailbox = Mailbox(keep_open=True)
         # 直接模拟 CLAIMED 状态（手动设置）
         req_name, resp_name = make_channel_names(os.getpid(), 40)
-        from src.protocol.shm import SLOT_CLAIMED, SLOT_EMPTY, _set_slot_state, _slot_state
-        from src.protocol.shm_utils import open_shm
-        from src.config import MMAP_MAILBOX_NAME, MAILBOX_SIZE
+        from pty_agent.protocol.shm import SLOT_CLAIMED, SLOT_EMPTY, _set_slot_state, _slot_state
+        from pty_agent.protocol.shm_utils import open_shm
+        from pty_agent.config import MMAP_MAILBOX_NAME, MAILBOX_SIZE
         shm = open_shm(MMAP_MAILBOX_NAME, MAILBOX_SIZE)
         try:
             # 找一个空槽位置 CLAIMED 并写入当前 PID
@@ -311,7 +311,7 @@ class TestMailbox:
                     slot = s
                     break
             if slot is not None:
-                from src.protocol.shm import _SLOT_PID_OFF, write_text
+                from pty_agent.protocol.shm import _SLOT_PID_OFF, write_text
                 base = slot * 256
                 _set_slot_state(shm, slot, SLOT_CLAIMED)
                 write_text(shm, base + _SLOT_PID_OFF, str(os.getpid()), 8)
@@ -327,10 +327,10 @@ class TestMailbox:
     def test_reclaim_orphan_claimed_reclaims_dead(self):
         """reclaim_orphan_claimed: 不存活进程的 CLAIMED 槽位应回收"""
         mailbox = Mailbox(keep_open=True)
-        from src.protocol.shm import SLOT_CLAIMED, SLOT_EMPTY, _set_slot_state, _slot_state
-        from src.protocol.shm_utils import open_shm
-        from src.config import MMAP_MAILBOX_NAME, MAILBOX_SIZE
-        from src.protocol.shm import _SLOT_PID_OFF, write_text
+        from pty_agent.protocol.shm import SLOT_CLAIMED, SLOT_EMPTY, _set_slot_state, _slot_state
+        from pty_agent.protocol.shm_utils import open_shm
+        from pty_agent.config import MMAP_MAILBOX_NAME, MAILBOX_SIZE
+        from pty_agent.protocol.shm import _SLOT_PID_OFF, write_text
         shm = open_shm(MMAP_MAILBOX_NAME, MAILBOX_SIZE)
         try:
             for s in range(32):

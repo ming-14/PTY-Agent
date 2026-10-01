@@ -7,7 +7,7 @@
 import re
 import time
 
-from src.session.output.trigger import TriggerMatcher, safe_regex_search
+from pty_agent.session.output.trigger import TriggerMatcher, safe_regex_search
 
 
 class _MockBuffer:

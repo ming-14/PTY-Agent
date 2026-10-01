@@ -3,8 +3,8 @@
 定义统一的接口契约，所有后端实现（Tty / Subprocess）必须
 实现全部方法。平台实现放在对等的包结构中：
 
-- src/backend/windows/  — Windows 实现（ConPTY）
-- src/backend/unix/     — Unix 实现（os.openpty + fork）
+- src/pty_agent/backend/windows/ — Windows 实现（ConPTY）
+- src/pty_agent/backend/unix/  — Unix 实现（os.openpty + fork）
 
 能力对齐原则：
 - 接口签名统一：两平台提供相同的方法集合。

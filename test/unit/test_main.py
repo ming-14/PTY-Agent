@@ -8,7 +8,7 @@ import argparse
 import pytest
 from unittest.mock import patch, MagicMock
 
-from src.__main__ import (
+from pty_agent.__main__ import (
     _parse_default_key,
     _format_config_key,
     build_parser,
@@ -356,8 +356,8 @@ class TestExecModeGuards:
             "sys.argv",
             ["app.py", "exec", "e", "-c", "python", "--force-pty-mode"],
         )
-        with patch("src.__main__.PtyClient", return_value=client), \
-             patch("src.__main__.print_response"):
+        with patch("pty_agent.__main__.PtyClient", return_value=client), \
+             patch("pty_agent.__main__.print_response"):
             main()
         err = capsys.readouterr().err
         assert "--force-pty-mode" in err
@@ -371,8 +371,8 @@ class TestExecModeGuards:
             "sys.argv",
             ["app.py", "exec", "e", "-c", "python", "--pty", "--force-pty-mode"],
         )
-        with patch("src.__main__.PtyClient", return_value=client), \
-             patch("src.__main__.print_response"):
+        with patch("pty_agent.__main__.PtyClient", return_value=client), \
+             patch("pty_agent.__main__.print_response"):
             main()
         assert "--force-pty-mode" not in capsys.readouterr().err
 
@@ -381,7 +381,7 @@ class TestNativeArgvAdoption:
     """Windows 引号截断纠偏的纯函数测试（跨平台可跑）"""
 
     def test_find_quoted_option_plain_and_inline(self):
-        from src.__main__ import _find_quoted_option
+        from pty_agent.__main__ import _find_quoted_option
         assert _find_quoted_option(["app.py", "exec", "t", "-c", "x"]) == 3
         assert _find_quoted_option(["app.py", "send", "t", "--input=x"]) == 3
         assert _find_quoted_option(["app.py", "read", "t"]) is None
@@ -389,12 +389,12 @@ class TestNativeArgvAdoption:
         assert _find_quoted_option(["app.py", "exec", "t", "-t", "x"]) is None
 
     def test_find_quoted_option_prefers_first(self):
-        from src.__main__ import _find_quoted_option
+        from pty_agent.__main__ import _find_quoted_option
         argv = ["app.py", "exec", "t", "-c", "python", "-c", "x"]
         assert _find_quoted_option(argv) == 3
 
     def test_option_value_inline_and_next_token(self):
-        from src.__main__ import _option_value
+        from pty_agent.__main__ import _option_value
         assert _option_value(["app.py", "-i", "print(1)"], 1) == "print(1)"
         assert _option_value(["app.py", "--input=print(1)"], 1) == "print(1)"
         assert _option_value(["app.py", "-i"], 1) is None
@@ -402,27 +402,27 @@ class TestNativeArgvAdoption:
 
     def test_adopt_when_truncated_command(self):
         """exec -c 值被截短 → 采用原生解析"""
-        from src.__main__ import _adopt_native_argv
+        from pty_agent.__main__ import _adopt_native_argv
         argv = ["app.py", "exec", "t", "-c", "python"]
         parsed = ["app.py", "exec", "t", "-c", 'python -c "print(1)"']
         assert _adopt_native_argv(argv, parsed) is parsed
 
     def test_adopt_when_truncated_send_input(self):
         """send -i 值被截短 → 采用原生解析（新输入选项同样受保护）"""
-        from src.__main__ import _adopt_native_argv
+        from pty_agent.__main__ import _adopt_native_argv
         argv = ["app.py", "send", "t", "-i", "print("]
         parsed = ["app.py", "send", "t", "-i", 'print("hi")']
         assert _adopt_native_argv(argv, parsed) is parsed
 
     def test_adopt_inline_form(self):
         """--input=<value> 内联形式同样可纠偏"""
-        from src.__main__ import _adopt_native_argv
+        from pty_agent.__main__ import _adopt_native_argv
         argv = ["app.py", "send", "t", "--input=print("]
         parsed = ["app.py", "send", "t", "--input=print(\"hi\")"]
         assert _adopt_native_argv(argv, parsed) is parsed
 
     def test_reject_equal_or_shorter_or_missing(self):
-        from src.__main__ import _adopt_native_argv
+        from pty_agent.__main__ import _adopt_native_argv
         same = (["app.py", "exec", "t", "-c", "echo"],
                 ["app.py", "exec", "t", "-c", "echo"])
         assert _adopt_native_argv(*same) is None
@@ -436,7 +436,7 @@ class TestNativeArgvAdoption:
     def test_windows_repair_is_noop_off_windows(self, monkeypatch):
         """非 Windows 平台不触碰 sys.argv"""
         import sys as _sys
-        from src.__main__ import _fix_windows_quoting
+        from pty_agent.__main__ import _fix_windows_quoting
         argv = ["app.py", "exec", "t", "-c", "python"]
         monkeypatch.setattr(_sys, "argv", list(argv))
         monkeypatch.setattr(_sys, "platform", "linux")

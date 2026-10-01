@@ -13,7 +13,7 @@ import sys
 import errno
 import pytest
 
-from src.backend.base import Backend
+from pty_agent.backend.base import Backend
 
 
 class TestBackendDrain:
@@ -41,7 +41,7 @@ class TestSubprocessBackendDrain:
 
     def test_subprocess_drain_returns_empty(self):
         """SubprocessBackend.drain() 返回 b""（继承基类）"""
-        from src.backend.subprocess import SubprocessBackend
+        from pty_agent.backend.subprocess import SubprocessBackend
 
         pty = SubprocessBackend(
             [sys.executable, "-c", "print('hello')"],
@@ -56,7 +56,7 @@ class TestSubprocessBackendDrain:
 
     def test_subprocess_read_still_works(self):
         """drain() 不破坏正常的 read()"""
-        from src.backend.subprocess import SubprocessBackend
+        from pty_agent.backend.subprocess import SubprocessBackend
 
         pty = SubprocessBackend(
             [sys.executable, "-u", "-c", "print('hello world')"],
@@ -90,7 +90,7 @@ class TestUnixTtyBackendDrain:
         仅 mock openpty/fork/waitpid，避免测试产生真实孤儿进程。
         `os.read` 由各测试单独 mock；fd 由 close() 正常回收。
         """
-        from src.backend.unix.pty import UnixTtyBackend
+        from pty_agent.backend.unix.pty import UnixTtyBackend
 
         r, w = os.pipe()
         monkeypatch.setattr(os, "openpty", lambda: (r, w))
@@ -223,13 +223,13 @@ class TestWinTtyBackendDrain:
 
     def test_drain_type_and_callable(self):
         """drain() 方法存在且可调用"""
-        from src.backend.windows.kernel32_api import WinTtyBackend
+        from pty_agent.backend.windows.kernel32_api import WinTtyBackend
         assert hasattr(WinTtyBackend, "drain")
         assert callable(WinTtyBackend.drain)
 
     def test_drain_no_data(self):
         """子进程未输出时 drain() 返回 b"""""
-        from src.backend.windows.kernel32_api import WinTtyBackend
+        from pty_agent.backend.windows.kernel32_api import WinTtyBackend
 
         try:
             pty = WinTtyBackend(
@@ -261,12 +261,12 @@ class TestDrainInterface:
 
     def test_subprocess_has_drain(self):
         """SubprocessBackend 有 drain()（通过继承）"""
-        from src.backend.subprocess import SubprocessBackend
+        from pty_agent.backend.subprocess import SubprocessBackend
         assert hasattr(SubprocessBackend, "drain")
 
     def test_unix_pty_has_drain(self):
         """UnixTtyBackend 有 drain()"""
-        from src.backend.unix.pty import UnixTtyBackend
+        from pty_agent.backend.unix.pty import UnixTtyBackend
         assert hasattr(UnixTtyBackend, "drain")
 
     def test_drain_returns_bytes(self):

@@ -10,7 +10,7 @@ PTY-Agent 是一个**命令行交互式程序交互代理**，通过subprocess�
 
 原理：程序后台有运行一个守护进程，由守护进程接受用户命令，对应CLI进行操作
 
-程序位于`app.py`，运行方法：`python app.py ...`
+程序位于`app.py`，运行方法：`python app.py ...`（已 `pip install -e .` 时等价：`pty-agent ...` / `python -m pty_agent ...`）
 
 ## 何时使用
 

@@ -7,7 +7,7 @@ import time
 import threading
 from datetime import datetime
 
-from src.session.output.events import EventHistoryManager, PendingEvent, _events_to_dicts
+from pty_agent.session.output.events import EventHistoryManager, PendingEvent, _events_to_dicts
 
 
 class TestPendingEvent:

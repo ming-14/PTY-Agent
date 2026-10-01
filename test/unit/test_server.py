@@ -10,7 +10,7 @@ import threading
 import pytest
 from unittest.mock import patch, MagicMock
 
-from src.daemon.server import DaemonServer
+from pty_agent.daemon.server import DaemonServer
 
 
 class TestDaemonServerInit:
@@ -37,10 +37,10 @@ class TestDaemonServerRun:
     """DaemonServer.run 测试"""
 
     def test_run_publishes_daemon_info(self):
-        with patch("src.daemon.server.write_auth_token") as mock_auth, \
-             patch("src.daemon.server.open_shm") as mock_open, \
-             patch("src.daemon.server.signal.signal"), \
-             patch("src.daemon.server.write_daemon_info_handle") as mock_write:
+        with patch("pty_agent.daemon.server.write_auth_token") as mock_auth, \
+             patch("pty_agent.daemon.server.open_shm") as mock_open, \
+             patch("pty_agent.daemon.server.signal.signal"), \
+             patch("pty_agent.daemon.server.write_daemon_info_handle") as mock_write:
             mock_auth.return_value = MagicMock()
             mock_info_shm = MagicMock()
             mock_open.return_value = mock_info_shm
@@ -62,19 +62,19 @@ class TestDaemonServerRun:
             assert args[2] is True
 
     def test_run_refuses_when_already_running(self):
-        with patch("src.daemon.server.read_daemon_info",
+        with patch("pty_agent.daemon.server.read_daemon_info",
                    return_value=(12345, True, time.time())), \
-             patch("src.daemon.server.pid_exists", return_value=True), \
-             patch("src.daemon.server.heartbeat_fresh", return_value=True):
+             patch("pty_agent.daemon.server.pid_exists", return_value=True), \
+             patch("pty_agent.daemon.server.heartbeat_fresh", return_value=True):
             srv = DaemonServer()
             with pytest.raises(RuntimeError):
                 srv.run()
 
     def test_no_pid_file_written(self):
-        with patch("src.daemon.server.write_auth_token") as mock_auth, \
-             patch("src.daemon.server.open_shm") as mock_open, \
-             patch("src.daemon.server.signal.signal"), \
-             patch("src.daemon.server.write_daemon_info_handle"):
+        with patch("pty_agent.daemon.server.write_auth_token") as mock_auth, \
+             patch("pty_agent.daemon.server.open_shm") as mock_open, \
+             patch("pty_agent.daemon.server.signal.signal"), \
+             patch("pty_agent.daemon.server.write_daemon_info_handle"):
             mock_auth.return_value = MagicMock()
             mock_open.return_value = MagicMock()
 
@@ -101,9 +101,9 @@ class TestDaemonServerSlot:
         mock_handler.handle.return_value = {"type": "pong"}
         srv._handler = mock_handler
 
-        with patch("src.daemon.server.open_shm") as mock_open, \
-             patch("src.daemon.server.read_message") as mock_read, \
-             patch("src.daemon.server.write_message") as mock_write:
+        with patch("pty_agent.daemon.server.open_shm") as mock_open, \
+             patch("pty_agent.daemon.server.read_message") as mock_read, \
+             patch("pty_agent.daemon.server.write_message") as mock_write:
             req_shm = MagicMock()
             resp_shm = MagicMock()
             mock_open.side_effect = [req_shm, resp_shm]
@@ -125,9 +125,9 @@ class TestDaemonServerSlot:
         mock_handler = MagicMock()
         srv._handler = mock_handler
 
-        with patch("src.daemon.server.open_shm") as mock_open, \
-             patch("src.daemon.server.read_message", return_value=None), \
-             patch("src.daemon.server.write_message") as mock_write:
+        with patch("pty_agent.daemon.server.open_shm") as mock_open, \
+             patch("pty_agent.daemon.server.read_message", return_value=None), \
+             patch("pty_agent.daemon.server.write_message") as mock_write:
             req_shm = MagicMock()
             resp_shm = MagicMock()
             mock_open.side_effect = [req_shm, resp_shm]
@@ -147,9 +147,9 @@ class TestDaemonServerSlot:
         mock_handler.handle.return_value = {"type": "ok"}
         srv._handler = mock_handler
 
-        with patch("src.daemon.server.open_shm") as mock_open, \
-             patch("src.daemon.server.read_message") as mock_read, \
-             patch("src.daemon.server.write_message"), \
+        with patch("pty_agent.daemon.server.open_shm") as mock_open, \
+             patch("pty_agent.daemon.server.read_message") as mock_read, \
+             patch("pty_agent.daemon.server.write_message"), \
              patch.object(srv, "stop") as mock_stop:
             req_shm = MagicMock()
             resp_shm = MagicMock()
@@ -168,20 +168,20 @@ class TestDaemonServerVerifyShm:
     def test_verify_own_pid(self):
         srv = DaemonServer()
         srv._my_pid = 12345
-        with patch("src.daemon.server.read_daemon_info",
+        with patch("pty_agent.daemon.server.read_daemon_info",
                    return_value=(12345, True, time.time())):
             assert srv._verify_shm() is True
 
     def test_verify_foreign_pid(self):
         srv = DaemonServer()
         srv._my_pid = 12345
-        with patch("src.daemon.server.read_daemon_info",
+        with patch("pty_agent.daemon.server.read_daemon_info",
                    return_value=(67890, True, time.time())):
             assert srv._verify_shm() is False
 
     def test_verify_no_info(self):
         srv = DaemonServer()
-        with patch("src.daemon.server.read_daemon_info", return_value=None):
+        with patch("pty_agent.daemon.server.read_daemon_info", return_value=None):
             assert srv._verify_shm() is True
 
 
@@ -255,8 +255,8 @@ class TestDaemonServerToken:
         srv._auth_shm = mock_shm
 
         old_token = srv._auth_token
-        with patch("src.daemon.server.write_auth_token") as mock_write, \
-             patch("src.daemon.server.threading.Timer") as mock_timer:
+        with patch("pty_agent.daemon.server.write_auth_token") as mock_write, \
+             patch("pty_agent.daemon.server.threading.Timer") as mock_timer:
             mock_timer.return_value = MagicMock()
             mock_write.return_value = mock_shm
             srv._rotate_token()

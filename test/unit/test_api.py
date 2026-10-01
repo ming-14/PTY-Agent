@@ -7,7 +7,7 @@
 
 from unittest.mock import patch
 
-from src.client.api import PtyClient, _has_shell_operators
+from pty_agent.client.api import PtyClient, _has_shell_operators
 
 
 class TestHasShellOperators:
@@ -143,7 +143,7 @@ class TestProcessInput:
     """process_input 测试"""
 
     def test_raw_mode_preserves_backslash(self):
-        from src.client.input import process_input
+        from pty_agent.client.input import process_input
         result = process_input("cd C:\\Users")
         assert "C:\\Users" in result
         assert result.endswith("\n")

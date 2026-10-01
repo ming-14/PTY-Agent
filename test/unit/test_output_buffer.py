@@ -5,7 +5,7 @@
 
 import threading
 
-from src.session.output.buffer import OutputBuffer
+from pty_agent.session.output.buffer import OutputBuffer
 
 
 class TestOutputBufferAppend:

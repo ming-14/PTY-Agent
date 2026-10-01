@@ -25,7 +25,7 @@ pytestmark = [
 @pytest.fixture
 def job():
     """创建一个不分配任何进程的 ProcessJob 实例"""
-    from src.backend.windows.job import ProcessJob
+    from pty_agent.backend.windows.job import ProcessJob
     j = ProcessJob(name="pytest-job")
     yield j
     j.close()
@@ -36,7 +36,7 @@ class TestProcessJobCreate:
 
     def test_create_and_close(self):
         """Job Object 创建后关闭不应异常"""
-        from src.backend.windows.job import ProcessJob
+        from pty_agent.backend.windows.job import ProcessJob
         j = ProcessJob(name="test-create")
         assert j is not None
         j.close()
@@ -44,7 +44,7 @@ class TestProcessJobCreate:
 
     def test_create_with_name(self):
         """创建命名 Job Object"""
-        from src.backend.windows.job import ProcessJob
+        from pty_agent.backend.windows.job import ProcessJob
         j = ProcessJob(name="test-named-job")
         assert j._hjob is not None
         assert j.name == "test-named-job"
@@ -52,7 +52,7 @@ class TestProcessJobCreate:
 
     def test_context_manager(self):
         """上下文管理器应能正确创建和关闭"""
-        from src.backend.windows.job import ProcessJob
+        from pty_agent.backend.windows.job import ProcessJob
         with ProcessJob(name="test-cm") as j:
             assert j._hjob is not None
         assert j._hjob is None
@@ -74,7 +74,7 @@ class TestProcessJobAssign:
     def test_assign_and_query_subprocess(self):
         """分配子进程后可在 Job 进程列表中查到"""
         import subprocess
-        from src.backend.windows.job import ProcessJob
+        from pty_agent.backend.windows.job import ProcessJob
 
         j = ProcessJob(name="test-assign-subproc")
         try:
@@ -107,7 +107,7 @@ class TestProcessJobAssign:
         这里用"自己的子进程句柄 + 故意写错的 PID"触发校验分支。
         """
         import subprocess
-        from src.backend.windows.job import ProcessJob
+        from pty_agent.backend.windows.job import ProcessJob
 
         j = ProcessJob(name="test-pid-mismatch")
         proc = subprocess.Popen(
@@ -132,7 +132,7 @@ class TestProcessJobSubprocess:
     def test_spawn_and_query(self):
         """启动子进程后可在 Job 进程列表中查到（独立 Job 实例）"""
         import subprocess
-        from src.backend.windows.job import ProcessJob
+        from pty_agent.backend.windows.job import ProcessJob
 
         j = ProcessJob(name="test-spawn-query")
         proc = subprocess.Popen(
@@ -151,7 +151,7 @@ class TestProcessJobSubprocess:
     def test_kill_on_close(self):
         """KILL_ON_JOB_CLOSE：关闭 Job 后子进程应被终止"""
         import subprocess
-        from src.backend.windows.job import ProcessJob
+        from pty_agent.backend.windows.job import ProcessJob
 
         j = ProcessJob(name="test-kill-on-close")
         proc = subprocess.Popen(
@@ -182,13 +182,13 @@ class TestProcessJobNotificationEvent:
 
     def test_push_sets_event_wait_returns_true(self, job):
         """推送通知后事件置位，wait 立即返回 True"""
-        from src.backend.windows.job import JobNotification
+        from pty_agent.backend.windows.job import JobNotification
         job._push_notif(JobNotification(msg_type=0, pid=100))
         assert job.wait_notification(0.1) is True
 
     def test_drain_clears_event(self, job):
         """drain 消费后事件清除，再次等待超时"""
-        from src.backend.windows.job import JobNotification
+        from pty_agent.backend.windows.job import JobNotification
         job._push_notif(JobNotification(msg_type=0, pid=100))
         items = job.drain_notifications()
         assert len(items) == 1
@@ -196,7 +196,7 @@ class TestProcessJobNotificationEvent:
 
     def test_drain_returns_all_pushed(self, job):
         """drain 返回所有推送的通知"""
-        from src.backend.windows.job import JobNotification
+        from pty_agent.backend.windows.job import JobNotification
         job._push_notif(JobNotification(msg_type=0, pid=100))
         job._push_notif(JobNotification(msg_type=0, pid=200))
         items = job.drain_notifications()
@@ -204,7 +204,7 @@ class TestProcessJobNotificationEvent:
 
     def test_push_after_drain_sets_event_again(self, job):
         """drain 后再推送，事件重新置位（无丢失唤醒）"""
-        from src.backend.windows.job import JobNotification
+        from pty_agent.backend.windows.job import JobNotification
         job._push_notif(JobNotification(msg_type=0, pid=100))
         job.drain_notifications()
         job._push_notif(JobNotification(msg_type=0, pid=200))

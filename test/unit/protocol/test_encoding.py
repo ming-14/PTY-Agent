@@ -2,9 +2,9 @@
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "src"))
 
-from src.session.encoding import decode_utf8
+from pty_agent.session.encoding import decode_utf8
 
 
 def test_decode_empty():

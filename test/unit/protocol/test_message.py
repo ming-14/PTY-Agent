@@ -6,9 +6,9 @@
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "src"))
 
-from src.protocol.message import Message
+from pty_agent.protocol.message import Message
 
 
 def test_encode_decode():

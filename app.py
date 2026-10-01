@@ -3,6 +3,8 @@
 用法:
   app.py             *显示帮助
   app.py ...         执行命令
+
+等价入口（安装后）: pty-agent ... / python -m pty_agent ...
 """
 
 import sys
@@ -19,12 +21,12 @@ if sys.version_info < _REQUIRED_VERSION:
 
 _src_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
 if _src_dir not in sys.path:
-    sys.path.insert(0, _src_dir)
+    sys.path.insert(0, _src_dir)  # 使未安装时也能 import pty_agent
 
 
 def main():
-    """转调原始 CLI，所有行为由 src/__main__ 决定"""
-    from src.__main__ import main as _cli_main  # noqa
+    """转调原始 CLI，所有行为由 src/pty_agent/__main__ 决定"""
+    from pty_agent.__main__ import main as _cli_main  # noqa
 
     # 将 argv[0] 设为 app.py，确保 help 显示正确命令名
     old_argv = sys.argv

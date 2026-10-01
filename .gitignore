@@ -8,6 +8,9 @@ __pycache__/
 # Build artifacts
 pty-agent/
 pty-agent-*.zip
+*.egg-info/
+build/
+dist/
 
 # Test fixtures
 test_debug.exe

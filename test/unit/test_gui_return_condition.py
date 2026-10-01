@@ -14,13 +14,13 @@ import time
 
 import pytest
 
-from src.session.output.buffer import OutputBuffer
-from src.session.output.trigger import TriggerMatcher
-from src.session.output.events import PendingEvent
-from src.session.process.gui import GuiDetector
-from src.session.process.monitor import ProcessMonitor
-from src.session.session import Session
-from src.session.wake import WakeSignal
+from pty_agent.session.output.buffer import OutputBuffer
+from pty_agent.session.output.trigger import TriggerMatcher
+from pty_agent.session.output.events import PendingEvent
+from pty_agent.session.process.gui import GuiDetector
+from pty_agent.session.process.monitor import ProcessMonitor
+from pty_agent.session.session import Session
+from pty_agent.session.wake import WakeSignal
 
 # 永不匹配的正则：让 -t 这一路肯定不会命中，用于隔离 GUI 条件
 NEVER_MATCH = r"(?!x)x"
@@ -185,7 +185,7 @@ class TestWaitForTriggerSignature:
 
     def test_no_gui_short_circuit_param(self):
         import inspect
-        from src.session.session import Session as _S
+        from pty_agent.session.session import Session as _S
 
         params = inspect.signature(_S.wait_for_trigger).parameters
         assert "gui_short_circuit" not in params, (
@@ -197,8 +197,8 @@ class TestWaitForTriggerSignature:
         import pathlib
 
         src_root = pathlib.Path(inspect.getfile(
-            __import__("src.session.session", fromlist=["Session"])))
-        src_root = src_root.parent.parent   # .../src
+            __import__("pty_agent.session.session", fromlist=["Session"])))
+        src_root = src_root.parent.parent   # .../src/pty_agent
         offenders = []
         for py in src_root.rglob("*.py"):
             if "gui_short_circuit" in py.read_text(encoding="utf-8"):
@@ -223,7 +223,7 @@ class TestPresenterGuiPayload:
         return cap.out + cap.err
 
     def test_gui_detected_shows_hwnd_without_debug(self, capsys):
-        from src.client.presenters import print_response
+        from pty_agent.client.presenters import print_response
 
         print_response(self._resp("gui_detected"), show_debug=False)
         combined = self._combined(capsys)
@@ -234,14 +234,14 @@ class TestPresenterGuiPayload:
 
     def test_other_reason_keeps_no_debug_contract(self, capsys):
         """非 GUI 返回原因时，--no-debug 依旧隐藏窗口信息"""
-        from src.client.presenters import print_response
+        from pty_agent.client.presenters import print_response
 
         print_response(self._resp("timeout"), show_debug=False)
         assert "0x00001234" not in self._combined(capsys)
 
     def test_debug_mode_not_duplicated(self, capsys):
         """show_debug=True 时窗口信息只出现一次（不在正载荷里重复）"""
-        from src.client.presenters import print_response
+        from pty_agent.client.presenters import print_response
 
         print_response(self._resp("gui_detected"), show_debug=True)
         assert self._combined(capsys).count("0x00001234") == 1
@@ -329,7 +329,7 @@ class TestGuiEventListenerPath:
                         reason="GuiWindowMonitor 仅 Windows 可用")
     def test_monitor_listener_fire_on_register(self):
         """订阅时已有待取窗口必须立即回调一次，避免订阅前丢事件"""
-        from src.backend.windows.gui_monitor import (
+        from pty_agent.backend.windows.gui_monitor import (
             GuiWindowMonitor, GuiWindowInfo)
 
         m = GuiWindowMonitor(job=None)
@@ -347,7 +347,7 @@ class TestGuiEventListenerPath:
                         reason="GuiWindowMonitor 仅 Windows 可用")
     def test_monitor_dedupe_on_hwnd(self):
         """去重发生在 _build_info：同一 hwnd 只产出一次"""
-        from src.backend.windows.gui_monitor import GuiWindowMonitor
+        from pty_agent.backend.windows.gui_monitor import GuiWindowMonitor
 
         m = GuiWindowMonitor(job=None)
         try:

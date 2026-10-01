@@ -25,11 +25,20 @@ python app.py remove py
 
 ## 安装
 
-Python 3.11+，运行时依赖 `pyte`（真实终端模式的终端仿真解析），测试依赖 `pytest`。
+Python 3.11+，标准 **src-layout 包**（源码在 `src/pty_agent/`）。运行时依赖 `pyte`（真实终端模式的终端仿真解析），测试依赖 `pytest`。
 
 ```powershell
+# 推荐：可编辑安装，得到 pty-agent 命令（等价 python -m pty_agent）
+pip install -e .
+
+# 测试/开发依赖（pytest、pytest-timeout、ruff）
+pip install -e ".[dev]"
+
+# 或者只装运行依赖，直接用入口脚本跑
 pip install -r requirements.txt
 ```
+
+未安装也可运行：`python app.py ...`（与 `pty-agent ...` 行为一致）。
 
 ## 命令概览
 
@@ -106,41 +115,43 @@ python app.py read myid --grep "ERROR"     # 全量正则过滤
 ```
 pty-agent/
 ├── app.py                 # 快捷入口
+├── pyproject.toml          # 打包配置（pip install -e . → pty-agent 命令）
 ├── src/
-│   ├── __main__.py        # CLI 入口（参数解析 + 呈现派发）
-│   ├── config.py          # 配置常量
-│   ├── protocol/          # 通信协议层（统一封装，client/daemon 唯一共享层）
-│   │   ├── shm.py         # 共享内存信箱/通道/守护进程信息区
-│   │   ├── request.py     # roundtrip() 统一共享内存请求门面
-│   │   ├── auth.py        # 认证令牌
-│   │   ├── daemon_utils.py# 守护进程存活检测
-│   │   ├── message.py     # JSON 消息编解码
-│   │   └── shm_utils.py   # 跨平台 mmap 原语
-│   ├── client/            # 前端客户端层（与 daemon 完全解耦）
-│   │   ├── api.py         # PtyClient 门面（构建请求 → roundtrip → 结构化 dict，不呈现）
-│   │   ├── controller.py  # 守护进程 start/stop/is_running
-│   │   ├── config_manager.py  # --default 临时配置覆盖
-│   │   ├── input.py       # 输入文本处理
-│   │   └── presenters/    # 呈现层（cli.py 自然语言；MCP 契约位）
-│   ├── daemon/            # 守护进程层（信箱服务器 + 请求处理）
-│   │   ├── server.py      # 信箱轮询主循环 + 令牌轮换
-│   │   ├── handler.py     # RequestHandler（业务协议）
-│   │   └── lifecycle.py   # 守护进程入口 + 日志
-│   ├── backend/           # 运行后端（subprocess 与 pty 分离、无回退）
-│   │   ├── subprocess.py  # SubprocessBackend（纯管道子进程）
-│   │   ├── tty.py         # WinTtyBackend / UnixTtyBackend（真实终端）
-│   │   ├── factory.py     # create_subprocess / create_tty 显式入口
-│   │   ├── base.py        # Backend 抽象 + ProcessEvent
-│   │   ├── windows/       # ConPTY + Job Object + GUI 检测
-│   │   └── unix/          # openpty + /proc 进程树
-│   └── session/           # 会话管理（文本行输出缓冲 + 输出管线）
-│       ├── manager.py     # SessionManager
-│       ├── session.py     # Session 协调器（模式/管线/游标）
-│       ├── wake.py        # WakeSignal 多路唤醒锚（GUI/触发/崩溃/退出同级响应）
-│       ├── session_threads.py # 读者/监控线程
-│       ├── output/        # buffer(文本行级) / screen(pyte 滚动屏) / pipeline(双管线) / trigger / events
-│       ├── encoding/      # UTF-8 解码（subprocess 流）
-│       └── process/       # 进程监控 / GUI 检测
+│   └── pty_agent/          # 主包
+│       ├── __main__.py        # CLI 入口（参数解析 + 呈现派发）
+│       ├── config.py          # 配置常量
+│       ├── protocol/          # 通信协议层（统一封装，client/daemon 唯一共享层）
+│       │   ├── shm.py         # 共享内存信箱/通道/守护进程信息区
+│       │   ├── request.py     # roundtrip() 统一共享内存请求门面
+│       │   ├── auth.py        # 认证令牌
+│       │   ├── daemon_utils.py# 守护进程存活检测
+│       │   ├── message.py     # JSON 消息编解码
+│       │   └── shm_utils.py   # 跨平台 mmap 原语
+│       ├── client/            # 前端客户端层（与 daemon 完全解耦）
+│       │   ├── api.py         # PtyClient 门面（构建请求 → roundtrip → 结构化 dict，不呈现）
+│       │   ├── controller.py  # 守护进程 start/stop/is_running
+│       │   ├── config_manager.py  # --default 临时配置覆盖
+│       │   ├── input.py       # 输入文本处理
+│       │   └── presenters/    # 呈现层（cli.py 自然语言；MCP 契约位）
+│       ├── daemon/            # 守护进程层（信箱服务器 + 请求处理）
+│       │   ├── server.py      # 信箱轮询主循环 + 令牌轮换
+│       │   ├── handler.py     # RequestHandler（业务协议）
+│       │   └── lifecycle.py   # 守护进程入口 + 日志
+│       ├── backend/           # 运行后端（subprocess 与 pty 分离、无回退）
+│       │   ├── subprocess.py  # SubprocessBackend（纯管道子进程）
+│       │   ├── tty.py         # WinTtyBackend / UnixTtyBackend（真实终端）
+│       │   ├── factory.py     # create_subprocess / create_tty 显式入口
+│       │   ├── base.py        # Backend 抽象 + ProcessEvent
+│       │   ├── windows/       # ConPTY + Job Object + GUI 检测
+│       │   └── unix/          # openpty + /proc 进程树
+│       └── session/           # 会话管理（文本行输出缓冲 + 输出管线）
+│           ├── manager.py     # SessionManager
+│           ├── session.py     # Session 协调器（模式/管线/游标）
+│           ├── wake.py        # WakeSignal 多路唤醒锚（GUI/触发/崩溃/退出同级响应）
+│           ├── session_threads.py # 读者/监控线程
+│           ├── output/        # buffer(文本行级) / screen(pyte 滚动屏) / pipeline(双管线) / trigger / events
+│           ├── encoding/      # UTF-8 解码（subprocess 流）
+│           └── process/       # 进程监控 / GUI 检测
 ├── test/                  # 单元测试 + 集成测试
 ├── docs/                  # 设计文档
 └── SKILL.md               # AI 技能描述

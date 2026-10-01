@@ -11,7 +11,7 @@ import time
 import threading
 import pytest
 
-from src.session.session import Session
+from pty_agent.session.session import Session
 
 
 class TestSessionExitInfo:

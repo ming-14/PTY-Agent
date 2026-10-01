@@ -13,7 +13,7 @@ class TestConfigManager:
     @pytest.fixture
     def cfg(self):
         """创建 ConfigManager 实例"""
-        from src.client.config_manager import ConfigManager
+        from pty_agent.client.config_manager import ConfigManager
 
         return ConfigManager()
 
@@ -125,7 +125,7 @@ class TestConfigManager:
 
     def test_resolve_eol(self, cfg):
         """resolve_eol 将配置名解析为实际行尾字符串"""
-        from src.client.config_manager import resolve_eol
+        from pty_agent.client.config_manager import resolve_eol
         assert resolve_eol("lf") == "\n"
         assert resolve_eol("cr") == "\r"
         assert resolve_eol("crlf") == "\r\n"
@@ -133,8 +133,8 @@ class TestConfigManager:
 
     def test_process_input_eol(self):
         """process_input 使用指定行尾"""
-        from src.client.input import process_input
-        from src.client.config_manager import resolve_eol
+        from pty_agent.client.input import process_input
+        from pty_agent.client.config_manager import resolve_eol
         assert process_input("x", eol=resolve_eol("lf")) == "x\n"
         assert process_input("x", eol=resolve_eol("cr")) == "x\r"
         assert process_input("x", eol=resolve_eol("crlf")) == "x\r\n"
@@ -166,7 +166,7 @@ class TestFormatter:
 
     def test_result_output(self, capsys):
         """测试 result 输出"""
-        from src.client.presenters import print_response
+        from pty_agent.client.presenters import print_response
 
         resp = self._result_resp(
             output="Hello World",
@@ -180,7 +180,7 @@ class TestFormatter:
 
     def test_error_output(self, capsys):
         """测试错误输出"""
-        from src.client.presenters import print_response
+        from pty_agent.client.presenters import print_response
 
         resp = {"type": "error", "error": "会话不存在"}
         print_response(resp)
@@ -190,7 +190,7 @@ class TestFormatter:
 
     def test_none_response(self, capsys):
         """测试 None 响应"""
-        from src.client.presenters import print_response
+        from pty_agent.client.presenters import print_response
 
         print_response(None)
         captured = capsys.readouterr()
@@ -201,7 +201,7 @@ class TestFormatter:
 
     def test_debug_enabled(self, capsys):
         """测试 show_debug=True 时显示 debug 段"""
-        from src.client.presenters import print_response
+        from pty_agent.client.presenters import print_response
 
         resp = self._result_resp()
         print_response(resp, show_debug=True)
@@ -213,7 +213,7 @@ class TestFormatter:
 
     def test_debug_disabled(self, capsys):
         """测试 show_debug=False 时隐藏 debug 段"""
-        from src.client.presenters import print_response
+        from pty_agent.client.presenters import print_response
 
         resp = self._result_resp()
         print_response(resp, show_debug=False)
@@ -225,7 +225,7 @@ class TestFormatter:
 
     def test_debug_disabled_hides_events(self, capsys):
         """测试 show_debug=False 时隐藏 pending_events"""
-        from src.client.presenters import print_response
+        from pty_agent.client.presenters import print_response
 
         resp = self._result_resp(debug={
             "processes": [],
@@ -248,7 +248,7 @@ class TestFormatter:
 
     def test_debug_disabled_hides_gui(self, capsys):
         """测试 show_debug=False 时隐藏 GUI 窗口"""
-        from src.client.presenters import print_response
+        from pty_agent.client.presenters import print_response
 
         resp = self._result_resp(debug={
             "processes": [],
@@ -266,7 +266,7 @@ class TestFormatter:
 
     def test_show_debug_flag_controls_output(self, capsys):
         """测试 print_response 的 show_debug 参数控制 debug 段"""
-        from src.client.presenters import print_response
+        from pty_agent.client.presenters import print_response
 
         resp = self._result_resp()
         # show_debug=True（默认）显示 debug，False 隐藏
@@ -284,7 +284,7 @@ class TestConfigParserIntegration:
 
     def test_key_conversion(self):
         """测试 CLI 键名到内部键名的转换"""
-        from src.__main__ import _parse_default_key, _format_config_key
+        from pty_agent.__main__ import _parse_default_key, _format_config_key
 
         assert _parse_default_key("idle-timeout") == "idle_timeout"
         assert _format_config_key("idle_timeout") == "idle-timeout"

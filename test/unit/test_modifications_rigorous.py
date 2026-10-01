@@ -18,7 +18,7 @@ from datetime import datetime
 import pytest
 from unittest.mock import patch, MagicMock
 
-from src.session.output.events import (
+from pty_agent.session.output.events import (
     PendingEvent,
     format_timestamp_iso,
     _events_to_dicts,
@@ -105,7 +105,7 @@ class TestFormatEventTimestamp:
 
     @pytest.fixture
     def formatter_mod(self):
-        import src.client.presenters.cli as fm
+        import pty_agent.client.presenters.cli as fm
         return fm
 
     def test_iso_string_shows_hhmmss(self, formatter_mod, capsys):
@@ -178,7 +178,7 @@ class TestConfigManagerSendEol:
 
     @pytest.fixture
     def cfg(self):
-        from src.client.config_manager import ConfigManager
+        from pty_agent.client.config_manager import ConfigManager
         return ConfigManager()
 
     def test_valid_lf(self, cfg):
@@ -216,7 +216,7 @@ class TestConfigManagerSendEol:
         assert cfg.get("send_eol") == "lf"
 
     def test_resolve_eol(self):
-        from src.client.config_manager import resolve_eol
+        from pty_agent.client.config_manager import resolve_eol
         assert resolve_eol("lf") == "\n"
         assert resolve_eol("cr") == "\r"
         assert resolve_eol("crlf") == "\r\n"
@@ -236,11 +236,11 @@ def _make_session():
     set_trigger 会同时建立 GUI 返回条件的轮次基线（_gui.arm），
     故工装需装配真实 GuiDetector（无后端，检测不会触发）。
     """
-    from src.session.session import Session
+    from pty_agent.session.session import Session
     s = Session.__new__(Session)
-    from src.session.output.buffer import OutputBuffer
-    from src.session.output.trigger import TriggerMatcher
-    from src.session.process.gui import GuiDetector
+    from pty_agent.session.output.buffer import OutputBuffer
+    from pty_agent.session.output.trigger import TriggerMatcher
+    from pty_agent.session.process.gui import GuiDetector
     s._out_buf = OutputBuffer()
     s._trig_mat = TriggerMatcher()
     s._gui = GuiDetector(event_sink=lambda e: None)
@@ -432,13 +432,13 @@ class TestSessionThreadsReaderReady:
     """wait_reader_ready 事件同步测试（替代原 time.sleep(0.1)）"""
 
     def _make_threads(self, backend):
-        from src.session.session_threads import (
+        from pty_agent.session.session_threads import (
             SessionThreads, SessionComponents,
         )
-        from src.session.output.buffer import OutputBuffer
-        from src.session.output.trigger import TriggerMatcher
-        from src.session.process.monitor import ProcessMonitor
-        from src.session.process.gui import GuiDetector
+        from pty_agent.session.output.buffer import OutputBuffer
+        from pty_agent.session.output.trigger import TriggerMatcher
+        from pty_agent.session.process.monitor import ProcessMonitor
+        from pty_agent.session.process.gui import GuiDetector
 
         components = SessionComponents(
             backend_provider=lambda: backend,
@@ -522,7 +522,7 @@ class TestProcessMonitorEmitProcessEnd:
 
     def _make_monitor(self):
         events = []
-        from src.session.process.monitor import ProcessMonitor
+        from pty_agent.session.process.monitor import ProcessMonitor
         mon = ProcessMonitor(
             backend_provider=lambda: None,
             event_sink=lambda e: events.append(e),
@@ -577,7 +577,7 @@ class TestProcessMonitorEmitProcessEnd:
         """名称优先从缓存取，缓存命中则不重复查询"""
         mon, events = self._make_monitor()
         mon._process_names[100] = "cached.exe"
-        with patch("src.session.process.monitor._get_process_name") as mock_name:
+        with patch("pty_agent.session.process.monitor._get_process_name") as mock_name:
             mon._emit_process_end(100, 0, time.time(), "test")
             mock_name.assert_not_called()
         assert "cached.exe" in events[0].info
@@ -585,7 +585,7 @@ class TestProcessMonitorEmitProcessEnd:
     def test_name_fresh_lookup_when_not_cached(self):
         """缓存未命中 → 调用 _get_process_name"""
         mon, events = self._make_monitor()
-        with patch("src.session.process.monitor._get_process_name",
+        with patch("pty_agent.session.process.monitor._get_process_name",
                    return_value="fresh.exe"):
             mon._emit_process_end(100, 0, time.time(), "test")
         assert "fresh.exe" in events[0].info
@@ -609,7 +609,7 @@ class TestBuildResultStartTime:
 
     @pytest.fixture
     def handler_with_session(self):
-        from src.daemon.handler import RequestHandler
+        from pty_agent.daemon.handler import RequestHandler
         h = RequestHandler.__new__(RequestHandler)
         h.manager = MagicMock()
         return h
@@ -631,7 +631,7 @@ class TestBuildResultStartTime:
 
     def test_start_time_iso_format(self, handler_with_session):
         """start_time 输出与 format_timestamp_iso 一致"""
-        from src.session.output.events import format_timestamp_iso
+        from pty_agent.session.output.events import format_timestamp_iso
         s = self._session(1234567890.5)
         handler_with_session.manager.get_session.return_value = s
         result = handler_with_session._build_result(
@@ -656,12 +656,12 @@ class TestBuildResultStartTime:
 
     def test_handler_no_longer_has_format_iso_ms(self):
         """旧的 _format_iso_ms 已删除（无残留）"""
-        import src.daemon.handler as handler_mod
+        import pty_agent.daemon.handler as handler_mod
         assert not hasattr(handler_mod.RequestHandler, "_format_iso_ms")
 
     def test_process_tree_uses_module_level_import(self):
         """processes 路径查询使用模块级 _get_process_path（循环内不再惰性导入）"""
-        from src.daemon.handler import RequestHandler
+        from pty_agent.daemon.handler import RequestHandler
         import inspect
         src = inspect.getsource(RequestHandler._build_result)
         # 循环内不应再有 from ... import（已移到模块顶部）
@@ -679,7 +679,7 @@ class TestEnsureDaemonDeadline:
     def test_uses_deadline_not_fixed_count(self):
         """验证不再使用固定 range(15) 而是 deadline 判断"""
         import inspect
-        from src.client.controller import ensure_daemon
+        from pty_agent.client.controller import ensure_daemon
         src = inspect.getsource(ensure_daemon)
         assert "range(15)" not in src
         assert "DAEMON_START_TIMEOUT" in src
@@ -687,25 +687,25 @@ class TestEnsureDaemonDeadline:
 
     def test_starts_when_daemon_ready_before_deadline(self):
         """start_daemon 未报告就绪，但 deadline 内 is_running 变真 → 正常返回"""
-        from src.client.controller import ensure_daemon
+        from pty_agent.client.controller import ensure_daemon
         calls = {"n": 0}
 
         def is_running():
             calls["n"] += 1
             return calls["n"] >= 3  # 第 3 次就绪
 
-        with patch("src.client.controller.is_running", side_effect=is_running), \
-             patch("src.client.controller.start_daemon", return_value=False), \
-             patch("src.client.controller.time.sleep"):
+        with patch("pty_agent.client.controller.is_running", side_effect=is_running), \
+             patch("pty_agent.client.controller.start_daemon", return_value=False), \
+             patch("pty_agent.client.controller.time.sleep"):
             ensure_daemon()  # 不应抛异常
         assert calls["n"] >= 3
 
     def test_returns_immediately_when_start_daemon_reports_ready(self):
         """start_daemon 返回 True → 不再二次轮询，立即返回"""
-        from src.client.controller import ensure_daemon
-        with patch("src.client.controller.is_running",
+        from pty_agent.client.controller import ensure_daemon
+        with patch("pty_agent.client.controller.is_running",
                    side_effect=[False]) as mock_running, \
-             patch("src.client.controller.start_daemon",
+             patch("pty_agent.client.controller.start_daemon",
                    return_value=True) as mock_start:
             ensure_daemon()  # is_running 只被调用一次，多调用会 StopIteration
         mock_start.assert_called_once()
@@ -713,28 +713,28 @@ class TestEnsureDaemonDeadline:
 
     def test_exits_on_timeout(self):
         """deadline 内未就绪 → SystemExit"""
-        from src.client.controller import ensure_daemon
-        with patch("src.client.controller.is_running", return_value=False), \
-             patch("src.client.controller.start_daemon", return_value=False), \
-             patch("src.client.controller.time.sleep"):
+        from pty_agent.client.controller import ensure_daemon
+        with patch("pty_agent.client.controller.is_running", return_value=False), \
+             patch("pty_agent.client.controller.start_daemon", return_value=False), \
+             patch("pty_agent.client.controller.time.sleep"):
             with pytest.raises(SystemExit):
                 ensure_daemon()
 
     def test_elapsed_equals_config(self):
         """实际等待总时长与 DAEMON_START_TIMEOUT 一致"""
-        from src.config import DAEMON_START_TIMEOUT
-        from src.client.controller import ensure_daemon
+        from pty_agent.config import DAEMON_START_TIMEOUT
+        from pty_agent.client.controller import ensure_daemon
         sleeps = []
-        with patch("src.client.controller.is_running", return_value=False), \
-             patch("src.client.controller.start_daemon", return_value=False), \
-             patch("src.client.controller.time.sleep",
+        with patch("pty_agent.client.controller.is_running", return_value=False), \
+             patch("pty_agent.client.controller.start_daemon", return_value=False), \
+             patch("pty_agent.client.controller.time.sleep",
                    side_effect=lambda s: sleeps.append(s)):
             with pytest.raises(SystemExit):
                 ensure_daemon()
         assert sleeps  # 确实等待过
         assert sum(sleeps) >= DAEMON_START_TIMEOUT - 0.5  # 约等于配置值
         # 等待间隔统一取配置值，不再有第二套硬编码间隔
-        from src.config import DAEMON_START_POLL_INTERVAL
+        from pty_agent.config import DAEMON_START_POLL_INTERVAL
         assert set(sleeps) == {DAEMON_START_POLL_INTERVAL}
 
 
@@ -757,14 +757,14 @@ class TestHandleConfigOps:
 
     def test_no_subcmd_no_config(self, capsys):
         """无子命令、无配置操作 → 返回空 dict（让 main 打印帮助）"""
-        from src.__main__ import _handle_config_ops
+        from pty_agent.__main__ import _handle_config_ops
         args = self._make_args()
         result = _handle_config_ops(args)
         assert result == {}
 
     def test_show_config_no_subcmd_returns_none(self, capsys):
         """--show-config 无子命令 → 返回 None（打印后退出）"""
-        from src.__main__ import _handle_config_ops
+        from pty_agent.__main__ import _handle_config_ops
         args = self._make_args(show_config="")
         result = _handle_config_ops(args)
         assert result is None
@@ -773,7 +773,7 @@ class TestHandleConfigOps:
 
     def test_default_no_subcmd_returns_none(self, capsys):
         """--default 无子命令 → 返回 None 并警告"""
-        from src.__main__ import _handle_config_ops
+        from pty_agent.__main__ import _handle_config_ops
         args = self._make_args(default=["timeout", "30"])
         result = _handle_config_ops(args)
         assert result is None
@@ -782,14 +782,14 @@ class TestHandleConfigOps:
 
     def test_default_with_subcmd_returns_overrides(self):
         """--default + 子命令 → 返回覆盖 dict"""
-        from src.__main__ import _handle_config_ops
+        from pty_agent.__main__ import _handle_config_ops
         args = self._make_args(subcmd="exec", default=["timeout", "30"])
         result = _handle_config_ops(args)
         assert result == {"timeout": 30.0}
 
     def test_show_config_with_subcmd_returns_empty(self, capsys):
         """--show-config + 子命令 → 打印配置后返回空 dict"""
-        from src.__main__ import _handle_config_ops
+        from pty_agent.__main__ import _handle_config_ops
         args = self._make_args(subcmd="exec", show_config="timeout")
         result = _handle_config_ops(args)
         assert result == {}
@@ -798,14 +798,14 @@ class TestHandleConfigOps:
 
     def test_default_invalid_key_exits(self):
         """--default 无效键 → SystemExit"""
-        from src.__main__ import _handle_config_ops
+        from pty_agent.__main__ import _handle_config_ops
         args = self._make_args(default=["bogus_key", "x"])
         with pytest.raises(SystemExit):
             _handle_config_ops(args)
 
     def test_default_and_show_config_no_subcmd(self, capsys):
         """--default + --show-config 无子命令 → 返回 None（show 优先退出）"""
-        from src.__main__ import _handle_config_ops
+        from pty_agent.__main__ import _handle_config_ops
         args = self._make_args(default=["timeout", "30"],
                                show_config="")
         result = _handle_config_ops(args)
@@ -822,7 +822,7 @@ class TestFactoryPlatformImport:
 
     def test_factory_exposes_create_funcs(self):
         """factory 导出 create_subprocess / create_tty 与后端类"""
-        import src.backend.factory as factory_mod
+        import pty_agent.backend.factory as factory_mod
         assert hasattr(factory_mod, "create_subprocess")
         assert hasattr(factory_mod, "create_tty")
         assert hasattr(factory_mod, "SubprocessBackend")
@@ -830,25 +830,25 @@ class TestFactoryPlatformImport:
 
     def test_no_pty_create_entry(self):
         """不再有 create_pty 单点入口"""
-        import src.backend.factory as factory_mod
+        import pty_agent.backend.factory as factory_mod
         assert not hasattr(factory_mod, "create_pty")
 
     def test_create_subprocess_uses_subprocess_backend(self):
         """create_subprocess 委托给 SubprocessBackend"""
-        import src.backend.factory as factory_mod
+        import pty_agent.backend.factory as factory_mod
         with patch.object(factory_mod, "SubprocessBackend") as mock_sub:
             factory_mod.create_subprocess("echo hello")
             mock_sub.assert_called_once()
 
     def test_create_tty_uses_tty_backend(self):
         """create_tty 委托给 TtyBackend"""
-        import src.backend.factory as factory_mod
+        import pty_agent.backend.factory as factory_mod
         with patch.object(factory_mod, "TtyBackend") as mock_tty:
             factory_mod.create_tty(["echo", "hi"])
             mock_tty.assert_called_once()
 
     def test_platform_backends_not_in_factory_namespace(self):
         """factory 命名空间不直接引入平台后端类"""
-        import src.backend.factory as factory_mod
+        import pty_agent.backend.factory as factory_mod
         assert not hasattr(factory_mod, "UnixTtyBackend")
         assert not hasattr(factory_mod, "WinTtyBackend")

@@ -8,7 +8,7 @@ from datetime import datetime
 
 import pytest
 
-from src.session.output.events import PendingEvent, _events_to_dicts
+from pty_agent.session.output.events import PendingEvent, _events_to_dicts
 
 
 class TestPendingEvent:
@@ -101,9 +101,9 @@ def _install_backend_mock(monkeypatch, backend=None):
     """把 Session 引用的 backend 工厂 mock 为返回给定后端（默认 _MockBackend）"""
     if backend is None:
         backend = _MockBackend()
-    monkeypatch.setattr("src.session.session.create_subprocess",
+    monkeypatch.setattr("pty_agent.session.session.create_subprocess",
                         lambda *a, **k: backend)
-    monkeypatch.setattr("src.session.session.create_tty",
+    monkeypatch.setattr("pty_agent.session.session.create_tty",
                         lambda *a, **k: backend)
 
 
@@ -113,7 +113,7 @@ class TestSessionEvents:
     @pytest.fixture
     def session(self, monkeypatch):
         """创建一个最小化 Session 实例（使用 mock Backend）"""
-        from src.session.session import Session
+        from pty_agent.session.session import Session
 
         _install_backend_mock(monkeypatch)
 
@@ -293,7 +293,7 @@ class TestSessionDrain:
     @pytest.fixture
     def drain_session(self, monkeypatch):
         """创建使用 _DataMockBackend 的 Session"""
-        from src.session.session import Session
+        from pty_agent.session.session import Session
 
         mock_backend = self._DataMockBackend()
         _install_backend_mock(monkeypatch, mock_backend)

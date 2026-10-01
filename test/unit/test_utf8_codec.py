@@ -4,7 +4,7 @@
 """
 
 
-from src.session.encoding.codec import decode_utf8, _utf8_trim_tail
+from pty_agent.session.encoding.codec import decode_utf8, _utf8_trim_tail
 
 
 class TestUtf8TrimTail:

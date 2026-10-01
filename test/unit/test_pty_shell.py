@@ -9,7 +9,7 @@ import subprocess
 import sys
 import pytest
 
-from src.backend.subprocess import SubprocessBackend
+from pty_agent.backend.subprocess import SubprocessBackend
 
 
 @functools.lru_cache(maxsize=None)
@@ -155,7 +155,7 @@ class TestShellConflict:
 
     def test_pty_and_shell_conflict_detected(self, monkeypatch):
         """同时指定 --pty 和 --shell 时返回错误"""
-        from src.client.api import PtyClient
+        from pty_agent.client.api import PtyClient
 
         client = PtyClient()
         resp = client.cmd_exec(
@@ -170,7 +170,7 @@ class TestShellConflict:
 
     def test_pty_without_shell_ok(self, monkeypatch):
         """--pty 不带 --shell 时不触发冲突（后续请求交由守护进程处理）"""
-        from src.client.api import PtyClient
+        from pty_agent.client.api import PtyClient
 
         # 阻止真实的共享内存请求（冲突检测通过后仍会走到 _send）
         monkeypatch.setattr(
@@ -189,7 +189,7 @@ class TestShellConflict:
 
     def test_shell_without_pty_ok(self, monkeypatch):
         """--shell 不带 --pty 时不触发冲突"""
-        from src.client.api import PtyClient
+        from pty_agent.client.api import PtyClient
 
         monkeypatch.setattr(
             PtyClient, "_send",

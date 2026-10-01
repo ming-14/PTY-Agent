@@ -7,7 +7,7 @@
 """
 
 
-from src.backend.windows.error_msg import (
+from pty_agent.backend.windows.error_msg import (
     translate_windows_error,
     format_process_exit_code,
     format_create_process_error,
@@ -114,7 +114,7 @@ class TestFormatProcessExitCode:
 
     def test_still_active(self):
         """STILL_ACTIVE=259 -> 不命中特殊翻译"""
-        from src.backend.windows.error_msg import STILL_ACTIVE
+        from pty_agent.backend.windows.error_msg import STILL_ACTIVE
         msg = format_process_exit_code(STILL_ACTIVE)
         assert "process exited abnormally" in msg
         assert str(STILL_ACTIVE) in msg

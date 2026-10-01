@@ -10,15 +10,15 @@ import os
 import time
 import pytest
 
-from src.protocol.shm import (
+from pty_agent.protocol.shm import (
     write_daemon_info_handle,
     read_daemon_info,
     cleanup_daemon_info,
 )
-from src.protocol.shm_utils import open_shm, close_shm
-from src.protocol.daemon_utils import heartbeat_fresh
-from src.client.controller import is_running
-from src.config import (
+from pty_agent.protocol.shm_utils import open_shm, close_shm
+from pty_agent.protocol.daemon_utils import heartbeat_fresh
+from pty_agent.client.controller import is_running
+from pty_agent.config import (
     DATA_DIR, IS_WINDOWS,
     MMAP_DAEMON_INFO_NAME, MMAP_DAEMON_INFO_SIZE,
 )

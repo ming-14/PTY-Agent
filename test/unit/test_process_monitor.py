@@ -4,8 +4,8 @@
 """
 
 
-from src.session.process.monitor import ProcessMonitor
-from src.session.process.gui import GuiDetector
+from pty_agent.session.process.monitor import ProcessMonitor
+from pty_agent.session.process.gui import GuiDetector
 
 
 class TestProcessMonitorInit:

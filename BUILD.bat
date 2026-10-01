@@ -26,6 +26,9 @@ if exist "%~dp0pty-agent" rd /s /q "%~dp0pty-agent"
 mkdir "%~dp0pty-agent"
 xcopy "%~dp0src" "%~dp0pty-agent\src\" /e /i /q
 copy "%~dp0app.py" "%~dp0pty-agent\" >nul
+copy "%~dp0pyproject.toml" "%~dp0pty-agent\" >nul
+copy "%~dp0README.md" "%~dp0pty-agent\" >nul
+copy "%~dp0LICENSE" "%~dp0pty-agent\" >nul
 copy "%~dp0SKILL.md" "%~dp0pty-agent\" >nul
 mkdir "%~dp0pty-agent\doc"
 xcopy "%~dp0docs\Skill文档\*" "%~dp0pty-agent\doc\" /q >nul

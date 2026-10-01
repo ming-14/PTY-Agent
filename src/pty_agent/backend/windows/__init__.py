@@ -6,7 +6,7 @@
 - ProcessJob          — Job Object 进程树追踪 + IOCP 实时通知
 - GuiWindowMonitor    — GUI 窗口检测（EnumWindows + Job PID 匹配）
 
-与 Unix 实现（src/backend/unix/）结构对称、接口对齐。
+与 Unix 实现（src/pty_agent/backend/unix/）结构对称、接口对齐。
 """
 
 from .kernel32_api import WinTtyBackend

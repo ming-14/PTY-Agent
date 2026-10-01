@@ -8,8 +8,8 @@
 import sys
 import pytest
 
-from src.backend.factory import create_subprocess, create_tty
-from src.backend.subprocess import SubprocessBackend
+from pty_agent.backend.factory import create_subprocess, create_tty
+from pty_agent.backend.subprocess import SubprocessBackend
 
 
 class TestCreateSubprocess:

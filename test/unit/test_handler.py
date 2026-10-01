@@ -9,9 +9,9 @@ import sys
 import os
 from unittest.mock import patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from src.daemon.handler import RequestHandler, _validate_field
+from pty_agent.daemon.handler import RequestHandler, _validate_field
 
 
 class _MockSession:

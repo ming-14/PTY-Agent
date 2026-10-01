@@ -7,11 +7,11 @@ _format_backend_error，以及（经进程子包转出的）backend.errors 退�
 import sys
 import pytest
 
-from src.backend.errors import (
+from pty_agent.backend.errors import (
     format_exit_code_message as _format_exit_code_message,
     signal_name as _signal_name,
 )
-from src.session.process.info import (
+from pty_agent.session.process.info import (
     _get_process_name,
     _get_process_path,
     _format_backend_error,

@@ -5,7 +5,7 @@
 
 import os
 
-from src.config import (
+from pty_agent.config import (
     MMAP_DAEMON_INFO_NAME,
     MMAP_DAEMON_INFO_SIZE,
     MMAP_MAILBOX_NAME,
@@ -41,7 +41,7 @@ class TestDaemonConfig:
         assert RESP_SHM_SIZE >= 64 * 1024 * 1024
 
     def test_no_socket_constants(self):
-        import src.config as cfg
+        import pty_agent.config as cfg
         assert not hasattr(cfg, "DAEMON_HOST")
         assert not hasattr(cfg, "DEFAULT_DAEMON_PORT")
         assert not hasattr(cfg, "PORT_FILE")
@@ -51,7 +51,7 @@ class TestDaemonConfig:
         assert not hasattr(cfg, "SOCKET_RECV_BUFSIZE")
 
     def test_no_pid_file_constant(self):
-        import src.config as cfg
+        import pty_agent.config as cfg
         assert not hasattr(cfg, "PID_FILE")
 
     def test_data_dir_under_home(self):

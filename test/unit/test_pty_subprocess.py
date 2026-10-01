@@ -10,7 +10,7 @@ import threading
 import time
 import pytest
 
-from src.backend.subprocess import SubprocessBackend, _CREATE_NO_WINDOW, _STARTF_USESHOWWINDOW, _SW_HIDE
+from pty_agent.backend.subprocess import SubprocessBackend, _CREATE_NO_WINDOW, _STARTF_USESHOWWINDOW, _SW_HIDE
 
 
 class TestSubprocessExitCode:
